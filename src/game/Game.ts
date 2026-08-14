@@ -40,6 +40,13 @@ export class Game {
   private readonly playerPos = new THREE.Vector3();
   private readonly rightDir = new THREE.Vector3();
 
+  // Phase dash VFX
+  private readonly phaseOverlayEl: HTMLElement;
+  private readonly phaseColor = new THREE.Color(0xa855f7);
+  private readonly phaseColorBright = new THREE.Color(0xd8b4fe);
+  private readonly phaseNormal = new THREE.Vector3();
+  private lastOverlayOpacity = -1;
+
   private constructor(container: HTMLElement, physics: PhysicsWorld) {
     this.physics = physics;
 
@@ -66,6 +73,7 @@ export class Game {
     this.hud = new DebugHUD();
     this.weaponHud = new WeaponHUD();
     this.dashHud = new DashHUD();
+    this.phaseOverlayEl = document.getElementById("phase-overlay")!;
 
     // ---- Weapon / targets / effects ----
     this.particles = new ParticleSystem(this.scene);
@@ -126,6 +134,7 @@ export class Game {
 
     const wantFire = this.input.pointerLocked && this.input.isMouseDown(0);
     this.rifle.update(dt, wantFire, this.hittables, this.elapsed);
+    this.handlePhaseEffects();
     this.particles.update(dt);
 
     this.hud.update(dt, this.movement);
@@ -133,6 +142,31 @@ export class Game {
     this.dashHud.update(dt, this.movement);
     this.renderer.render(this.scene, this.fpsCamera.camera);
     this.input.endFrame();
+  }
+
+  /**
+   * Phase dash feedback: portal rings + bursts on both wall faces and a
+   * short violet screen flash. Purely visual — movement is never paused.
+   */
+  private handlePhaseEffects(): void {
+    const ev = this.movement.consumePhaseEvent();
+    if (ev) {
+      // Entry face effect (ring normal faces back toward the player).
+      this.phaseNormal.copy(ev.travelDir).negate();
+      this.particles.ring(ev.entryPoint, this.phaseNormal, 26, 0.55, 4.5, 0.45, this.phaseColor);
+      this.particles.burst(ev.entryPoint, 14, 3.5, 0.35, this.phaseColorBright);
+
+      // Exit face effect (ring normal faces the travel direction).
+      this.particles.ring(ev.exitPoint, ev.travelDir, 26, 0.55, 4.5, 0.45, this.phaseColor);
+      this.particles.burst(ev.exitPoint, 14, 3.5, 0.35, this.phaseColorBright);
+    }
+
+    // Violet energy vignette driven by the phase timer (1 → 0).
+    const opacity = Math.round(this.movement.phaseIntensity * 100) / 100;
+    if (opacity !== this.lastOverlayOpacity) {
+      this.lastOverlayOpacity = opacity;
+      this.phaseOverlayEl.style.opacity = String(opacity);
+    }
   }
 
   private handleSafety(): void {
@@ -153,6 +187,7 @@ export class Game {
       wallSide: this.movement.state === MoveState.WALL_SLIDING ? this.movement.wallSide : 0,
       crouchAmount: this.player.crouched ? 1 : 0,
       dashKick: this.movement.isDashing ? 1 : 0,
+      phaseKick: this.movement.phaseIntensity,
     });
   }
 }

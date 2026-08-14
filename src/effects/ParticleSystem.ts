@@ -29,6 +29,9 @@ export class ParticleSystem {
 
   private readonly geometry: THREE.BufferGeometry;
   private readonly tmpDir = new THREE.Vector3();
+  private readonly tmpT1 = new THREE.Vector3();
+  private readonly tmpT2 = new THREE.Vector3();
+  private readonly tmpPos = new THREE.Vector3();
 
   constructor(scene: THREE.Scene) {
     this.positions = new Float32Array(this.max * 3);
@@ -119,6 +122,48 @@ export class ParticleSystem {
         .normalize()
         .multiplyScalar(speed * (0.35 + Math.random() * 0.65));
       this.spawn(pos, this.tmpDir, life * (0.5 + Math.random() * 0.5), color, gravity, 1.5);
+    }
+  }
+
+  /**
+   * Energetic ring burst in the plane perpendicular to `normal`
+   * (phase dash portal effect on wall entry / exit faces).
+   */
+  ring(
+    pos: THREE.Vector3,
+    normal: THREE.Vector3,
+    count: number,
+    radius: number,
+    speed: number,
+    life: number,
+    color: THREE.Color,
+  ): void {
+    // Tangent basis of the wall plane.
+    const t1 = this.tmpT1;
+    const t2 = this.tmpT2;
+    if (Math.abs(normal.y) < 0.9) {
+      t1.set(0, 1, 0).cross(normal).normalize();
+    } else {
+      t1.set(1, 0, 0).cross(normal).normalize();
+    }
+    t2.crossVectors(normal, t1).normalize();
+
+    for (let n = 0; n < count; n++) {
+      const a = (n / count) * Math.PI * 2 + Math.random() * 0.3;
+      const c = Math.cos(a);
+      const s = Math.sin(a);
+      this.tmpPos
+        .copy(pos)
+        .addScaledVector(t1, c * radius)
+        .addScaledVector(t2, s * radius);
+      // Expand outward in the wall plane with a slight push along the normal.
+      this.tmpDir
+        .set(0, 0, 0)
+        .addScaledVector(t1, c)
+        .addScaledVector(t2, s)
+        .multiplyScalar(speed * (0.6 + Math.random() * 0.4))
+        .addScaledVector(normal, speed * 0.25 * Math.random());
+      this.spawn(this.tmpPos, this.tmpDir, life * (0.6 + Math.random() * 0.4), color, 0, 2.5);
     }
   }
 

@@ -7,6 +7,9 @@ import RAPIER from "@dimforge/rapier3d-compat";
 export class PhysicsWorld {
   world!: RAPIER.World;
 
+  /** Collider handles explicitly marked as phase-dashable walls. */
+  private readonly phaseableHandles = new Set<number>();
+
   static async create(): Promise<PhysicsWorld> {
     await RAPIER.init();
     const physics = new PhysicsWorld();
@@ -24,6 +27,8 @@ export class PhysicsWorld {
   /**
    * Static cuboid collider. Sizes are FULL sizes (not half extents).
    * Optional quaternion rotation for ramps.
+   * `phaseable: true` marks the wall as traversable by the Phase Dash —
+   * an explicit opt-in so future maps can be designed around the mechanic.
    */
   addStaticBox(
     x: number,
@@ -33,13 +38,21 @@ export class PhysicsWorld {
     sizeY: number,
     sizeZ: number,
     rotation?: { x: number; y: number; z: number; w: number },
+    options?: { phaseable?: boolean },
   ): RAPIER.Collider {
     const desc = RAPIER.ColliderDesc.cuboid(sizeX / 2, sizeY / 2, sizeZ / 2)
       .setTranslation(x, y, z)
       .setFriction(0)
       .setRestitution(0);
     if (rotation) desc.setRotation(rotation);
-    return this.world.createCollider(desc);
+    const collider = this.world.createCollider(desc);
+    if (options?.phaseable) this.phaseableHandles.add(collider.handle);
+    return collider;
+  }
+
+  /** True if this collider was explicitly marked as a phase-dashable wall. */
+  isPhaseable(collider: RAPIER.Collider): boolean {
+    return this.phaseableHandles.has(collider.handle);
   }
 }
 

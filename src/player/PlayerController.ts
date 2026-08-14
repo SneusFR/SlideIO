@@ -16,7 +16,7 @@ export class PlayerController {
   /** True while the capsule uses the reduced slide height. */
   crouched = false;
 
-  private physics: PhysicsWorld;
+  readonly physics: PhysicsWorld;
 
   constructor(physics: PhysicsWorld) {
     this.physics = physics;
@@ -49,6 +49,15 @@ export class PlayerController {
 
   setPosition(x: number, y: number, z: number): void {
     this.body.setTranslation({ x, y, z }, true);
+  }
+
+  /**
+   * Teleport applied on the next physics step (phase dash traversal).
+   * Must be used instead of setPosition when called after move() in the
+   * same frame — otherwise the pending kinematic translation wins.
+   */
+  setNextPosition(x: number, y: number, z: number): void {
+    this.body.setNextKinematicTranslation({ x, y, z });
   }
 
   /**

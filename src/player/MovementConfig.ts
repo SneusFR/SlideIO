@@ -59,6 +59,17 @@ export const MovementConfig = {
   dashMinSpeedFraction: 0.25, // dash ends early if collisions slow it below this fraction
   dashFovBoost: 10, // extra FOV degrees while dashing
 
+  // ---- Phase dash (dash through phaseable walls) ----
+  // Traversal is allowed based on DASH STATE ONLY — never on player speed.
+  phaseTraversalEnabled: true,
+  phaseGraceTime: 0.15, // contact just after the dash ended still phases (s)
+  maxPhaseWallThickness: 3.0, // walls thicker than this stay solid (m)
+  phaseDuration: 0.18, // visual phase effect length (s) — movement never pauses
+  phaseExitOffset: 0.08, // extra clearance beyond the far face (m)
+  phaseReentryCooldown: 0.25, // blocks instantly re-phasing the same wall backwards (s)
+  phaseMomentumRetention: 1.0, // 1.0 = 100% of velocity preserved through the wall
+  phaseFovPunch: 14, // extra FOV degrees at the peak of the phase flash
+
   // ---- Wall slide / wall jump ----
   wallSlideGravity: 7,
   wallSlideMaxFallSpeed: 6,

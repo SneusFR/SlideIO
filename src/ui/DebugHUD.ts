@@ -27,11 +27,19 @@ export class DebugHUD {
     this.refreshTimer = 0;
 
     const v = movement.velocity;
+    const pd = movement.phaseDebug;
     this.el.textContent =
       `Speed:    ${movement.horizontalSpeed.toFixed(1)}\n` +
       `Grounded: ${movement.grounded}\n` +
       `State:    ${movement.state}\n` +
       `Velocity: ${v.x.toFixed(1)} / ${v.y.toFixed(1)} / ${v.z.toFixed(1)}\n` +
-      `FPS:      ${this.fps}`;
+      `FPS:      ${this.fps}\n` +
+      `\n` +
+      `Dash:     ${movement.dashReady ? "READY" : "COOLDOWN"}\n` +
+      `Phase:    ${movement.phaseEligible ? "YES" : "NO"}\n` +
+      `Grace:    ${movement.phaseGraceActive ? "ACTIVE" : "INACTIVE"}\n` +
+      `Phase Wall: ${pd.wallPhaseable ? "TRUE" : "FALSE"}\n` +
+      `Exit Clear: ${pd.exitClear ? "TRUE" : "FALSE"}\n` +
+      `Wall Thickness: ${pd.wallThickness.toFixed(1)}`;
   }
 }

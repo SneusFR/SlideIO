@@ -12,6 +12,8 @@ export interface CameraFeel {
   crouchAmount: number;
   /** 1 while dashing, 0 otherwise — small extra FOV kick. */
   dashKick: number;
+  /** 1 → 0 during a wall phase traversal — short portal FOV punch. */
+  phaseKick: number;
 }
 
 /**
@@ -70,9 +72,11 @@ export class FPSCamera {
       1,
     );
     // Dash: brief extra FOV punch on top of the speed FOV.
+    // Phase: short warp punch while traversing a phaseable wall.
     const targetFov =
       THREE.MathUtils.lerp(cfg.baseFov, cfg.maxSpeedFov, speedT) +
-      feel.dashKick * cfg.dashFovBoost;
+      feel.dashKick * cfg.dashFovBoost +
+      feel.phaseKick * cfg.phaseFovPunch;
     this.fov = THREE.MathUtils.damp(this.fov, targetFov, cfg.fovLerpSpeed, dt);
     if (Math.abs(this.camera.fov - this.fov) > 0.01) {
       this.camera.fov = this.fov;

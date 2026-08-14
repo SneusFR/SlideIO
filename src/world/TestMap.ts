@@ -31,6 +31,8 @@ export class TestMap {
     north: 0x8a63b8,
     obstacle: 0xd8b13c,
     rangeAccent: 0x9d5cff,
+    phaseWall: 0x7c3aed,
+    phaseGlow: 0xc084fc,
   };
 
   constructor(physics: PhysicsWorld) {
@@ -44,6 +46,7 @@ export class TestMap {
     this.buildWestWallZone();
     this.buildNorthZone();
     this.buildShootingRange();
+    this.buildPhaseTestWalls();
   }
 
   // ------------------------------------------------------------------
@@ -100,6 +103,52 @@ export class TestMap {
     const cy = (h0 + h1) / 2 - Math.cos(angle) * (t / 2);
     const cz = (z0 + z1) / 2 - Math.sin(angle) * (t / 2);
     this.box(x, cy, cz, width, t, len, color, angle, 0);
+  }
+
+  /**
+   * Phase-dashable wall: violet translucent panel + collider explicitly
+   * marked `phaseable`. Dash into it → phase through to the other side.
+   * Regular walls (this.box) always stay fully solid, even mid-dash.
+   */
+  private phaseWall(
+    x: number,
+    y: number,
+    z: number,
+    sx: number,
+    sy: number,
+    sz: number,
+    tooThickHint = false,
+  ): void {
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(sx, sy, sz),
+      new THREE.MeshLambertMaterial({
+        color: TestMap.COLORS.phaseWall,
+        emissive: tooThickHint ? 0x2e1065 : 0x5b21b6,
+        emissiveIntensity: tooThickHint ? 0.35 : 0.7,
+        transparent: true,
+        opacity: tooThickHint ? 0.95 : 0.8,
+      }),
+    );
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    this.group.add(mesh);
+
+    // Glowing edge frame so phaseable walls read as portals at a glance.
+    const g = TestMap.COLORS.phaseGlow;
+    if (sx >= sz) {
+      // Wall thin along Z: vertical strips on the left/right ends.
+      this.glowStrip(x - sx / 2 + 0.1, y, z, 0.2, sy, sz + 0.06, g);
+      this.glowStrip(x + sx / 2 - 0.1, y, z, 0.2, sy, sz + 0.06, g);
+      this.glowStrip(x, y + sy / 2 - 0.08, z, sx, 0.16, sz + 0.06, g);
+    } else {
+      // Wall thin along X: vertical strips on the near/far ends.
+      this.glowStrip(x, y, z - sz / 2 + 0.1, sx + 0.06, sy, 0.2, g);
+      this.glowStrip(x, y, z + sz / 2 - 0.1, sx + 0.06, sy, 0.2, g);
+      this.glowStrip(x, y + sy / 2 - 0.08, z, sx + 0.06, 0.16, sz, g);
+    }
+
+    this.physics.addStaticBox(x, y, z, sx, sy, sz, undefined, { phaseable: true });
   }
 
   /** Visual-only emissive strip (no collider) — floor markers, accents. */
@@ -312,6 +361,38 @@ export class TestMap {
     // Free-standing practice platforms
     this.box(18, 0.8, -40, 5, 1.6, 5, C.north); // top 1.6
     this.box(0, 1.5, -44, 5, 3, 5, C.north); // top 3.0
+  }
+
+  /**
+   * Phase Dash test walls — all explicitly marked `phaseable`.
+   *
+   *  1. Near-spawn wall (z = 17): stand almost still → E → short dash →
+   *     phase. Proves there is NO minimum speed requirement.
+   *  2. Arena wall (x = 18): simple ZONE A / ZONE B divider with open
+   *     floor on both sides.
+   *  3. Speed-lane wall (x = 18 in the south corridor): slide hop to high
+   *     speed → dash → phase, momentum fully preserved on exit.
+   *  4. Aerial wall (floating, east of the arena): jump off the east high
+   *     platform → air dash → phase → still airborne on the far side.
+   *  5. Thick block (4 m > maxPhaseWallThickness): marked phaseable but
+   *     always rejected by the thickness check → stays solid.
+   */
+  private buildPhaseTestWalls(): void {
+    // 1. Near-spawn wall: directly in front of the spawn (facing -Z).
+    this.phaseWall(0, 2.5, 17, 7, 5, 0.5);
+
+    // 2. Simple arena divider: ZONE A (arena) / ZONE B (east entrance).
+    this.phaseWall(18, 2.5, 0, 0.5, 5, 10);
+
+    // 3. Speed-lane wall across the south slide-hop corridor.
+    this.phaseWall(18, 3, 39.5, 0.5, 6, 15);
+
+    // 4. Floating aerial wall in front of the east platform's jump gap
+    //    (bottom edge at y = 3.6 — you can run under it, air dash through it).
+    this.phaseWall(16, 5.4, -8, 0.5, 3.6, 8);
+
+    // 5. Too-thick phase block: traversal is always rejected (4 m thick).
+    this.phaseWall(-9, 2.5, 17, 6, 5, 4, true);
   }
 
   /**

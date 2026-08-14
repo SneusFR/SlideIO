@@ -61,6 +61,22 @@ body {
   z-index: 10;
 }
 
+/* ---- Phase dash overlay: violet energy vignette during a wall phase ---- */
+#phase-overlay {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      ellipse at center,
+      rgba(168, 85, 247, 0) 30%,
+      rgba(168, 85, 247, 0.22) 68%,
+      rgba(124, 58, 237, 0.55) 100%
+    );
+  mix-blend-mode: screen;
+}
+
 #crosshair {
   position: absolute;
   left: 50%;

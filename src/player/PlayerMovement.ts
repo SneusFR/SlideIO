@@ -2,7 +2,16 @@ import * as THREE from "three";
 import { InputManager } from "../input/InputManager";
 import { FPSCamera } from "../camera/FPSCamera";
 import { PlayerController } from "./PlayerController";
+import { RAPIER } from "../physics/PhysicsWorld";
+import { PhaseDash, PhaseResult, PhaseAttemptDebug } from "./PhaseDash";
 import { MovementConfig as cfg } from "./MovementConfig";
+
+/** Fired once per successful wall traversal — consumed by Game for VFX. */
+export interface PhaseEvent {
+  entryPoint: THREE.Vector3;
+  exitPoint: THREE.Vector3;
+  travelDir: THREE.Vector3;
+}
 
 export enum MoveState {
   GROUNDED = "GROUNDED",
@@ -37,6 +46,21 @@ export class PlayerMovement {
   private dashTimer = 0;
   private dashCooldownTimer = 0;
 
+  // ---- Phase dash (dash through phaseable walls) ----
+  private readonly phaseDash: PhaseDash;
+  /** Tolerance window after the dash ends: contact still counts as a dash hit. */
+  private phaseGraceTimer = 0;
+  /** Visual phase effect timer — movement itself never pauses. */
+  private phaseTimer = 0;
+  /** Blocks instantly re-phasing right after a traversal. */
+  private phaseReentryTimer = 0;
+  private readonly phaseEvent: PhaseEvent = {
+    entryPoint: new THREE.Vector3(),
+    exitPoint: new THREE.Vector3(),
+    travelDir: new THREE.Vector3(),
+  };
+  private phaseEventPending = false;
+
   /** Horizontal speed just before the dash (used to preserve momentum on exit). */
   private preDashSpeed = 0;
   private readonly dashDir = new THREE.Vector3();
@@ -52,11 +76,16 @@ export class PlayerMovement {
   private readonly corrected = new THREE.Vector3();
   private readonly tmp = new THREE.Vector3();
 
+  private readonly posScratch = new THREE.Vector3();
+  private readonly probeDir = new THREE.Vector3();
+
   constructor(
     private player: PlayerController,
     private input: InputManager,
     private fpsCamera: FPSCamera,
-  ) {}
+  ) {
+    this.phaseDash = new PhaseDash(player.physics, player);
+  }
 
   get horizontalSpeed(): number {
     return Math.hypot(this.velocity.x, this.velocity.z);
@@ -72,6 +101,43 @@ export class PlayerMovement {
 
   get dashReady(): boolean {
     return this.dashCooldownTimer <= 0 && !this.isDashing;
+  }
+
+  /** True during the short visual phase window right after a traversal. */
+  get isPhasing(): boolean {
+    return this.phaseTimer > 0;
+  }
+
+  /** 1 → 0 over phaseDuration; drives the FOV punch / screen overlay. */
+  get phaseIntensity(): number {
+    return cfg.phaseDuration > 0 ? this.phaseTimer / cfg.phaseDuration : 0;
+  }
+
+  /** True while a dash-that-just-ended can still trigger a traversal. */
+  get phaseGraceActive(): boolean {
+    return !this.isDashing && this.phaseGraceTimer > 0;
+  }
+
+  /** Would a phaseable wall contact trigger a traversal right now? */
+  get phaseEligible(): boolean {
+    return (
+      cfg.phaseTraversalEnabled &&
+      (this.isDashing || this.phaseGraceTimer > 0) &&
+      this.phaseTimer <= 0 &&
+      this.phaseReentryTimer <= 0
+    );
+  }
+
+  /** Debug info about the latest traversal attempt (dev HUD). */
+  get phaseDebug(): PhaseAttemptDebug {
+    return this.phaseDash.lastAttempt;
+  }
+
+  /** Returns the pending traversal event once, then null. */
+  consumePhaseEvent(): PhaseEvent | null {
+    if (!this.phaseEventPending) return null;
+    this.phaseEventPending = false;
+    return this.phaseEvent;
   }
 
   update(dt: number): void {
@@ -117,6 +183,10 @@ export class PlayerMovement {
     this.slideTimer = 0;
     this.dashTimer = 0;
     this.dashCooldownTimer = 0;
+    this.phaseGraceTimer = 0;
+    this.phaseTimer = 0;
+    this.phaseReentryTimer = 0;
+    this.phaseEventPending = false;
   }
 
   // ------------------------------------------------------------------
@@ -282,11 +352,17 @@ export class PlayerMovement {
     this.dashTimer = cfg.dashDuration;
     this.dashCooldownTimer = cfg.dashCooldown;
     this.wallSide = 0;
+    this.phaseGraceTimer = 0;
     this.state = MoveState.DASHING;
   }
 
   private endDash(): void {
     this.dashTimer = 0;
+
+    // Phase grace window: a wall touched within this short span after the
+    // dash ends still triggers a traversal ("reached the wall thanks to
+    // the dash"). This is a timing tolerance — never a speed condition.
+    this.phaseGraceTimer = cfg.phaseGraceTime;
 
     // Momentum retention: fast players keep their pre-dash speed, slower
     // players exit with a moderate boost — never a hard reset to walk speed.
@@ -344,6 +420,12 @@ export class PlayerMovement {
   // ------------------------------------------------------------------
 
   private applyMovement(dt: number): void {
+    // Phase dash: proactive probe just ahead of the capsule. Catching the
+    // wall right before impact keeps the momentum 100% intact (the wall
+    // never gets a chance to scrub velocity) and does not depend on the
+    // character controller's collision report.
+    if (this.tryProactivePhase(dt)) return;
+
     this.delta.copy(this.velocity).multiplyScalar(dt);
     this.player.move(this.delta, this.corrected);
 
@@ -361,8 +443,56 @@ export class PlayerMovement {
   }
 
   /**
+   * Raycast a short distance ahead along the current motion. If a valid
+   * phaseable wall is about to be hit while the dash (or its grace
+   * window) is active, traverse it immediately.
+   * Authorization NEVER depends on speed — only on dash state + wall.
+   */
+  private tryProactivePhase(dt: number): boolean {
+    if (!this.phaseEligible) return false;
+
+    // Probe along the horizontal velocity; fall back to the dash
+    // direction when nearly stationary (dash just started this frame).
+    const d = this.probeDir.set(this.velocity.x, 0, this.velocity.z);
+    if (d.lengthSq() < 0.01) d.set(this.dashDir.x, 0, this.dashDir.z);
+    if (d.lengthSq() < 0.0001) return false;
+    d.normalize();
+
+    // Reach: capsule edge + this frame's travel + a small safety margin.
+    const reach =
+      cfg.capsuleRadius + Math.max(this.horizontalSpeed, 1) * dt + 0.15;
+
+    const pos = this.player.getPosition(this.posScratch);
+    const hit = this.player.physics.world.castRayAndGetNormal(
+      new RAPIER.Ray(
+        { x: pos.x, y: pos.y, z: pos.z },
+        { x: d.x, y: d.y, z: d.z },
+      ),
+      reach,
+      true,
+      undefined,
+      undefined,
+      this.player.collider,
+      this.player.body,
+    );
+    if (!hit || !hit.collider) return false;
+
+    // Vertical surfaces only (the hit normal points back toward us).
+    this.tmp.set(hit.normal.x, hit.normal.y, hit.normal.z);
+    if (Math.abs(this.tmp.y) >= cfg.wallMaxNormalY) return false;
+    this.tmp.setY(0).normalize();
+
+    const res = this.phaseDash.tryPhase(hit.collider, pos, this.tmp);
+    if (!res) return false;
+    this.executePhase(res);
+    return true;
+  }
+
+  /**
    * Read the character controller's contacts:
    * project velocity out of obstacles and detect valid walls.
+   * Wall contacts made while dashing (or within the grace window) may
+   * trigger a phase traversal instead of a normal collision.
    */
   private collectContacts(): void {
     this.touchingWall = false;
@@ -378,6 +508,23 @@ export class PlayerMovement {
 
       // Wall detection: near-vertical surfaces only.
       if (Math.abs(this.tmp.y) < cfg.wallMaxNormalY) {
+        // Phase dash: authorization depends only on dash state + a valid
+        // phaseable wall — NEVER on the player's speed.
+        if (this.phaseEligible && col.collider) {
+          this.wallNormal.copy(this.tmp).setY(0).normalize();
+          const res = this.phaseDash.tryPhase(
+            col.collider,
+            this.player.getPosition(this.posScratch),
+            this.wallNormal,
+          );
+          if (res) {
+            // Traversal: skip the velocity scrub for this wall so the
+            // player's momentum passes through 100% intact.
+            this.executePhase(res);
+            return;
+          }
+        }
+
         this.touchingWall = true;
         this.wallNormal.copy(this.tmp).setY(0).normalize();
       }
@@ -386,6 +533,28 @@ export class PlayerMovement {
       const into = this.velocity.dot(this.tmp);
       if (into < 0) this.velocity.addScaledVector(this.tmp, -into);
     }
+  }
+
+  /**
+   * Execute a validated traversal: reposition the player on the far side
+   * of the wall. Velocity is preserved (phaseMomentumRetention = 1 keeps
+   * 100% of speed AND direction, including the vertical component), the
+   * state machine is untouched (airborne stays airborne, an active dash
+   * keeps dashing) and no collision is ever globally disabled.
+   */
+  private executePhase(res: PhaseResult): void {
+    this.player.setNextPosition(res.exitPos.x, res.exitPos.y, res.exitPos.z);
+
+    // Momentum: never reset, never recomputed — just carried through.
+    this.velocity.multiplyScalar(cfg.phaseMomentumRetention);
+
+    this.phaseTimer = cfg.phaseDuration;
+    this.phaseReentryTimer = cfg.phaseDuration + cfg.phaseReentryCooldown;
+
+    this.phaseEvent.entryPoint.copy(res.entryPoint);
+    this.phaseEvent.exitPoint.copy(res.exitPoint);
+    this.phaseEvent.travelDir.copy(res.travelDir);
+    this.phaseEventPending = true;
   }
 
   private resolveStateTransitions(dt: number): void {
@@ -549,6 +718,11 @@ export class PlayerMovement {
     this.slideCooldownTimer = Math.max(0, this.slideCooldownTimer - dt);
     this.wallRegrabTimer = Math.max(0, this.wallRegrabTimer - dt);
     this.dashCooldownTimer = Math.max(0, this.dashCooldownTimer - dt);
+    if (!this.isDashing) {
+      this.phaseGraceTimer = Math.max(0, this.phaseGraceTimer - dt);
+    }
+    this.phaseTimer = Math.max(0, this.phaseTimer - dt);
+    this.phaseReentryTimer = Math.max(0, this.phaseReentryTimer - dt);
   }
 
   private readBufferedInputs(): void {
