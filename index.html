@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SlideIO — Movement Prototype</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="overlay">
+      <div id="overlay-title">CLICK TO PLAY</div>
+      <div id="overlay-controls">
+        WASD — Move&nbsp;&nbsp;·&nbsp;&nbsp;SPACE — Jump&nbsp;&nbsp;·&nbsp;&nbsp;SHIFT — Slide&nbsp;&nbsp;·&nbsp;&nbsp;E — Dash&nbsp;&nbsp;·&nbsp;&nbsp;LMB — Fire&nbsp;&nbsp;·&nbsp;&nbsp;R — Respawn
+      </div>
+    </div>
+
+    <div id="hud">
+      <div id="crosshair"></div>
+      <div id="debug"></div>
+      <div id="heat-hud">
+        <div id="heat-label">HEAT</div>
+        <div id="heat-bar"><div id="heat-fill"></div></div>
+        <div id="heat-value">0%</div>
+      </div>
+      <div id="overheat-warning" class="hidden">
+        <div id="overheat-title">WEAPON OVERHEATED</div>
+        <div id="overheat-cooling">Cooling… <span id="overheat-time">0.0</span> s</div>
+      </div>
+      <div id="dash-hud">
+        <div id="dash-label">DASH [E]</div>
+        <div id="dash-bar"><div id="dash-fill"></div></div>
+        <div id="dash-status">READY</div>
+      </div>
+      <div id="controls-hint">WASD Move · SPACE Jump · SHIFT Slide · E Dash · LMB Fire · R Respawn</div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
