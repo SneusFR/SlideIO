@@ -173,8 +173,8 @@ export class PlayerMovement {
     this.resolveStateTransitions(dt);
   }
 
-  respawn(): void {
-    this.player.respawn();
+  respawn(pos?: { x: number; y: number; z: number }): void {
+    this.player.respawn(pos);
     this.velocity.set(0, 0, 0);
     this.state = MoveState.GROUNDED;
     this.wallSide = 0;

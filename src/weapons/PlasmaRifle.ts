@@ -4,7 +4,8 @@ import { HeatSystem } from "./HeatSystem";
 import { PlasmaBeam } from "./PlasmaBeam";
 import { ParticleSystem } from "../effects/ParticleSystem";
 import { PlasmaImpact } from "../effects/PlasmaImpact";
-import { TrainingTarget } from "../targets/TrainingTarget";
+import { Combatant } from "../combat/Combatant";
+import { castBeam, BeamCastResult } from "./BeamCombat";
 
 /**
  * First-person Plasma Rifle.
@@ -17,8 +18,11 @@ import { TrainingTarget } from "../targets/TrainingTarget";
 export class PlasmaRifle {
   readonly heat = new HeatSystem();
 
-  /** True while the beam is currently burning a TrainingTarget. */
+  /** True while the beam is currently burning a target or a combatant. */
   hittingTarget = false;
+
+  /** The combatant wielding this rifle (never damaged by its own beam). */
+  owner: Combatant | null = null;
 
   private readonly camera: THREE.Camera;
   private readonly particles: ParticleSystem;
@@ -47,6 +51,7 @@ export class PlasmaRifle {
 
   // ---- Firing / raycast ----
   private readonly raycaster = new THREE.Raycaster();
+  private readonly beamResult = new BeamCastResult();
   private static readonly SCREEN_CENTER = new THREE.Vector2(0, 0);
   private muzzleEmitAccum = 0;
   private beamEmitAccum = 0;
@@ -213,34 +218,31 @@ export class PlasmaRifle {
 
   private fireBeam(dt: number, hittables: THREE.Object3D[], time: number): void {
     // Perfectly accurate: ray from the camera through the crosshair center.
+    // Damage + occlusion go through the SAME shared castBeam as the bots.
     this.raycaster.setFromCamera(PlasmaRifle.SCREEN_CENTER, this.camera);
-    this.raycaster.far = cfg.beamRange;
+    castBeam(
+      this.raycaster,
+      this.raycaster.ray.origin,
+      this.raycaster.ray.direction,
+      cfg.beamRange,
+      hittables,
+      this.owner,
+      this.beamResult,
+    );
 
-    const hits = this.raycaster.intersectObjects(hittables, true);
-    const hit = hits.length > 0 ? hits[0] : null;
+    const hit = this.beamResult.hit;
+    this.beamEnd.copy(this.beamResult.point);
+    this.hitNormal.copy(this.beamResult.normal);
 
-    if (hit) {
-      this.beamEnd.copy(hit.point);
-      if (hit.face) {
-        this.hitNormal
-          .copy(hit.face.normal)
-          .transformDirection(hit.object.matrixWorld);
-      } else {
-        this.hitNormal.copy(this.raycaster.ray.direction).negate();
-      }
-
-      // Continuous damage if the first thing hit is a training target.
-      const target = this.findTarget(hit.object);
-      if (target) {
-        target.applyDamage(cfg.plasmaDamagePerSecond * dt);
-        this.hittingTarget = true;
-      }
-    } else {
-      this.beamEnd
-        .copy(this.raycaster.ray.direction)
-        .multiplyScalar(cfg.beamRange)
-        .add(this.raycaster.ray.origin);
-      this.hitNormal.copy(this.raycaster.ray.direction).negate();
+    if (this.beamResult.combatant) {
+      this.beamResult.combatant.health.applyDamage(
+        cfg.plasmaDamagePerSecond * dt,
+        this.owner,
+      );
+      this.hittingTarget = true;
+    } else if (this.beamResult.trainingTarget) {
+      this.beamResult.trainingTarget.applyDamage(cfg.plasmaDamagePerSecond * dt);
+      this.hittingTarget = true;
     }
 
     // Beam: from the muzzle, converging to the camera-raycast hit point.
@@ -258,16 +260,6 @@ export class PlasmaRifle {
 
     this.muzzleLight.intensity = 2.2 + Math.sin(time * 47) * 0.8;
     this.emitFiringParticles(dt);
-  }
-
-  private findTarget(object: THREE.Object3D): TrainingTarget | null {
-    let o: THREE.Object3D | null = object;
-    while (o) {
-      const t = o.userData.trainingTarget as TrainingTarget | undefined;
-      if (t) return t;
-      o = o.parent;
-    }
-    return null;
   }
 
   private emitFiringParticles(dt: number): void {

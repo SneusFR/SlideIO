@@ -6,10 +6,11 @@ import { ParticleSystem } from "../effects/ParticleSystem";
  * Creates and updates the shooting-range targets.
  * Exposes `hittables` (target root groups) for the weapon raycast.
  *
- * Layout (range spans z -49 .. -115, firing line ≈ z -52):
- *   Close  (~z -63..-67)  — horizontal + vertical
- *   Medium (~z -82..-85)  — fast strafe + circular
- *   Long   (~z -100..-106) — erratic + slow horizontal
+ * Layout (training annex behind the blue yard, z 47 .. 93, x -22 .. 22,
+ * firing line ≈ z 52 — entered through the doorway in the south wall):
+ *   Close  (~z 58..62) — horizontal + vertical
+ *   Medium (~z 71..74) — fast strafe + circular
+ *   Long   (~z 84..88) — erratic + slow horizontal
  */
 export class TargetManager {
   readonly group = new THREE.Group();
@@ -26,13 +27,13 @@ export class TargetManager {
 
     // ---- Close range ----
     this.add(
-      new TrainingTarget("horizontal", new THREE.Vector3(0, 1.8, -63), {
+      new TrainingTarget("horizontal", new THREE.Vector3(0, 1.8, 58), {
         amplitude: 6,
         speed: 1.1,
       }),
     );
     this.add(
-      new TrainingTarget("vertical", new THREE.Vector3(-14, 3.2, -67), {
+      new TrainingTarget("vertical", new THREE.Vector3(-10, 3.2, 62), {
         amplitude: 1.9,
         speed: 1.6,
       }),
@@ -40,28 +41,28 @@ export class TargetManager {
 
     // ---- Medium range ----
     this.add(
-      new TrainingTarget("strafe", new THREE.Vector3(8, 2.4, -82), {
-        amplitude: 10,
+      new TrainingTarget("strafe", new THREE.Vector3(6, 2.4, 71), {
+        amplitude: 8,
         speed: 9,
       }),
     );
     this.add(
-      new TrainingTarget("circular", new THREE.Vector3(-13, 4.2, -85), {
-        radius: 3.2,
+      new TrainingTarget("circular", new THREE.Vector3(-11, 4.2, 74), {
+        radius: 3,
         speed: 1.4,
       }),
     );
 
     // ---- Long range ----
     this.add(
-      new TrainingTarget("erratic", new THREE.Vector3(10, 3.5, -100), {
+      new TrainingTarget("erratic", new THREE.Vector3(8, 3.5, 84), {
         speed: 6,
-        zone: { x: 8, y: 2.2, z: 5 },
+        zone: { x: 8, y: 2.2, z: 4 },
       }),
     );
     this.add(
-      new TrainingTarget("horizontal", new THREE.Vector3(-12, 2.5, -106), {
-        amplitude: 9,
+      new TrainingTarget("horizontal", new THREE.Vector3(-9, 2.5, 88), {
+        amplitude: 7,
         speed: 0.7,
       }),
     );

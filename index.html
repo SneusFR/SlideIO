@@ -14,12 +14,30 @@
       <div id="overlay-controls">
         WASD — Move&nbsp;&nbsp;·&nbsp;&nbsp;SPACE — Jump&nbsp;&nbsp;·&nbsp;&nbsp;SHIFT — Slide&nbsp;&nbsp;·&nbsp;&nbsp;E — Dash&nbsp;&nbsp;·&nbsp;&nbsp;LMB — Fire&nbsp;&nbsp;·&nbsp;&nbsp;R — Respawn
       </div>
+
+      <div id="bots-menu">
+        <div id="bots-title">BOTS</div>
+        <div id="bots-row">
+          <button id="bots-minus" type="button">−</button>
+          <span id="bots-count">0</span>
+          <button id="bots-plus" type="button">+</button>
+        </div>
+        <div id="bots-hint">Maximum: 8 · FFA — everyone fights everyone · applied instantly</div>
+      </div>
     </div>
 
     <div id="hud">
       <div id="phase-overlay"></div>
+      <div id="damage-vignette"></div>
       <div id="crosshair"></div>
       <div id="debug"></div>
+
+      <div id="health-hud">
+        <div id="health-label">HEALTH</div>
+        <div id="health-bar"><div id="health-fill"></div></div>
+        <div id="health-value">100</div>
+      </div>
+
       <div id="heat-hud">
         <div id="heat-label">HEAT</div>
         <div id="heat-bar"><div id="heat-fill"></div></div>
@@ -34,6 +52,14 @@
         <div id="dash-bar"><div id="dash-fill"></div></div>
         <div id="dash-status">READY</div>
       </div>
+
+      <div id="kill-feedback" class="hidden">ELIMINATED</div>
+
+      <div id="death-screen" class="hidden">
+        <div id="death-title">YOU DIED</div>
+        <div id="death-respawn">Respawning… <span id="death-timer">2.5</span></div>
+      </div>
+
       <div id="controls-hint">WASD Move · SPACE Jump · SHIFT Slide · E Dash · LMB Fire · R Respawn</div>
     </div>
 

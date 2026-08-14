@@ -95,8 +95,8 @@ export const MovementConfig = {
 
   // ---- World / safety ----
   killPlaneY: -25,
-  spawnPosition: { x: 0, y: 2.5, z: 24 },
-  spawnYaw: 0, // facing -Z (toward arena center)
+  spawnPosition: { x: 0, y: 2.5, z: 40 }, // blue yard (south side)
+  spawnYaw: 0, // facing -Z (down the street, toward the red side)
 };
 
 export type MovementConfigType = typeof MovementConfig;

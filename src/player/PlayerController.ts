@@ -118,8 +118,9 @@ export class PlayerController {
     return hit === null;
   }
 
-  respawn(): void {
+  respawn(pos?: { x: number; y: number; z: number }): void {
     this.setCrouched(false);
-    this.setPosition(cfg.spawnPosition.x, cfg.spawnPosition.y, cfg.spawnPosition.z);
+    const p = pos ?? cfg.spawnPosition;
+    this.setPosition(p.x, p.y, p.z);
   }
 }

@@ -25,6 +25,18 @@ export class PhysicsWorld {
   }
 
   /**
+   * Force a scene-query refresh (broad-phase update) so raycasts and shape
+   * intersections see freshly created colliders. Rapier only updates its
+   * query structures during `world.step()`, so anything built from queries
+   * BEFORE the first step (e.g. the NavGrid) would see an empty world.
+   * A zero-dt step updates the queries without advancing the simulation.
+   */
+  refreshQueries(): void {
+    this.world.timestep = 0;
+    this.world.step();
+  }
+
+  /**
    * Static cuboid collider. Sizes are FULL sizes (not half extents).
    * Optional quaternion rotation for ramps.
    * `phaseable: true` marks the wall as traversable by the Phase Dash —
