@@ -1,5 +1,7 @@
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { WeaponConfig as cfg } from "./WeaponConfig";
+import rifleModelUrl from "../assets/voidrifle_opt.glb?url";
 import { HeatSystem } from "./HeatSystem";
 import { PlasmaBeam } from "./PlasmaBeam";
 import { ParticleSystem } from "../effects/ParticleSystem";
@@ -39,9 +41,9 @@ export class PlasmaRifle {
   private muzzle!: THREE.Object3D;
   private muzzleLight!: THREE.PointLight;
   private muzzleRing!: THREE.Mesh;
-  private coreMat!: THREE.MeshBasicMaterial;
-  private coilMat!: THREE.MeshStandardMaterial;
   private accentMat!: THREE.MeshStandardMaterial;
+  /** Emissive materials from the GLB — tinted/boosted with heat. */
+  private readonly glowMats: { mat: THREE.MeshStandardMaterial; base: number }[] = [];
   private kick = 0; // visual-only recoil slide
 
   // Heat-driven color shift (violet → hot)
@@ -83,21 +85,29 @@ export class PlasmaRifle {
     camera.add(this.viewmodel);
   }
 
+  /**
+   * Hide/show the rifle view model while the hammer is out.
+   * Purely visual — heat, overheat cooldown and firing logic keep
+   * evolving normally in the background (nothing is reset).
+   */
+  setViewmodelHidden(hidden: boolean): void {
+    this.viewmodel.visible = !hidden;
+  }
+
   // ------------------------------------------------------------------
-  // Procedural sci-fi view model (all local coords; weapon faces -Z)
+  // GLB view model (all local coords; weapon faces -Z)
   // ------------------------------------------------------------------
 
+  // Dimensions of the previous procedural rifle — the GLB is normalized to
+  // occupy the same space so all offsets/FX anchors stay valid.
+  /** Total length (stock rear z=+0.29 → muzzle tip z=-0.56). */
+  private static readonly TARGET_LENGTH = 0.85;
+  /** Front tip (muzzle end) of the old rifle in local space. */
+  private static readonly FRONT_Z = -0.56;
+  /** Vertical center of the old rifle body. */
+  private static readonly CENTER_Y = -0.04;
+
   private buildViewmodel(): void {
-    const darkMat = new THREE.MeshStandardMaterial({
-      color: 0x252b38,
-      metalness: 0.65,
-      roughness: 0.4,
-    });
-    const midMat = new THREE.MeshStandardMaterial({
-      color: 0x3a4254,
-      metalness: 0.5,
-      roughness: 0.5,
-    });
     this.accentMat = new THREE.MeshStandardMaterial({
       color: 0x120a24,
       emissive: 0x9333ea,
@@ -105,75 +115,17 @@ export class PlasmaRifle {
       metalness: 0.4,
       roughness: 0.4,
     });
-    this.coilMat = new THREE.MeshStandardMaterial({
-      color: 0x1a1030,
-      emissive: 0x7c3aed,
-      emissiveIntensity: 0.8,
-      metalness: 0.4,
-      roughness: 0.5,
-    });
-    this.coreMat = new THREE.MeshBasicMaterial({ color: this.coolViolet });
-
-    const add = (mesh: THREE.Mesh, order: number): THREE.Mesh => {
-      const mat = mesh.material as THREE.Material;
-      mat.depthTest = false; // never clip into walls
-      mesh.renderOrder = 100 + order;
-      mesh.frustumCulled = false;
-      this.viewmodel.add(mesh);
-      return mesh;
-    };
-
-    // Receiver / body
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.11, 0.44), darkMat), 0)
-      .position.set(0, 0, -0.04);
-
-    // Stock
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.085, 0.14), midMat), 1)
-      .position.set(0, -0.005, 0.22);
-
-    // Grip (angled)
-    const grip = add(new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.15, 0.06), midMat), 2);
-    grip.position.set(0, -0.11, 0.09);
-    grip.rotation.x = 0.35;
-
-    // Top rail
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.03, 0.34), midMat), 3)
-      .position.set(0, 0.075, -0.06);
-
-    // Glowing side strips (heat feedback)
-    const stripGeo = new THREE.BoxGeometry(0.008, 0.045, 0.3);
-    add(new THREE.Mesh(stripGeo, this.accentMat), 4).position.set(0.05, 0.01, -0.05);
-    add(new THREE.Mesh(stripGeo, this.accentMat), 5).position.set(-0.05, 0.01, -0.05);
-
-    // Energy core (bright sphere on top of the receiver)
-    add(new THREE.Mesh(new THREE.SphereGeometry(0.042, 12, 10), this.coreMat), 6)
-      .position.set(0, 0.065, 0.06);
-
-    // Barrel shroud
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.2), darkMat), 7)
-      .position.set(0, 0.012, -0.3);
-
-    // Barrel
-    const barrel = add(
-      new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.028, 0.36, 10), darkMat),
-      8,
-    );
-    barrel.position.set(0, 0.012, -0.38);
-    barrel.rotation.x = Math.PI / 2;
-
-    // Plasma coils around the barrel (heat up while firing)
-    const coilGeo = new THREE.TorusGeometry(0.042, 0.011, 8, 16);
-    for (let i = 0; i < 3; i++) {
-      const coil = add(new THREE.Mesh(coilGeo, this.coilMat), 9 + i);
-      coil.position.set(0, 0.012, -0.3 - i * 0.07);
-    }
+    this.accentMat.depthTest = false;
 
     // Muzzle ring (spins while firing — animated part)
-    this.muzzleRing = add(
-      new THREE.Mesh(new THREE.TorusGeometry(0.036, 0.009, 8, 16), this.accentMat),
-      12,
+    this.muzzleRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.036, 0.009, 8, 16),
+      this.accentMat,
     );
+    this.muzzleRing.renderOrder = 112; // above the GLB body
+    this.muzzleRing.frustumCulled = false;
     this.muzzleRing.position.set(0, 0.012, -0.55);
+    this.viewmodel.add(this.muzzleRing);
 
     // Muzzle anchor (beam start / particle emitter) + firing light
     this.muzzle = new THREE.Object3D();
@@ -182,6 +134,81 @@ export class PlasmaRifle {
 
     this.muzzleLight = new THREE.PointLight(0xa855f7, 0, 4, 2);
     this.muzzle.add(this.muzzleLight);
+
+    this.loadModel();
+  }
+
+  private loadModel(): void {
+    const loader = new GLTFLoader();
+    loader.load(rifleModelUrl, (gltf) => {
+      const model = gltf.scene;
+
+      // Source model lies along the X axis. Find the muzzle end (thinner
+      // cross-section) and rotate so the barrel faces -Z like the old rifle.
+      const box = new THREE.Box3().setFromObject(model);
+      const muzzleSign = PlasmaRifle.findMuzzleSign(model, box);
+      model.rotation.y = muzzleSign > 0 ? Math.PI / 2 : -Math.PI / 2;
+
+      // Uniform scale so its length matches the old procedural rifle.
+      box.setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const scale = PlasmaRifle.TARGET_LENGTH / Math.max(size.z, 1e-6);
+      model.scale.setScalar(scale);
+
+      // Recenter: muzzle tip at FRONT_Z, centered on x, body around CENTER_Y.
+      box.setFromObject(model);
+      const center = box.getCenter(new THREE.Vector3());
+      model.position.x -= center.x;
+      model.position.y += PlasmaRifle.CENTER_Y - center.y;
+      model.position.z += PlasmaRifle.FRONT_Z - box.min.z;
+
+      model.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh)) return;
+        obj.renderOrder = 100; // view-model layer (hammer is 150+)
+        obj.frustumCulled = false;
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const mat of mats) {
+          mat.depthTest = false; // never clip into walls
+          if (mat instanceof THREE.MeshStandardMaterial && mat.emissive.getHex() !== 0) {
+            this.glowMats.push({ mat, base: mat.emissiveIntensity });
+          }
+        }
+      });
+
+      this.viewmodel.add(model);
+    });
+  }
+
+  /**
+   * Heuristic: the muzzle end of a rifle has a thinner cross-section than
+   * the stock/grip end. Returns +1 if the muzzle is on the +X side, else -1.
+   */
+  private static findMuzzleSign(model: THREE.Object3D, box: THREE.Box3): number {
+    const centerX = (box.min.x + box.max.x) / 2;
+    const half = Math.max((box.max.x - box.min.x) / 2, 1e-6);
+    const pos = { minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity };
+    const neg = { minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity };
+    const v = new THREE.Vector3();
+
+    model.updateMatrixWorld(true);
+    model.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      const attr = (obj.geometry as THREE.BufferGeometry).getAttribute("position");
+      for (let i = 0; i < attr.count; i++) {
+        v.fromBufferAttribute(attr as THREE.BufferAttribute, i).applyMatrix4(obj.matrixWorld);
+        const t = (v.x - centerX) / half; // -1 .. 1 along the length
+        const side = t > 0.55 ? pos : t < -0.55 ? neg : null;
+        if (!side) continue;
+        side.minY = Math.min(side.minY, v.y);
+        side.maxY = Math.max(side.maxY, v.y);
+        side.minZ = Math.min(side.minZ, v.z);
+        side.maxZ = Math.max(side.maxZ, v.z);
+      }
+    });
+
+    const posArea = (pos.maxY - pos.minY) * (pos.maxZ - pos.minZ);
+    const negArea = (neg.maxY - neg.minY) * (neg.maxZ - neg.minZ);
+    return posArea <= negArea ? 1 : -1;
   }
 
   // ------------------------------------------------------------------
@@ -326,16 +353,18 @@ export class PlasmaRifle {
 
     // Heat glow: violet → warm as the rifle heats up.
     this.tmpColor.lerpColors(this.coolViolet, this.hotOrange, heatRatio);
-    this.coreMat.color.copy(this.tmpColor);
-    this.coilMat.emissive.copy(this.tmpColor);
-    this.coilMat.emissiveIntensity = 0.8 + heatRatio * 2.6;
+    this.accentMat.emissive.copy(this.tmpColor);
     this.accentMat.emissiveIntensity = 1.1 + heatRatio * 1.6;
+    for (const g of this.glowMats) {
+      g.mat.emissive.copy(this.tmpColor);
+      g.mat.emissiveIntensity = g.base + heatRatio * 2.6;
+    }
 
     if (this.heat.overheated) {
       // Angry pulsing while locked out.
       const pulse = 0.5 + 0.5 * Math.sin(time * 18);
-      this.coilMat.emissiveIntensity = 2 + pulse * 2.5;
-      this.coreMat.color.lerpColors(this.hotOrange, this.coolViolet, pulse * 0.4);
+      this.accentMat.emissiveIntensity = 2 + pulse * 2.5;
+      for (const g of this.glowMats) g.mat.emissiveIntensity = 2 + pulse * 2.5;
     }
 
     // Energy vapor when running hot.

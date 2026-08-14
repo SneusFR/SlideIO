@@ -136,6 +136,18 @@ export class Bot implements Combatant {
     return out.set(t.x, t.y + 0.55, t.z);
   }
 
+  /**
+   * Knockback: added ON TOP of the current velocity (never a reset).
+   * Lifting the bot off the ground lets gravity + the character controller
+   * integrate the shove naturally over the next frames.
+   */
+  applyImpulse(impulse: THREE.Vector3): void {
+    if (!this.health.alive) return;
+    this.velocity.add(impulse);
+    if (impulse.y > 0.5) this.grounded = false;
+    this.sliding = false;
+  }
+
   // ---- Death / respawn ----
   onDeath(): void {
     this.getPosition(this.tmp);

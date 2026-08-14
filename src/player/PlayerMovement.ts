@@ -5,6 +5,7 @@ import { PlayerController } from "./PlayerController";
 import { RAPIER } from "../physics/PhysicsWorld";
 import { PhaseDash, PhaseResult, PhaseAttemptDebug } from "./PhaseDash";
 import { MovementConfig as cfg } from "./MovementConfig";
+import { HammerConfig as hc } from "../weapons/HammerConfig";
 
 /** Fired once per successful wall traversal — consumed by Game for VFX. */
 export interface PhaseEvent {
@@ -19,6 +20,8 @@ export enum MoveState {
   SLIDING = "SLIDING",
   WALL_SLIDING = "WALL_SLIDING",
   DASHING = "DASHING",
+  /** Hammer Ground Slam: vertical charge toward the ground. */
+  GROUND_SLAMMING = "GROUND_SLAMMING",
 }
 
 /**
@@ -45,6 +48,13 @@ export class PlayerMovement {
   private wallRegrabTimer = 0;
   private dashTimer = 0;
   private dashCooldownTimer = 0;
+
+  // ---- Hammer Ground Slam (vertical charge, driven by the melee input) ----
+  /** Short hang before the dive accelerates downward. */
+  private slamWindupTimer = 0;
+  /** Set on the frame the dive touches valid ground — consumed by the Game. */
+  private slamImpactPending = false;
+  private readonly slamImpactPos = new THREE.Vector3();
 
   // ---- Phase dash (dash through phaseable walls) ----
   private readonly phaseDash: PhaseDash;
@@ -95,6 +105,10 @@ export class PlayerMovement {
     return this.state === MoveState.DASHING;
   }
 
+  get isGroundSlamming(): boolean {
+    return this.state === MoveState.GROUND_SLAMMING;
+  }
+
   get dashCooldownRemaining(): number {
     return this.dashCooldownTimer;
   }
@@ -140,6 +154,41 @@ export class PlayerMovement {
     return this.phaseEvent;
   }
 
+  /**
+   * Start the hammer Ground Slam: interrupt whatever aerial movement is in
+   * progress and charge toward the ground. NOT a teleport — a strong
+   * downward velocity with collisions fully active.
+   * - An active dash burst is cleanly interrupted (cooldown untouched,
+   *   NO phase grace granted: the slam can never phase through walls).
+   * - Horizontal momentum is mostly dropped: this is a vertical charge.
+   */
+  startGroundSlam(): void {
+    if (this.state === MoveState.GROUND_SLAMMING) return;
+
+    if (this.state === MoveState.DASHING) {
+      this.dashTimer = 0; // interrupt the burst; dash cooldown stays as-is
+    }
+    if (this.state === MoveState.SLIDING) {
+      this.endSlide(); // safety (slam normally starts airborne)
+    }
+    this.wallSide = 0;
+    this.phaseGraceTimer = 0; // §31: the slam is NOT a phase mechanic
+
+    this.velocity.x *= hc.groundSlamHorizontalRetention;
+    this.velocity.z *= hc.groundSlamHorizontalRetention;
+    if (this.velocity.y > 0) this.velocity.y *= 0.3;
+
+    this.slamWindupTimer = hc.groundSlamWindup;
+    this.state = MoveState.GROUND_SLAMMING;
+  }
+
+  /** Returns the slam impact point once (feet position), then null. */
+  consumeSlamImpact(): THREE.Vector3 | null {
+    if (!this.slamImpactPending) return null;
+    this.slamImpactPending = false;
+    return this.slamImpactPos;
+  }
+
   update(dt: number): void {
     this.tickTimers(dt);
     this.readBufferedInputs();
@@ -166,6 +215,9 @@ export class PlayerMovement {
       case MoveState.DASHING:
         this.updateDashing(dt);
         break;
+      case MoveState.GROUND_SLAMMING:
+        this.updateGroundSlamming(dt);
+        break;
     }
 
     this.clampVelocity();
@@ -183,6 +235,8 @@ export class PlayerMovement {
     this.slideTimer = 0;
     this.dashTimer = 0;
     this.dashCooldownTimer = 0;
+    this.slamWindupTimer = 0;
+    this.slamImpactPending = false;
     this.phaseGraceTimer = 0;
     this.phaseTimer = 0;
     this.phaseReentryTimer = 0;
@@ -274,6 +328,27 @@ export class PlayerMovement {
     }
   }
 
+  private updateGroundSlamming(dt: number): void {
+    if (this.slamWindupTimer > 0) {
+      // Brief hang: the hammer is raised, all momentum damps toward zero.
+      this.slamWindupTimer -= dt;
+      const damp = Math.max(0, 1 - 10 * dt);
+      this.velocity.multiplyScalar(damp);
+      return;
+    }
+
+    // Vertical charge: strong constant downward speed, collisions active.
+    this.velocity.y = -hc.groundSlamSpeed;
+
+    // Heavily reduced air control — the slam is a charge, not a free dash.
+    this.accelerate(
+      this.wishDir,
+      cfg.walkSpeed * hc.groundSlamAirControl,
+      cfg.airAcceleration * hc.groundSlamAirControl,
+      dt,
+    );
+  }
+
   private updateWallSliding(dt: number): void {
     this.wallSlideTimer -= dt;
 
@@ -331,6 +406,8 @@ export class PlayerMovement {
 
   private tryStartDash(): void {
     if (this.dashCooldownTimer > 0 || this.state === MoveState.DASHING) return;
+    // No dashing out of a Ground Slam: the vertical charge must complete.
+    if (this.state === MoveState.GROUND_SLAMMING) return;
 
     // Dashing out of a slide: stand back up first (skip if blocked by a ceiling).
     if (this.state === MoveState.SLIDING) {
@@ -615,6 +692,25 @@ export class PlayerMovement {
         // Dash owns its own lifecycle (updateDashing); landing refreshes
         // the wall slide window like a normal touchdown.
         if (this.grounded) this.wallSlideTimer = cfg.wallSlideDuration;
+        break;
+
+      case MoveState.GROUND_SLAMMING:
+        // The AoE triggers on REAL ground contact — never on a timer.
+        if (this.grounded) {
+          this.player.getPosition(this.slamImpactPos);
+          this.slamImpactPos.y -= cfg.standHalfHeight + cfg.capsuleRadius; // feet
+          this.slamImpactPending = true;
+
+          // Weighty landing: kill most horizontal speed, eat buffered jumps.
+          this.velocity.x *= hc.groundSlamLandingSpeedScale;
+          this.velocity.z *= hc.groundSlamLandingSpeedScale;
+          this.velocity.y = 0;
+          this.jumpBufferTimer = 0;
+
+          this.wallSlideTimer = cfg.wallSlideDuration;
+          this.state = MoveState.GROUNDED;
+        }
+        // No wall-slide grabbing during the dive: slam → wall = plain collision.
         break;
     }
   }

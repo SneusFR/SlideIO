@@ -14,6 +14,12 @@ export interface Combatant {
   getPosition(out: THREE.Vector3): THREE.Vector3;
   /** Eye / head position (used for LOS checks and beam origins). */
   getEyePosition(out: THREE.Vector3): THREE.Vector3;
+  /**
+   * Add a knockback impulse (m/s) ON TOP of the current velocity.
+   * Never a teleport, never a velocity reset — the victim keeps its
+   * momentum and the shove integrates naturally with the physics.
+   */
+  applyImpulse(impulse: THREE.Vector3): void;
 }
 
 /**

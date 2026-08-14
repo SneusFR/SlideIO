@@ -30,10 +30,17 @@ export class FPSCamera {
   private roll = 0;
   private fov = cfg.baseFov;
   private eyeOffset = cfg.eyeOffsetStand;
+  /** Decaying impact shake intensity (hammer hits, ground slam…). */
+  private shakeIntensity = 0;
 
   constructor(aspect: number) {
     this.camera = new THREE.PerspectiveCamera(cfg.baseFov, aspect, 0.1, 400);
     this.camera.rotation.order = "YXZ";
+  }
+
+  /** Add impact shake (stacks, capped, decays exponentially). */
+  addShake(amount: number): void {
+    this.shakeIntensity = Math.min(1.4, this.shakeIntensity + amount);
   }
 
   handleMouse(dx: number, dy: number): void {
@@ -106,6 +113,19 @@ export class FPSCamera {
       playerCenter.z,
     );
     this.camera.rotation.set(this.pitch, this.yaw, this.roll);
+
+    // Impact shake: small positional + roll jitter, decaying quickly.
+    // Purely visual — never blocks the simulation (no real hit-stop).
+    if (this.shakeIntensity > 0.002) {
+      const s = this.shakeIntensity;
+      this.camera.position.x += (Math.random() - 0.5) * 0.06 * s;
+      this.camera.position.y += (Math.random() - 0.5) * 0.06 * s;
+      this.camera.rotation.z += (Math.random() - 0.5) * 0.03 * s;
+      this.camera.rotation.x += (Math.random() - 0.5) * 0.015 * s;
+      this.shakeIntensity *= Math.exp(-9 * dt);
+    } else {
+      this.shakeIntensity = 0;
+    }
   }
 
   setAspect(aspect: number): void {

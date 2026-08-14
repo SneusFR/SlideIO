@@ -48,6 +48,13 @@ export class PlayerCombatant implements Combatant {
     return out;
   }
 
+  /** Knockback: added on top of the current momentum (never a reset). */
+  applyImpulse(impulse: THREE.Vector3): void {
+    if (!this.health.alive) return;
+    this.movement.velocity.add(impulse);
+    if (impulse.y > 0.5) this.movement.grounded = false;
+  }
+
   /** Keep the hit proxy glued to the capsule (call once per frame). */
   syncProxy(): void {
     this.player.getPosition(this.pos);

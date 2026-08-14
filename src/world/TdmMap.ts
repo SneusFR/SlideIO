@@ -1,5 +1,19 @@
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
+import vaultWallUrl from "../assets/vaultwall_opt.glb?url";
+
+/** One perimeter wall segment, visualized with tiled vault GLB instances. */
+interface WallSegment {
+  x: number;
+  baseY: number;
+  z: number;
+  sx: number;
+  sy: number;
+  sz: number;
+  /** Y rotation orienting the vault's decorated face toward the play area. */
+  ry: number;
+}
 
 /**
  * "Block Party" — compact Red vs Blue TDM arena (Nuketown-like spirit).
@@ -33,6 +47,7 @@ export class TdmMap {
   readonly group = new THREE.Group();
 
   private physics: PhysicsWorld;
+  private readonly vaultSegments: WallSegment[] = [];
 
   // Stylized daytime palette
   private static COLORS = {
@@ -82,6 +97,7 @@ export class TdmMap {
     this.buildCenterStreet();
     this.buildLanes();
     this.buildTrainingRange();
+    this.loadVaultWalls();
   }
 
   // ------------------------------------------------------------------
@@ -154,6 +170,97 @@ export class TdmMap {
     );
     mesh.position.set(x, y, z);
     this.group.add(mesh);
+  }
+
+  /**
+   * Perimeter wall: invisible static collider (identical to the old boundary
+   * boxes) + "Violet Vault" GLB visuals tiled along the wall once loaded.
+   */
+  private vaultWall(
+    x: number,
+    baseY: number,
+    z: number,
+    sx: number,
+    sy: number,
+    sz: number,
+    ry: number,
+  ): void {
+    this.physics.addStaticBox(x, baseY + sy / 2, z, sx, sy, sz);
+    this.vaultSegments.push({ x, baseY, z, sx, sy, sz, ry });
+  }
+
+  /**
+   * Loads the optimized vault GLB and instances it along every recorded
+   * wall segment (InstancedMesh → one draw call per material, cheap).
+   * Each segment is split into tiles whose aspect stays close to the
+   * source model, then stretched to match the collider size exactly.
+   */
+  private loadVaultWalls(): void {
+    const loader = new GLTFLoader();
+    loader.load(vaultWallUrl, (gltf) => {
+      const scene = gltf.scene;
+      scene.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(scene);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+
+      // Bake meshes into normalized geometry: length along X, base at y = 0,
+      // centered on x/z (the source vault already lies along X).
+      const parts: { geo: THREE.BufferGeometry; mat: THREE.Material | THREE.Material[] }[] = [];
+      scene.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh)) return;
+        const geo = (obj.geometry as THREE.BufferGeometry).clone();
+        geo.applyMatrix4(obj.matrixWorld);
+        geo.translate(-center.x, -box.min.y, -center.z);
+        parts.push({ geo, mat: obj.material });
+      });
+      if (parts.length === 0) return;
+
+      // Split each segment into tiles with roughly the model's aspect ratio.
+      const lenPerHeight = size.x / size.y;
+      const tiles: { x: number; y: number; z: number; len: number; h: number; t: number; ry: number }[] = [];
+      for (const s of this.vaultSegments) {
+        const alongX = s.sx >= s.sz;
+        const length = alongX ? s.sx : s.sz;
+        const thick = alongX ? s.sz : s.sx;
+        const n = Math.max(1, Math.round(length / (s.sy * lenPerHeight)));
+        const tileLen = length / n;
+        for (let i = 0; i < n; i++) {
+          const off = -length / 2 + tileLen * (i + 0.5);
+          tiles.push({
+            x: alongX ? s.x + off : s.x,
+            y: s.baseY,
+            z: alongX ? s.z : s.z + off,
+            len: tileLen,
+            h: s.sy,
+            t: thick,
+            ry: s.ry,
+          });
+        }
+      }
+
+      const up = new THREE.Vector3(0, 1, 0);
+      const m = new THREE.Matrix4();
+      const q = new THREE.Quaternion();
+      const p = new THREE.Vector3();
+      const sc = new THREE.Vector3();
+
+      for (const { geo, mat } of parts) {
+        const inst = new THREE.InstancedMesh(geo, mat, tiles.length);
+        for (let i = 0; i < tiles.length; i++) {
+          const t = tiles[i];
+          q.setFromAxisAngle(up, t.ry);
+          sc.set(t.len / size.x, t.h / size.y, t.t / size.z);
+          p.set(t.x, t.y, t.z);
+          m.compose(p, q, sc);
+          inst.setMatrixAt(i, m);
+        }
+        inst.instanceMatrix.needsUpdate = true;
+        inst.castShadow = true;
+        inst.receiveShadow = true;
+        this.group.add(inst);
+      }
+    });
   }
 
   /** Wooden crate (solid, climbable). */
@@ -339,18 +446,17 @@ export class TdmMap {
   }
 
   private buildBoundary(): void {
-    const C = TdmMap.COLORS;
     const h = 14;
 
-    // West / east / north perimeter
-    this.box(-43, h / 2, 0, 2, h, 96, C.boundary);
-    this.box(43, h / 2, 0, 2, h, 96, C.boundary);
-    this.box(0, h / 2, -47, 88, h, 2, C.boundary);
+    // West / east / north perimeter (vault GLB visuals, same colliders)
+    this.vaultWall(-43, 0, 0, 2, h, 96, Math.PI / 2);
+    this.vaultWall(43, 0, 0, 2, h, 96, -Math.PI / 2);
+    this.vaultWall(0, 0, -47, 88, h, 2, 0);
 
     // South perimeter with a doorway (x 8..14) into the training range
-    this.box(-18, h / 2, 47, 52, h, 2, C.boundary);
-    this.box(29, h / 2, 47, 30, h, 2, C.boundary);
-    this.box(11, 9, 47, 6, 10, 2, C.boundary); // lintel above doorway (opening 4 m)
+    this.vaultWall(-18, 0, 47, 52, h, 2, Math.PI);
+    this.vaultWall(29, 0, 47, 30, h, 2, Math.PI);
+    this.vaultWall(11, 4, 47, 6, 10, 2, Math.PI); // lintel above doorway (opening 4 m)
     this.sign("RANGE", 11, 4.8, 45.85, 4, 1.6, Math.PI, "#20242c", "#c084fc");
   }
 
@@ -714,10 +820,10 @@ export class TdmMap {
     // Floor (top surface at y = 0)
     this.box(0, -0.5, 70, 44, 1, 46, C.plaza);
 
-    // Enclosing walls
-    this.box(-22, 5, 70, 2, 10, 46, C.boundary);
-    this.box(22, 5, 70, 2, 10, 46, C.boundary);
-    this.box(0, 5, 93, 46, 10, 2, C.boundary);
+    // Enclosing walls (vault GLB visuals, same colliders)
+    this.vaultWall(-22, 0, 70, 2, 10, 46, Math.PI / 2);
+    this.vaultWall(22, 0, 70, 2, 10, 46, -Math.PI / 2);
+    this.vaultWall(0, 0, 93, 46, 10, 2, Math.PI);
 
     // Firing line + distance markers
     this.glowStrip(0, 0.03, 52, 40, 0.05, 0.4, C.rangeAccent);

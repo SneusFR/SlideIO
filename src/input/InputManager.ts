@@ -1,11 +1,20 @@
 /**
  * Keyboard + mouse input with pointer lock.
  * Movement code reads state through this class only — never from DOM events directly.
+ *
+ * MELEE BINDING ("A" key) — centralized here to avoid any input conflict:
+ * movement uses PHYSICAL key codes (KeyW/KeyA/KeyS/KeyD positions), so on
+ * AZERTY keyboards the key labeled "A" is the physical "KeyQ" position while
+ * the "KeyA" CODE is the strafe-left binding (labeled "Q" on AZERTY).
+ * Melee therefore triggers on the "A" KEY VALUE (layout-aware) or the
+ * physical "KeyQ" code, and NEVER on the "KeyA" code — this guarantees the
+ * melee attack and strafe-left can never fire from the same key press.
  */
 export class InputManager {
   private keysDown = new Set<string>();
   private keysPressed = new Set<string>(); // edge-triggered, cleared each frame
   private mouseButtons = new Set<number>();
+  private meleePressed = false; // edge-triggered virtual action, cleared each frame
 
   mouseDX = 0;
   mouseDY = 0;
@@ -16,6 +25,7 @@ export class InputManager {
       if (e.repeat) return;
       this.keysDown.add(e.code);
       this.keysPressed.add(e.code);
+      if (this.isMeleeEvent(e)) this.meleePressed = true;
       if (e.code === "Space") e.preventDefault();
     });
 
@@ -27,6 +37,7 @@ export class InputManager {
       this.keysDown.clear();
       this.keysPressed.clear();
       this.mouseButtons.clear();
+      this.meleePressed = false;
     });
 
     window.addEventListener("mousedown", (e) => {
@@ -50,8 +61,20 @@ export class InputManager {
         this.keysDown.clear();
         this.keysPressed.clear();
         this.mouseButtons.clear();
+        this.meleePressed = false;
       }
     });
+  }
+
+  /**
+   * "A" key, layout-aware and conflict-free:
+   * - the "KeyA" CODE is reserved for strafe-left → never melee;
+   * - key VALUE "a" (AZERTY "A" key emits code "KeyQ" + value "a") → melee;
+   * - physical "KeyQ" code as a fallback for other layouts.
+   */
+  private isMeleeEvent(e: KeyboardEvent): boolean {
+    if (e.code === "KeyA") return false; // strafe-left binding: never melee
+    return e.code === "KeyQ" || e.key.toLowerCase() === "a";
   }
 
   requestPointerLock(): void {
@@ -72,9 +95,15 @@ export class InputManager {
     return this.keysPressed.has(code);
   }
 
+  /** True only on the frame the melee key ("A") went down. */
+  wasMeleePressed(): boolean {
+    return this.meleePressed;
+  }
+
   /** Call once at the end of every frame. */
   endFrame(): void {
     this.keysPressed.clear();
+    this.meleePressed = false;
     this.mouseDX = 0;
     this.mouseDY = 0;
   }

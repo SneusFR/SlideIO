@@ -13,7 +13,10 @@ import { BotsMenu } from "../ui/BotsMenu";
 import { MovementConfig as cfg } from "../player/MovementConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import { ParticleSystem } from "../effects/ParticleSystem";
+import { Shockwave } from "../effects/Shockwave";
 import { PlasmaRifle } from "../weapons/PlasmaRifle";
+import { HammerWeapon } from "../weapons/HammerWeapon";
+import { HammerViewmodel } from "../weapons/HammerViewmodel";
 import { TargetManager } from "../targets/TargetManager";
 import { Combatant } from "../combat/Combatant";
 import { PlayerCombatant } from "../combat/PlayerCombatant";
@@ -44,6 +47,13 @@ export class Game {
   private particles: ParticleSystem;
   private rifle: PlasmaRifle;
   private targets: TargetManager;
+
+  // ---- Hammer melee ----
+  private shockwave: Shockwave;
+  private hammer: HammerWeapon;
+  private hammerViewmodel: HammerViewmodel;
+  private readonly eyePos = new THREE.Vector3();
+  private readonly fwdFlat = new THREE.Vector3();
 
   // ---- FFA combat ----
   private nav: NavGrid;
@@ -119,11 +129,24 @@ export class Game {
     this.combatants.push(this.playerCombatant);
     this.rifle.owner = this.playerCombatant;
 
+    // ---- Combat hammer (melee): grounded sweep + airborne Ground Slam ----
+    this.shockwave = new Shockwave(this.scene);
+    this.hammerViewmodel = new HammerViewmodel(this.fpsCamera.camera);
+    this.hammer = new HammerWeapon(
+      this.combatants,
+      this.particles,
+      this.shockwave,
+      this.hammerViewmodel,
+    );
+    this.hammer.owner = this.playerCombatant;
+    this.hammer.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
+
     this.playerCombatant.health.onDamaged = (amount) => {
       this.combatHud.notifyDamage(amount);
     };
     this.playerCombatant.health.onDeath = () => {
       this.playerDeathTimer = cc.playerRespawnDelay;
+      this.hammer.reset(); // drop any melee attack in progress
     };
 
     // ---- Bots ----
@@ -201,7 +224,13 @@ export class Game {
       this.playerCombatant.health.update(dt);
 
       if (playerAlive) {
+        this.handleMeleeInput();
         this.movement.update(dt);
+
+        // Ground Slam AoE: fires on the REAL ground contact of the dive
+        // (reported by the movement state machine) — never on a timer.
+        const slamImpact = this.movement.consumeSlamImpact();
+        if (slamImpact) this.hammer.onSlamLanded(slamImpact);
       } else {
         this.updatePlayerDeath(dt);
       }
@@ -226,12 +255,24 @@ export class Game {
     this.scene.updateMatrixWorld();
 
     if (running) {
+      // Hammer melee: swing hit window / slam bookkeeping + viewmodel anim.
+      this.playerCombatant.getEyePosition(this.eyePos);
+      this.fpsCamera.getForward(this.fwdFlat);
+      this.hammer.update(dt, this.eyePos, this.fwdFlat);
+
+      // Plasma Rifle is unavailable while the hammer is out (nothing is
+      // reset — heat keeps cooling / overheat keeps ticking normally).
       const wantFire =
-        playerAlive && this.input.pointerLocked && this.input.isMouseDown(0);
+        playerAlive &&
+        this.input.pointerLocked &&
+        this.input.isMouseDown(0) &&
+        !this.hammer.blocksFiring;
+      this.rifle.setViewmodelHidden(this.hammer.isBusy);
       this.rifle.update(dt, wantFire, this.hittables, this.elapsed);
       this.botManager.updateWeapons(dt, this.hittables, this.elapsed);
       this.handlePhaseEffects();
       this.particles.update(dt);
+      this.shockwave.update(dt);
     }
 
     this.hud.update(dt, this.movement);
@@ -240,6 +281,26 @@ export class Game {
     this.combatHud.update(dt, this.playerCombatant.health, this.playerDeathTimer);
     this.renderer.render(this.scene, this.fpsCamera.camera);
     this.input.endFrame();
+  }
+
+  /**
+   * Melee input priority (single "A" press, edge-triggered):
+   *   dead                 → nothing
+   *   attack in progress   → nothing (no cancel, no spam, no stacking)
+   *   airborne             → Ground Slam (vertical charge + AoE on landing)
+   *   grounded             → alternating horizontal hammer sweep
+   * Once started, the attack type is LOCKED until the sequence finishes.
+   */
+  private handleMeleeInput(): void {
+    if (!this.input.wasMeleePressed()) return;
+    if (this.hammer.isBusy) return; // input cleanly ignored — no feedback needed
+
+    if (this.movement.grounded) {
+      this.hammer.startSwing();
+    } else if (this.hammer.startSlam()) {
+      // Movement takes over the descent; the AoE fires on real ground contact.
+      this.movement.startGroundSlam();
+    }
   }
 
   /** Death state: controls disabled, countdown, then smart respawn. */
