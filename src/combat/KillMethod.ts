@@ -14,11 +14,11 @@ export enum KillMethod {
   GROUND_SLAM = "GROUND_SLAM",
   /** Astral Lance quick horizontal sweep (no special medal yet). */
   SPEAR_SWEEP = "SPEAR_SWEEP",
-  /** Astral Lance charged rush impact (no special medal yet). */
+  /** Astral Lance charged rush impact → IMPALED medal. */
   SPEAR_RUSH = "SPEAR_RUSH",
-  /** MOLE STRIKE killstreak emergence blast (no special medal yet). */
+  /** MOLE STRIKE killstreak emergence blast → MOLED medal. */
   MOLE_STRIKE = "MOLE_STRIKE",
-  /** OBLITERREUR black-vortex beam (no special medal yet). */
+  /** OBLITERREUR black-vortex beam → OBLITERATED medal. */
   OBLITERREUR = "OBLITERREUR",
   ENVIRONMENT = "ENVIRONMENT",
 }

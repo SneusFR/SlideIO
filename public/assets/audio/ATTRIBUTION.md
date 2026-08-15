@@ -12,6 +12,7 @@ Pour chaque son : la page source est `https://freesound.org/s/<ID>/` (nom d'aute
 |---|---|---|---|---|
 | `movement/footsteps_run_sheet_01.mp3` | Dry Footsteps Loop | 816017 | CC0 | https://freesound.org/s/816017/ |
 | `movement/jump_whoosh_01.mp3` | Whoosh (short) | 803773 | CC0 | https://freesound.org/s/803773/ |
+| `movement/jump_whoosh_soft_01.mp3` | digital_whoosh_soft.wav | 71852 | CC0 | https://freesound.org/s/71852/ |
 | `movement/walljump_whoosh_01.mp3` | Whoosh (puny) | 803772 | CC0 | https://freesound.org/s/803772/ |
 | `movement/landing_soft_01.mp3` | Landing_Stone_1.wav | 422753 | CC0 | https://freesound.org/s/422753/ |
 | `movement/landing_soft_02.mp3` | Landing_Stone_2.wav | 422754 | CC0 | https://freesound.org/s/422754/ |

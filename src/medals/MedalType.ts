@@ -9,4 +9,10 @@ export enum MedalType {
   TRIPLE_KILL = "TRIPLE_KILL",
   SMASHED = "SMASHED",
   HOMERUN = "HOMERUN",
+  /** Kill with the OBLITERREUR black-vortex beam. */
+  OBLITERATED = "OBLITERATED",
+  /** Kill with the MOLE STRIKE killstreak emergence blast. */
+  MOLED = "MOLED",
+  /** Kill with the Astral Lance charged rush. */
+  IMPALED = "IMPALED",
 }

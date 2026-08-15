@@ -13,7 +13,7 @@ const A = "/assets/audio";
 export const AUDIO_MANIFEST: Record<string, string> = {
   // Movement
   footsteps: `${A}/movement/footsteps_run_sheet_01.mp3`,
-  jump: `${A}/movement/jump_whoosh_01.mp3`,
+  jump: `${A}/movement/jump_whoosh_soft_01.mp3`,
   walljump: `${A}/movement/walljump_whoosh_01.mp3`,
   landing_soft_01: `${A}/movement/landing_soft_01.mp3`,
   landing_soft_02: `${A}/movement/landing_soft_02.mp3`,
@@ -168,12 +168,13 @@ export class GameAudio {
 
   readonly movementSfx: MovementSfxListener = {
     jump: () => {
+      // Soft airy whoosh — quieter and slightly slowed for a smooth feel.
       audio.play("jump", {
         bus: "movement",
-        volume: 0.4,
-        volumeVar: 0.06,
-        rate: 1,
-        rateVar: 0.07,
+        volume: 0.32,
+        volumeVar: 0.05,
+        rate: 0.95,
+        rateVar: 0.05,
         throttleMs: 90,
       });
     },

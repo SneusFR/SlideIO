@@ -11,9 +11,9 @@ export const ObliterreurConfig = {
   /** Beam lifetime in seconds once fired. */
   obliterreurBeamDuration: 5.0,
   /** Fraction of MAX HP dealt per second inside the beam volume. */
-  obliterreurDamagePerSecondFraction: 0.5,
+  obliterreurDamagePerSecondFraction: 1.0,
   /** Damage-volume radius of the beam tube (meters). */
-  obliterreurBeamRadius: 0.55,
+  obliterreurBeamRadius: 1.65,
   /** Extra radius added to a combatant's center for the hit test. */
   obliterreurTargetHitRadius: 0.85,
   /** Damage tick frequency (Hz) — damage itself stays framerate-independent. */

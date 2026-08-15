@@ -8,8 +8,8 @@ export const PickupConfig = {
   medkitHealAmount: 35,
   medkitLifetime: 25,
   medkitPickupRadius: 1.15,
-  medkitSize: 0.5, // largest dimension of the model after normalization
-  medkitHoverHeight: 0.42, // rest height of the model center above the ground
+  medkitSize: 1.0, // largest dimension of the model after normalization (2x — readability)
+  medkitHoverHeight: 0.68, // rest height of the model center above the ground
   medkitBobSpeed: 2.2,
   medkitBobHeight: 0.07,
   medkitSpinSpeed: 1.1, // rad/s slow idle rotation
@@ -21,8 +21,8 @@ export const PickupConfig = {
   coinDropRadius: 1.0, // scatter radius around the death point
   coinLifetime: 20,
   coinPickupRadius: 0.95,
-  coinSize: 0.3,
-  coinHoverHeight: 0.24,
+  coinSize: 0.6, // (2x — readability)
+  coinHoverHeight: 0.42,
   coinBobSpeed: 3.2,
   coinBobHeight: 0.05,
   coinSpinSpeed: 2.8, // rad/s — coins visibly spin on themselves
@@ -39,6 +39,13 @@ export const PickupConfig = {
   // ---- Particles (shared budget — readability over quantity) ----
   sparkleRate: 2.2, // sparkles per second per pickup
   maxSparklesPerFrame: 3, // global budget so 50 coins never flood the emitter
+
+  // ---- Glow (self-lit material + additive halo billboard) ----
+  glowEmissiveIntensity: 0.85, // self-illumination boost applied to the GLB materials
+  glowHaloScale: 2.4, // halo sprite diameter relative to the pickup size
+  glowHaloOpacity: 0.55, // base opacity of the additive halo
+  medkitGlowColor: 0x4ade80, // green — matches the sparkle tint
+  coinGlowColor: 0xfcd34d, // warm gold — matches the sparkle tint
 };
 
 export type PickupConfigType = typeof PickupConfig;

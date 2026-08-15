@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 130" width="660" height="130">
+  <defs>
+    <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e9d5ff"/>
+      <stop offset="45%" stop-color="#c084fc"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="7" flood-color="#a855f7" flood-opacity="0.9"/>
+    </filter>
+  </defs>
+  <text x="330" y="94" text-anchor="middle" textLength="600" lengthAdjust="spacingAndGlyphs"
+        font-family="'Arial Black', Impact, sans-serif" font-weight="900" font-style="italic"
+        font-size="76" fill="url(#grad)" stroke="#2e1065" stroke-width="4" paint-order="stroke"
+        filter="url(#glow)">OBLITERATED</text>
+</svg>

@@ -4,6 +4,9 @@ import doubleKillUrl from "../assets/doublekill.png";
 import tripleKillUrl from "../assets/triplekill.png";
 import smashedUrl from "../assets/SMASHED.png";
 import homerunUrl from "../assets/homerun.png";
+import obliteratedUrl from "../assets/OBLITERATED.svg";
+import moledUrl from "../assets/MOLED.svg";
+import impaledUrl from "../assets/IMPALED.svg";
 import { KillMethod } from "../combat/KillMethod";
 
 /**
@@ -53,6 +56,9 @@ export const ComboMedalRegistry: Readonly<Record<number, MedalType>> = {
 export const SpecialMedalRegistry: Readonly<Partial<Record<KillMethod, MedalType>>> = {
   [KillMethod.HAMMER_SWING]: MedalType.HOMERUN,
   [KillMethod.GROUND_SLAM]: MedalType.SMASHED,
+  [KillMethod.OBLITERREUR]: MedalType.OBLITERATED,
+  [KillMethod.MOLE_STRIKE]: MedalType.MOLED,
+  [KillMethod.SPEAR_RUSH]: MedalType.IMPALED,
 };
 
 /**
@@ -66,4 +72,7 @@ export const MedalAssets: Readonly<Record<MedalType, string>> = {
   [MedalType.TRIPLE_KILL]: tripleKillUrl,
   [MedalType.SMASHED]: smashedUrl,
   [MedalType.HOMERUN]: homerunUrl,
+  [MedalType.OBLITERATED]: obliteratedUrl,
+  [MedalType.MOLED]: moledUrl,
+  [MedalType.IMPALED]: impaledUrl,
 };
