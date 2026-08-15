@@ -2,6 +2,7 @@ import { HammerConfig as hc } from "../weapons/HammerConfig";
 import { SpearConfig as sc } from "../weapons/SpearConfig";
 import { WeaponConfig as wc } from "../weapons/WeaponConfig";
 import { MoleStrikeConfig as mole } from "../killstreaks/mole/MoleStrikeConfig";
+import { ObliterreurConfig as oc } from "../weapons/obliterreur/ObliterreurConfig";
 
 /**
  * Player loadout: the single source of truth for what is equipped.
@@ -10,7 +11,7 @@ import { MoleStrikeConfig as mole } from "../killstreaks/mole/MoleStrikeConfig";
  */
 
 export type MeleeWeaponId = "HAMMER" | "SPEAR";
-export type PrimaryWeaponId = "PLASMA_RIFLE";
+export type PrimaryWeaponId = "PLASMA_RIFLE" | "OBLITERREUR";
 export type KillstreakId = "NONE" | "MOLE_STRIKE" | "ORBITAL_SCAN" | "NOVA_STRIKE";
 
 /** Exactly three equippable killstreak slots (keys 1 / 2 / 3 in game). */
@@ -67,7 +68,7 @@ export function loadLoadout(): LoadoutSelection {
         : [...DEFAULT_KILLSTREAKS] as KillstreakLoadout;
     return {
       melee: parsed.melee === "SPEAR" ? "SPEAR" : "HAMMER",
-      primary: "PLASMA_RIFLE",
+      primary: parsed.primary === "OBLITERREUR" ? "OBLITERREUR" : "PLASMA_RIFLE",
       killstreaks,
     };
   } catch {
@@ -196,6 +197,39 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
             value: `${Math.round((wc.maxHeat / wc.heatPerSecond) * 10) / 10}s de tir`,
           },
           { label: "PURGE MIN", value: `${wc.overheatMinLockTime}s` },
+        ],
+      },
+    ],
+  },
+  {
+    id: "OBLITERREUR",
+    name: "OBLITERREUR",
+    tagline: "Faille de vortex ancrée",
+    summary:
+      "Arme de zone tactique : ancrez deux mini trous noirs sur les surfaces de la carte, puis ouvrez entre eux un immense faisceau de vortex noir incurvé qui dévore tout combattant pris dans son volume — même à travers les murs.",
+    abilities: [
+      {
+        trigger: "CLIC DROIT",
+        name: "ANCRAGE",
+        description:
+          "Place un mini trou noir au centre du viseur, sur les surfaces statiques uniquement. Deux points maximum : le 3e clic redéfinit le point I puis II en boucle. Pendant un vortex actif, un clic droit l'annule instantanément avant de replacer.",
+        stats: [
+          { label: "POINTS", value: "2 (I / II)" },
+          { label: "PORTÉE", value: `${oc.obliterreurPlacementRange} m` },
+          { label: "SURFACES", value: "STATIQUES" },
+          { label: "COOLDOWN", value: "AUCUN" },
+        ],
+      },
+      {
+        trigger: "CLIC GAUCHE",
+        name: "VORTEX NOIR",
+        description:
+          "Ouvre le faisceau de vortex noir incurvé entre les deux ancres. Tout combattant dans le tube subit des dégâts continus — les murs ne le protègent pas. Les ancres survivent à l'extinction du vortex.",
+        stats: [
+          { label: "DÉGÂTS", value: `${pct(oc.obliterreurDamagePerSecondFraction)}/s` },
+          { label: "DURÉE", value: `${oc.obliterreurBeamDuration}s` },
+          { label: "RAYON", value: `${oc.obliterreurBeamRadius} m` },
+          { label: "COOLDOWN", value: "AUCUN" },
         ],
       },
     ],

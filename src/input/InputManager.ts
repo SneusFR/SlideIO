@@ -14,6 +14,7 @@ export class InputManager {
   private keysDown = new Set<string>();
   private keysPressed = new Set<string>(); // edge-triggered, cleared each frame
   private mouseButtons = new Set<number>();
+  private mousePressed = new Set<number>(); // edge-triggered, cleared each frame
   private meleePressed = false; // edge-triggered virtual action, cleared each frame
   /** Physical code currently holding the melee action down (null = released). */
   private meleeHeldCode: string | null = null;
@@ -43,6 +44,7 @@ export class InputManager {
       this.keysDown.clear();
       this.keysPressed.clear();
       this.mouseButtons.clear();
+      this.mousePressed.clear();
       this.meleePressed = false;
       this.meleeHeldCode = null;
     });
@@ -50,6 +52,7 @@ export class InputManager {
     window.addEventListener("mousedown", (e) => {
       if (!this.pointerLocked) return;
       this.mouseButtons.add(e.button);
+      this.mousePressed.add(e.button);
     });
 
     window.addEventListener("mouseup", (e) => {
@@ -68,6 +71,7 @@ export class InputManager {
         this.keysDown.clear();
         this.keysPressed.clear();
         this.mouseButtons.clear();
+        this.mousePressed.clear();
         this.meleePressed = false;
         this.meleeHeldCode = null;
       }
@@ -103,6 +107,11 @@ export class InputManager {
     return this.keysPressed.has(code);
   }
 
+  /** True only on the frame the mouse button went down. 0 = left, 2 = right. */
+  wasMousePressed(button = 0): boolean {
+    return this.mousePressed.has(button);
+  }
+
   /** True only on the frame the melee key ("A") went down. */
   wasMeleePressed(): boolean {
     return this.meleePressed;
@@ -116,6 +125,7 @@ export class InputManager {
   /** Call once at the end of every frame. */
   endFrame(): void {
     this.keysPressed.clear();
+    this.mousePressed.clear();
     this.meleePressed = false;
     this.mouseDX = 0;
     this.mouseDY = 0;

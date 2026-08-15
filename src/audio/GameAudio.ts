@@ -91,6 +91,10 @@ export class GameAudio {
   private comboLoop: LoopHandle | null = null;
   /** Muffled rumble layer while burrowed with MOLE STRIKE. */
   private undergroundLoop: LoopHandle | null = null;
+  // ---- OBLITERREUR vortex-beam spatial loops (layered existing SFX) ----
+  private obliHumLoop: LoopHandle | null = null;
+  private obliRumbleLoop: LoopHandle | null = null;
+  private obliCrackleLoop: LoopHandle | null = null;
 
   // ---- Spatial loops for bot rifles (max N simultaneous) ----
   private readonly botFireLoops = new Map<Bot, LoopHandle>();
@@ -431,6 +435,93 @@ export class GameAudio {
   }
 
   // ------------------------------------------------------------------
+  // OBLITERREUR (layered from existing SFX — no new assets)
+  // ------------------------------------------------------------------
+
+  /** Anchor point placed: sharp "dark energy snap". */
+  obliterreurPlace(): void {
+    audio.play("phase_warp", { bus: "weapons", volume: 0.5, rate: 1.45, throttleMs: 80 });
+    audio.play("dash_energy", { bus: "weapons", volume: 0.5, rate: 0.55, delay: 0.04 });
+  }
+
+  /** Vortex beam fired: massive sub boom + warp + dark energy swell. */
+  obliterreurActivate(): void {
+    audio.play("hammer_slam_sub", { bus: "weapons", volume: 0.95, rate: 0.7 });
+    audio.play("phase_warp", { bus: "weapons", volume: 0.7, rate: 0.8 });
+    audio.play("dash_energy", { bus: "weapons", volume: 0.5, rate: 0.5, delay: 0.08 });
+  }
+
+  /** Vortex collapsed (natural expiry or RMB cancel — higher pitch). */
+  obliterreurBeamEnd(cancelled: boolean): void {
+    audio.play("phase_warp", {
+      bus: "weapons",
+      volume: 0.45,
+      rate: cancelled ? 1.6 : 1.25,
+    });
+    audio.play("plasma_stop", { bus: "weapons", volume: 0.4, rate: 0.7 });
+  }
+
+  /**
+   * Spatial black-hole drone while the vortex is open: deep hum + sub
+   * rumble + energy crackle, all anchored to the closest beam point.
+   * Idempotent per frame; stops with a short fade when the beam dies.
+   */
+  updateObliterreurBeam(active: boolean, pos: THREE.Vector3): void {
+    if (!audio.unlocked) return;
+    if (!active) {
+      this.stopObliterreurLoops();
+      return;
+    }
+
+    const spatial = {
+      spatial: true,
+      refDistance: 10,
+      maxDistance: 90,
+    } as const;
+
+    if (!this.obliHumLoop || this.obliHumLoop.stopped) {
+      this.obliHumLoop = audio.loop("plasma_heat_loop", {
+        bus: "weapons",
+        volume: 0.85,
+        rate: 0.5, // deep black-hole hum
+        fadeIn: 0.12,
+        ...spatial,
+      });
+    }
+    if (!this.obliRumbleLoop || this.obliRumbleLoop.stopped) {
+      this.obliRumbleLoop = audio.loop("slide_loop", {
+        bus: "weapons",
+        volume: 0.5,
+        rate: 0.35, // sub rumble
+        fadeIn: 0.15,
+        ...spatial,
+      });
+    }
+    if (!this.obliCrackleLoop || this.obliCrackleLoop.stopped) {
+      this.obliCrackleLoop = audio.loop("plasma_cooling_loop", {
+        bus: "weapons",
+        volume: 0.35,
+        rate: 0.6, // unstable energy crackle
+        fadeIn: 0.12,
+        ...spatial,
+      });
+    }
+
+    this.obliHumLoop?.setPosition(pos.x, pos.y, pos.z);
+    this.obliRumbleLoop?.setPosition(pos.x, pos.y, pos.z);
+    this.obliCrackleLoop?.setPosition(pos.x, pos.y, pos.z);
+  }
+
+  private stopObliterreurLoops(): void {
+    this.obliHumLoop?.stop(0.2);
+    this.obliHumLoop = null;
+    this.obliRumbleLoop?.stop(0.2);
+    this.obliRumbleLoop = null;
+    this.obliCrackleLoop?.stop(0.2);
+    this.obliCrackleLoop = null;
+  }
+
+  // ------------------------------------------------------------------
   // Medals / combo
   // ------------------------------------------------------------------
 
@@ -512,6 +603,7 @@ export class GameAudio {
       this.stopBotLoops();
       this.stopComboLayer();
       this.stopUndergroundLayer();
+      this.stopObliterreurLoops();
     }
   }
 

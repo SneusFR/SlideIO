@@ -23,7 +23,8 @@ import { SpearWeapon } from "../weapons/SpearWeapon";
 import { SpearViewmodel } from "../weapons/SpearViewmodel";
 import { SpearConfig as spearCfg } from "../weapons/SpearConfig";
 import { SpearHUD } from "../ui/SpearHUD";
-import { loadLoadout, MeleeWeaponId } from "../loadout/Loadout";
+import { loadLoadout, MeleeWeaponId, PrimaryWeaponId } from "../loadout/Loadout";
+import { ObliterreurWeapon } from "../weapons/obliterreur/ObliterreurWeapon";
 import { KillstreakManager } from "../killstreaks/KillstreakManager";
 import { MoleStrike } from "../killstreaks/mole/MoleStrike";
 import { MoleStrikeVFX } from "../killstreaks/mole/MoleStrikeVFX";
@@ -85,6 +86,12 @@ export class Game {
   private meleeHoldTimer = 0;
   private meleeHoldPending = false;
   private spearRushWasReady = true;
+
+  // ---- OBLITERREUR (primary alternative — equipped via the Loadout menu) ----
+  private obliterreur: ObliterreurWeapon;
+  /** Which primary weapon is equipped (read from the persisted loadout). */
+  private primaryWeapon: PrimaryWeaponId;
+  private readonly obliAudioPos = new THREE.Vector3();
 
   // ---- FFA combat ----
   private gameAudio: GameAudio;
@@ -237,6 +244,19 @@ export class Game {
     };
     this.spearHud = new SpearHUD();
 
+    // ---- OBLITERREUR (primary alternative — equipped from the Loadout menu):
+    // RMB anchors two mini black holes on static surfaces, LMB opens a huge
+    // curved black-vortex beam between them (damage through walls).
+    this.primaryWeapon = loadLoadout().primary;
+    this.obliterreur = new ObliterreurWeapon(
+      this.scene,
+      this.fpsCamera.camera,
+      this.combatants,
+      this.particles,
+    );
+    this.obliterreur.owner = this.playerCombatant;
+    this.obliterreur.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
+
     // ---- Audio: pure observation of existing gameplay events ----
     this.gameAudio = new GameAudio();
     this.movement.sfx = this.gameAudio.movementSfx;
@@ -249,6 +269,10 @@ export class Game {
     this.spear.onSweepStart = () => this.gameAudio.hammerSwing(); // polearm whoosh
     this.spear.onHitConnect = (pos) => this.gameAudio.hammerHit(pos);
     this.spear.onRushStart = () => this.gameAudio.phaseTraversal(); // energy charge whoosh
+    // Obliterreur: layered dark-energy palette from existing SFX.
+    this.obliterreur.onPointPlaced = () => this.gameAudio.obliterreurPlace();
+    this.obliterreur.onBeamStart = () => this.gameAudio.obliterreurActivate();
+    this.obliterreur.onBeamEnd = (cancelled) => this.gameAudio.obliterreurBeamEnd(cancelled);
 
     this.playerCombatant.health.onDamaged = (amount, attacker) => {
       this.combatHud.notifyDamage(amount, this.damageAngleFrom(attacker));
@@ -287,6 +311,7 @@ export class Game {
       this.playerDeathTimer = cc.playerRespawnDelay;
       this.hammer.reset(); // drop any melee attack in progress
       this.spear.reset();
+      this.obliterreur.reset(); // vortex off + anchors cleared on death
       this.meleeHoldPending = false;
       // Death mid-burrow: instant cleanup WITHOUT the AoE, then every
       // killstreak slot (progress / ready / spent) resets to LOCKED.
@@ -388,6 +413,11 @@ export class Game {
     const selection = loadLoadout();
     // The manager skips unchanged slots, so in-flight progress survives.
     this.killstreaks.setEquipped(selection.killstreaks);
+    // Primary swap: a clean slate — active vortex cancelled, anchors gone.
+    if (selection.primary !== this.primaryWeapon) {
+      this.primaryWeapon = selection.primary;
+      this.obliterreur.reset();
+    }
     const melee = selection.melee;
     if (melee === this.meleeWeapon) return;
     this.meleeWeapon = melee;
@@ -504,18 +534,40 @@ export class Game {
       this.spearRushWasReady = rushReady;
 
       // Plasma Rifle is unavailable while a melee weapon is out (nothing is
-      // reset — heat keeps cooling / overheat keeps ticking normally).
+      // reset — heat keeps cooling / overheat keeps ticking normally) or
+      // when the OBLITERREUR is the equipped primary.
+      const obliEquipped = this.primaryWeapon === "OBLITERREUR";
+      const meleeBlocked =
+        this.hammer.blocksFiring || this.spear.blocksFiring || this.moleStrike.blocksWeapons;
       const wantFire =
         playerAlive &&
         this.input.pointerLocked &&
         this.input.isMouseDown(0) &&
-        !this.hammer.blocksFiring &&
-        !this.spear.blocksFiring &&
-        !this.moleStrike.blocksWeapons;
+        !meleeBlocked &&
+        !obliEquipped;
       this.rifle.setViewmodelHidden(
-        this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
+        this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active || obliEquipped,
       );
       this.rifle.update(dt, wantFire, this.hittables, this.elapsed);
+
+      // OBLITERREUR: RMB places / redefines anchors (cancels an active
+      // vortex), LMB opens the beam. Placement raycasts STATIC geometry
+      // only; the active beam damages through walls (volume check).
+      this.obliterreur.setViewmodelHidden(
+        !obliEquipped || this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
+      );
+      this.obliterreur.update(dt, {
+        placePressed:
+          obliEquipped && playerAlive && !meleeBlocked && this.input.wasMousePressed(2),
+        firePressed:
+          obliEquipped && playerAlive && !meleeBlocked && this.input.wasMousePressed(0),
+        staticHittables: this.staticHittables,
+        time: this.elapsed,
+      });
+      this.gameAudio.updateObliterreurBeam(
+        this.obliterreur.beamActive,
+        this.obliterreur.getAudioEmitterPos(this.playerPos, this.obliAudioPos),
+      );
       this.botManager.updateWeapons(dt, this.hittables, this.elapsed);
       this.handlePhaseEffects();
       this.particles.update(dt);

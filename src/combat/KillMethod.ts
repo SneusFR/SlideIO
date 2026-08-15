@@ -18,5 +18,7 @@ export enum KillMethod {
   SPEAR_RUSH = "SPEAR_RUSH",
   /** MOLE STRIKE killstreak emergence blast (no special medal yet). */
   MOLE_STRIKE = "MOLE_STRIKE",
+  /** OBLITERREUR black-vortex beam (no special medal yet). */
+  OBLITERREUR = "OBLITERREUR",
   ENVIRONMENT = "ENVIRONMENT",
 }
