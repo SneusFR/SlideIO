@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { KillMethod } from "./KillMethod";
 
 /**
  * Anything that can fight in the FFA: the human player and every bot.
@@ -33,8 +34,31 @@ export class Health {
 
   /** Fired every time damage is actually applied. */
   onDamaged?: (amount: number, attacker: Combatant | null) => void;
-  /** Fired once when HP reaches 0. */
-  onDeath?: (attacker: Combatant | null) => void;
+  /**
+   * Fired EXACTLY ONCE when HP reaches 0 (`alive` flips to false and blocks
+   * any further damage, so continuous beams can never produce a second kill
+   * event for the same death). Carries the explicit kill method.
+   */
+  onDeath?: (attacker: Combatant | null, method: KillMethod) => void;
+
+  /**
+   * Additional pure OBSERVERS (match stats, future systems…). They run after
+   * the primary gameplay callbacks and can never replace or block them —
+   * several systems can watch the same Health without clobbering each other.
+   */
+  private readonly damageListeners: ((amount: number, attacker: Combatant | null) => void)[] = [];
+  private readonly deathListeners: ((attacker: Combatant | null, method: KillMethod) => void)[] =
+    [];
+
+  /** Observe every applied damage tick (never called on blocked damage). */
+  addDamageListener(fn: (amount: number, attacker: Combatant | null) => void): void {
+    this.damageListeners.push(fn);
+  }
+
+  /** Observe the single death event (same guarantees as `onDeath`). */
+  addDeathListener(fn: (attacker: Combatant | null, method: KillMethod) => void): void {
+    this.deathListeners.push(fn);
+  }
 
   constructor(readonly max: number) {
     this.current = max;
@@ -53,14 +77,20 @@ export class Health {
    * No friendly-fire logic needed: FFA — but owners never damage themselves
    * because weapons skip their own combatant during the raycast.
    */
-  applyDamage(amount: number, attacker: Combatant | null): boolean {
+  applyDamage(
+    amount: number,
+    attacker: Combatant | null,
+    method: KillMethod = KillMethod.ENVIRONMENT,
+  ): boolean {
     if (!this.alive || this.protectionTimer > 0 || amount <= 0) return false;
     this.current -= amount;
     this.onDamaged?.(amount, attacker);
+    for (const fn of this.damageListeners) fn(amount, attacker);
     if (this.current <= 0) {
       this.current = 0;
       this.alive = false;
-      this.onDeath?.(attacker);
+      this.onDeath?.(attacker, method);
+      for (const fn of this.deathListeners) fn(attacker, method);
     }
     return true;
   }
@@ -70,7 +100,8 @@ export class Health {
     if (!this.alive) return;
     this.current = 0;
     this.alive = false;
-    this.onDeath?.(attacker);
+    this.onDeath?.(attacker, KillMethod.ENVIRONMENT);
+    for (const fn of this.deathListeners) fn(attacker, KillMethod.ENVIRONMENT);
   }
 
   update(dt: number): void {

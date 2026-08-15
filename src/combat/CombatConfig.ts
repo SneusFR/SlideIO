@@ -85,6 +85,26 @@ export const CombatConfig = {
   damageVignetteMax: 0.55,
   killFeedbackDuration: 0.9,
 
+  // ---- Directional damage indicator (screen-space, temporary) ----
+  damageDirectionDuration: 0.45, // seconds a directional flash stays after the last hit
+  damageDirectionMaxOpacity: 0.8,
+  damageDirectionMergeAngle: 0.6, // rad — hits closer than this refresh the same indicator
+
+  // ---- Low-health vignette (persistent, HP-driven) ----
+  lowHealthThreshold: 0.9, // vignette starts building below this HP ratio
+  damageOverlayIntensity: 0.5, // max vignette opacity at ~0 HP
+  lowHealthCriticalRatio: 0.2, // below this the vignette pulses
+  healFeedbackDuration: 0.9,
+
+  // ---- Enemy visual readability ----
+  enemyOutlineEnabled: true,
+  enemyOutlineThickness: 0.025, // meters of red hull around the silhouette
+  enemyOutlineColor: 0xff2d2d,
+  enemyHealthBarVisible: true,
+  enemyNameVisible: true,
+  enemyVisibilityMaxDistance: 120, // outline/UI never shown beyond this
+  enemyVisibilityBodyRadius: 1.2, // frustum culling sphere radius around a bot
+
   // ---- Health bars ----
   botHealthBarVisibleRange: 70,
 };

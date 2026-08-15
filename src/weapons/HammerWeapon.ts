@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { HammerConfig as hc } from "./HammerConfig";
 import { Combatant } from "../combat/Combatant";
+import { KillMethod } from "../combat/KillMethod";
 import { ParticleSystem } from "../effects/ParticleSystem";
 import { Shockwave } from "../effects/Shockwave";
 import { HammerViewmodel } from "./HammerViewmodel";
@@ -37,6 +38,16 @@ export class HammerWeapon {
 
   /** Camera feedback hook (wired to FPSCamera.addShake by the Game). */
   onCameraShake: ((amount: number) => void) | null = null;
+
+  // ---- Audio hooks (observation only — never change gameplay) ----
+  /** A swing was launched (hit or miss — the big whoosh). */
+  onSwingStart: (() => void) | null = null;
+  /** The hammer connected with a combatant. */
+  onHitConnect: ((pos: THREE.Vector3) => void) | null = null;
+  /** The Ground Slam dive started. */
+  onSlamStart: (() => void) | null = null;
+  /** The Ground Slam impacted; `hitCount` combatants were caught. */
+  onSlamImpact: ((pos: THREE.Vector3, hitCount: number) => void) | null = null;
 
   private swingTimer = 0; // elapsed time inside the current swing
   private recoveryTimer = 0;
@@ -92,6 +103,7 @@ export class HammerWeapon {
     this.nextSwingDirection = this.nextSwingDirection === "LEFT" ? "RIGHT" : "LEFT";
 
     this.onCameraShake?.(hc.hammerSwingCameraShake);
+    this.onSwingStart?.();
     return true;
   }
 
@@ -105,6 +117,7 @@ export class HammerWeapon {
     this.state = HammerState.SLAM_DIVE;
     this.hitTargetsThisSwing.clear();
     this.viewmodel?.startSlam();
+    this.onSlamStart?.();
     return true;
   }
 
@@ -115,9 +128,10 @@ export class HammerWeapon {
   onSlamLanded(impactPoint: THREE.Vector3): void {
     if (this.state !== HammerState.SLAM_DIVE) return;
 
-    this.resolveSlamAoE(impactPoint);
+    const hitCount = this.resolveSlamAoE(impactPoint);
     this.spawnSlamVfx(impactPoint);
     this.onCameraShake?.(hc.groundSlamCameraShake);
+    this.onSlamImpact?.(impactPoint, hitCount);
 
     this.viewmodel?.startSlamImpact();
     this.state = HammerState.SLAM_RECOVERY;
@@ -209,7 +223,7 @@ export class HammerWeapon {
   private applySwingHit(target: Combatant, dx: number, dz: number, distXZ: number): void {
     // Generic damage system — exactly like the Plasma Rifle.
     const damage = target.health.max * hc.hammerGroundDamageFraction;
-    const applied = target.health.applyDamage(damage, this.owner);
+    const applied = target.health.applyDamage(damage, this.owner, KillMethod.HAMMER_SWING);
     if (!applied) return; // spawn protection etc. → no knockback either
 
     // Violent knockback: mostly attacker→victim direction, slightly
@@ -232,13 +246,15 @@ export class HammerWeapon {
     this.particles.ring(this.tmpPos, this.tmpDir, 14, 0.35, 5, 0.3, this.energyColor);
 
     this.onCameraShake?.(hc.hammerCameraShake);
+    this.onHitConnect?.(this.tmpPos);
   }
 
   // ------------------------------------------------------------------
   // Ground Slam: circular AoE resolved ONCE at the real impact
   // ------------------------------------------------------------------
 
-  private resolveSlamAoE(center: THREE.Vector3): void {
+  private resolveSlamAoE(center: THREE.Vector3): number {
+    let hitCount = 0;
     for (const target of this.combatants) {
       if (target === this.owner || !target.health.alive) continue;
       if (this.hitTargetsThisSwing.has(target)) continue;
@@ -257,8 +273,9 @@ export class HammerWeapon {
       this.hitTargetsThisSwing.add(target); // one hit per impact
 
       const damage = target.health.max * hc.groundSlamDamageFraction;
-      const applied = target.health.applyDamage(damage, this.owner);
+      const applied = target.health.applyDamage(damage, this.owner, KillMethod.GROUND_SLAM);
       if (!applied) continue;
+      hitCount++;
 
       // Radial knockback away from the impact + shockwave pop-up.
       if (distXZ > 0.001) {
@@ -274,6 +291,7 @@ export class HammerWeapon {
       // Per-victim hit feedback.
       this.particles.burst(this.tmpPos, 16, 5, 0.4, this.energyColor, 3);
     }
+    return hitCount;
   }
 
   private spawnSlamVfx(center: THREE.Vector3): void {

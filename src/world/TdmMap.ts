@@ -1,19 +1,7 @@
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
-import vaultWallUrl from "../assets/vaultwall_opt.glb?url";
-
-/** One perimeter wall segment, visualized with tiled vault GLB instances. */
-interface WallSegment {
-  x: number;
-  baseY: number;
-  z: number;
-  sx: number;
-  sy: number;
-  sz: number;
-  /** Y rotation orienting the vault's decorated face toward the play area. */
-  ry: number;
-}
+import { SpaceConfig as space } from "./SpaceConfig";
+import { ForceFieldWalls, ForceFieldSegment } from "./ForceFieldWall";
 
 /**
  * "Block Party" — compact Red vs Blue TDM arena (Nuketown-like spirit).
@@ -47,7 +35,7 @@ export class TdmMap {
   readonly group = new THREE.Group();
 
   private physics: PhysicsWorld;
-  private readonly vaultSegments: WallSegment[] = [];
+  private readonly fieldSegments: ForceFieldSegment[] = [];
 
   // Stylized daytime palette
   private static COLORS = {
@@ -97,7 +85,7 @@ export class TdmMap {
     this.buildCenterStreet();
     this.buildLanes();
     this.buildTrainingRange();
-    this.loadVaultWalls();
+    this.buildForceFields();
   }
 
   // ------------------------------------------------------------------
@@ -174,93 +162,51 @@ export class TdmMap {
 
   /**
    * Perimeter wall: invisible static collider (identical to the old boundary
-   * boxes) + "Violet Vault" GLB visuals tiled along the wall once loaded.
+   * boxes) + violet force-field visuals (see-through energy plane, rising
+   * particles, violet light) built once every segment is recorded.
    */
-  private vaultWall(
+  private fieldWall(
     x: number,
     baseY: number,
     z: number,
     sx: number,
     sy: number,
     sz: number,
-    ry: number,
   ): void {
     this.physics.addStaticBox(x, baseY + sy / 2, z, sx, sy, sz);
-    this.vaultSegments.push({ x, baseY, z, sx, sy, sz, ry });
+    const alongX = sx >= sz;
+    this.fieldSegments.push({
+      x,
+      baseY,
+      z,
+      length: alongX ? sx : sz,
+      height: sy,
+      alongX,
+    });
   }
 
   /**
-   * Loads the optimized vault GLB and instances it along every recorded
-   * wall segment (InstancedMesh → one draw call per material, cheap).
-   * Each segment is split into tiles whose aspect stays close to the
-   * source model, then stretched to match the collider size exactly.
+   * Force-field ceiling: thin collider just above the plane (nothing can
+   * ever leave the dome) + a horizontal field plane closing the "cubic
+   * dome". Meteor impacts target these roof areas.
    */
-  private loadVaultWalls(): void {
-    const loader = new GLTFLoader();
-    loader.load(vaultWallUrl, (gltf) => {
-      const scene = gltf.scene;
-      scene.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(scene);
-      const size = box.getSize(new THREE.Vector3());
-      const center = box.getCenter(new THREE.Vector3());
-
-      // Bake meshes into normalized geometry: length along X, base at y = 0,
-      // centered on x/z (the source vault already lies along X).
-      const parts: { geo: THREE.BufferGeometry; mat: THREE.Material | THREE.Material[] }[] = [];
-      scene.traverse((obj) => {
-        if (!(obj instanceof THREE.Mesh)) return;
-        const geo = (obj.geometry as THREE.BufferGeometry).clone();
-        geo.applyMatrix4(obj.matrixWorld);
-        geo.translate(-center.x, -box.min.y, -center.z);
-        parts.push({ geo, mat: obj.material });
-      });
-      if (parts.length === 0) return;
-
-      // Split each segment into tiles with roughly the model's aspect ratio.
-      const lenPerHeight = size.x / size.y;
-      const tiles: { x: number; y: number; z: number; len: number; h: number; t: number; ry: number }[] = [];
-      for (const s of this.vaultSegments) {
-        const alongX = s.sx >= s.sz;
-        const length = alongX ? s.sx : s.sz;
-        const thick = alongX ? s.sz : s.sx;
-        const n = Math.max(1, Math.round(length / (s.sy * lenPerHeight)));
-        const tileLen = length / n;
-        for (let i = 0; i < n; i++) {
-          const off = -length / 2 + tileLen * (i + 0.5);
-          tiles.push({
-            x: alongX ? s.x + off : s.x,
-            y: s.baseY,
-            z: alongX ? s.z : s.z + off,
-            len: tileLen,
-            h: s.sy,
-            t: thick,
-            ry: s.ry,
-          });
-        }
-      }
-
-      const up = new THREE.Vector3(0, 1, 0);
-      const m = new THREE.Matrix4();
-      const q = new THREE.Quaternion();
-      const p = new THREE.Vector3();
-      const sc = new THREE.Vector3();
-
-      for (const { geo, mat } of parts) {
-        const inst = new THREE.InstancedMesh(geo, mat, tiles.length);
-        for (let i = 0; i < tiles.length; i++) {
-          const t = tiles[i];
-          q.setFromAxisAngle(up, t.ry);
-          sc.set(t.len / size.x, t.h / size.y, t.t / size.z);
-          p.set(t.x, t.y, t.z);
-          m.compose(p, q, sc);
-          inst.setMatrixAt(i, m);
-        }
-        inst.instanceMatrix.needsUpdate = true;
-        inst.castShadow = true;
-        inst.receiveShadow = true;
-        this.group.add(inst);
-      }
+  private fieldRoof(x: number, y: number, z: number, sx: number, sz: number): void {
+    this.physics.addStaticBox(x, y + 0.5, z, sx, 1, sz);
+    this.fieldSegments.push({
+      x,
+      baseY: y,
+      z,
+      length: sx,
+      height: sz,
+      alongX: true,
+      horizontal: true,
     });
+  }
+
+  /** Builds the violet force-field visuals over every recorded segment. */
+  private buildForceFields(): void {
+    const fields = new ForceFieldWalls(this.fieldSegments);
+    this.group.add(fields.group);
   }
 
   /** Wooden crate (solid, climbable). */
@@ -394,21 +340,48 @@ export class TdmMap {
   // Lighting / ground / boundary
   // ------------------------------------------------------------------
 
+  /**
+   * "Night / space" lighting rig (see SpaceConfig — no magic numbers):
+   *  - HemisphereLight: dark violet-blue sky bounce over a neutral dark
+   *    ground, so upward-facing surfaces take a subtle space tint without
+   *    ever washing out the red/blue team identity.
+   *  - Main DirectionalLight = MOONLIGHT: cool white barely tinted violet,
+   *    aligned with the visible moon direction (SpaceSky) so shadows and
+   *    the sky composition agree. Only shadow-casting light (readability).
+   *  - Low opposite violet rim light: a faint fill that catches building
+   *    edges / metal / characters with a purple sheen. No shadows — cheap.
+   */
   private buildLighting(): void {
-    const hemi = new THREE.HemisphereLight(0xd6e7ff, 0x64705a, 1.05);
+    const hemi = new THREE.HemisphereLight(
+      space.spaceAmbientColor,
+      space.spaceAmbientGroundColor,
+      space.spaceAmbientIntensity,
+    );
     this.group.add(hemi);
 
-    const sun = new THREE.DirectionalLight(0xfff2df, 1.45);
-    sun.position.set(40, 80, 30);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -120;
-    sun.shadow.camera.right = 120;
-    sun.shadow.camera.top = 120;
-    sun.shadow.camera.bottom = -120;
-    sun.shadow.camera.far = 300;
-    sun.shadow.bias = -0.0005;
-    this.group.add(sun);
+    // Moonlight — direction matches SpaceConfig.moonPosition (the visible moon).
+    const moon = new THREE.DirectionalLight(space.moonLightColor, space.moonLightIntensity);
+    moon.position
+      .set(space.moonPosition.x, space.moonPosition.y, space.moonPosition.z)
+      .normalize()
+      .multiplyScalar(90);
+    moon.castShadow = true;
+    moon.shadow.mapSize.set(2048, 2048);
+    moon.shadow.camera.left = -120;
+    moon.shadow.camera.right = 120;
+    moon.shadow.camera.top = 120;
+    moon.shadow.camera.bottom = -120;
+    moon.shadow.camera.far = 300;
+    moon.shadow.bias = -0.0005;
+    this.group.add(moon);
+
+    // Violet rim/fill from the opposite low direction (subtle, shadowless).
+    const rim = new THREE.DirectionalLight(space.rimLightColor, space.rimLightIntensity);
+    rim.position
+      .set(-space.moonPosition.x, 0.25, -space.moonPosition.z)
+      .normalize()
+      .multiplyScalar(90);
+    this.group.add(rim);
   }
 
   private buildGroundAndStreet(): void {
@@ -448,15 +421,18 @@ export class TdmMap {
   private buildBoundary(): void {
     const h = 14;
 
-    // West / east / north perimeter (vault GLB visuals, same colliders)
-    this.vaultWall(-43, 0, 0, 2, h, 96, Math.PI / 2);
-    this.vaultWall(43, 0, 0, 2, h, 96, -Math.PI / 2);
-    this.vaultWall(0, 0, -47, 88, h, 2, 0);
+    // West / east / north perimeter (violet force fields, same colliders)
+    this.fieldWall(-43, 0, 0, 2, h, 96);
+    this.fieldWall(43, 0, 0, 2, h, 96);
+    this.fieldWall(0, 0, -47, 88, h, 2);
 
     // South perimeter with a doorway (x 8..14) into the training range
-    this.vaultWall(-18, 0, 47, 52, h, 2, Math.PI);
-    this.vaultWall(29, 0, 47, 30, h, 2, Math.PI);
-    this.vaultWall(11, 4, 47, 6, 10, 2, Math.PI); // lintel above doorway (opening 4 m)
+    this.fieldWall(-18, 0, 47, 52, h, 2);
+    this.fieldWall(29, 0, 47, 30, h, 2);
+    this.fieldWall(11, 4, 47, 6, 10, 2); // lintel above doorway (opening 4 m)
+
+    // Force-field ceiling closing the "cubic dome" over the arena
+    this.fieldRoof(0, h, 0, 88, 96);
     this.sign("RANGE", 11, 4.8, 45.85, 4, 1.6, Math.PI, "#20242c", "#c084fc");
   }
 
@@ -820,10 +796,13 @@ export class TdmMap {
     // Floor (top surface at y = 0)
     this.box(0, -0.5, 70, 44, 1, 46, C.plaza);
 
-    // Enclosing walls (vault GLB visuals, same colliders)
-    this.vaultWall(-22, 0, 70, 2, 10, 46, Math.PI / 2);
-    this.vaultWall(22, 0, 70, 2, 10, 46, -Math.PI / 2);
-    this.vaultWall(0, 0, 93, 46, 10, 2, Math.PI);
+    // Enclosing walls (violet force fields, same colliders)
+    this.fieldWall(-22, 0, 70, 2, 10, 46);
+    this.fieldWall(22, 0, 70, 2, 10, 46);
+    this.fieldWall(0, 0, 93, 46, 10, 2);
+
+    // Force-field ceiling over the training range annex
+    this.fieldRoof(0, 10, 70, 44, 46);
 
     // Firing line + distance markers
     this.glowStrip(0, 0.03, 52, 40, 0.05, 0.4, C.rangeAccent);

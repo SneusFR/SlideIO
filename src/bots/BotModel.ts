@@ -1,10 +1,64 @@
 import * as THREE from "three";
+import { CombatConfig as cc } from "../combat/CombatConfig";
 
 const BODY_COLORS = [0xd4a03b, 0x3bb0d4, 0x7ed43b, 0xd43b9a, 0xd4573b, 0x3bd4a8, 0x8a3bd4, 0xd4cf3b];
 
+// ---- Shared enemy-readability resources (created once for all bots) ----
+
+/**
+ * Inverted-hull outline material: back faces of a slightly enlarged copy
+ * of each body box render as a thin red rim hugging the silhouette.
+ * Depth test stays ON → walls fully occlude the outline (no X-ray).
+ */
+let outlineMat: THREE.MeshBasicMaterial | null = null;
+function getOutlineMaterial(): THREE.MeshBasicMaterial {
+  if (!outlineMat) {
+    outlineMat = new THREE.MeshBasicMaterial({
+      color: cc.enemyOutlineColor,
+      side: THREE.BackSide,
+      toneMapped: false,
+    });
+    outlineMat.userData.shared = true;
+  }
+  return outlineMat;
+}
+
+/** "BOT" nameplate texture + material, shared by every bot. */
+let labelMat: THREE.MeshBasicMaterial | null = null;
+function getLabelMaterial(): THREE.MeshBasicMaterial {
+  if (!labelMat) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 96;
+    const ctx = canvas.getContext("2d")!;
+    ctx.clearRect(0, 0, 256, 96);
+    ctx.font = "bold 60px Consolas, 'Courier New', monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = 12;
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "rgba(8, 10, 14, 0.9)";
+    ctx.strokeText("BOT", 128, 50);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText("BOT", 128, 50);
+    const tex = new THREE.CanvasTexture(canvas);
+    labelMat = new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    labelMat.userData.shared = true;
+  }
+  return labelMat;
+}
+
 /**
  * Low-poly humanoid bot: head, torso, legs, arms and a mini Plasma Rifle.
- * Procedural animation (leg swing, bob, gun pitch) + world-space health bar.
+ * Procedural animation (leg swing, bob, gun pitch) + billboarded enemy UI
+ * (name + big red health bar) and a red silhouette outline. Outline and
+ * UI are only shown while the PLAYER actually sees the bot (`setSeen`) —
+ * never through walls.
  */
 export class BotModel {
   readonly group = new THREE.Group();
@@ -15,16 +69,21 @@ export class BotModel {
   private readonly muzzle: THREE.Object3D;
   private readonly healthBar: THREE.Group;
   private readonly healthFill: THREE.Mesh;
-  private readonly healthFillMat: THREE.MeshBasicMaterial;
+  private readonly nameLabel: THREE.Mesh;
   private readonly bodyMat: THREE.MeshLambertMaterial;
   private readonly visorMat: THREE.MeshBasicMaterial;
   private readonly chestMat: THREE.MeshBasicMaterial;
+
+  /** Inverted-hull outline meshes (share source geometry + one material). */
+  private readonly outlineMeshes: THREE.Mesh[] = [];
+  private seen = false;
 
   private walkPhase = Math.random() * 10;
   private flashAmount = 0;
   private readonly baseColor: THREE.Color;
   private readonly flashColor = new THREE.Color(0xffffff);
   private readonly tmpColor = new THREE.Color();
+  private readonly tmpSize = new THREE.Vector3();
 
   constructor(index: number) {
     const color = BODY_COLORS[index % BODY_COLORS.length];
@@ -83,18 +142,80 @@ export class BotModel {
 
     this.group.add(this.legL, this.legR, this.torso, this.gunPivot);
 
-    // ---- Health bar (billboarded, above the head) ----
+    // ---- Silhouette outline (hull copies follow each animated part) ----
+    if (cc.enemyOutlineEnabled) {
+      this.addOutline(legGeoL);
+      this.addOutline(legGeoR);
+      this.addOutline(chest);
+      this.addOutline(head);
+      this.addOutline(armL);
+      this.addOutline(armR);
+      this.addOutline(gunBody);
+    }
+
+    // ---- Enemy UI (billboarded, above the head): BOT + big red HP bar ----
     this.healthBar = new THREE.Group();
-    this.healthBar.position.y = 1.15;
+    this.healthBar.position.y = 1.32;
     const barBg = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.95, 0.11),
-      new THREE.MeshBasicMaterial({ color: 0x14161c, transparent: true, opacity: 0.75 }),
+      new THREE.PlaneGeometry(1.15, 0.16),
+      new THREE.MeshBasicMaterial({
+        color: 0x14161c,
+        transparent: true,
+        opacity: 0.72,
+        toneMapped: false,
+      }),
     );
-    this.healthFillMat = new THREE.MeshBasicMaterial({ color: 0x4ade80 });
-    this.healthFill = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.07), this.healthFillMat);
+    this.healthFill = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.09, 0.115),
+      new THREE.MeshBasicMaterial({ color: 0xef4444, toneMapped: false }),
+    );
     this.healthFill.position.z = 0.002;
-    this.healthBar.add(barBg, this.healthFill);
+    this.nameLabel = new THREE.Mesh(new THREE.PlaneGeometry(0.52, 0.195), getLabelMaterial());
+    this.nameLabel.position.y = 0.19;
+    this.nameLabel.visible = cc.enemyNameVisible;
+    this.healthBar.add(barBg, this.healthFill, this.nameLabel);
+    this.healthBar.visible = false; // hidden until the player actually sees the bot
+    // UI planes must NEVER count as body hits for beam raycasts.
+    barBg.raycast = NO_RAYCAST;
+    this.healthFill.raycast = NO_RAYCAST;
+    this.nameLabel.raycast = NO_RAYCAST;
     this.group.add(this.healthBar);
+  }
+
+  /** Create an inverted-hull copy of `source` on the same animated parent. */
+  private addOutline(source: THREE.Mesh): void {
+    const geo = source.geometry;
+    geo.computeBoundingBox();
+    geo.boundingBox!.getSize(this.tmpSize);
+    const t = cc.enemyOutlineThickness * 2;
+    const o = new THREE.Mesh(geo, getOutlineMaterial());
+    o.position.copy(source.position);
+    o.rotation.copy(source.rotation);
+    o.scale.set(
+      (this.tmpSize.x + t) / this.tmpSize.x,
+      (this.tmpSize.y + t) / this.tmpSize.y,
+      (this.tmpSize.z + t) / this.tmpSize.z,
+    );
+    o.visible = false;
+    o.castShadow = false;
+    // The hull is purely visual: exclude it from beam raycasts so the
+    // effective hitbox of the bot does not grow by the outline thickness.
+    o.raycast = NO_RAYCAST;
+    source.parent!.add(o);
+    this.outlineMeshes.push(o);
+  }
+
+  /**
+   * Toggle the enemy readability visuals (outline + name + HP bar).
+   * Called every frame by BotManager.updateVisibility with the REAL
+   * line-of-sight result — nothing here ever shows through walls.
+   */
+  setSeen(seen: boolean): void {
+    if (seen === this.seen) return;
+    this.seen = seen;
+    const outlineOn = seen && cc.enemyOutlineEnabled;
+    for (const o of this.outlineMeshes) o.visible = outlineOn;
+    this.healthBar.visible = seen && cc.enemyHealthBarVisible;
   }
 
   getMuzzleWorld(out: THREE.Vector3): THREE.Vector3 {
@@ -140,7 +261,6 @@ export class BotModel {
     this.torso.rotation.x = THREE.MathUtils.damp(this.torso.rotation.x, targetTilt, 12, dt);
     const targetY = sliding ? -0.32 : 0;
     this.torso.position.z = sliding ? 0.1 : 0;
-    this.group.children.forEach(() => {}); // noop keeps shape stable
     this.torso.position.y += targetY * 0.5;
 
     this.gunPivot.rotation.x = pitch;
@@ -160,13 +280,14 @@ export class BotModel {
       this.chestMat.color.setHex(0xa855f7);
     }
 
-    // Health bar: fill + color + billboard.
-    this.healthBar.quaternion.copy(camQuat);
+    // Enemy UI: pure billboard (never rotates with the skeleton) + fill.
+    // The group itself rotates with the body yaw, so cancel it by applying
+    // the camera quaternion in world terms (premultiply the inverse yaw).
+    this.healthBar.quaternion
+      .setFromAxisAngle(Y_AXIS, -yaw)
+      .multiply(camQuat);
     this.healthFill.scale.x = Math.max(hpRatio, 0.001);
-    this.healthFill.position.x = -0.45 * (1 - hpRatio);
-    if (hpRatio > 0.5) this.healthFillMat.color.setHex(0x4ade80);
-    else if (hpRatio > 0.25) this.healthFillMat.color.setHex(0xfacc15);
-    else this.healthFillMat.color.setHex(0xef4444);
+    this.healthFill.position.x = -0.545 * (1 - hpRatio);
   }
 
   dispose(): void {
@@ -174,8 +295,13 @@ export class BotModel {
       const m = o as THREE.Mesh;
       if (m.isMesh) {
         m.geometry.dispose();
-        (m.material as THREE.Material).dispose();
+        const mat = m.material as THREE.Material;
+        // Never dispose shared resources (outline / nameplate materials).
+        if (!mat.userData.shared) mat.dispose();
       }
     });
   }
 }
+
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+const NO_RAYCAST = () => {};

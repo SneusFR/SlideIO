@@ -3,13 +3,99 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SlideIO — Movement Prototype</title>
+    <title>SlideIO</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Rajdhani:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <div id="app"></div>
 
-    <div id="overlay">
+    <!-- ================= MAIN MENU ================= -->
+    <div id="main-menu-root">
+      <!-- Three.js menu canvas is appended here (behind the UI) -->
+
+      <div id="main-menu" class="menu-hidden">
+        <!-- Player info — top left -->
+        <div id="menu-profile">
+          <div id="menu-avatar">
+            <svg viewBox="0 0 48 48" aria-hidden="true">
+              <path
+                d="M24 5 L38 12 L38 26 Q38 36 24 43 Q10 36 10 26 L10 12 Z"
+                fill="#150b26"
+                stroke="#7c3aed"
+                stroke-width="1.6"
+              />
+              <path d="M15 22 L33 22 L30 27 L18 27 Z" fill="#a855f7" opacity="0.9" />
+              <path d="M20 13 L28 13 L26 18 L22 18 Z" fill="#7c3aed" opacity="0.7" />
+            </svg>
+          </div>
+          <div id="menu-profile-sep"></div>
+          <div id="menu-profile-info">
+            <div id="menu-player-name">VALENTIN</div>
+            <div id="menu-level-row">
+              <span id="menu-player-level">LVL 27</span>
+              <div id="menu-xp-bar"><div id="menu-xp-fill"></div></div>
+            </div>
+            <div id="menu-currency-row">
+              <svg id="menu-coin" viewBox="0 0 20 20" aria-hidden="true">
+                <circle cx="10" cy="10" r="8" fill="none" stroke="#a855f7" stroke-width="1.6" />
+                <circle cx="10" cy="10" r="3.4" fill="#a855f7" opacity="0.85" />
+              </svg>
+              <span id="menu-player-currency">1,245,870</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Navigation — left column -->
+        <nav id="menu-nav">
+          <button class="menu-btn menu-btn-primary" data-action="play" type="button">
+            <span class="menu-btn-label">Play</span>
+            <span class="menu-btn-arrow">&#187;</span>
+          </button>
+          <button class="menu-btn" data-action="editor" type="button">
+            <span class="menu-btn-label">Editor</span>
+            <span class="menu-btn-arrow">&#187;</span>
+          </button>
+          <button class="menu-btn" data-action="shop" type="button">
+            <span class="menu-btn-label">Shop</span>
+            <span class="menu-btn-arrow">&#187;</span>
+          </button>
+          <button class="menu-btn" data-action="settings" type="button">
+            <span class="menu-btn-label">Settings</span>
+            <span class="menu-btn-arrow">&#187;</span>
+          </button>
+          <button class="menu-btn" data-action="credits" type="button">
+            <span class="menu-btn-label">Credits</span>
+            <span class="menu-btn-arrow">&#187;</span>
+          </button>
+        </nav>
+
+        <!-- Loadout — under the character, right side -->
+        <div id="menu-loadout-wrap">
+          <button class="menu-btn menu-btn-loadout" data-action="loadout" type="button">
+            <span class="menu-btn-label">Loadout</span>
+          </button>
+          <div id="menu-loadout-glow"></div>
+        </div>
+      </div>
+
+      <!-- Subtle violet flash used by the PLAY transition -->
+      <div id="menu-play-flash"></div>
+    </div>
+
+    <!-- Minimal preload screen shown while menu assets stream in -->
+    <div id="menu-loading">
+      <div id="menu-loading-title">SLIDE&nbsp;IO</div>
+      <div id="menu-loading-sub">LOADING<span class="dots"></span></div>
+    </div>
+
+    <!-- ================= GAMEPLAY (unchanged) ================= -->
+    <div id="overlay" class="hidden">
       <div id="overlay-title">CLICK TO PLAY</div>
       <div id="overlay-controls">
         WASD — Move&nbsp;&nbsp;·&nbsp;&nbsp;SPACE — Jump&nbsp;&nbsp;·&nbsp;&nbsp;SHIFT — Slide&nbsp;&nbsp;·&nbsp;&nbsp;E — Dash&nbsp;&nbsp;·&nbsp;&nbsp;LMB — Fire&nbsp;&nbsp;·&nbsp;&nbsp;R — Respawn
@@ -26,9 +112,12 @@
       </div>
     </div>
 
-    <div id="hud">
+    <div id="hud" class="menu-active">
       <div id="phase-overlay"></div>
       <div id="damage-vignette"></div>
+      <div id="lowhp-vignette"></div>
+      <div id="heal-flash"></div>
+      <div id="damage-dir-container"></div>
       <div id="crosshair"></div>
       <div id="debug"></div>
 
@@ -53,7 +142,33 @@
         <div id="dash-status">READY</div>
       </div>
 
+      <div id="medal-display" class="hidden">
+        <div id="medal-glow"></div>
+        <div id="medal-flash"></div>
+        <img id="medal-img" alt="" draggable="false" />
+      </div>
+
+      <div id="combo-hud" class="hidden">
+        <div id="combo-label">COMBO <span id="combo-count">x1</span></div>
+        <div id="combo-bar"><div id="combo-fill"></div></div>
+        <div id="combo-time">5.0s</div>
+      </div>
+
+      <div id="leaderboard-hud" class="hidden">
+        <div id="leaderboard-title">FFA</div>
+        <div id="leaderboard-header">
+          <span class="lb-rank">#</span>
+          <span class="lb-name">PLAYER</span>
+          <span class="lb-k">K</span>
+          <span class="lb-d">D</span>
+          <span class="lb-a">A</span>
+          <span class="lb-kd">K/D</span>
+        </div>
+        <div id="leaderboard-rows"></div>
+      </div>
+
       <div id="kill-feedback" class="hidden">ELIMINATED</div>
+      <div id="heal-feedback" class="hidden">+35 HP</div>
 
       <div id="death-screen" class="hidden">
         <div id="death-title">YOU DIED</div>

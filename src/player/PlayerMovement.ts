@@ -14,6 +14,20 @@ export interface PhaseEvent {
   travelDir: THREE.Vector3;
 }
 
+/**
+ * Optional audio hooks fired by the movement state machine. Pure
+ * observation: gameplay behaves EXACTLY the same with or without them.
+ */
+export interface MovementSfxListener {
+  jump(): void;
+  wallJump(): void;
+  /** @param fallSpeed vertical speed (m/s, positive down) at touchdown. */
+  land(fallSpeed: number): void;
+  slideStart(): void;
+  slideEnd(): void;
+  dash(): void;
+}
+
 export enum MoveState {
   GROUNDED = "GROUNDED",
   AIRBORNE = "AIRBORNE",
@@ -33,6 +47,9 @@ export class PlayerMovement {
   state = MoveState.GROUNDED;
   readonly velocity = new THREE.Vector3();
   grounded = false;
+
+  /** Optional audio listener (assigned by the Game — never gameplay). */
+  sfx: MovementSfxListener | null = null;
 
   /** -1 wall on the left of view, +1 on the right, 0 when not wall sliding. */
   wallSide = 0;
@@ -378,6 +395,7 @@ export class PlayerMovement {
   private doJump(): void {
     this.velocity.y = cfg.jumpForce;
     this.consumeJump();
+    this.sfx?.jump();
   }
 
   private doSlideJump(): void {
@@ -392,6 +410,7 @@ export class PlayerMovement {
     this.velocity.y = cfg.jumpForce;
     this.endSlide();
     this.consumeJump();
+    this.sfx?.jump();
   }
 
   private doWallJump(): void {
@@ -402,6 +421,7 @@ export class PlayerMovement {
     this.state = MoveState.AIRBORNE;
     this.wallSide = 0;
     this.consumeJump();
+    this.sfx?.wallJump();
   }
 
   private tryStartDash(): void {
@@ -431,6 +451,7 @@ export class PlayerMovement {
     this.wallSide = 0;
     this.phaseGraceTimer = 0;
     this.state = MoveState.DASHING;
+    this.sfx?.dash();
   }
 
   private endDash(): void {
@@ -475,11 +496,13 @@ export class PlayerMovement {
       this.velocity.x += this.velocity.x * inv * boost;
       this.velocity.z += this.velocity.z * inv * boost;
     }
+    this.sfx?.slideStart();
   }
 
   private endSlide(): void {
     this.player.setCrouched(false);
     this.slideCooldownTimer = cfg.slideCooldown;
+    if (this.state === MoveState.SLIDING) this.sfx?.slideEnd();
     if (this.state === MoveState.SLIDING) {
       this.state = this.grounded ? MoveState.GROUNDED : MoveState.AIRBORNE;
     }
@@ -503,6 +526,9 @@ export class PlayerMovement {
     // character controller's collision report.
     if (this.tryProactivePhase(dt)) return;
 
+    const wasGrounded = this.grounded;
+    const fallSpeed = -this.velocity.y; // positive when falling
+
     this.delta.copy(this.velocity).multiplyScalar(dt);
     this.player.move(this.delta, this.corrected);
 
@@ -511,6 +537,11 @@ export class PlayerMovement {
     this.grounded = this.player.isGrounded() && this.velocity.y <= 0.1;
     if (this.grounded) {
       this.coyoteTimer = cfg.coyoteTime;
+    }
+
+    // Landing feedback (the Ground Slam has its own dedicated impact sound).
+    if (!wasGrounded && this.grounded && this.state !== MoveState.GROUND_SLAMMING) {
+      this.sfx?.land(Math.max(0, fallSpeed));
     }
 
     this.collectContacts();

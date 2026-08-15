@@ -5,6 +5,7 @@ import { MovementConfig as mc } from "../player/MovementConfig";
 import { WeaponConfig as wc } from "../weapons/WeaponConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import { Combatant, Health } from "../combat/Combatant";
+import { KillMethod } from "../combat/KillMethod";
 import { SpawnManager } from "../combat/SpawnManager";
 import { NavGrid } from "../navigation/NavGrid";
 import { ParticleSystem } from "../effects/ParticleSystem";
@@ -44,9 +45,14 @@ export class Bot implements Combatant {
   grounded = false;
   sliding = false;
   dashing = false;
+  /** World position of the last death (loot drops read this). */
+  readonly deathPosition = new THREE.Vector3();
   /** Fraction of intended horizontal movement that was blocked last frame. */
   blockedAmount = 0;
   respawnTimer = 0;
+
+  /** True while the plasma beam is actually emitting (read by game audio). */
+  isFiring = false;
 
   private readonly body: RAPIER_API.RigidBody;
   private readonly collider: RAPIER_API.Collider;
@@ -151,6 +157,8 @@ export class Bot implements Combatant {
   // ---- Death / respawn ----
   onDeath(): void {
     this.getPosition(this.tmp);
+    this.deathPosition.copy(this.tmp);
+    this.model.setSeen(false); // enemy UI/outline never lingers on a corpse
     this.particles.burst(this.tmp, 30, 8, 0.9, this.deathColorA, 5);
     this.particles.burst(this.tmp, 14, 3.5, 0.5, this.deathColorB, 2);
     this.model.group.visible = false;
@@ -353,6 +361,7 @@ export class Bot implements Combatant {
   updateWeapon(dt: number, hittables: THREE.Object3D[], time: number): void {
     const wantFire = this.health.alive && this.ai.out.wantFire;
     const firing = wantFire && this.heat.canFire;
+    this.isFiring = firing;
     this.heat.update(dt, firing);
     this.ai.notifyHeat(this.heat);
 
@@ -378,7 +387,11 @@ export class Bot implements Combatant {
     );
 
     if (this.beamResult.combatant) {
-      this.beamResult.combatant.health.applyDamage(wc.plasmaDamagePerSecond * dt, this);
+      this.beamResult.combatant.health.applyDamage(
+        wc.plasmaDamagePerSecond * dt,
+        this,
+        KillMethod.PLASMA,
+      );
     } else if (this.beamResult.trainingTarget) {
       this.beamResult.trainingTarget.applyDamage(wc.plasmaDamagePerSecond * dt);
     }

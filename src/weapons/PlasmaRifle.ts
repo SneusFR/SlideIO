@@ -7,6 +7,7 @@ import { PlasmaBeam } from "./PlasmaBeam";
 import { ParticleSystem } from "../effects/ParticleSystem";
 import { PlasmaImpact } from "../effects/PlasmaImpact";
 import { Combatant } from "../combat/Combatant";
+import { KillMethod } from "../combat/KillMethod";
 import { castBeam, BeamCastResult } from "./BeamCombat";
 
 /**
@@ -22,6 +23,15 @@ export class PlasmaRifle {
 
   /** True while the beam is currently burning a target or a combatant. */
   hittingTarget = false;
+
+  /** True while the beam is actually emitting (trigger held + not overheated). */
+  isFiring = false;
+
+  /** True while the beam is burning ANY surface (wall, floor, target…). */
+  beamHit = false;
+
+  /** Fired once on the frame the rifle overheats (audio hook). */
+  onOverheat: (() => void) | null = null;
 
   /** The combatant wielding this rifle (never damaged by its own beam). */
   owner: Combatant | null = null;
@@ -229,6 +239,8 @@ export class PlasmaRifle {
     const firing = wantFire && this.heat.canFire;
     this.heat.update(dt, firing);
     this.hittingTarget = false;
+    this.isFiring = firing;
+    if (!firing) this.beamHit = false;
 
     if (firing) {
       this.fireBeam(dt, hittables, time);
@@ -238,7 +250,10 @@ export class PlasmaRifle {
       this.muzzleLight.intensity = 0;
     }
 
-    if (this.heat.consumeOverheatEvent()) this.overheatBurst();
+    if (this.heat.consumeOverheatEvent()) {
+      this.overheatBurst();
+      this.onOverheat?.();
+    }
 
     this.updateViewmodelFeedback(dt, firing, time);
   }
@@ -258,6 +273,7 @@ export class PlasmaRifle {
     );
 
     const hit = this.beamResult.hit;
+    this.beamHit = hit;
     this.beamEnd.copy(this.beamResult.point);
     this.hitNormal.copy(this.beamResult.normal);
 
@@ -265,6 +281,7 @@ export class PlasmaRifle {
       this.beamResult.combatant.health.applyDamage(
         cfg.plasmaDamagePerSecond * dt,
         this.owner,
+        KillMethod.PLASMA,
       );
       this.hittingTarget = true;
     } else if (this.beamResult.trainingTarget) {
