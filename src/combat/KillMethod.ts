@@ -12,5 +12,11 @@ export enum KillMethod {
   PLASMA = "PLASMA",
   HAMMER_SWING = "HAMMER_SWING",
   GROUND_SLAM = "GROUND_SLAM",
+  /** Astral Lance quick horizontal sweep (no special medal yet). */
+  SPEAR_SWEEP = "SPEAR_SWEEP",
+  /** Astral Lance charged rush impact (no special medal yet). */
+  SPEAR_RUSH = "SPEAR_RUSH",
+  /** MOLE STRIKE killstreak emergence blast (no special medal yet). */
+  MOLE_STRIKE = "MOLE_STRIKE",
   ENVIRONMENT = "ENVIRONMENT",
 }

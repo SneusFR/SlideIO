@@ -6,6 +6,8 @@ import { RAPIER } from "../physics/PhysicsWorld";
 import { PhaseDash, PhaseResult, PhaseAttemptDebug } from "./PhaseDash";
 import { MovementConfig as cfg } from "./MovementConfig";
 import { HammerConfig as hc } from "../weapons/HammerConfig";
+import { SpearConfig as sc } from "../weapons/SpearConfig";
+import { MoleStrikeConfig as mole } from "../killstreaks/mole/MoleStrikeConfig";
 
 /** Fired once per successful wall traversal — consumed by Game for VFX. */
 export interface PhaseEvent {
@@ -36,7 +38,14 @@ export enum MoveState {
   DASHING = "DASHING",
   /** Hammer Ground Slam: vertical charge toward the ground. */
   GROUND_SLAMMING = "GROUND_SLAMMING",
+  /** Astral Lance charged rush: fast forward charge, tip-first. */
+  SPEAR_RUSHING = "SPEAR_RUSHING",
+  /** MOLE STRIKE: burrowed under the surface, free horizontal steering. */
+  UNDERGROUND = "UNDERGROUND",
 }
+
+/** Why a spear rush ended — consumed once by the Game for feedback/cooldown. */
+export type SpearRushEndReason = "TIMEOUT" | "WALL" | "HIT";
 
 /**
  * Momentum-based movement in the spirit of arena shooters:
@@ -72,6 +81,12 @@ export class PlayerMovement {
   /** Set on the frame the dive touches valid ground — consumed by the Game. */
   private slamImpactPending = false;
   private readonly slamImpactPos = new THREE.Vector3();
+
+  // ---- Spear charged rush (forward charge, driven by the melee hold) ----
+  private spearRushTimer = 0;
+  /** Charge direction (mostly horizontal, lightly steerable). */
+  readonly spearRushDir = new THREE.Vector3(0, 0, -1);
+  private spearRushEndReason: SpearRushEndReason | null = null;
 
   // ---- Phase dash (dash through phaseable walls) ----
   private readonly phaseDash: PhaseDash;
@@ -124,6 +139,19 @@ export class PlayerMovement {
 
   get isGroundSlamming(): boolean {
     return this.state === MoveState.GROUND_SLAMMING;
+  }
+
+  get isSpearRushing(): boolean {
+    return this.state === MoveState.SPEAR_RUSHING;
+  }
+
+  get isUnderground(): boolean {
+    return this.state === MoveState.UNDERGROUND;
+  }
+
+  /** Charge speed: reference is the NORMAL RUN SPEED (never hardcoded). */
+  get spearRushSpeed(): number {
+    return cfg.walkSpeed * sc.spearRushSpeedMultiplier;
   }
 
   get dashCooldownRemaining(): number {
@@ -206,12 +234,83 @@ export class PlayerMovement {
     return this.slamImpactPos;
   }
 
+  /**
+   * Start the Astral Lance charged rush: charge in the direction the player
+   * is looking at trigger time, at 2× normal run speed, for at most
+   * spearRushMaxDuration seconds. Works exactly the same on the ground and
+   * in the air (airborne stays airborne — never snapped to the ground).
+   * NOT a dash: no phase grace is ever granted (§ Phase Walls).
+   */
+  startSpearRush(): void {
+    if (this.state === MoveState.SPEAR_RUSHING) return;
+
+    if (this.state === MoveState.DASHING) this.dashTimer = 0;
+    if (this.state === MoveState.SLIDING) this.endSlide();
+    this.wallSide = 0;
+    this.phaseGraceTimer = 0; // the rush can NEVER phase through walls
+
+    // Charge direction = camera look, with a clamped vertical component
+    // (no "look at the sky → rocket launch").
+    this.fpsCamera.getLookDirection(this.spearRushDir);
+    this.spearRushDir.y = THREE.MathUtils.clamp(
+      this.spearRushDir.y,
+      -sc.spearRushMaxVerticalComponent,
+      sc.spearRushMaxVerticalComponent,
+    );
+    this.spearRushDir.normalize();
+
+    this.velocity.copy(this.spearRushDir).multiplyScalar(this.spearRushSpeed);
+    this.spearRushTimer = sc.spearRushMaxDuration;
+    this.spearRushEndReason = null;
+    this.state = MoveState.SPEAR_RUSHING;
+  }
+
+  /** External stop (the tip connected with a combatant, wall impact...). */
+  stopSpearRush(reason: SpearRushEndReason): void {
+    if (this.state !== MoveState.SPEAR_RUSHING) return;
+    this.endSpearRush(reason);
+  }
+
+  /** Returns why the rush ended ONCE, then null (Game feedback/cooldown). */
+  consumeSpearRushEnd(): SpearRushEndReason | null {
+    const reason = this.spearRushEndReason;
+    this.spearRushEndReason = null;
+    return reason;
+  }
+
+  /**
+   * MOLE STRIKE dive: exit any special state cleanly and switch to the
+   * UNDERGROUND state (standing capsule kept — the "underground" feel is
+   * pure camera/VFX; collisions with walls and bounds stay fully active).
+   */
+  startUnderground(): void {
+    if (this.state === MoveState.UNDERGROUND) return;
+
+    if (this.state === MoveState.DASHING) this.dashTimer = 0;
+    if (this.state === MoveState.SLIDING) this.endSlide();
+    if (this.state === MoveState.SPEAR_RUSHING) this.endSpearRush("TIMEOUT");
+    this.slamWindupTimer = 0;
+    this.wallSide = 0;
+    this.phaseGraceTimer = 0; // burrowing is NEVER a phase mechanic
+    this.jumpBufferTimer = 0; // eat buffered inputs from before the dive
+    this.slideBufferTimer = 0;
+
+    this.state = MoveState.UNDERGROUND;
+  }
+
+  /** MOLE STRIKE emergence: hand control back to the normal state machine. */
+  stopUnderground(): void {
+    if (this.state !== MoveState.UNDERGROUND) return;
+    this.state = this.grounded ? MoveState.GROUNDED : MoveState.AIRBORNE;
+  }
+
   update(dt: number): void {
     this.tickTimers(dt);
     this.readBufferedInputs();
     this.computeWishDir();
 
     // Dash triggers instantly from any state (except while already dashing).
+    // While UNDERGROUND, E means "emerge" (handled by the Game) — never dash.
     if (this.input.wasPressed("KeyE")) {
       this.tryStartDash();
     }
@@ -235,6 +334,12 @@ export class PlayerMovement {
       case MoveState.GROUND_SLAMMING:
         this.updateGroundSlamming(dt);
         break;
+      case MoveState.SPEAR_RUSHING:
+        this.updateSpearRushing(dt);
+        break;
+      case MoveState.UNDERGROUND:
+        this.updateUnderground(dt);
+        break;
     }
 
     this.clampVelocity();
@@ -254,6 +359,8 @@ export class PlayerMovement {
     this.dashCooldownTimer = 0;
     this.slamWindupTimer = 0;
     this.slamImpactPending = false;
+    this.spearRushTimer = 0;
+    this.spearRushEndReason = null;
     this.phaseGraceTimer = 0;
     this.phaseTimer = 0;
     this.phaseReentryTimer = 0;
@@ -366,6 +473,98 @@ export class PlayerMovement {
     );
   }
 
+  /**
+   * Astral Lance charged rush: constant forward speed (2× run speed) with
+   * a very light steering. RUSH COMMITTED — nothing cancels it except a
+   * wall, a combatant hit (external stop) or the 5 s timeout.
+   * Airborne: gravity influence is heavily reduced during the charge (short
+   * anti-nosedive), and resumes normally the instant the rush ends.
+   */
+  private updateSpearRushing(dt: number): void {
+    this.spearRushTimer -= dt;
+
+    // Wall stop: the capsule touched a near-vertical surface (Rapier's
+    // swept character controller — no tunneling), or the obstacle scrubbed
+    // most of the charge velocity.
+    const alongDir =
+      this.velocity.x * this.spearRushDir.x + this.velocity.z * this.spearRushDir.z;
+    const hSpeedRef = this.spearRushSpeed * Math.hypot(this.spearRushDir.x, this.spearRushDir.z);
+    if (this.touchingWall || alongDir < hSpeedRef * sc.spearRushMinSpeedFraction) {
+      this.endSpearRush("WALL");
+      return;
+    }
+
+    // Automatic stop after the max duration — even with no obstacle.
+    if (this.spearRushTimer <= 0) {
+      this.endSpearRush("TIMEOUT");
+      return;
+    }
+
+    // Very light steering toward the current view (horizontal only —
+    // the general direction stays the one of the initial charge).
+    this.fpsCamera.getLookDirection(this.tmp);
+    const currentAngle = Math.atan2(this.spearRushDir.z, this.spearRushDir.x);
+    const targetAngle = Math.atan2(this.tmp.z, this.tmp.x);
+    let diff = targetAngle - currentAngle;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    const maxTurn = sc.spearRushSteering * dt;
+    const angle = currentAngle + THREE.MathUtils.clamp(diff, -maxTurn, maxTurn);
+    const hLen = Math.hypot(this.spearRushDir.x, this.spearRushDir.z);
+    this.spearRushDir.x = Math.cos(angle) * hLen;
+    this.spearRushDir.z = Math.sin(angle) * hLen;
+
+    // Horizontal charge speed is enforced every frame (fixed 2× run speed —
+    // no infinite stacking with slide-hop momentum).
+    this.velocity.x = this.spearRushDir.x * this.spearRushSpeed;
+    this.velocity.z = this.spearRushDir.z * this.spearRushSpeed;
+
+    // Vertical: reduced gravity while airborne (short charge, not flight);
+    // grounded charges just hug the floor like normal ground movement.
+    if (this.grounded) {
+      this.velocity.y = -2;
+    } else {
+      this.applyGravity(dt, cfg.gravity * sc.spearAirRushGravityScale);
+    }
+  }
+
+  /** End the rush: keep a reasonable part of the speed — never a hard 0. */
+  private endSpearRush(reason: SpearRushEndReason): void {
+    this.spearRushTimer = 0;
+    this.spearRushEndReason = reason;
+
+    const keep = this.spearRushSpeed * sc.spearRushMomentumRetention;
+    const h = this.horizontalSpeed;
+    if (h > keep && h > 0.001) {
+      const scale = keep / h;
+      this.velocity.x *= scale;
+      this.velocity.z *= scale;
+    }
+
+    // Gravity + the normal state machine resume immediately.
+    this.state = this.grounded ? MoveState.GROUNDED : MoveState.AIRBORNE;
+  }
+
+  /**
+   * MOLE STRIKE burrowing: direct, responsive horizontal steering at a
+   * fixed speed, constantly pressed onto the ground. Jumps, slides and
+   * dashes are unreachable from here (buffers are eaten every frame).
+   */
+  private updateUnderground(dt: number): void {
+    this.jumpBufferTimer = 0;
+    this.slideBufferTimer = 0;
+
+    // Quick exponential smoothing toward wishDir * burrow speed.
+    const k = Math.min(1, 12 * dt);
+    const tx = this.wishDir.x * mole.moleStrikeUndergroundSpeed;
+    const tz = this.wishDir.z * mole.moleStrikeUndergroundSpeed;
+    this.velocity.x += (tx - this.velocity.x) * k;
+    this.velocity.z += (tz - this.velocity.z) * k;
+
+    // Hug the ground (like normal grounded movement, slightly stronger).
+    this.velocity.y = -3;
+  }
+
   private updateWallSliding(dt: number): void {
     this.wallSlideTimer -= dt;
 
@@ -428,6 +627,10 @@ export class PlayerMovement {
     if (this.dashCooldownTimer > 0 || this.state === MoveState.DASHING) return;
     // No dashing out of a Ground Slam: the vertical charge must complete.
     if (this.state === MoveState.GROUND_SLAMMING) return;
+    // RUSH COMMITTED: the spear charge cannot be canceled into a dash.
+    if (this.state === MoveState.SPEAR_RUSHING) return;
+    // Burrowed: E requests the emergence instead — never a dash.
+    if (this.state === MoveState.UNDERGROUND) return;
 
     // Dashing out of a slide: stand back up first (skip if blocked by a ceiling).
     if (this.state === MoveState.SLIDING) {
@@ -742,6 +945,19 @@ export class PlayerMovement {
           this.state = MoveState.GROUNDED;
         }
         // No wall-slide grabbing during the dive: slam → wall = plain collision.
+        break;
+
+      case MoveState.SPEAR_RUSHING:
+        // The rush owns its own lifecycle (updateSpearRushing). Landing is
+        // NEVER forced (air rush stays airborne); touching the ground during
+        // a ground rush just refreshes the wall-slide window.
+        if (this.grounded) this.wallSlideTimer = cfg.wallSlideDuration;
+        break;
+
+      case MoveState.UNDERGROUND:
+        // Owned by MoleStrike (startUnderground/stopUnderground). Nothing
+        // here may transition it — no wall slides, no landing chains.
+        if (this.grounded) this.wallSlideTimer = cfg.wallSlideDuration;
         break;
     }
   }

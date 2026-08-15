@@ -9,6 +9,11 @@ export interface Combatant {
   readonly id: number;
   readonly name: string;
   readonly health: Health;
+  /**
+   * False while this combatant cannot be acquired as a target (e.g. the
+   * player burrowed underground during MOLE STRIKE). Undefined = targetable.
+   */
+  targetable?: boolean;
   /** Current world velocity (read-only usage — for aim prediction / spawn scoring). */
   readonly velocity: THREE.Vector3;
   /** Capsule center position. */
@@ -31,6 +36,11 @@ export class Health {
   current: number;
   alive = true;
   protectionTimer = 0;
+  /**
+   * Hard invulnerability (killstreak abilities). Blocks applyDamage() but
+   * NOT kill() — the kill plane and the suicide key must always work.
+   */
+  invulnerable = false;
 
   /** Fired every time damage is actually applied. */
   onDamaged?: (amount: number, attacker: Combatant | null) => void;
@@ -82,7 +92,7 @@ export class Health {
     attacker: Combatant | null,
     method: KillMethod = KillMethod.ENVIRONMENT,
   ): boolean {
-    if (!this.alive || this.protectionTimer > 0 || amount <= 0) return false;
+    if (!this.alive || this.invulnerable || this.protectionTimer > 0 || amount <= 0) return false;
     this.current -= amount;
     this.onDamaged?.(amount, attacker);
     for (const fn of this.damageListeners) fn(amount, attacker);
@@ -115,5 +125,6 @@ export class Health {
     this.current = this.max;
     this.alive = true;
     this.protectionTimer = protectionDuration;
+    this.invulnerable = false;
   }
 }

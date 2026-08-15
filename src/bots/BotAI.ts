@@ -153,8 +153,8 @@ export class BotAI {
       this.updatePerception(ctx);
     }
 
-    // Drop dead targets instantly.
-    if (this.target && !this.target.health.alive) {
+    // Drop dead or untargetable targets instantly (underground player…).
+    if (this.target && (!this.target.health.alive || this.target.targetable === false)) {
       this.target = null;
       this.targetVisible = false;
       if (this.state === "ENGAGING") this.state = "ROAMING";
@@ -187,7 +187,7 @@ export class BotAI {
     this.targetVisible = false;
 
     for (const c of ctx.combatants) {
-      if (c === this.bot || !c.health.alive) continue;
+      if (c === this.bot || !c.health.alive || c.targetable === false) continue;
       c.getPosition(this.otherPos);
       const dist = this.otherPos.distanceTo(this.selfPos);
       if (dist > cc.botPerceptionRange) continue;

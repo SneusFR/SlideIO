@@ -14,6 +14,8 @@ export class PlayerCombatant implements Combatant {
   readonly id = -1;
   readonly name = "Player";
   readonly health = new Health(cc.playerMaxHealth);
+  /** False while burrowed underground (MOLE STRIKE) — bots drop the target. */
+  targetable = true;
 
   /** Invisible cylinder matching the capsule — raycastable, never rendered. */
   readonly hitProxy: THREE.Mesh;
@@ -57,7 +59,22 @@ export class PlayerCombatant implements Combatant {
 
   /** Keep the hit proxy glued to the capsule (call once per frame). */
   syncProxy(): void {
+    if (!this.targetable) return; // parked far away while underground
     this.player.getPosition(this.pos);
     this.hitProxy.position.copy(this.pos);
+  }
+
+  /**
+   * MOLE STRIKE support: while underground the player cannot be hit or
+   * targeted — the raycastable hit proxy is parked far below the map and
+   * `targetable` makes every bot drop / ignore the player instantly.
+   */
+  setUnderground(hidden: boolean): void {
+    this.targetable = !hidden;
+    if (hidden) {
+      this.hitProxy.position.set(0, -9999, 0);
+    } else {
+      this.syncProxy();
+    }
   }
 }

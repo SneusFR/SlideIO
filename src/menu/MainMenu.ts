@@ -4,6 +4,7 @@ import { SpaceBackground } from "./SpaceBackground";
 import { MenuCharacter } from "./MenuCharacter";
 import { MenuAudio } from "./MenuAudio";
 import { MenuUI } from "./MenuUI";
+import { LoadoutMenu } from "./LoadoutMenu";
 
 /**
  * The Main Menu scene: own renderer + scene + camera, fully independent
@@ -28,6 +29,7 @@ export class MainMenu {
   private background: SpaceBackground;
   private character: MenuCharacter;
   private ui: MenuUI;
+  private loadout: LoadoutMenu;
   readonly sounds: MenuAudio;
 
   private lastTime = 0;
@@ -87,6 +89,9 @@ export class MainMenu {
     // ---- UI ----
     this.ui = new MenuUI(sounds);
     this.ui.onPlay = () => this.onPlay?.();
+    // LOADOUT overlay: opens on the nav button, closes back to the menu.
+    this.loadout = new LoadoutMenu(sounds);
+    this.ui.onLoadout = () => this.loadout.open();
 
     // ---- Events ----
     const onResize = () => {
@@ -180,6 +185,7 @@ export class MainMenu {
     this.character.dispose();
     this.background.dispose();
     this.ui.dispose();
+    this.loadout.dispose();
     this.sounds.dispose();
 
     this.renderer.dispose();

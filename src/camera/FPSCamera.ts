@@ -14,6 +14,8 @@ export interface CameraFeel {
   dashKick: number;
   /** 1 → 0 during a wall phase traversal — short portal FOV punch. */
   phaseKick: number;
+  /** Extra downward camera offset in meters (MOLE STRIKE burrow). */
+  undergroundDrop?: number;
 }
 
 /**
@@ -112,6 +114,8 @@ export class FPSCamera {
       playerCenter.y + this.eyeOffset,
       playerCenter.z,
     );
+    // Underground sink (MOLE STRIKE): purely visual eye drop.
+    this.camera.position.y -= feel.undergroundDrop ?? 0;
     this.camera.rotation.set(this.pitch, this.yaw, this.roll);
 
     // Impact shake: small positional + roll jitter, decaying quickly.

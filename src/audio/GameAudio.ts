@@ -89,6 +89,8 @@ export class GameAudio {
   private ambienceLoop: LoopHandle | null = null;
   /** Subtle energetic hum while a kill combo is active. */
   private comboLoop: LoopHandle | null = null;
+  /** Muffled rumble layer while burrowed with MOLE STRIKE. */
+  private undergroundLoop: LoopHandle | null = null;
 
   // ---- Spatial loops for bot rifles (max N simultaneous) ----
   private readonly botFireLoops = new Map<Bot, LoopHandle>();
@@ -372,6 +374,63 @@ export class GameAudio {
   }
 
   // ------------------------------------------------------------------
+  // Killstreaks (layered from existing SFX — no new assets)
+  // ------------------------------------------------------------------
+
+  /** A killstreak slot just became READY: bright unlock + energy ping. */
+  killstreakReady(): void {
+    audio.play("medal_unlock", { bus: "ui", volume: 0.6, rate: 1.5 });
+    audio.play("ready_ping", { bus: "ui", volume: 0.5, rate: 1.6, delay: 0.12 });
+  }
+
+  /** MOLE STRIKE dive-in: heavy descent + dirt thud + energy layer. */
+  moleEnter(): void {
+    audio.play("hammer_slam_descent", { bus: "movement", volume: 0.7, rate: 0.8 });
+    audio.play("landing_heavy", { bus: "impacts", volume: 0.8, rate: 0.65, delay: 0.12 });
+    audio.play("dash_energy", { bus: "movement", volume: 0.5, rate: 0.7 });
+  }
+
+  /**
+   * MOLE STRIKE emergence: massive eruption. One extra hit-confirm layer
+   * when at least one combatant was caught — never N stacked booms.
+   */
+  moleEmerge(hitCount: number): void {
+    audio.play("hammer_slam_impact", { bus: "impacts", volume: 1, rate: 1, rateVar: 0.03 });
+    audio.play("hammer_slam_sub", { bus: "impacts", volume: 0.9, rate: 0.85 });
+    audio.play("phase_warp", { bus: "movement", volume: 0.6, rate: 0.9 });
+    if (hitCount > 0) {
+      audio.play("hammer_hit_01", { bus: "impacts", volume: 0.6, rate: 0.92, delay: 0.05 });
+    }
+  }
+
+  /**
+   * Continuous muffled "digging" rumble while burrowed. Idempotent:
+   * MoleStrike calls it every frame while underground (so the layer
+   * survives a pause/resume) and once with false on emergence/abort.
+   */
+  setUndergroundLayer(active: boolean): void {
+    if (active) {
+      if (!this.undergroundLoop || this.undergroundLoop.stopped) {
+        this.undergroundLoop = audio.loop("slide_loop", {
+          bus: "movement",
+          volume: 0.45,
+          rate: 0.5,
+          fadeIn: 0.15,
+        });
+      }
+    } else {
+      this.stopUndergroundLayer();
+    }
+  }
+
+  private stopUndergroundLayer(): void {
+    if (this.undergroundLoop && !this.undergroundLoop.stopped) {
+      this.undergroundLoop.stop(0.2);
+    }
+    this.undergroundLoop = null;
+  }
+
+  // ------------------------------------------------------------------
   // Medals / combo
   // ------------------------------------------------------------------
 
@@ -452,6 +511,7 @@ export class GameAudio {
       this.stopMovementLoops();
       this.stopBotLoops();
       this.stopComboLayer();
+      this.stopUndergroundLayer();
     }
   }
 

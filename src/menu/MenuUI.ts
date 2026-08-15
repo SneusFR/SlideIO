@@ -12,6 +12,8 @@ import { MenuAudio } from "./MenuAudio";
 export class MenuUI {
   /** Fired once when PLAY is clicked. */
   onPlay: (() => void) | null = null;
+  /** Fired every time LOADOUT is clicked (opens the loadout overlay). */
+  onLoadout: (() => void) | null = null;
 
   private readonly root: HTMLElement;
   private playFired = false;
@@ -50,8 +52,10 @@ export class MenuUI {
         if (btn.dataset.action === "play" && !this.playFired) {
           this.playFired = true;
           this.onPlay?.();
+        } else if (btn.dataset.action === "loadout") {
+          this.onLoadout?.();
         }
-        // EDITOR / SHOP / SETTINGS / CREDITS / LOADOUT: visual only.
+        // EDITOR / SHOP / SETTINGS / CREDITS: visual only.
       };
       btn.addEventListener("click", onClick);
       this.cleanups.push(() => btn.removeEventListener("click", onClick));

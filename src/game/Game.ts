@@ -19,6 +19,15 @@ import { Shockwave } from "../effects/Shockwave";
 import { PlasmaRifle } from "../weapons/PlasmaRifle";
 import { HammerWeapon } from "../weapons/HammerWeapon";
 import { HammerViewmodel } from "../weapons/HammerViewmodel";
+import { SpearWeapon } from "../weapons/SpearWeapon";
+import { SpearViewmodel } from "../weapons/SpearViewmodel";
+import { SpearConfig as spearCfg } from "../weapons/SpearConfig";
+import { SpearHUD } from "../ui/SpearHUD";
+import { loadLoadout, MeleeWeaponId } from "../loadout/Loadout";
+import { KillstreakManager } from "../killstreaks/KillstreakManager";
+import { MoleStrike } from "../killstreaks/mole/MoleStrike";
+import { MoleStrikeVFX } from "../killstreaks/mole/MoleStrikeVFX";
+import { KillstreakHUD } from "../ui/KillstreakHUD";
 import { TargetManager } from "../targets/TargetManager";
 import { Combatant } from "../combat/Combatant";
 import { PlayerCombatant } from "../combat/PlayerCombatant";
@@ -66,6 +75,17 @@ export class Game {
   private readonly eyePos = new THREE.Vector3();
   private readonly fwdFlat = new THREE.Vector3();
 
+  // ---- Astral Lance melee (equipped via the Loadout menu) ----
+  private spear: SpearWeapon;
+  private spearViewmodel: SpearViewmodel;
+  private spearHud: SpearHUD;
+  /** Which melee weapon is equipped (read from the persisted loadout). */
+  private meleeWeapon: MeleeWeaponId;
+  /** Tap-vs-hold detection: press time accumulated while the key is held. */
+  private meleeHoldTimer = 0;
+  private meleeHoldPending = false;
+  private spearRushWasReady = true;
+
   // ---- FFA combat ----
   private gameAudio: GameAudio;
 
@@ -78,6 +98,11 @@ export class Game {
   // ---- FFA match stats (ALL combatants) + live leaderboard HUD ----
   private matchStats: MatchStatsManager;
   private leaderboardHud: LeaderboardHUD;
+
+  // ---- Killstreaks: 3 equippable slots (keys 1/2/3), reset on death ----
+  private killstreaks: KillstreakManager;
+  private moleStrike: MoleStrike;
+  private killstreakHud: KillstreakHUD;
 
   private nav: NavGrid;
   private spawner: SpawnManager;
@@ -191,6 +216,27 @@ export class Game {
     this.hammer.owner = this.playerCombatant;
     this.hammer.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
 
+    // ---- Astral Lance (melee alternative — equipped from the Loadout menu):
+    // quick press → horizontal sweep, held press → CHARGED SPEAR RUSH.
+    this.meleeWeapon = loadLoadout().melee;
+    this.spearViewmodel = new SpearViewmodel(this.fpsCamera.camera);
+    this.spear = new SpearWeapon(
+      this.combatants,
+      this.particles,
+      this.shockwave,
+      this.spearViewmodel,
+    );
+    this.spear.owner = this.playerCombatant;
+    this.spear.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
+    // The FIRST combatant hit by the tip stops the charge immediately.
+    this.spear.onRushImpact = () => {
+      this.movement.stopSpearRush("HIT");
+      this.movement.consumeSpearRushEnd(); // already handled right here
+      this.spear.onRushEnded("HIT");
+      this.gameAudio.slamImpact(1); // heavy piercing energy impact
+    };
+    this.spearHud = new SpearHUD();
+
     // ---- Audio: pure observation of existing gameplay events ----
     this.gameAudio = new GameAudio();
     this.movement.sfx = this.gameAudio.movementSfx;
@@ -199,6 +245,10 @@ export class Game {
     this.hammer.onHitConnect = (pos) => this.gameAudio.hammerHit(pos);
     this.hammer.onSlamStart = () => this.gameAudio.slamDescent();
     this.hammer.onSlamImpact = (_pos, hitCount) => this.gameAudio.slamImpact(hitCount);
+    // Lance: reuse the existing heavy melee / energy palette (same system).
+    this.spear.onSweepStart = () => this.gameAudio.hammerSwing(); // polearm whoosh
+    this.spear.onHitConnect = (pos) => this.gameAudio.hammerHit(pos);
+    this.spear.onRushStart = () => this.gameAudio.phaseTraversal(); // energy charge whoosh
 
     this.playerCombatant.health.onDamaged = (amount, attacker) => {
       this.combatHud.notifyDamage(amount, this.damageAngleFrom(attacker));
@@ -213,9 +263,35 @@ export class Game {
     // Combo over (timeout or death) → the pitch chain restarts at base.
     this.combo.onComboEnd = () => this.medals.resetChain();
 
+    // ---- Killstreaks: pure state machine + HUD + the MOLE STRIKE ability.
+    // Kills feed the slots, death resets everything, keys 1/2/3 activate.
+    this.killstreaks = new KillstreakManager();
+    this.killstreakHud = new KillstreakHUD(this.killstreaks);
+    this.killstreaks.onChanged = () => this.killstreakHud.render();
+    this.killstreaks.onReady = (slotIndex) => {
+      this.killstreakHud.notifyReady(slotIndex);
+      this.gameAudio.killstreakReady();
+    };
+    this.moleStrike = new MoleStrike(
+      this.player,
+      this.movement,
+      this.playerCombatant,
+      this.fpsCamera,
+      this.combatants,
+      new MoleStrikeVFX(this.particles, this.shockwave),
+      this.gameAudio,
+    );
+    this.killstreaks.setEquipped(loadLoadout().killstreaks);
+
     this.playerCombatant.health.onDeath = () => {
       this.playerDeathTimer = cc.playerRespawnDelay;
       this.hammer.reset(); // drop any melee attack in progress
+      this.spear.reset();
+      this.meleeHoldPending = false;
+      // Death mid-burrow: instant cleanup WITHOUT the AoE, then every
+      // killstreak slot (progress / ready / spent) resets to LOCKED.
+      this.moleStrike.abort();
+      this.killstreaks.onPlayerDeath();
       this.gameAudio.playerDeath();
       // The combo NEVER survives death — even on a mutual kill the medal
       // may already be queued, but the bar/count reset immediately.
@@ -251,6 +327,9 @@ export class Game {
         const count = this.combo.registerKill();
         this.comboHud.notifyKill();
         this.medals.onPlayerKill(count, method);
+        // Killstreak progress: every LOCKED slot advances by one kill.
+        this.killstreaks.onPlayerKill();
+        this.killstreakHud.notifyKill();
       }
       this.gameAudio.botKilled(bot);
       // Loot belongs to a REAL combat death only. Manual bot removal from
@@ -296,7 +375,25 @@ export class Game {
     // and kick off SFX preloading (cached — only the first call fetches).
     this.gameAudio.unlock();
     void this.gameAudio.preload();
+    this.applyLoadout();
     this.input.requestPointerLock();
+  }
+
+  /**
+   * Re-read the persisted loadout when (re)entering the game. The Loadout
+   * menu only WRITES the selection — this is the single point where the
+   * game applies it. Switching melee weapons cleanly drops any attack.
+   */
+  private applyLoadout(): void {
+    const selection = loadLoadout();
+    // The manager skips unchanged slots, so in-flight progress survives.
+    this.killstreaks.setEquipped(selection.killstreaks);
+    const melee = selection.melee;
+    if (melee === this.meleeWeapon) return;
+    this.meleeWeapon = melee;
+    this.hammer.reset();
+    this.spear.reset();
+    this.meleeHoldPending = false;
   }
 
   start(): void {
@@ -332,16 +429,34 @@ export class Game {
       this.playerCombatant.health.update(dt);
 
       if (playerAlive) {
-        this.handleMeleeInput();
+        // Melee is blocked for the whole MOLE STRIKE (burrow → eruption).
+        if (!this.moleStrike.blocksWeapons) this.handleMeleeInput(dt);
         this.movement.update(dt);
+        // AFTER movement: E while burrowed emerges here instead of dashing
+        // (the movement itself refuses to dash while UNDERGROUND).
+        this.handleKillstreakInput();
 
         // Ground Slam AoE: fires on the REAL ground contact of the dive
         // (reported by the movement state machine) — never on a timer.
         const slamImpact = this.movement.consumeSlamImpact();
         if (slamImpact) this.hammer.onSlamLanded(slamImpact);
+
+        // Spear rush lifecycle: the movement reports WHY the charge ended
+        // (wall / timeout — a tip hit is stopped by the weapon itself).
+        const rushEnd = this.movement.consumeSpearRushEnd();
+        if (rushEnd) {
+          this.spear.onRushEnded(rushEnd);
+          if (rushEnd === "WALL") {
+            this.player.getPosition(this.playerPos);
+            this.gameAudio.hammerHit(this.playerPos); // distinct wall impact
+          }
+        }
       } else {
         this.updatePlayerDeath(dt);
       }
+
+      // MOLE STRIKE phase timers (enter / burrow timeout / emerge AoE).
+      this.moleStrike.update(dt);
 
       this.botManager.update(dt); // AI + bot movement (pre-step)
       this.physics.step(dt);
@@ -375,19 +490,31 @@ export class Game {
     this.botManager.updateVisibility(this.fpsCamera.camera);
 
     if (running) {
-      // Hammer melee: swing hit window / slam bookkeeping + viewmodel anim.
+      // Melee weapons: hit windows / rush bookkeeping + viewmodel anims.
       this.playerCombatant.getEyePosition(this.eyePos);
       this.fpsCamera.getForward(this.fwdFlat);
       this.hammer.update(dt, this.eyePos, this.fwdFlat);
+      this.spear.update(dt, this.eyePos, this.fwdFlat, this.movement.spearRushDir);
 
-      // Plasma Rifle is unavailable while the hammer is out (nothing is
+      // Cooldown feedback: discreet ping when SPEAR RUSH becomes READY.
+      const rushReady = this.spear.rushReady;
+      if (rushReady && !this.spearRushWasReady && this.meleeWeapon === "SPEAR") {
+        this.gameAudio.medalPop(1.4); // small "energy ready" ping
+      }
+      this.spearRushWasReady = rushReady;
+
+      // Plasma Rifle is unavailable while a melee weapon is out (nothing is
       // reset — heat keeps cooling / overheat keeps ticking normally).
       const wantFire =
         playerAlive &&
         this.input.pointerLocked &&
         this.input.isMouseDown(0) &&
-        !this.hammer.blocksFiring;
-      this.rifle.setViewmodelHidden(this.hammer.isBusy);
+        !this.hammer.blocksFiring &&
+        !this.spear.blocksFiring &&
+        !this.moleStrike.blocksWeapons;
+      this.rifle.setViewmodelHidden(
+        this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
+      );
       this.rifle.update(dt, wantFire, this.hittables, this.elapsed);
       this.botManager.updateWeapons(dt, this.hittables, this.elapsed);
       this.handlePhaseEffects();
@@ -414,6 +541,8 @@ export class Game {
     this.hud.update(dt, this.movement);
     this.weaponHud.update(dt, this.rifle.heat, this.rifle.hittingTarget);
     this.dashHud.update(dt, this.movement);
+    this.spearHud.setVisible(this.meleeWeapon === "SPEAR");
+    this.spearHud.update(this.spear);
     this.combatHud.update(dt, this.playerCombatant.health, this.playerDeathTimer);
     this.comboHud.update(this.combo);
     this.renderer.render(this.scene, this.fpsCamera.camera);
@@ -421,14 +550,38 @@ export class Game {
   }
 
   /**
-   * Melee input priority (single "A" press, edge-triggered):
-   *   dead                 → nothing
-   *   attack in progress   → nothing (no cancel, no spam, no stacking)
-   *   airborne             → Ground Slam (vertical charge + AoE on landing)
-   *   grounded             → alternating horizontal hammer sweep
-   * Once started, the attack type is LOCKED until the sequence finishes.
+   * Killstreak activation (keys 1/2/3) + MOLE STRIKE emerge (E).
+   * A refused activation (no ground below the feet) consumes NOTHING —
+   * the slot stays READY. Only one killstreak can be ACTIVE at a time.
    */
-  private handleMeleeInput(): void {
+  private handleKillstreakInput(): void {
+    if (this.moleStrike.active) {
+      if (this.input.wasPressed("KeyE")) this.moleStrike.requestEmerge();
+      return;
+    }
+    for (let i = 0; i < 3; i++) {
+      if (!this.input.wasPressed(`Digit${i + 1}`)) continue;
+      const def = this.killstreaks.peekReady(i);
+      if (!def) continue;
+      if (def.id === "MOLE_STRIKE" && this.moleStrike.canActivate()) {
+        this.killstreaks.confirmActivation(i);
+        this.moleStrike.activate(() => this.killstreaks.completeActivation(i));
+        this.meleeHoldPending = false; // never resume a held charge afterwards
+      }
+    }
+  }
+
+  /** Melee input dispatch: the equipped weapon owns the "A" key. */
+  private handleMeleeInput(dt: number): void {
+    if (this.meleeWeapon === "SPEAR") {
+      this.handleSpearInput(dt);
+      return;
+    }
+
+    // ---- Hammer (single press, edge-triggered) ----
+    //   attack in progress   → nothing (no cancel, no spam, no stacking)
+    //   airborne             → Ground Slam (vertical charge + AoE on landing)
+    //   grounded             → alternating horizontal hammer sweep
     if (!this.input.wasMeleePressed()) return;
     if (this.hammer.isBusy) return; // input cleanly ignored — no feedback needed
 
@@ -437,6 +590,43 @@ export class Game {
     } else if (this.hammer.startSlam()) {
       // Movement takes over the descent; the AoE fires on real ground contact.
       this.movement.startGroundSlam();
+    }
+  }
+
+  /**
+   * Astral Lance tap-vs-hold detection (grounded AND airborne — identical):
+   *   press released before the hold threshold → SWEEP
+   *   press held past the threshold            → CHARGED SPEAR RUSH
+   * The sweep is NEVER auto-played before a rush. During the rush cooldown
+   * a held press does nothing, but a quick tap still sweeps normally.
+   * Once a rush launches it is COMMITTED — releasing the key changes nothing.
+   */
+  private handleSpearInput(dt: number): void {
+    if (this.spear.isBusy) {
+      this.meleeHoldPending = false; // no buffering, no cancel, no stacking
+      return;
+    }
+
+    if (this.input.wasMeleePressed()) {
+      this.meleeHoldPending = true;
+      this.meleeHoldTimer = 0;
+    }
+    if (!this.meleeHoldPending) return;
+
+    if (!this.input.isMeleeDown()) {
+      // Released before the threshold → quick press → SWEEP.
+      this.meleeHoldPending = false;
+      this.spear.startSweep();
+      return;
+    }
+
+    this.meleeHoldTimer += dt;
+    if (this.meleeHoldTimer >= spearCfg.spearChargeHoldThreshold) {
+      this.meleeHoldPending = false;
+      // Held past the threshold → RUSH (only if the cooldown allows it).
+      if (this.spear.rushReady && this.spear.startRush()) {
+        this.movement.startSpearRush();
+      }
     }
   }
 
@@ -516,8 +706,13 @@ export class Game {
       lateralSpeed: this.movement.velocity.dot(this.rightDir),
       wallSide: this.movement.state === MoveState.WALL_SLIDING ? this.movement.wallSide : 0,
       crouchAmount: this.player.crouched ? 1 : 0,
-      dashKick: this.movement.isDashing ? 1 : 0,
+      dashKick: this.movement.isDashing
+        ? 1
+        : this.movement.isSpearRushing
+          ? spearCfg.spearRushFovKick
+          : 0,
       phaseKick: this.movement.phaseIntensity,
+      undergroundDrop: this.moleStrike.cameraDrop,
     });
   }
 }
