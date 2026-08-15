@@ -4,9 +4,9 @@ import doubleKillUrl from "../assets/doublekill.png";
 import tripleKillUrl from "../assets/triplekill.png";
 import smashedUrl from "../assets/SMASHED.png";
 import homerunUrl from "../assets/homerun.png";
-import obliteratedUrl from "../assets/OBLITERATED.svg";
-import moledUrl from "../assets/MOLED.svg";
-import impaledUrl from "../assets/IMPALED.svg";
+import obliteratedUrl from "../assets/Oblirated.png";
+import moledUrl from "../assets/Moled.png";
+import impaledUrl from "../assets/Impaled.png";
 import { KillMethod } from "../combat/KillMethod";
 
 /**
