@@ -25,6 +25,8 @@ import { SpearConfig as spearCfg } from "../weapons/SpearConfig";
 import { SpearHUD } from "../ui/SpearHUD";
 import { loadLoadout, MeleeWeaponId, PrimaryWeaponId } from "../loadout/Loadout";
 import { ObliterreurWeapon } from "../weapons/obliterreur/ObliterreurWeapon";
+import { RevolverWeapon } from "../weapons/revolver/RevolverWeapon";
+import { RevolverHUD } from "../ui/RevolverHUD";
 import { KillstreakManager } from "../killstreaks/KillstreakManager";
 import { MoleStrike } from "../killstreaks/mole/MoleStrike";
 import { MoleStrikeVFX } from "../killstreaks/mole/MoleStrikeVFX";
@@ -32,6 +34,9 @@ import { KillstreakHUD } from "../ui/KillstreakHUD";
 import { TargetManager } from "../targets/TargetManager";
 import { Combatant } from "../combat/Combatant";
 import { PlayerCombatant } from "../combat/PlayerCombatant";
+import { HitZone } from "../combat/HitZone";
+import { HitFeedbackManager } from "../combat/HitFeedbackManager";
+import { HitmarkerHUD } from "../ui/HitmarkerHUD";
 import { SpawnManager } from "../combat/SpawnManager";
 import { NavGrid } from "../navigation/NavGrid";
 import { BotManager } from "../bots/BotManager";
@@ -93,6 +98,10 @@ export class Game {
   private primaryWeapon: PrimaryWeaponId;
   private readonly obliAudioPos = new THREE.Vector3();
 
+  // ---- REVOLVER (primary alternative — equipped via the Loadout menu) ----
+  private revolver: RevolverWeapon;
+  private revolverHud: RevolverHUD;
+
   // ---- FFA combat ----
   private gameAudio: GameAudio;
 
@@ -116,6 +125,7 @@ export class Game {
   private botManager: BotManager;
   private pickups: PickupManager;
   private playerCombatant: PlayerCombatant;
+  private hitFeedback: HitFeedbackManager;
   private readonly combatants: Combatant[] = [];
   private playerDeathTimer = 0;
 
@@ -201,6 +211,15 @@ export class Game {
     this.combatants.push(this.playerCombatant);
     this.rifle.owner = this.playerCombatant;
 
+    // Hit-confirmation feedback (hitmarker + sound + victim reaction) —
+    // LOCAL PLAYER only; weapons report every applied damage tick to it.
+    this.hitFeedback = new HitFeedbackManager(
+      new HitmarkerHUD(),
+      this.particles,
+      this.playerCombatant,
+    );
+    this.rifle.feedback = this.hitFeedback;
+
     // ---- FFA match stats (source of truth) + live leaderboard HUD ----
     // Event flow: combat event → MatchStatsManager → leaderboard refresh.
     // The HUD is a pure observer and only re-renders when stats actually
@@ -255,12 +274,30 @@ export class Game {
       this.particles,
     );
     this.obliterreur.owner = this.playerCombatant;
+    this.obliterreur.feedback = this.hitFeedback;
     this.obliterreur.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
+
+    // ---- REVOLVER (primary alternative — equipped from the Loadout menu):
+    // LMB single shot, RMB fan fire (empties the cylinder), R explosive
+    // throw + immediate holographic rematerialization of a fresh revolver.
+    this.revolver = new RevolverWeapon(
+      this.scene,
+      this.fpsCamera.camera,
+      this.combatants,
+      this.particles,
+      this.shockwave,
+    );
+    this.revolver.owner = this.playerCombatant;
+    this.revolver.setFeedback(this.hitFeedback);
+    this.revolver.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
+    this.revolverHud = new RevolverHUD();
 
     // ---- Audio: pure observation of existing gameplay events ----
     this.gameAudio = new GameAudio();
     this.movement.sfx = this.gameAudio.movementSfx;
     this.rifle.onOverheat = () => this.gameAudio.overheat();
+    this.hitFeedback.onBodyHitSound = () => this.gameAudio.hitBody();
+    this.hitFeedback.onHeadshotSound = () => this.gameAudio.hitHead();
     this.hammer.onSwingStart = () => this.gameAudio.hammerSwing();
     this.hammer.onHitConnect = (pos) => this.gameAudio.hammerHit(pos);
     this.hammer.onSlamStart = () => this.gameAudio.slamDescent();
@@ -273,6 +310,12 @@ export class Game {
     this.obliterreur.onPointPlaced = () => this.gameAudio.obliterreurPlace();
     this.obliterreur.onBeamStart = () => this.gameAudio.obliterreurActivate();
     this.obliterreur.onBeamEnd = (cancelled) => this.gameAudio.obliterreurBeamEnd(cancelled);
+    // Revolver: ballistic gunshot sample + layered throw / explosion /
+    // holographic-materialize cues (pure observers, gameplay untouched).
+    this.revolver.onShot = (fanFire) => this.gameAudio.revolverShot(fanFire);
+    this.revolver.onThrow = () => this.gameAudio.revolverThrow();
+    this.revolver.onExplosion = (pos) => this.gameAudio.revolverExplosion(pos);
+    this.revolver.onMaterializeStart = () => this.gameAudio.revolverMaterialize();
 
     this.playerCombatant.health.onDamaged = (amount, attacker) => {
       this.combatHud.notifyDamage(amount, this.damageAngleFrom(attacker));
@@ -312,6 +355,7 @@ export class Game {
       this.hammer.reset(); // drop any melee attack in progress
       this.spear.reset();
       this.obliterreur.reset(); // vortex off + anchors cleared on death
+      this.revolver.reset(); // fan fire dropped, fresh 6/6 for the respawn
       this.meleeHoldPending = false;
       // Death mid-burrow: instant cleanup WITHOUT the AoE, then every
       // killstreak slot (progress / ready / spent) resets to LOCKED.
@@ -343,7 +387,7 @@ export class Game {
       this.spawner,
       this.combatants,
     );
-    this.botManager.onBotKilled = (bot, killer, method) => {
+    this.botManager.onBotKilled = (bot, killer, method, hitZone) => {
       if (killer === this.playerCombatant) {
         this.combatHud.notifyKill();
         // LOCAL PLAYER kill only (bot-vs-bot never touches the combo):
@@ -351,7 +395,7 @@ export class Game {
         // first, then the kill-method medal — HOMERUN / SMASHED).
         const count = this.combo.registerKill();
         this.comboHud.notifyKill();
-        this.medals.onPlayerKill(count, method);
+        this.medals.onPlayerKill(count, method, hitZone === HitZone.HEAD);
         // Killstreak progress: every LOCKED slot advances by one kill.
         this.killstreaks.onPlayerKill();
         this.killstreakHud.notifyKill();
@@ -413,10 +457,12 @@ export class Game {
     const selection = loadLoadout();
     // The manager skips unchanged slots, so in-flight progress survives.
     this.killstreaks.setEquipped(selection.killstreaks);
-    // Primary swap: a clean slate — active vortex cancelled, anchors gone.
+    // Primary swap: a clean slate — active vortex cancelled, anchors gone,
+    // revolver back to a full ready cylinder.
     if (selection.primary !== this.primaryWeapon) {
       this.primaryWeapon = selection.primary;
       this.obliterreur.reset();
+      this.revolver.reset();
     }
     const melee = selection.melee;
     if (melee === this.meleeWeapon) return;
@@ -535,8 +581,9 @@ export class Game {
 
       // Plasma Rifle is unavailable while a melee weapon is out (nothing is
       // reset — heat keeps cooling / overheat keeps ticking normally) or
-      // when the OBLITERREUR is the equipped primary.
+      // when another primary (OBLITERREUR / REVOLVER) is equipped.
       const obliEquipped = this.primaryWeapon === "OBLITERREUR";
+      const revolverEquipped = this.primaryWeapon === "REVOLVER";
       const meleeBlocked =
         this.hammer.blocksFiring || this.spear.blocksFiring || this.moleStrike.blocksWeapons;
       const wantFire =
@@ -544,9 +591,14 @@ export class Game {
         this.input.pointerLocked &&
         this.input.isMouseDown(0) &&
         !meleeBlocked &&
-        !obliEquipped;
+        !obliEquipped &&
+        !revolverEquipped;
       this.rifle.setViewmodelHidden(
-        this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active || obliEquipped,
+        this.hammer.isBusy ||
+          this.spear.isBusy ||
+          this.moleStrike.active ||
+          obliEquipped ||
+          revolverEquipped,
       );
       this.rifle.update(dt, wantFire, this.hittables, this.elapsed);
 
@@ -568,6 +620,21 @@ export class Game {
         this.obliterreur.beamActive,
         this.obliterreur.getAudioEmitterPos(this.playerPos, this.obliAudioPos),
       );
+
+      // REVOLVER: LMB single shot, RMB committed fan fire, R explosive
+      // throw. Perfect accuracy is inside the weapon (camera-center ray);
+      // thrown projectiles / explosions keep ticking even while blocked.
+      this.revolver.setViewmodelHidden(
+        !revolverEquipped || this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
+      );
+      this.revolver.update(dt, {
+        firePressed: revolverEquipped && this.input.wasMousePressed(0),
+        fanFirePressed: revolverEquipped && this.input.wasMousePressed(2),
+        throwPressed: revolverEquipped && this.input.wasPressed("KeyR"),
+        canAct: revolverEquipped && playerAlive && !meleeBlocked,
+        hittables: this.hittables,
+        time: this.elapsed,
+      });
       this.botManager.updateWeapons(dt, this.hittables, this.elapsed);
       this.handlePhaseEffects();
       this.particles.update(dt);
@@ -577,6 +644,7 @@ export class Game {
       // the game so the Escape menu never eats your combo).
       this.combo.update(dt);
       this.medals.update(dt);
+      this.hitFeedback.update(dt);
       this.gameAudio.setComboLayer(this.combo.active, this.combo.comboCount);
     }
 
@@ -595,6 +663,8 @@ export class Game {
     this.dashHud.update(dt, this.movement);
     this.spearHud.setVisible(this.meleeWeapon === "SPEAR");
     this.spearHud.update(this.spear);
+    this.revolverHud.setVisible(this.primaryWeapon === "REVOLVER");
+    this.revolverHud.update(this.revolver);
     this.combatHud.update(dt, this.playerCombatant.health, this.playerDeathTimer);
     this.comboHud.update(this.combo);
     this.renderer.render(this.scene, this.fpsCamera.camera);
@@ -743,7 +813,11 @@ export class Game {
     if (!this.playerCombatant.health.alive) return;
     this.player.getPosition(this.playerPos);
     const fellOut = this.playerPos.y < cfg.killPlaneY;
-    if (fellOut || this.input.wasPressed("KeyR")) {
+    // R = manual respawn — EXCEPT with the Revolver equipped, where R is
+    // the weapon's explosive throw (the kill plane still works normally).
+    const manualRespawn =
+      this.input.wasPressed("KeyR") && this.primaryWeapon !== "REVOLVER";
+    if (fellOut || manualRespawn) {
       // Suicide / kill plane → normal death + respawn flow.
       this.playerCombatant.health.kill(null);
     }

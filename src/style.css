@@ -1405,3 +1405,118 @@ body {
     font-size: 12px;
   }
 }
+
+/* ==========================================================================
+   Hitmarker (hit confirmation around the crosshair)
+   Two clearly DISTINCT pulses driven by pure CSS animations (no JS ticks):
+   - BODY: 4 small light-violet diagonal arms, quick punch-in + fade.
+   - HEAD: intense violet arms pushed further out with a double pulse and
+     a small central flash. Never "just bigger" — a different signature.
+   Durations come from HitFeedbackConfig via --hm-body-dur / --hm-head-dur.
+   ========================================================================== */
+#hitmarker {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 22; /* just above the crosshair */
+}
+
+.hm-arm {
+  position: absolute;
+  left: -1px;
+  top: -5px;
+  width: 2px;
+  height: 10px;
+  border-radius: 1px;
+  opacity: 0;
+  transform: rotate(var(--r)) translateY(-10px);
+}
+
+.hm-center {
+  position: absolute;
+  left: -3px;
+  top: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  opacity: 0;
+}
+
+/* ---- BODY hit: subtle, fast, light violet ---- */
+#hitmarker.hm-body .hm-arm {
+  background: #e7dcff;
+  box-shadow: 0 0 6px rgba(192, 132, 252, 0.9);
+  animation: hm-body-arm var(--hm-body-dur, 0.16s) ease-out forwards;
+}
+
+@keyframes hm-body-arm {
+  0% {
+    opacity: 0.95;
+    transform: rotate(var(--r)) translateY(-14px) scaleY(1.25);
+  }
+  55% {
+    opacity: 0.9;
+    transform: rotate(var(--r)) translateY(-10px) scaleY(1);
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(var(--r)) translateY(-9px) scaleY(0.85);
+  }
+}
+
+/* ---- HEADSHOT: intense violet, pushed out, double pulse + core flash ---- */
+#hitmarker.hm-head .hm-arm {
+  background: #c084fc;
+  box-shadow:
+    0 0 8px rgba(168, 85, 247, 1),
+    0 0 16px rgba(168, 85, 247, 0.6);
+  animation: hm-head-arm var(--hm-head-dur, 0.28s) ease-out forwards;
+}
+
+@keyframes hm-head-arm {
+  0% {
+    opacity: 1;
+    transform: rotate(var(--r)) translateY(-24px) scaleY(1.6);
+  }
+  30% {
+    opacity: 1;
+    transform: rotate(var(--r)) translateY(-15px) scaleY(1.05);
+  }
+  /* second pulse — the double-tap signature of a headshot */
+  50% {
+    opacity: 1;
+    transform: rotate(var(--r)) translateY(-20px) scaleY(1.3);
+  }
+  70% {
+    opacity: 0.85;
+    transform: rotate(var(--r)) translateY(-14px) scaleY(1);
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(var(--r)) translateY(-12px) scaleY(0.8);
+  }
+}
+
+#hitmarker.hm-head .hm-center {
+  background: radial-gradient(circle, #ffffff 0%, #c084fc 55%, transparent 75%);
+  box-shadow: 0 0 12px rgba(192, 132, 252, 0.95);
+  animation: hm-head-center var(--hm-head-dur, 0.28s) ease-out forwards;
+}
+
+@keyframes hm-head-center {
+  0% {
+    opacity: 1;
+    transform: scale(1.7);
+  }
+  45% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+}

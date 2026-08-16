@@ -20,5 +20,9 @@ export enum KillMethod {
   MOLE_STRIKE = "MOLE_STRIKE",
   /** OBLITERREUR black-vortex beam → OBLITERATED medal. */
   OBLITERREUR = "OBLITERREUR",
+  /** Revolver ballistic bullet (LMB single shot or RMB fan fire). */
+  REVOLVER = "REVOLVER",
+  /** Thrown revolver AoE explosion (never a headshot by definition). */
+  REVOLVER_EXPLOSION = "REVOLVER_EXPLOSION",
   ENVIRONMENT = "ENVIRONMENT",
 }

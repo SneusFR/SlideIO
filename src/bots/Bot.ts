@@ -6,6 +6,7 @@ import { WeaponConfig as wc } from "../weapons/WeaponConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import { Combatant, Health } from "../combat/Combatant";
 import { KillMethod } from "../combat/KillMethod";
+import { HitZone } from "../combat/HitZone";
 import { SpawnManager } from "../combat/SpawnManager";
 import { NavGrid } from "../navigation/NavGrid";
 import { ParticleSystem } from "../effects/ParticleSystem";
@@ -182,6 +183,14 @@ export class Bot implements Combatant {
   }
 
   // ---- Frame update (AI + movement, before physics.step) ----
+  /**
+   * Cosmetic reaction to a confirmed hit from the LOCAL player (routed by
+   * the HitFeedbackManager). Zone-aware: a headshot lights ONLY the head.
+   */
+  onHitVisual(zone: HitZone, _position: THREE.Vector3 | null): void {
+    if (this.health.alive) this.model.hitFlash(zone);
+  }
+
   update(dt: number, ctx: BotContext): void {
     this.health.update(dt);
 

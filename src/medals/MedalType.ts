@@ -15,4 +15,6 @@ export enum MedalType {
   MOLED = "MOLED",
   /** Kill with the Astral Lance charged rush. */
   IMPALED = "IMPALED",
+  /** Killing blow landed on the head (Plasma Rifle only). */
+  HEADSHOT = "HEADSHOT",
 }

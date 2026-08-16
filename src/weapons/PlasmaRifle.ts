@@ -8,6 +8,8 @@ import { ParticleSystem } from "../effects/ParticleSystem";
 import { PlasmaImpact } from "../effects/PlasmaImpact";
 import { Combatant } from "../combat/Combatant";
 import { KillMethod } from "../combat/KillMethod";
+import { HitZone } from "../combat/HitZone";
+import { HitFeedbackManager } from "../combat/HitFeedbackManager";
 import { castBeam, BeamCastResult } from "./BeamCombat";
 
 /**
@@ -35,6 +37,9 @@ export class PlasmaRifle {
 
   /** The combatant wielding this rifle (never damaged by its own beam). */
   owner: Combatant | null = null;
+
+  /** Hit-confirmation feedback sink (only the local player's rifle has one). */
+  feedback: HitFeedbackManager | null = null;
 
   private readonly camera: THREE.Camera;
   private readonly particles: ParticleSystem;
@@ -278,11 +283,26 @@ export class PlasmaRifle {
     this.hitNormal.copy(this.beamResult.normal);
 
     if (this.beamResult.combatant) {
-      this.beamResult.combatant.health.applyDamage(
-        cfg.plasmaDamagePerSecond * dt,
-        this.owner,
-        KillMethod.PLASMA,
-      );
+      const combatant = this.beamResult.combatant;
+      const zone = this.beamResult.hitZone;
+      // Headshot multiplier is re-evaluated EVERY frame from the actual
+      // struck mesh — sliding the beam off the head instantly drops it.
+      const mult =
+        zone === HitZone.HEAD && cfg.supportsHeadshots ? cfg.headshotMultiplier : 1;
+      const damage = cfg.plasmaDamagePerSecond * mult * dt;
+      const applied = combatant.health.applyDamage(damage, this.owner, KillMethod.PLASMA, zone);
+      if (applied) {
+        // Only APPLIED damage produces feedback (dead/protected → nothing).
+        this.feedback?.registerHit({
+          attacker: this.owner,
+          target: combatant,
+          hitZone: zone,
+          damage,
+          position: this.beamResult.point,
+          weapon: KillMethod.PLASMA,
+          isKill: !combatant.health.alive,
+        });
+      }
       this.hittingTarget = true;
     } else if (this.beamResult.trainingTarget) {
       this.beamResult.trainingTarget.applyDamage(cfg.plasmaDamagePerSecond * dt);

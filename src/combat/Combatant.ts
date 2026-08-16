@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { KillMethod } from "./KillMethod";
+import { HitZone } from "./HitZone";
 
 /**
  * Anything that can fight in the FFA: the human player and every bot.
@@ -26,6 +27,11 @@ export interface Combatant {
    * momentum and the shove integrates naturally with the physics.
    */
   applyImpulse(impulse: THREE.Vector3): void;
+  /**
+   * Optional cosmetic reaction to a confirmed hit from the LOCAL player
+   * (damage flash, headshot glint…). Purely visual — never gameplay.
+   */
+  onHitVisual?(zone: HitZone, position: THREE.Vector3 | null): void;
 }
 
 /**
@@ -47,9 +53,10 @@ export class Health {
   /**
    * Fired EXACTLY ONCE when HP reaches 0 (`alive` flips to false and blocks
    * any further damage, so continuous beams can never produce a second kill
-   * event for the same death). Carries the explicit kill method.
+   * event for the same death). Carries the explicit kill method AND the
+   * hit zone of the fatal hit (HEAD = headshot kill).
    */
-  onDeath?: (attacker: Combatant | null, method: KillMethod) => void;
+  onDeath?: (attacker: Combatant | null, method: KillMethod, hitZone: HitZone) => void;
 
   /**
    * Additional pure OBSERVERS (match stats, future systems…). They run after
@@ -57,8 +64,11 @@ export class Health {
    * several systems can watch the same Health without clobbering each other.
    */
   private readonly damageListeners: ((amount: number, attacker: Combatant | null) => void)[] = [];
-  private readonly deathListeners: ((attacker: Combatant | null, method: KillMethod) => void)[] =
-    [];
+  private readonly deathListeners: ((
+    attacker: Combatant | null,
+    method: KillMethod,
+    hitZone: HitZone,
+  ) => void)[] = [];
 
   /** Observe every applied damage tick (never called on blocked damage). */
   addDamageListener(fn: (amount: number, attacker: Combatant | null) => void): void {
@@ -66,7 +76,9 @@ export class Health {
   }
 
   /** Observe the single death event (same guarantees as `onDeath`). */
-  addDeathListener(fn: (attacker: Combatant | null, method: KillMethod) => void): void {
+  addDeathListener(
+    fn: (attacker: Combatant | null, method: KillMethod, hitZone: HitZone) => void,
+  ): void {
     this.deathListeners.push(fn);
   }
 
@@ -91,6 +103,7 @@ export class Health {
     amount: number,
     attacker: Combatant | null,
     method: KillMethod = KillMethod.ENVIRONMENT,
+    hitZone: HitZone = HitZone.BODY,
   ): boolean {
     if (!this.alive || this.invulnerable || this.protectionTimer > 0 || amount <= 0) return false;
     this.current -= amount;
@@ -99,8 +112,8 @@ export class Health {
     if (this.current <= 0) {
       this.current = 0;
       this.alive = false;
-      this.onDeath?.(attacker, method);
-      for (const fn of this.deathListeners) fn(attacker, method);
+      this.onDeath?.(attacker, method, hitZone);
+      for (const fn of this.deathListeners) fn(attacker, method, hitZone);
     }
     return true;
   }
@@ -110,8 +123,8 @@ export class Health {
     if (!this.alive) return;
     this.current = 0;
     this.alive = false;
-    this.onDeath?.(attacker, KillMethod.ENVIRONMENT);
-    for (const fn of this.deathListeners) fn(attacker, KillMethod.ENVIRONMENT);
+    this.onDeath?.(attacker, KillMethod.ENVIRONMENT, HitZone.BODY);
+    for (const fn of this.deathListeners) fn(attacker, KillMethod.ENVIRONMENT, HitZone.BODY);
   }
 
   update(dt: number): void {

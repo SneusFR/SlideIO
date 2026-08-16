@@ -31,6 +31,11 @@ export const AUDIO_MANIFEST: Record<string, string> = {
   plasma_heat_loop: `${A}/plasma/plasma_heat_loop_01.mp3`,
   plasma_overheat: `${A}/plasma/plasma_overheat_01.mp3`,
   plasma_cooling_loop: `${A}/plasma/plasma_cooling_loop_01.mp3`,
+  // Hit confirmation (local player damage feedback)
+  hit_body: `${A}/hits/hit_body_01.mp3`,
+  hit_head: `${A}/hits/hit_head_01.mp3`,
+  // Revolver (arcade ballistic revolver — CC0, see ATTRIBUTION.md)
+  revolver_shot: `${A}/revolver/revolver_shot_01.mp3`,
   // Hammer
   hammer_swing_01: `${A}/hammer/hammer_swing_01.mp3`,
   hammer_swing_02: `${A}/hammer/hammer_swing_02.mp3`,
@@ -373,9 +378,93 @@ export class GameAudio {
     }
   }
 
+  /** Short energetic body-hit confirmation tick (throttled by the feedback manager too). */
+  hitBody(): void {
+    audio.play("hit_body", {
+      bus: "impacts",
+      volume: 0.38,
+      rate: 1,
+      rateVar: 0.05,
+      throttleMs: 70,
+    });
+  }
+
+  /** Bright, clearly DISTINCT headshot ping — never just a louder body hit. */
+  hitHead(): void {
+    audio.play("hit_head", {
+      bus: "impacts",
+      volume: 0.5,
+      rate: 1,
+      rateVar: 0.03,
+      throttleMs: 70,
+    });
+  }
+
   /** Rifle overheat burst (wired to PlasmaRifle.onOverheat). */
   overheat(): void {
     audio.play("plasma_overheat", { bus: "weapons", volume: 0.85, rate: 1 });
+  }
+
+  // ------------------------------------------------------------------
+  // REVOLVER (ballistic gunshot sample + layered existing SFX)
+  // ------------------------------------------------------------------
+
+  /**
+   * Revolver gunshot: soft-stylized arcade "BANG" (real ballistic sample,
+   * never a laser). Fan-fire shots are slightly quieter with a small pitch
+   * variance and capped polyphony so the fast BANG-BANG-BANG-BANG never
+   * saturates the mix.
+   */
+  revolverShot(fanFire: boolean): void {
+    audio.play("revolver_shot", {
+      bus: "weapons",
+      volume: fanFire ? 0.5 : 0.62,
+      volumeVar: 0.04,
+      rate: fanFire ? 1.06 : 1,
+      rateVar: fanFire ? 0.06 : 0.03,
+      throttleMs: fanFire ? 45 : 0,
+      maxInstances: 4, // polyphony limiter for the fan fire
+    });
+  }
+
+  /** Weapon leaves the hand: short throw whoosh. */
+  revolverThrow(): void {
+    audio.play("jump", { bus: "weapons", volume: 0.55, rate: 1.35, rateVar: 0.06 });
+    audio.play("dash_whoosh", { bus: "weapons", volume: 0.3, rate: 1.5, delay: 0.02 });
+  }
+
+  /** Thrown revolver detonation: bass punch + short energy burst. */
+  revolverExplosion(pos: THREE.Vector3): void {
+    audio.playAt("hammer_slam_impact", pos, {
+      bus: "impacts",
+      volume: 0.95,
+      rate: 1.1,
+      rateVar: 0.04,
+      throttleMs: 60,
+      refDistance: 9,
+    });
+    audio.playAt("hammer_slam_sub", pos, {
+      bus: "impacts",
+      volume: 0.85,
+      rate: 1,
+      throttleMs: 60,
+      refDistance: 9,
+    });
+    audio.playAt("dash_energy", pos, {
+      bus: "impacts",
+      volume: 0.5,
+      rate: 0.75,
+      delay: 0.03,
+      throttleMs: 60,
+      refDistance: 9,
+    });
+  }
+
+  /** Fresh revolver holographically assembling in the hand. */
+  revolverMaterialize(): void {
+    audio.play("phase_warp", { bus: "weapons", volume: 0.4, rate: 1.7, throttleMs: 80 });
+    audio.play("dash_energy", { bus: "weapons", volume: 0.4, rate: 1.4, delay: 0.05 });
+    audio.play("ready_ping", { bus: "ui", volume: 0.3, rate: 1.5, delay: 0.3 });
   }
 
   // ------------------------------------------------------------------

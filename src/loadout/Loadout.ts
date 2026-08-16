@@ -3,6 +3,7 @@ import { SpearConfig as sc } from "../weapons/SpearConfig";
 import { WeaponConfig as wc } from "../weapons/WeaponConfig";
 import { MoleStrikeConfig as mole } from "../killstreaks/mole/MoleStrikeConfig";
 import { ObliterreurConfig as oc } from "../weapons/obliterreur/ObliterreurConfig";
+import { RevolverConfig as rc } from "../weapons/revolver/RevolverConfig";
 
 /**
  * Player loadout: the single source of truth for what is equipped.
@@ -11,7 +12,7 @@ import { ObliterreurConfig as oc } from "../weapons/obliterreur/ObliterreurConfi
  */
 
 export type MeleeWeaponId = "HAMMER" | "SPEAR";
-export type PrimaryWeaponId = "PLASMA_RIFLE" | "OBLITERREUR";
+export type PrimaryWeaponId = "PLASMA_RIFLE" | "OBLITERREUR" | "REVOLVER";
 export type KillstreakId = "NONE" | "MOLE_STRIKE" | "ORBITAL_SCAN" | "NOVA_STRIKE";
 
 /** Exactly three equippable killstreak slots (keys 1 / 2 / 3 in game). */
@@ -68,7 +69,10 @@ export function loadLoadout(): LoadoutSelection {
         : [...DEFAULT_KILLSTREAKS] as KillstreakLoadout;
     return {
       melee: parsed.melee === "SPEAR" ? "SPEAR" : "HAMMER",
-      primary: parsed.primary === "OBLITERREUR" ? "OBLITERREUR" : "PLASMA_RIFLE",
+      primary:
+        parsed.primary === "OBLITERREUR" || parsed.primary === "REVOLVER"
+          ? parsed.primary
+          : "PLASMA_RIFLE",
       killstreaks,
     };
   } catch {
@@ -230,6 +234,49 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
           { label: "DURÉE", value: `${oc.obliterreurBeamDuration}s` },
           { label: "RAYON", value: `${oc.obliterreurBeamRadius} m` },
           { label: "COOLDOWN", value: "AUCUN" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "REVOLVER",
+    name: "REVOLVER",
+    tagline: "Barillet parfait & lancer explosif",
+    summary:
+      "Précision absolue : chaque balle part exactement au centre du viseur, quel que soit votre mouvement. Corps = kill instantané, tête = 2 balles. Videz le barillet d'un coup au clic droit, puis l'arme vide est lancée comme une grenade — et un nouveau revolver se matérialise dans votre main.",
+    abilities: [
+      {
+        trigger: "CLIC GAUCHE",
+        name: "TIR SIMPLE",
+        description:
+          "Une balle hitscan 100% précise vers le crosshair. Un tir au corps tue instantanément ; la tête demande deux balles (50% chacune) — un headshot reste compté comme HEADSHOT.",
+        stats: [
+          { label: "CORPS", value: `${rc.revolverBodyDamage} PV` },
+          { label: "TÊTE", value: `${rc.revolverHeadDamage} PV` },
+          { label: "CADENCE", value: `${rc.revolverPrimaryFireInterval}s` },
+          { label: "BARILLET", value: `${rc.revolverCapacity}` },
+        ],
+      },
+      {
+        trigger: "CLIC DROIT",
+        name: "FAN FIRE",
+        description:
+          "Vide automatiquement toutes les balles restantes en rafale ultra-rapide. Chaque balle raycast individuellement là où pointe le viseur à cet instant. Barillet vide → l'arme est lancée automatiquement.",
+        stats: [
+          { label: "CADENCE", value: `${rc.revolverFanFireInterval}s / balle` },
+          { label: "DISPERSION", value: "AUCUNE" },
+        ],
+      },
+      {
+        trigger: "TOUCHE R",
+        name: "LANCER EXPLOSIF",
+        description:
+          "Jette le revolver actuel (peu importe les munitions) : il vole vers l'avant, tourne sur lui-même et explose au premier obstacle. Un nouveau revolver se matérialise immédiatement dans votre main, barillet plein.",
+        stats: [
+          { label: "DÉGÂTS AOE", value: pct(rc.revolverExplosionDamageFraction) },
+          { label: "RAYON", value: `${rc.revolverExplosionRadius} m` },
+          { label: "VITESSE", value: `${rc.revolverThrowSpeed} m/s` },
+          { label: "MATÉRIALISATION", value: `${rc.revolverMaterializeDuration}s` },
         ],
       },
     ],

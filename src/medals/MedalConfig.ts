@@ -7,6 +7,7 @@ import homerunUrl from "../assets/homerun.png";
 import obliteratedUrl from "../assets/Oblirated.png";
 import moledUrl from "../assets/Moled.png";
 import impaledUrl from "../assets/Impaled.png";
+import headshotUrl from "../assets/headshot.png";
 import { KillMethod } from "../combat/KillMethod";
 
 /**
@@ -75,4 +76,5 @@ export const MedalAssets: Readonly<Record<MedalType, string>> = {
   [MedalType.OBLITERATED]: obliteratedUrl,
   [MedalType.MOLED]: moledUrl,
   [MedalType.IMPALED]: impaledUrl,
+  [MedalType.HEADSHOT]: headshotUrl,
 };

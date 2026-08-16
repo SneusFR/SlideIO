@@ -7,6 +7,10 @@ export const WeaponConfig = {
   // ---- Damage ----
   plasmaDamagePerSecond: 55,
 
+  // ---- Headshots (Plasma Rifle only — melee/AoE weapons never headshot) ----
+  supportsHeadshots: true,
+  headshotMultiplier: 2.0,
+
   // ---- Heat / overheat ----
   maxHeat: 100,
   heatPerSecond: 26, // heat gained per second while firing

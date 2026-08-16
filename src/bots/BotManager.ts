@@ -3,6 +3,7 @@ import { PhysicsWorld, RAPIER } from "../physics/PhysicsWorld";
 import { ParticleSystem } from "../effects/ParticleSystem";
 import { Combatant } from "../combat/Combatant";
 import { KillMethod } from "../combat/KillMethod";
+import { HitZone } from "../combat/HitZone";
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import { SpawnManager } from "../combat/SpawnManager";
 import { NavGrid } from "../navigation/NavGrid";
@@ -21,7 +22,9 @@ export class BotManager {
    * Carries the killer AND the explicit kill method so the combo/medal
    * systems can react without guessing.
    */
-  onBotKilled: ((bot: Bot, killer: Combatant | null, method: KillMethod) => void) | null = null;
+  onBotKilled:
+    | ((bot: Bot, killer: Combatant | null, method: KillMethod, hitZone: HitZone) => void)
+    | null = null;
 
   /** A bot joined the roster (Escape menu). NOT a respawn. */
   onBotAdded: ((bot: Bot) => void) | null = null;
@@ -75,9 +78,9 @@ export class BotManager {
       this.ctx.spawner,
       this.combatants,
     );
-    bot.health.onDeath = (killer, method) => {
+    bot.health.onDeath = (killer, method, hitZone) => {
       bot.onDeath();
-      this.onBotKilled?.(bot, killer, method);
+      this.onBotKilled?.(bot, killer, method, hitZone);
     };
     this.bots.push(bot);
     this.combatants.push(bot);

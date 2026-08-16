@@ -5,6 +5,8 @@ import { ObliterreurBeamVFX } from "./ObliterreurBeamVFX";
 import { ObliterreurViewmodel } from "./ObliterreurViewmodel";
 import { Combatant } from "../../combat/Combatant";
 import { KillMethod } from "../../combat/KillMethod";
+import { HitZone } from "../../combat/HitZone";
+import { HitFeedbackManager } from "../../combat/HitFeedbackManager";
 import { ParticleSystem } from "../../effects/ParticleSystem";
 
 export interface ObliterreurInput {
@@ -32,6 +34,9 @@ export interface ObliterreurInput {
 export class ObliterreurWeapon {
   /** The combatant wielding this weapon (never damaged by its own vortex). */
   owner: Combatant | null = null;
+
+  /** Hit-confirmation feedback sink (local player's weapon only). */
+  feedback: HitFeedbackManager | null = null;
 
   // ---- Hooks (wired by Game) ----
   onCameraShake: ((amount: number) => void) | null = null;
@@ -228,11 +233,20 @@ export class ObliterreurWeapon {
       if (target.targetable === false) continue;
       target.getPosition(this.tmpPos);
       if (this.distSqToPolyline(this.tmpPos) <= hitDistSq) {
-        target.health.applyDamage(
-          target.health.max * oc.obliterreurDamagePerSecondFraction * seconds,
-          this.owner,
-          KillMethod.OBLITERREUR,
-        );
+        // AoE weapon: always BODY, never a headshot multiplier.
+        const damage = target.health.max * oc.obliterreurDamagePerSecondFraction * seconds;
+        const applied = target.health.applyDamage(damage, this.owner, KillMethod.OBLITERREUR);
+        if (applied) {
+          this.feedback?.registerHit({
+            attacker: this.owner,
+            target,
+            hitZone: HitZone.BODY,
+            damage,
+            position: this.tmpPos,
+            weapon: KillMethod.OBLITERREUR,
+            isKill: !target.health.alive,
+          });
+        }
       }
     }
   }

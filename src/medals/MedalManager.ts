@@ -60,13 +60,19 @@ export class MedalManager {
    * A confirmed LOCAL PLAYER kill (Game verifies killer === localPlayer).
    * @param comboCount combo count AFTER this kill (1 = combo start)
    * @param method     explicit cause of death from the damage system
+   * @param isHeadshot true when the KILLING blow landed on the head
    */
-  onPlayerKill(comboCount: number, method: KillMethod): void {
+  onPlayerKill(comboCount: number, method: KillMethod, isHeadshot = false): void {
     // 1) Combo medal (registry lookup — extensible, no if-chains).
     const comboMedal = ComboMedalRegistry[comboCount];
     if (comboMedal !== undefined) this.queue.push(comboMedal);
 
-    // 2) Special medal, deferred + merged (one SMASHED per slam impact).
+    // 2) HEADSHOT right after the combo medal of the SAME kill. Only the
+    //    Plasma Rifle can headshot and it has no special method medal, so
+    //    this never competes with SMASHED/OBLITERATED/etc.
+    if (isHeadshot) this.queue.push(MedalType.HEADSHOT);
+
+    // 3) Special medal, deferred + merged (one SMASHED per slam impact).
     const special = SpecialMedalRegistry[method];
     if (special !== undefined) {
       const last = this.lastSpecialAt.get(special);

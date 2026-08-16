@@ -105,3 +105,21 @@ Pour chaque son : la page source est `https://freesound.org/s/<ID>/` (nom d'aute
 | Fichier local | Titre original | Freesound ID | Licence | Source |
 |---|---|---|---|---|
 | `medals/medal_unlock_01.mp3` | Achievement.wav | 338849 | CC0 | https://freesound.org/s/338849/ |
+
+## Revolver
+
+| Fichier local | Titre original | Freesound ID | Licence | Source |
+|---|---|---|---|---|
+| `revolver/revolver_shot_01.mp3` | Gunshot (revolver, stylized ballistic) | 683186 | CC0 | https://freesound.org/s/683186/ |
+
+Les autres sons du Revolver (lancer, explosion, matérialisation holographique)
+sont des **layers de sons CC0 déjà présents** dans ce projet (jump/dash whoosh,
+hammer slam impact/sub, dash energy, phase warp, ready ping) — voir les
+sections correspondantes ci-dessus.
+
+## Hits (confirmation de dégâts)
+
+| Fichier local | Titre original | Freesound ID | Licence | Source |
+|---|---|---|---|---|
+| `hits/hit_body_01.mp3` | Hitmarker Sound Effect | 570335 | CC0 | https://freesound.org/s/570335/ |
+| `hits/hit_head_01.mp3` | Headshot sound | 660769 | CC0 | https://freesound.org/s/660769/ |

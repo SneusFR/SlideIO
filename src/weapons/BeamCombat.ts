@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { Combatant } from "../combat/Combatant";
+import { HitZone } from "../combat/HitZone";
 import { TrainingTarget } from "../targets/TrainingTarget";
 
 /** Result of a beam raycast, written in place (no allocations). */
@@ -9,6 +10,8 @@ export class BeamCastResult {
   readonly normal = new THREE.Vector3();
   combatant: Combatant | null = null;
   trainingTarget: TrainingTarget | null = null;
+  /** Zone of the combatant hit (BODY unless a HEAD-tagged mesh was struck). */
+  hitZone: HitZone = HitZone.BODY;
 }
 
 /** Walk up the parent chain to find the entity a mesh belongs to. */
@@ -20,6 +23,22 @@ function resolveCombatant(object: THREE.Object3D): Combatant | null {
     o = o.parent;
   }
   return null;
+}
+
+/**
+ * Resolve the anatomical zone of the struck mesh: walk up from the hit
+ * object looking for a `userData.hitZone` tag, stopping at the combatant
+ * root (a head tag never leaks to another entity). Default = BODY.
+ */
+function resolveHitZone(object: THREE.Object3D): HitZone {
+  let o: THREE.Object3D | null = object;
+  while (o) {
+    const z = o.userData.hitZone as HitZone | undefined;
+    if (z) return z;
+    if (o.userData.combatant) break; // combatant root reached — stop
+    o = o.parent;
+  }
+  return HitZone.BODY;
 }
 
 function resolveTrainingTarget(object: THREE.Object3D): TrainingTarget | null {
@@ -54,6 +73,7 @@ export function castBeam(
   out.hit = false;
   out.combatant = null;
   out.trainingTarget = null;
+  out.hitZone = HitZone.BODY;
 
   const hits = raycaster.intersectObjects(hittables, true);
   for (let i = 0; i < hits.length; i++) {
@@ -70,6 +90,7 @@ export function castBeam(
       out.normal.copy(direction).negate();
     }
     out.combatant = combatant;
+    out.hitZone = combatant ? resolveHitZone(h.object) : HitZone.BODY;
     out.trainingTarget = combatant ? null : resolveTrainingTarget(h.object);
     return;
   }

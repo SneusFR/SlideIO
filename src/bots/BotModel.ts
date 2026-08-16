@@ -1,5 +1,7 @@
 import * as THREE from "three";
 import { CombatConfig as cc } from "../combat/CombatConfig";
+import { HitZone } from "../combat/HitZone";
+import { HitFeedbackConfig as hfc } from "../combat/HitFeedbackConfig";
 
 const BODY_COLORS = [0xd4a03b, 0x3bb0d4, 0x7ed43b, 0xd43b9a, 0xd4573b, 0x3bd4a8, 0x8a3bd4, 0xd4cf3b];
 
@@ -71,6 +73,8 @@ export class BotModel {
   private readonly healthFill: THREE.Mesh;
   private readonly nameLabel: THREE.Mesh;
   private readonly bodyMat: THREE.MeshLambertMaterial;
+  /** Head-only material (same base color) so headshot flashes stay local. */
+  private readonly headMat: THREE.MeshLambertMaterial;
   private readonly visorMat: THREE.MeshBasicMaterial;
   private readonly chestMat: THREE.MeshBasicMaterial;
 
@@ -80,8 +84,10 @@ export class BotModel {
 
   private walkPhase = Math.random() * 10;
   private flashAmount = 0;
+  private headFlashAmount = 0;
   private readonly baseColor: THREE.Color;
   private readonly flashColor = new THREE.Color(0xffffff);
+  private readonly visorBaseColor = new THREE.Color(0xc084fc);
   private readonly tmpColor = new THREE.Color();
   private readonly tmpSize = new THREE.Vector3();
 
@@ -89,6 +95,7 @@ export class BotModel {
     const color = BODY_COLORS[index % BODY_COLORS.length];
     this.baseColor = new THREE.Color(color);
     this.bodyMat = new THREE.MeshLambertMaterial({ color });
+    this.headMat = new THREE.MeshLambertMaterial({ color });
     const darkMat = new THREE.MeshLambertMaterial({ color: 0x2a2e38 });
     this.visorMat = new THREE.MeshBasicMaterial({ color: 0xc084fc });
     this.chestMat = new THREE.MeshBasicMaterial({ color: 0xa855f7 });
@@ -117,10 +124,15 @@ export class BotModel {
     chest.position.y = 0.14;
     const chestGlow = mesh(new THREE.BoxGeometry(0.2, 0.08, 0.02), this.chestMat);
     chestGlow.position.set(0, 0.22, -0.14);
-    const head = mesh(new THREE.BoxGeometry(0.26, 0.26, 0.26), this.bodyMat);
+    const head = mesh(new THREE.BoxGeometry(0.26, 0.26, 0.26), this.headMat);
     head.position.y = 0.58;
     const visor = mesh(new THREE.BoxGeometry(0.2, 0.07, 0.02), this.visorMat);
     visor.position.set(0, 0.6, -0.14);
+    // The head mesh IS the headshot hitbox: parented to the animated torso,
+    // it follows every pose automatically. The visor sits on the face and
+    // counts as head too.
+    head.userData.hitZone = HitZone.HEAD;
+    visor.userData.hitZone = HitZone.HEAD;
     // Left arm (supports the rifle)
     const armL = mesh(new THREE.BoxGeometry(0.11, 0.4, 0.11), this.bodyMat);
     armL.position.set(-0.3, 0.12, -0.08);
@@ -228,6 +240,16 @@ export class BotModel {
   }
 
   /**
+   * Zone-aware hit reaction from the local player's confirmed hits:
+   * BODY refreshes the classic white body flash, HEAD lights up ONLY the
+   * head + visor (the rest of the bot keeps its color — §readability).
+   */
+  hitFlash(zone: HitZone): void {
+    if (zone === HitZone.HEAD) this.headFlashAmount = 1;
+    else this.flashAmount = 1;
+  }
+
+  /**
    * @param speed     horizontal speed (drives legs)
    * @param yaw       body facing
    * @param pitch     gun aim pitch
@@ -267,9 +289,20 @@ export class BotModel {
 
     // Damage flash on the body material.
     if (this.flashAmount > 0) {
-      this.flashAmount = Math.max(0, this.flashAmount - dt * 5);
+      this.flashAmount = Math.max(0, this.flashAmount - dt * hfc.bodyHitFlashDecay);
       this.tmpColor.lerpColors(this.baseColor, this.flashColor, this.flashAmount * 0.8);
       this.bodyMat.color.copy(this.tmpColor);
+    }
+
+    // Head flash: the brightest of the general body flash (head is part of
+    // the body) and the dedicated headshot flash, which also lights the visor.
+    if (this.flashAmount > 0 || this.headFlashAmount > 0) {
+      this.headFlashAmount = Math.max(0, this.headFlashAmount - dt * hfc.headHitFlashDecay);
+      const headAmt = Math.max(this.flashAmount * 0.8, this.headFlashAmount);
+      this.tmpColor.lerpColors(this.baseColor, this.flashColor, headAmt);
+      this.headMat.color.copy(this.tmpColor);
+      this.tmpColor.lerpColors(this.visorBaseColor, this.flashColor, this.headFlashAmount);
+      this.visorMat.color.copy(this.tmpColor);
     }
 
     // Spawn protection: chest glow pulses white.
