@@ -69,6 +69,10 @@ export class SnapshotBuffer {
    * Store a new network state. STALE snapshots (sequence/timestamp not newer
    * than the latest stored one) are ignored — the player never moves back
    * in time because a late packet arrived after a fresher one.
+   *
+   * @returns true when the snapshot was actually STORED (fresh), false for
+   *          ignored duplicates/stale packets — lets the caller feed
+   *          network-quality metrics with real arrivals only.
    */
   push(
     timestamp: number,
@@ -82,10 +86,10 @@ export class SnapshotBuffer {
     velocityY: number,
     velocityZ: number,
     movementState: NetworkMovementState,
-  ): void {
-    if (sequence <= this.lastSequence) return; // stale/out-of-order → ignore
+  ): boolean {
+    if (sequence <= this.lastSequence) return false; // stale/out-of-order → ignore
     const prev = this.newest;
-    if (prev && timestamp <= prev.timestamp) return; // non-monotonic time → ignore
+    if (prev && timestamp <= prev.timestamp) return false; // non-monotonic time → ignore
 
     this.lastSequence = sequence;
 
@@ -112,6 +116,7 @@ export class SnapshotBuffer {
     while (this.snapshots.length > cfg.snapshotMaxCount) {
       this.pool.push(this.snapshots.shift()!);
     }
+    return true;
   }
 
   /**

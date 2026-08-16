@@ -9,6 +9,7 @@ import {
   shortestAngleDelta,
 } from "./interpolation/SnapshotBuffer";
 import { NetworkClock } from "./interpolation/NetworkClock";
+import { AdaptiveInterpolationDelay } from "./interpolation/AdaptiveInterpolationDelay";
 import {
   RemotePlayerAnimationController,
   RemoteCharacterClips,
@@ -403,6 +404,8 @@ class RemotePlayer {
 export class RemotePlayerManager {
   private readonly remotes = new Map<string, RemotePlayer>();
   private readonly clock = new NetworkClock();
+  /** Measured snapshot rate + jitter → lowest SAFE interpolation delay. */
+  private readonly adaptiveDelay = new AdaptiveInterpolationDelay();
   private asset: CharacterAsset | null = null;
 
   constructor(private readonly scene: THREE.Scene) {}
@@ -443,7 +446,8 @@ export class RemotePlayerManager {
       // the buffer is wiped at respawn (teleport, never interpolated).
       if (p.ts > 0 && p.isAlive) {
         this.clock.noteServerTimestamp(p.ts);
-        remote.buffer.push(
+        const prevTs = remote.buffer.newest?.timestamp ?? null;
+        const stored = remote.buffer.push(
           p.ts,
           p.seq,
           p.x,
@@ -456,6 +460,9 @@ export class RemotePlayerManager {
           p.vz,
           sanitizeNetworkMovementState(p.state),
         );
+        // Feed the adaptive delay with REAL arrivals only (sync() runs
+        // every frame on the same state — duplicates return false).
+        if (stored) this.adaptiveDelay.noteSnapshot(this.clock.now(), p.ts, prevTs);
       }
     }
 
@@ -471,7 +478,8 @@ export class RemotePlayerManager {
   /** Per-frame: sample every buffer slightly in the past + animate. */
   update(dt: number): void {
     if (!this.clock.hasSync) return;
-    const renderTime = this.clock.now() - icfg.interpolationDelayMs;
+    // ADAPTIVE delay: as low as the measured jitter safely allows.
+    const renderTime = this.clock.now() - this.adaptiveDelay.update(dt);
     for (const remote of this.remotes.values()) remote.update(dt, renderTime);
   }
 
@@ -539,14 +547,24 @@ export class RemotePlayerManager {
   }
 
   /** Debug info (shown only when the debug HUD is active). */
-  getDebugInfo(): { remotePlayers: number; snapshots: number; extrapolating: boolean } {
+  getDebugInfo(): {
+    remotePlayers: number;
+    snapshots: number;
+    extrapolating: boolean;
+    interpDelayMs: number;
+  } {
     let snapshots = 0;
     let extrapolating = false;
     for (const r of this.remotes.values()) {
       snapshots += r.buffer.count;
       extrapolating = extrapolating || r.extrapolating;
     }
-    return { remotePlayers: this.remotes.size, snapshots, extrapolating };
+    return {
+      remotePlayers: this.remotes.size,
+      snapshots,
+      extrapolating,
+      interpDelayMs: Math.round(this.adaptiveDelay.delayMs),
+    };
   }
 
   dispose(): void {

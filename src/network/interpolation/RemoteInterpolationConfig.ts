@@ -11,13 +11,31 @@
  */
 export const RemoteInterpolationConfig = {
   /**
-   * Remote players are rendered this many milliseconds in the PAST so two
-   * snapshots normally bracket the render time. At ~30 network updates/sec
-   * (≈33 ms between snapshots) 70 ms still covers two intervals + jitter
-   * while cutting ~30 ms of the visible remote latency (what you FEEL as
-   * "he lands later on my screen").
+   * INITIAL interpolation delay (ms). Remote players are rendered this
+   * many milliseconds in the PAST so two snapshots normally bracket the
+   * render time. The delay then ADAPTS at runtime between
+   * adaptiveDelayMinMs and adaptiveDelayMaxMs based on the measured
+   * snapshot rate + arrival jitter (see AdaptiveInterpolationDelay).
    */
   interpolationDelayMs: 70,
+
+  // ---- Adaptive interpolation delay (AdaptiveInterpolationDelay) ----
+  /** Floor of the adaptive delay (ms) — never below ~1.5 snapshot gaps. */
+  adaptiveDelayMinMs: 50,
+  /** Ceiling of the adaptive delay (ms) — worst tolerated connections. */
+  adaptiveDelayMaxMs: 150,
+  /** Safety margin added on top of gap + jitter (ms). */
+  adaptiveSafetyMarginMs: 8,
+  /** Jitter envelope decay (ms of envelope per second of clean traffic). */
+  adaptiveJitterDecayMsPerSec: 15,
+  /** Applied-delay raise speed (ms/s) — fast: protect the next frames. */
+  adaptiveRaiseRateMsPerSec: 240,
+  /** Applied-delay lower speed (ms/s) — slow: invisible timeline drift. */
+  adaptiveLowerRateMsPerSec: 6,
+  /** Lateness samples above this (ms) are stale artifacts — ignored. */
+  adaptiveLatenessCapMs: 400,
+  /** Snapshot gaps above this (ms) are idle suppression — ignored. */
+  adaptiveGapCapMs: 300,
 
   /**
    * When no future snapshot exists (packet delay/loss/jitter), extrapolate
