@@ -22,6 +22,7 @@ import type { NetworkPlayerInfo } from "./MultiplayerClient";
 import characterUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_Running_withSkin.glb?url";
 import runClipUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_Walking_withSkin.glb?url";
 import jumpClipUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_Regular_Jump_withSkin.glb?url";
+import slideClipUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_slide_right_withSkin.glb?url";
 
 /** Capsule center → feet distance (model root sits at the feet). */
 const FEET_OFFSET = moveCfg.standHalfHeight + moveCfg.capsuleRadius;
@@ -53,7 +54,8 @@ function loadCharacterAsset(): Promise<CharacterAsset> {
     loader.loadAsync(characterUrl),
     loader.loadAsync(runClipUrl),
     loader.loadAsync(jumpClipUrl),
-  ]).then(([gltf, runGltf, jumpGltf]: [GLTF, GLTF, GLTF]) => {
+    loader.loadAsync(slideClipUrl),
+  ]).then(([gltf, runGltf, jumpGltf, slideGltf]: [GLTF, GLTF, GLTF, GLTF]) => {
     const model = gltf.scene;
 
     // Normalize ONCE on the template: target height, feet at local y = 0,
@@ -83,30 +85,32 @@ function loadCharacterAsset(): Promise<CharacterAsset> {
     template.add(model);
 
     // Real clips (inspected in the assets): "Armature|Alert|baselayer"
-    // (idle), "Armature|running|baselayer" (run) and
-    // "Armature|Regular_Jump|baselayer" (jump). Same skeleton — the clips
-    // retarget onto every clone by bone name. The frozen slide pose is a
-    // cheap CLONE sharing the keyframe data (distinct action only).
+    // (idle), "Armature|running|baselayer" (run),
+    // "Armature|Regular_Jump|baselayer" (jump) and
+    // "Armature|slide_right|baselayer" (slide). Same skeleton — the clips
+    // retarget onto every clone by bone name.
     const idle =
       gltf.animations?.find((c) => /alert|idle/i.test(c.name)) ?? gltf.animations?.[0];
     const run =
       runGltf.animations?.find((c) => /run/i.test(c.name)) ?? runGltf.animations?.[0];
     const jump =
       jumpGltf.animations?.find((c) => /jump/i.test(c.name)) ?? jumpGltf.animations?.[0];
-    if (!idle || !run || !jump) throw new Error("Remote character clips missing");
+    const slide =
+      slideGltf.animations?.find((c) => /slide/i.test(c.name)) ?? slideGltf.animations?.[0];
+    if (!idle || !run || !jump || !slide) throw new Error("Remote character clips missing");
 
     // The jump clip carries hips ROOT MOTION (the character rises inside
     // the clip). The avatar's actual jump arc already comes from the
     // NETWORK position — keeping both would double the motion and leave
     // the model floating above its capsule. Flatten the hips translation.
     stripHipsRootMotion(jump);
+    // The slide clip travels ~4.9 m forward (baked hips X/Z motion) — the
+    // network position provides the real travel, so flatten X/Z. The hips
+    // Y is KEPT: it carries the crouch (drop to the ground) of the slide
+    // pose itself, which must play on the spot.
+    stripHipsRootMotion(slide, { keepY: true });
 
-    const clips: RemoteCharacterClips = {
-      idle,
-      run,
-      jump,
-      slidePose: run.clone(),
-    };
+    const clips: RemoteCharacterClips = { idle, run, jump, slide };
     return { template, clips };
   });
   return cachedCharacter;
@@ -117,14 +121,20 @@ function loadCharacterAsset(): Promise<CharacterAsset> {
  * removes the baked root motion (vertical jump arc / forward travel)
  * while keeping every rotation — the character animates in place and the
  * NETWORK position provides the real trajectory.
+ *
+ * `keepY` preserves the vertical hips channel: used for clips where the
+ * hips height IS the pose (slide crouch) rather than world travel.
  */
-function stripHipsRootMotion(clip: THREE.AnimationClip): void {
+function stripHipsRootMotion(
+  clip: THREE.AnimationClip,
+  { keepY = false }: { keepY?: boolean } = {},
+): void {
   for (const track of clip.tracks) {
     if (!/Hips\.position$/i.test(track.name)) continue;
     const values = track.values;
     for (let i = 3; i < values.length; i += 3) {
       values[i] = values[0];
-      values[i + 1] = values[1];
+      if (!keepY) values[i + 1] = values[1];
       values[i + 2] = values[2];
     }
   }

@@ -40,6 +40,18 @@ export const PickupConfig = {
   sparkleRate: 2.2, // sparkles per second per pickup
   maxSparklesPerFrame: 3, // global budget so 50 coins never flood the emitter
 
+  // ---- Mesh decimation (collectables don't need high-poly models) ----
+  /**
+   * Vertex-clustering grid resolution used to simplify the pickup GLBs at
+   * load time. The source models are absurdly dense for collectables
+   * (coin ≈ 44k tris, medkit ≈ 31k tris) — with dozens of drops on the
+   * ground this tanked the framerate. ~32 cells across the largest axis
+   * keeps the silhouette while cutting the triangle count by ~95%.
+   */
+  meshDecimateGrid: 32,
+  /** Meshes under this vertex count are left untouched. */
+  meshDecimateMinVertices: 3000,
+
   // ---- Glow (self-lit material + additive halo billboard) ----
   glowEmissiveIntensity: 0.85, // self-illumination boost applied to the GLB materials
   glowHaloScale: 2.4, // halo sprite diameter relative to the pickup size

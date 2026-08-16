@@ -61,7 +61,10 @@ export class RevolverViewmodel {
         const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
         obj.material = mats.length === 1 ? mats[0].clone() : mats.map((m) => m.clone());
         const cloned = Array.isArray(obj.material) ? obj.material : [obj.material];
-        for (const m of cloned) m.depthTest = false; // never clip into walls
+        for (const m of cloned) {
+          m.depthTest = false; // never clip into walls
+          m.transparent = true; // draw AFTER world transparents (dome…)
+        }
       });
       this.group.add(model);
       this.materializeVfx = new RevolverMaterializeVFX(model, this.particles);

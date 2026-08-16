@@ -86,6 +86,7 @@ export class ObliterreurViewmodel {
         const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
         for (const mat of mats) {
           mat.depthTest = false; // never clip into walls
+          mat.transparent = true; // draw AFTER world transparents (dome…)
           if (mat instanceof THREE.MeshStandardMaterial && mat.emissive.getHex() !== 0) {
             this.glowMats.push({ mat, base: mat.emissiveIntensity });
           }

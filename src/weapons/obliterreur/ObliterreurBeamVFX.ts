@@ -32,12 +32,13 @@ const NOISE_GLSL = /* glsl */ `
       u.y
     );
   }
+  // 2 octaves (was 3): the beam covers most of the screen when the player
+  // is inside the vortex — every octave here is a full-screen cost.
   float fbm(vec2 p) {
     float v = 0.0;
     v += 0.5 * vnoise(p);
     v += 0.25 * vnoise(p * 2.13 + 17.0);
-    v += 0.125 * vnoise(p * 4.41 + 47.0);
-    return v / 0.875;
+    return v / 0.75;
   }
 `;
 
@@ -107,7 +108,8 @@ const CORE_FRAG = /* glsl */ `
     col = mix(col, mix(deepViolet, filament, fil), fil * 0.85);
 
     // Ridged lightning: thin branching bolts crawling on the black core.
-    float r1 = 1.0 - abs(2.0 * fbm(base * 1.7 + q * 4.0 + vec2(0.0, uTime * 2.2)) - 1.0);
+    // Single-octave ridge — cheap, the flicker hides the missing detail.
+    float r1 = 1.0 - abs(2.0 * vnoise(base * 1.7 + q * 4.0 + vec2(0.0, uTime * 2.2)) - 1.0);
     float bolt = pow(smoothstep(0.7, 1.0, r1), 3.0);
     float flick = 0.5 + 0.5 * hash(vec2(floor(uTime * 13.0), floor(vUv.x * 30.0)));
     vec3 boltCol = mix(vec3(0.486, 0.227, 0.929), vec3(0.914, 0.835, 1.0), bolt);
@@ -139,7 +141,7 @@ const GLOW_FRAG = /* glsl */ `
       vUv.x * uLen * 0.3 - uTime * 2.0,
       vUv.y * 2.0 + uTime * uRotSpeed * 0.7
     );
-    float streaks = fbm(base + vec2(fbm(base * 1.4), fbm(base * 1.4 + 7.0)) * 2.5);
+    float streaks = fbm(base + vec2(vnoise(base * 1.4), vnoise(base * 1.4 + 7.0)) * 2.5);
     // Blotchy irregular energy — patches of glow, not a uniform sleeve.
     float blotch = 0.35 + 0.65 * vnoise(vec2(vUv.x * uLen * 0.12 - uTime * 0.9, uTime * 0.5));
     float pulse = 0.8 + 0.2 * sin(uTime * 3.1);
@@ -167,7 +169,7 @@ const ARC_FRAG = /* glsl */ `
       vUv.x * uLen * 0.22 - uTime * 2.6,
       vUv.y * 2.0 + vUv.x * uLen * 0.1 + uTime * uRotSpeed * 1.3
     );
-    vec2 q = vec2(fbm(base * 1.6 + uTime * 0.5), fbm(base * 1.6 - uTime * 0.4 + 9.0));
+    vec2 q = vec2(vnoise(base * 1.6 + uTime * 0.5), vnoise(base * 1.6 - uTime * 0.4 + 9.0));
     float r1 = 1.0 - abs(2.0 * fbm(base + q * 3.0) - 1.0);
     float bolt = pow(smoothstep(0.78, 1.0, r1), 2.0);
 
@@ -206,6 +208,7 @@ export class ObliterreurBeamVFX {
       noiseAmp: number,
       blending: THREE.Blending,
       renderOrder: number,
+      side: THREE.Side,
     ): Shell => ({
       mat: new THREE.ShaderMaterial({
         vertexShader: TUBE_VERT,
@@ -221,22 +224,27 @@ export class ObliterreurBeamVFX {
         transparent: true,
         depthWrite: false,
         blending,
-        side: THREE.DoubleSide,
+        side,
       }),
       mesh: null,
       radius,
       renderOrder,
     });
 
+    // PERF: only the CORE is double-sided (the black void must stay solid
+    // when the player is INSIDE the tube). The two additive shells render
+    // front faces only — being inside the vortex used to shade 6 full-screen
+    // layers of expensive noise (3 shells × 2 sides) and tanked the FPS.
     const r = oc.obliterreurBeamRadius;
     this.shells = [
-      makeShell(CORE_FRAG, r, oc.obliterreurCoreNoiseAmp, THREE.NormalBlending, 55),
+      makeShell(CORE_FRAG, r, oc.obliterreurCoreNoiseAmp, THREE.NormalBlending, 55, THREE.DoubleSide),
       makeShell(
         GLOW_FRAG,
         r * oc.obliterreurGlowRadiusScale,
         oc.obliterreurGlowNoiseAmp,
         THREE.AdditiveBlending,
         56,
+        THREE.FrontSide,
       ),
       makeShell(
         ARC_FRAG,
@@ -244,6 +252,7 @@ export class ObliterreurBeamVFX {
         oc.obliterreurArcNoiseAmp,
         THREE.AdditiveBlending,
         57,
+        THREE.FrontSide,
       ),
     ];
 
@@ -268,10 +277,12 @@ export class ObliterreurBeamVFX {
   activate(curve: THREE.CubicBezierCurve3, length: number): void {
     this.disposeMeshes();
 
-    const tubularSegments = Math.min(160, Math.max(32, Math.ceil(length * 6)));
+    // Capped segment counts: the ragged silhouette comes from the vertex
+    // noise, not from geometric density (perf: 3 shells are rebuilt here).
+    const tubularSegments = Math.min(112, Math.max(32, Math.ceil(length * 5)));
 
     for (const shell of this.shells) {
-      const geom = new THREE.TubeGeometry(curve, tubularSegments, shell.radius, 20, false);
+      const geom = new THREE.TubeGeometry(curve, tubularSegments, shell.radius, 14, false);
       const mesh = new THREE.Mesh(geom, shell.mat);
       mesh.renderOrder = shell.renderOrder;
       mesh.frustumCulled = false;

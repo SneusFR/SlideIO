@@ -77,6 +77,10 @@ function normalizeTemplate(
       const mesh = obj as THREE.Mesh;
       mesh.castShadow = false;
       mesh.receiveShadow = false;
+      // Collectables don't need high-poly meshes: decimate ONCE on the
+      // template (every drop clones it) — dozens of coins on the ground
+      // used to push millions of triangles and tank the framerate.
+      decimateMeshGeometry(mesh);
       // Shared materials: mark them so per-bot dispose logic elsewhere
       // never destroys them by accident.
       const mat = mesh.material as THREE.Material;
@@ -98,6 +102,85 @@ function normalizeTemplate(
   wrapper.add(model);
   wrapper.add(makeHaloSprite(targetSize, glowColor));
   return wrapper;
+}
+
+/**
+ * Simplify a mesh's geometry with GRID VERTEX CLUSTERING: every vertex
+ * inside the same cell of a regular 3D grid collapses onto one
+ * representative vertex; triangles whose corners merge become degenerate
+ * and are dropped, duplicated result-triangles are emitted only once.
+ *
+ * O(n), runs once per template at load time. Coarse by design — these are
+ * small glowing collectables, silhouette + texture read is all that
+ * matters (coin: ~44k tris → ~2k, medkit: ~31k tris → ~2k).
+ */
+function decimateMeshGeometry(mesh: THREE.Mesh): void {
+  const src = mesh.geometry as THREE.BufferGeometry;
+  const pos = src.getAttribute("position") as THREE.BufferAttribute | undefined;
+  if (!pos || pos.count < pc.meshDecimateMinVertices) return;
+  const normal = src.getAttribute("normal") as THREE.BufferAttribute | undefined;
+  const uv = src.getAttribute("uv") as THREE.BufferAttribute | undefined;
+
+  src.computeBoundingBox();
+  const bb = src.boundingBox!;
+  const g = pc.meshDecimateGrid;
+  const maxAxis = Math.max(bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z, 1e-6);
+  const cell = maxAxis / g; // cubic cells sized from the largest axis
+
+  // ---- Cluster: map every source vertex to its cell representative ----
+  const cellToRep = new Map<string, number>();
+  const vertexRep = new Uint32Array(pos.count);
+  const outPos: number[] = [];
+  const outNormal: number[] = [];
+  const outUv: number[] = [];
+  for (let i = 0; i < pos.count; i++) {
+    const cx = Math.floor((pos.getX(i) - bb.min.x) / cell);
+    const cy = Math.floor((pos.getY(i) - bb.min.y) / cell);
+    const cz = Math.floor((pos.getZ(i) - bb.min.z) / cell);
+    const key = `${cx},${cy},${cz}`;
+    let rep = cellToRep.get(key);
+    if (rep === undefined) {
+      rep = outPos.length / 3;
+      cellToRep.set(key, rep);
+      outPos.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+      if (normal) outNormal.push(normal.getX(i), normal.getY(i), normal.getZ(i));
+      if (uv) outUv.push(uv.getX(i), uv.getY(i));
+    }
+    vertexRep[i] = rep;
+  }
+
+  // ---- Rebuild the index: drop degenerates + deduplicate triangles ----
+  const index = src.getIndex();
+  const triCount = (index ? index.count : pos.count) / 3;
+  const outIndex: number[] = [];
+  const seen = new Set<string>();
+  for (let t = 0; t < triCount; t++) {
+    const i0 = index ? index.getX(t * 3) : t * 3;
+    const i1 = index ? index.getX(t * 3 + 1) : t * 3 + 1;
+    const i2 = index ? index.getX(t * 3 + 2) : t * 3 + 2;
+    const a = vertexRep[i0];
+    const b = vertexRep[i1];
+    const c = vertexRep[i2];
+    if (a === b || b === c || a === c) continue; // collapsed → drop
+    // Orientation-preserving canonical key (smallest vertex first).
+    const key =
+      a < b && a < c ? `${a},${b},${c}` : b < c ? `${b},${c},${a}` : `${c},${a},${b}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    outIndex.push(a, b, c);
+  }
+  if (outIndex.length === 0) return; // safety: keep the original mesh
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.Float32BufferAttribute(outPos, 3));
+  if (normal) geom.setAttribute("normal", new THREE.Float32BufferAttribute(outNormal, 3));
+  if (uv) geom.setAttribute("uv", new THREE.Float32BufferAttribute(outUv, 2));
+  geom.setIndex(outIndex);
+  if (!normal) geom.computeVertexNormals();
+  geom.computeBoundingSphere();
+
+  mesh.geometry = geom;
+  src.dispose();
 }
 
 /**

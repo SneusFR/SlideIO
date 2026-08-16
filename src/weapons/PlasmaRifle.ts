@@ -131,6 +131,11 @@ export class PlasmaRifle {
       roughness: 0.4,
     });
     this.accentMat.depthTest = false;
+    // Transparent pass: the viewmodel doesn't write depth (depthTest off),
+    // so transparent world effects (force-field dome…) drawn later would
+    // composite OVER the gun. In the transparent pass its high renderOrder
+    // guarantees it draws after them instead.
+    this.accentMat.transparent = true;
 
     // Muzzle ring (spins while firing — animated part)
     this.muzzleRing = new THREE.Mesh(
@@ -184,6 +189,7 @@ export class PlasmaRifle {
         const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
         for (const mat of mats) {
           mat.depthTest = false; // never clip into walls
+          mat.transparent = true; // draw AFTER world transparents (dome…)
           if (mat instanceof THREE.MeshStandardMaterial && mat.emissive.getHex() !== 0) {
             this.glowMats.push({ mat, base: mat.emissiveIntensity });
           }
