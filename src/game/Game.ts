@@ -48,6 +48,11 @@ import { MedalHUD } from "../ui/MedalHUD";
 import { ComboHUD } from "../ui/ComboHUD";
 import { MatchStatsManager } from "../stats/MatchStatsManager";
 import { LeaderboardHUD } from "../ui/LeaderboardHUD";
+import { MultiplayerGameController } from "../network/MultiplayerGameController";
+import type { MultiplayerClient } from "../network/MultiplayerClient";
+import { KillMethod } from "../combat/KillMethod";
+import { WeaponActionType } from "../../shared/combat/NetworkWeapons";
+import type { HitConfirmedEvent } from "../../shared/combat/NetworkWeapons";
 
 /**
  * Top-level game: rendering, main loop and wiring between subsystems.
@@ -124,10 +129,34 @@ export class Game {
   private spawner: SpawnManager;
   private botManager: BotManager;
   private pickups: PickupManager;
+
+  /** Non-null while running in MULTIPLAYER mode (Phase 2 transform sync). */
+  private multiplayer: MultiplayerGameController | null = null;
+  /** The raw client, kept for weapon equip/action sends (Phase 5). */
+  private multiplayerClient: MultiplayerClient | null = null;
   private playerCombatant: PlayerCombatant;
+  private hitmarkerHud: HitmarkerHUD;
   private hitFeedback: HitFeedbackManager;
   private readonly combatants: Combatant[] = [];
   private playerDeathTimer = 0;
+
+  // ---- Phase 5: networked weapons (multiplayer only) ----
+  /** Last WEAPON_EQUIP actually sent (dedup — resent on respawn). */
+  private lastSentEquip = "";
+  /** Plasma edge detection: local isFiring → PLASMA_START / PLASMA_STOP. */
+  private netPlasmaWasFiring = false;
+  /** ~10 Hz PLASMA_AIM refresh accumulator while firing. */
+  private netPlasmaAimTimer = 0;
+  /** True once the local weapon callbacks have been network-wrapped. */
+  private netCallbacksWrapped = false;
+  /** Latest server-reported attacker position (directional damage HUD). */
+  private readonly netAttackerPos = new THREE.Vector3();
+  private netAttackerAge = Infinity;
+  /** Server hitmarker throttle (plasma streams confirm at ~20 Hz). */
+  private lastNetHitFeedback = -1;
+  private readonly netOrigin = new THREE.Vector3();
+  private readonly netDir = new THREE.Vector3();
+  private readonly netImpulse = new THREE.Vector3();
 
   /** Static map meshes + target groups (never changes after startup). */
   private staticHittables: THREE.Object3D[] = [];
@@ -213,8 +242,11 @@ export class Game {
 
     // Hit-confirmation feedback (hitmarker + sound + victim reaction) —
     // LOCAL PLAYER only; weapons report every applied damage tick to it.
+    // The HitmarkerHUD is kept as a field: in multiplayer the SERVER's
+    // HIT_CONFIRMED events drive it directly (source of truth).
+    this.hitmarkerHud = new HitmarkerHUD();
     this.hitFeedback = new HitFeedbackManager(
-      new HitmarkerHUD(),
+      this.hitmarkerHud,
       this.particles,
       this.playerCombatant,
     );
@@ -411,6 +443,7 @@ export class Game {
     this.botManager.onBotAdded = (bot) => this.matchStats.register(bot, `BOT ${bot.id + 1}`);
     this.botManager.onBotRemoved = (bot) => this.matchStats.unregister(bot.id);
     this.botsMenu = new BotsMenu((count) => {
+      if (this.multiplayer) return; // bots stay disabled in multiplayer
       this.botManager.setBotCount(count);
       this.rebuildHittables();
     });
@@ -464,12 +497,126 @@ export class Game {
       this.obliterreur.reset();
       this.revolver.reset();
     }
+    // MULTIPLAYER: the server must know the equipped primary (loadout ids
+    // are IDENTICAL strings to NetworkWeaponId — no mapping table).
+    this.sendNetworkEquip();
     const melee = selection.melee;
     if (melee === this.meleeWeapon) return;
     this.meleeWeapon = melee;
     this.hammer.reset();
     this.spear.reset();
     this.meleeHoldPending = false;
+  }
+
+  /**
+   * Switch this Game instance to MULTIPLAYER mode (call BEFORE start()).
+   * Same map / player controller / weapons as solo — only bots are
+   * disabled and a network controller mirrors the other players.
+   * The SERVER-assigned spawn is applied to the local physics body.
+   */
+  async enableMultiplayer(client: MultiplayerClient): Promise<void> {
+    this.multiplayerClient = client;
+    this.multiplayer = new MultiplayerGameController(
+      client,
+      this.scene,
+      this.fpsCamera,
+      this.player,
+      this.movement,
+    );
+    await this.multiplayer.preload();
+    // Remote plasma beams are visually blocked by the static world.
+    this.multiplayer.setRaycastTargets(this.staticHittables);
+
+    // Phase 2 multiplayer runs with 0 bots (solo mode keeps them working).
+    this.botManager.setBotCount(0);
+    this.rebuildHittables();
+    document.getElementById("bots-menu")?.classList.add("hidden");
+
+    // Spawn where the server decided (position + facing, velocity zeroed).
+    this.multiplayer.applyServerSpawn();
+
+    // ---- PHASE 4: SERVER-AUTHORITATIVE COMBAT STATE ----
+
+    // Leaderboard source switches to the SERVER K/D/A (room.state.players):
+    // ALL real players appear on every client, host has zero priority.
+    // The local MatchStatsManager stops driving the HUD (solo/bots only).
+    this.matchStats.onStatsChanged = null;
+    this.multiplayer.onStatsChanged = (stats) => this.leaderboardHud.refresh(stats);
+
+    // Server-owned HP mirrored into the existing local Health (HUD +
+    // damage feedback reuse). The client NEVER writes HP back to the server.
+    this.multiplayer.onLocalHealthChanged = (health) => {
+      const h = this.playerCombatant.health;
+      if (!h.alive) return; // death/respawn transitions own the resets
+      if (health < h.current) {
+        const amount = h.current - health;
+        h.current = Math.max(1, health); // never let LOCAL math flip death
+        h.onDamaged?.(amount, null); // reuse the existing damage feedback
+      } else {
+        h.current = Math.min(h.max, health);
+      }
+    };
+
+    // Death is decided BY THE SERVER (isAlive/PLAYER_DIED) — reuse the
+    // whole existing death flow (control loss, weapons reset, feedback).
+    this.multiplayer.onLocalDied = () => {
+      this.playerCombatant.health.kill(null);
+    };
+
+    // Server respawn: the controller already teleported the body + camera;
+    // restore HP/protection and hand control back (weapons re-enabled).
+    this.multiplayer.onLocalRespawned = () => {
+      this.playerDeathTimer = 0;
+      this.playerCombatant.health.reset(cc.spawnProtectionDuration);
+      this.gameAudio.playerRespawn();
+      // Equip is refused while dead — re-assert it after every respawn.
+      this.sendNetworkEquip(true);
+      this.netPlasmaWasFiring = false;
+    };
+
+    // Server-confirmed kill by the local player → existing kill feedback
+    // (combo + medals + killstreak progress, exactly like the solo flow).
+    this.multiplayer.onLocalKill = (isHeadshot, damageType) =>
+      this.handleNetworkKill(isHeadshot, damageType);
+
+    // ---- PHASE 5: SERVER-AUTHORITATIVE WEAPONS ----
+
+    // The SERVER's HIT_CONFIRMED is the only hitmarker source in MP
+    // (local prediction cannot hit remote players — they have no local
+    // Combatant, so there is no double feedback to suppress).
+    this.multiplayer.onHitConfirmed = (event) => this.handleNetworkHitConfirmed(event);
+
+    // Victim-side: remember the attacker position briefly so the existing
+    // directional damage indicator works when the HP mirror reports it.
+    this.multiplayer.onDamageTaken = (event) => {
+      if (typeof event.ax === "number") {
+        this.netAttackerPos.set(event.ax, event.ay ?? 0, event.az ?? 0);
+        this.netAttackerAge = 0;
+      }
+    };
+
+    // Server knockback → local physics impulse (never a teleport).
+    this.multiplayer.onApplyImpulse = (x, y, z) =>
+      this.playerCombatant.applyImpulse(this.netImpulse.set(x, y, z));
+
+    // Local weapon events → WEAPON_ACTION sends (wrap, never replace).
+    this.wrapNetworkWeaponCallbacks();
+    // Tell the server which primary we start with.
+    this.sendNetworkEquip(true);
+  }
+
+  /** Tear down the multiplayer session (leave game / connection lost). */
+  disableMultiplayer(): void {
+    this.multiplayer?.dispose();
+    this.multiplayer = null;
+    this.multiplayerClient = null;
+    this.lastSentEquip = "";
+    this.netPlasmaWasFiring = false;
+    document.getElementById("bots-menu")?.classList.remove("hidden");
+    // Back to LOCAL mode: the MatchStatsManager drives the leaderboard again.
+    this.matchStats.onStatsChanged = () =>
+      this.leaderboardHud.refresh(this.matchStats.getSortedStats());
+    this.matchStats.onStatsChanged();
   }
 
   start(): void {
@@ -522,6 +669,7 @@ export class Game {
         const rushEnd = this.movement.consumeSpearRushEnd();
         if (rushEnd) {
           this.spear.onRushEnded(rushEnd);
+          this.netSendAimedAction(WeaponActionType.SPEAR_RUSH_STOP);
           if (rushEnd === "WALL") {
             this.player.getPosition(this.playerPos);
             this.gameAudio.hammerHit(this.playerPos); // distinct wall impact
@@ -601,6 +749,9 @@ export class Game {
           revolverEquipped,
       );
       this.rifle.update(dt, wantFire, this.hittables, this.elapsed);
+      // MULTIPLAYER: plasma has no callbacks — edge-detect isFiring here
+      // (START/STOP) + a silent ~10 Hz aim refresh while the beam is on.
+      if (this.multiplayer) this.updateNetworkPlasma(dt);
 
       // OBLITERREUR: RMB places / redefines anchors (cancels an active
       // vortex), LMB opens the beam. Placement raycasts STATIC geometry
@@ -667,6 +818,12 @@ export class Game {
     this.revolverHud.update(this.revolver);
     this.combatHud.update(dt, this.playerCombatant.health, this.playerDeathTimer);
     this.comboHud.update(this.combo);
+
+    // Multiplayer (Phase 2): remote avatars + fixed-rate transform send.
+    // Runs its own network accumulator — never one send per render frame.
+    this.multiplayer?.update(dt);
+    this.netAttackerAge += dt; // network damage-direction memory decays
+
     this.renderer.render(this.scene, this.fpsCamera.camera);
     this.input.endFrame();
   }
@@ -755,6 +912,17 @@ export class Game {
   /** Death state: controls disabled, countdown, then smart respawn. */
   private updatePlayerDeath(dt: number): void {
     this.playerDeathTimer -= dt;
+
+    // MULTIPLAYER: the SERVER owns the respawn timer and the spawn point.
+    // The countdown shown on screen tracks the server clock; the actual
+    // respawn happens when the server flips isAlive / sends the event.
+    if (this.multiplayer) {
+      const remaining = this.multiplayer.getRespawnCountdown();
+      this.playerDeathTimer =
+        remaining !== null ? remaining : Math.max(this.playerDeathTimer, 0.05);
+      return;
+    }
+
     if (this.playerDeathTimer > 0) return;
 
     const spawn = this.spawner.pickSpawn(this.combatants, this.playerCombatant);
@@ -797,8 +965,16 @@ export class Game {
    * Null when there is no attacker (kill plane, suicide…).
    */
   private damageAngleFrom(attacker: Combatant | null): number | null {
-    if (!attacker || attacker === this.playerCombatant) return null;
-    attacker.getPosition(this.attackerPos);
+    if (attacker === this.playerCombatant) return null;
+    if (attacker) {
+      attacker.getPosition(this.attackerPos);
+    } else if (this.multiplayer && this.netAttackerAge < 0.5) {
+      // MULTIPLAYER: the HP mirror reports damage with a null attacker —
+      // a FRESH server DAMAGE_TAKEN position drives the indicator instead.
+      this.attackerPos.copy(this.netAttackerPos);
+    } else {
+      return null;
+    }
     this.player.getPosition(this.playerPos);
     this.toAttacker.subVectors(this.attackerPos, this.playerPos);
     this.toAttacker.y = 0;
@@ -813,6 +989,16 @@ export class Game {
     if (!this.playerCombatant.health.alive) return;
     this.player.getPosition(this.playerPos);
     const fellOut = this.playerPos.y < cfg.killPlaneY;
+    // MULTIPLAYER: death is SERVER-authoritative — no manual R respawn and
+    // no local kill. Falling out of the world just recovers to a spawn pad
+    // (position is client-reported in this phase).
+    if (this.multiplayer) {
+      if (fellOut) {
+        const spawn = this.spawner.pickSpawn(this.combatants, this.playerCombatant);
+        this.movement.respawn(spawn.pos);
+      }
+      return;
+    }
     // R = manual respawn — EXCEPT with the Revolver equipped, where R is
     // the weapon's explosive throw (the kill plane still works normally).
     const manualRespawn =
@@ -821,6 +1007,142 @@ export class Game {
       // Suicide / kill plane → normal death + respawn flow.
       this.playerCombatant.health.kill(null);
     }
+  }
+
+  // ------------------------------------------------------------------
+  // Phase 5 — networked weapons (multiplayer only)
+  // ------------------------------------------------------------------
+
+  /**
+   * Wrap the local weapon callbacks ONCE so every validated local action
+   * is also reported to the server (origin + direction only — the server
+   * computes every hit). Existing audio/VFX wiring keeps running first.
+   */
+  private wrapNetworkWeaponCallbacks(): void {
+    if (this.netCallbacksWrapped) return;
+    this.netCallbacksWrapped = true;
+
+    const prevShot = this.revolver.onShot;
+    this.revolver.onShot = (fanFire) => {
+      prevShot?.(fanFire);
+      this.netSendAimedAction(WeaponActionType.REVOLVER_FIRE);
+    };
+    const prevThrow = this.revolver.onThrow;
+    this.revolver.onThrow = () => {
+      prevThrow?.();
+      this.netSendAimedAction(WeaponActionType.REVOLVER_THROW);
+    };
+
+    const prevSwing = this.hammer.onSwingStart;
+    this.hammer.onSwingStart = () => {
+      prevSwing?.();
+      this.netSendAimedAction(WeaponActionType.HAMMER_SWEEP);
+    };
+    const prevSlamStart = this.hammer.onSlamStart;
+    this.hammer.onSlamStart = () => {
+      prevSlamStart?.();
+      this.netSendAimedAction(WeaponActionType.HAMMER_SLAM_START);
+    };
+    const prevSlamImpact = this.hammer.onSlamImpact;
+    this.hammer.onSlamImpact = (pos, hitCount) => {
+      prevSlamImpact?.(pos, hitCount);
+      // The REAL impact point travels in px/py/pz (server validates it).
+      this.netSendAimedAction(WeaponActionType.HAMMER_SLAM_IMPACT, pos);
+    };
+
+    const prevSweep = this.spear.onSweepStart;
+    this.spear.onSweepStart = () => {
+      prevSweep?.();
+      this.netSendAimedAction(WeaponActionType.SPEAR_SWEEP);
+    };
+    const prevRushStart = this.spear.onRushStart;
+    this.spear.onRushStart = () => {
+      prevRushStart?.();
+      this.netSendAimedAction(WeaponActionType.SPEAR_RUSH_START);
+    };
+    const prevRushImpact = this.spear.onRushImpact;
+    this.spear.onRushImpact = (pos) => {
+      prevRushImpact?.(pos);
+      // Tip-hit ends the charge here (WALL/timeout end in the frame loop).
+      this.netSendAimedAction(WeaponActionType.SPEAR_RUSH_STOP);
+    };
+
+    const prevPlaced = this.obliterreur.onPointPlaced;
+    this.obliterreur.onPointPlaced = (index) => {
+      prevPlaced?.(index);
+      // The server re-raycasts the same camera ray for the real anchor.
+      this.netSendAimedAction(WeaponActionType.OBLITERREUR_PLACE);
+    };
+    const prevBeamStart = this.obliterreur.onBeamStart;
+    this.obliterreur.onBeamStart = () => {
+      prevBeamStart?.();
+      this.netSendAimedAction(WeaponActionType.OBLITERREUR_FIRE);
+    };
+  }
+
+  /** Send one aimed WEAPON_ACTION (camera eye origin + facing direction). */
+  private netSendAimedAction(action: string, extraPoint?: THREE.Vector3): void {
+    if (!this.multiplayer || !this.multiplayerClient?.isConnected) return;
+    const cam = this.fpsCamera.camera;
+    cam.getWorldPosition(this.netOrigin);
+    cam.getWorldDirection(this.netDir);
+    this.multiplayerClient.sendWeaponAction(action, {
+      ox: this.netOrigin.x,
+      oy: this.netOrigin.y,
+      oz: this.netOrigin.z,
+      dx: this.netDir.x,
+      dy: this.netDir.y,
+      dz: this.netDir.z,
+      ...(extraPoint ? { px: extraPoint.x, py: extraPoint.y, pz: extraPoint.z } : {}),
+    });
+  }
+
+  /** WEAPON_EQUIP for the current primary (dedup unless forced). */
+  private sendNetworkEquip(force = false): void {
+    if (!this.multiplayer || !this.multiplayerClient?.isConnected) return;
+    const weapon: string = this.primaryWeapon; // ids match NetworkWeaponId
+    if (!force && weapon === this.lastSentEquip) return;
+    this.lastSentEquip = weapon;
+    this.multiplayerClient.sendWeaponEquip(weapon);
+  }
+
+  /** Plasma has no local callback: edge-detect + 10 Hz silent aim. */
+  private updateNetworkPlasma(dt: number): void {
+    const firing = this.rifle.isFiring;
+    if (firing !== this.netPlasmaWasFiring) {
+      this.netPlasmaWasFiring = firing;
+      this.netPlasmaAimTimer = 0;
+      this.netSendAimedAction(
+        firing ? WeaponActionType.PLASMA_START : WeaponActionType.PLASMA_STOP,
+      );
+    } else if (firing) {
+      this.netPlasmaAimTimer += dt;
+      if (this.netPlasmaAimTimer >= 0.1) {
+        this.netPlasmaAimTimer = 0;
+        this.netSendAimedAction("PLASMA_AIM"); // silent server aim refresh
+      }
+    }
+  }
+
+  /** SERVER hit confirmation → hitmarker + hit sound (lightly throttled). */
+  private handleNetworkHitConfirmed(event: HitConfirmedEvent): void {
+    const zone = event.hitZone === "HEAD" ? HitZone.HEAD : HitZone.BODY;
+    // Continuous plasma confirms ~20 Hz — keep the feedback readable.
+    if (!event.killed && this.elapsed - this.lastNetHitFeedback < 0.08) return;
+    this.lastNetHitFeedback = this.elapsed;
+    this.hitmarkerHud.show(zone);
+    if (zone === HitZone.HEAD) this.gameAudio.hitHead();
+    else this.gameAudio.hitBody();
+  }
+
+  /** SERVER-confirmed kill → the full solo kill feedback chain. */
+  private handleNetworkKill(isHeadshot: boolean, damageType: string): void {
+    this.combatHud.notifyKill();
+    const count = this.combo.registerKill();
+    this.comboHud.notifyKill();
+    this.medals.onPlayerKill(count, networkKillMethod(damageType), isHeadshot);
+    this.killstreaks.onPlayerKill();
+    this.killstreakHud.notifyKill();
   }
 
   private updateCamera(dt: number): void {
@@ -840,5 +1162,23 @@ export class Game {
       phaseKick: this.movement.phaseIntensity,
       undergroundDrop: this.moleStrike.cameraDrop,
     });
+  }
+}
+
+/** Server DamageType string → the local KillMethod driving kill medals. */
+function networkKillMethod(damageType: string): KillMethod {
+  switch (damageType) {
+    case "REVOLVER":
+      return KillMethod.REVOLVER;
+    case "REVOLVER_EXPLOSION":
+      return KillMethod.REVOLVER_EXPLOSION;
+    case "HAMMER":
+      return KillMethod.HAMMER_SWING;
+    case "SPEAR":
+      return KillMethod.SPEAR_SWEEP;
+    case "OBLITERREUR":
+      return KillMethod.OBLITERREUR;
+    default:
+      return KillMethod.PLASMA;
   }
 }

@@ -22,6 +22,8 @@ import { LoadoutMenu } from "./LoadoutMenu";
 export class MainMenu {
   /** Fired once when the PLAY transition should begin. */
   onPlay: (() => void) | null = null;
+  /** Fired when MULTIPLAYER is clicked (lobby overlay handled outside). */
+  onMultiplayer: (() => void) | null = null;
 
   private renderer: THREE.WebGLRenderer;
   private scene: THREE.Scene;
@@ -89,6 +91,7 @@ export class MainMenu {
     // ---- UI ----
     this.ui = new MenuUI(sounds);
     this.ui.onPlay = () => this.onPlay?.();
+    this.ui.onMultiplayer = () => this.onMultiplayer?.();
     // LOADOUT overlay: opens on the nav button, closes back to the menu.
     this.loadout = new LoadoutMenu(sounds);
     this.ui.onLoadout = () => this.loadout.open();

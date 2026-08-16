@@ -1,2 +1,7 @@
 node_modules/
 dist/
+
+# Environment files (frontend + backend) — keep only the .env.example files
+.env
+.env.local
+.env.*.local

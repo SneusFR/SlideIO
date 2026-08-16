@@ -14,6 +14,8 @@ export class MenuUI {
   onPlay: (() => void) | null = null;
   /** Fired every time LOADOUT is clicked (opens the loadout overlay). */
   onLoadout: (() => void) | null = null;
+  /** Fired every time MULTIPLAYER is clicked (opens the lobby overlay). */
+  onMultiplayer: (() => void) | null = null;
 
   private readonly root: HTMLElement;
   private playFired = false;
@@ -54,6 +56,8 @@ export class MenuUI {
           this.onPlay?.();
         } else if (btn.dataset.action === "loadout") {
           this.onLoadout?.();
+        } else if (btn.dataset.action === "multiplayer") {
+          this.onMultiplayer?.();
         }
         // EDITOR / SHOP / SETTINGS / CREDITS: visual only.
       };

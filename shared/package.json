@@ -1,0 +1,6 @@
+{
+  "name": "slideio-shared",
+  "private": true,
+  "type": "commonjs",
+  "description": "Pure-TS data contracts shared by the SlideIO frontend and backend (no Three.js, no DOM, no Colyseus)."
+}

@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["ES2020"],
+    "rootDir": "..",
+    "outDir": "dist",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "experimentalDecorators": true,
+    "resolveJsonModule": true,
+    "sourceMap": true
+  },
+  "include": ["src", "../shared"]
+}
