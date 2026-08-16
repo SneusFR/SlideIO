@@ -57,8 +57,10 @@ import type { HitConfirmedEvent } from "../../shared/combat/NetworkWeapons";
 /**
  * Top-level game: rendering, main loop and wiring between subsystems.
  * FFA sandbox: the human player + up to 8 autonomous bots, everyone
- * hostile to everyone. The game pauses while the pointer is unlocked
- * (Escape menu) so bots can't kill you while you tweak their count.
+ * hostile to everyone. In SOLO the game pauses while the pointer is
+ * unlocked (Escape menu) so bots can't kill you while you tweak their
+ * count. In MULTIPLAYER the match NEVER pauses — Escape only releases
+ * the inputs; physics, damage and network events keep running.
  */
 export class Game {
   private renderer: THREE.WebGLRenderer;
@@ -526,6 +528,8 @@ export class Game {
     await this.multiplayer.preload();
     // Remote plasma beams are visually blocked by the static world.
     this.multiplayer.setRaycastTargets(this.staticHittables);
+    // Remote obliterreur beams emit the same suction/spark particles.
+    this.multiplayer.setParticles(this.particles);
 
     // Phase 2 multiplayer runs with 0 bots (solo mode keeps them working).
     this.botManager.setBotCount(0);
@@ -639,9 +643,14 @@ export class Game {
     this.lastTime = now;
     this.elapsed += dt;
 
-    // Game is PAUSED while the pointer is unlocked (Escape menu): no AI,
-    // no physics, no damage — bots can't kill you in the menu.
-    const running = this.input.pointerLocked;
+    // SOLO: the game is PAUSED while the pointer is unlocked (Escape menu):
+    // no AI, no physics, no damage — bots can't kill you in the menu.
+    // MULTIPLAYER: the match NEVER pauses. Escape / focus loss only releases
+    // the inputs (the InputManager clears every key on unlock) while
+    // physics, knockback, damage, weapon timers and network sends keep
+    // running — otherwise the other players would see a frozen, hovering,
+    // unhittable ghost until this client clicks back in.
+    const running = this.multiplayer !== null || this.input.pointerLocked;
     const playerAlive = this.playerCombatant.health.alive;
 
     if (running) {

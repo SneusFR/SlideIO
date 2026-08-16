@@ -25,6 +25,13 @@ export const RemoteInterpolationConfig = {
   maxExtrapolationMs: 125,
 
   /**
+   * When NO fresh snapshot arrived for this long (sender tab hidden,
+   * heavy packet loss…), the frozen avatar falls back to a clean IDLE
+   * pose with zero velocity — it must never keep sprinting on the spot.
+   */
+  staleStateFallbackMs: 400,
+
+  /**
    * Snapshot-to-snapshot (or estimate-to-snapshot) distance above which we
    * SNAP instead of interpolating (respawn / phase teleport / anomaly).
    * Meters. Normal gameplay at hardCap ~34 m/s × 50 ms ≈ 1.7 m; a phase

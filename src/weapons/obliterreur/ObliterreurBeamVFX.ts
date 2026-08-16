@@ -352,4 +352,21 @@ export class ObliterreurBeamVFX {
       }
     }
   }
+
+  /**
+   * Full teardown: meshes, endpoint lights and shader materials removed
+   * from the scene/GPU. Used by REMOTE beam replicas when their owner
+   * leaves the room (the local weapon lives for the whole session).
+   */
+  dispose(): void {
+    this.phase = "idle";
+    this.appear = 0;
+    this.disposeMeshes();
+    for (const light of this.lights) {
+      light.intensity = 0;
+      this.scene.remove(light);
+      light.dispose();
+    }
+    for (const shell of this.shells) shell.mat.dispose();
+  }
 }

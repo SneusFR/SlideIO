@@ -18,6 +18,8 @@ import type { PlayerMatchStats } from "../stats/MatchStatsManager";
 import type { FPSCamera } from "../camera/FPSCamera";
 import type { PlayerController } from "../player/PlayerController";
 import type { PlayerMovement } from "../player/PlayerMovement";
+import type { ParticleSystem } from "../effects/ParticleSystem";
+import { NetworkMovementState } from "./NetworkMovementState";
 
 /**
  * Bridges the running game and the multiplayer session:
@@ -80,6 +82,15 @@ export class MultiplayerGameController {
    */
   private sendSequence = 0;
 
+  /**
+   * Background keep-alive: the render loop (rAF) is throttled/stopped when
+   * the tab is hidden — the local simulation can't run, but the server and
+   * every remote client must still see a CLEAN standing player at the last
+   * position (never a ghost extrapolated forever with a stale velocity).
+   */
+  private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+  private lastFrameAt = 0;
+
   constructor(
     private readonly client: MultiplayerClient,
     scene: THREE.Scene,
@@ -99,6 +110,9 @@ export class MultiplayerGameController {
     client.onHitConfirmed = (event) => this.onHitConfirmed?.(event);
     client.onDamageTaken = (event) => this.onDamageTaken?.(event);
     client.onApplyImpulse = (event) => this.onApplyImpulse?.(event.x, event.y, event.z);
+
+    this.lastFrameAt = performance.now();
+    this.keepaliveTimer = setInterval(() => this.backgroundKeepalive(), 250);
 
     // DEV-ONLY damage tool: `mpDamage("PLAYER 65", 25)` from the console.
     // The server hard-refuses DEBUG_DAMAGE in production — easy to delete
@@ -124,6 +138,11 @@ export class MultiplayerGameController {
   /** Static world meshes remote plasma beams visually stop on. */
   setRaycastTargets(targets: THREE.Object3D[]): void {
     this.vfx.setRaycastTargets(targets);
+  }
+
+  /** Shared ParticleSystem: remote VFX emit the same particles as local. */
+  setParticles(particles: ParticleSystem): void {
+    this.vfx.setParticles(particles);
   }
 
   /**
@@ -157,6 +176,7 @@ export class MultiplayerGameController {
    * accumulator tick — never once per render frame.
    */
   update(dt: number): void {
+    this.lastFrameAt = performance.now();
     const players = this.client.getPlayers();
 
     // Remote avatars: reconcile with the latest server state + smooth.
@@ -253,8 +273,41 @@ export class MultiplayerGameController {
     this.timeSinceSend = 0;
   }
 
+  /**
+   * While rAF is stalled (hidden tab): report the CURRENT position with
+   * zero velocity + IDLE so the server hit detection and every remote
+   * client keep an exact, clean, hittable avatar for this player.
+   */
+  private backgroundKeepalive(): void {
+    if (performance.now() - this.lastFrameAt < 300) return; // loop is alive
+    if (!this.client.isConnected || !this.localAlive) return;
+    const pos = this.player.getPosition(this.posScratch);
+    this.sendSequence++;
+    this.client.sendTransform({
+      x: pos.x,
+      y: pos.y,
+      z: pos.z,
+      yaw: wrapAngle(this.fpsCamera.yaw),
+      pitch: this.fpsCamera.pitch,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      state: NetworkMovementState.IDLE,
+      seq: this.sendSequence,
+    });
+    this.lastSent.x = pos.x;
+    this.lastSent.y = pos.y;
+    this.lastSent.z = pos.z;
+    this.lastSent.state = NetworkMovementState.IDLE;
+    this.timeSinceSend = 0;
+  }
+
   /** Tear down every remote avatar (leave game / connection lost). */
   dispose(): void {
+    if (this.keepaliveTimer !== null) {
+      clearInterval(this.keepaliveTimer);
+      this.keepaliveTimer = null;
+    }
     this.client.onPlayerDied = null;
     this.client.onPlayerRespawned = null;
     this.client.onWeaponActionConfirmed = null;

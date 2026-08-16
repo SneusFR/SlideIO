@@ -183,15 +183,22 @@ export class SnapshotBuffer {
     const clampedMs = Math.min(aheadMs, cfg.maxExtrapolationMs);
     const dt = clampedMs / 1000;
 
+    // Once the extrapolation window is exhausted the avatar is FROZEN —
+    // report ZERO velocity so run animations stop scaling with a stale
+    // speed, and after a longer stale window fall back to IDLE entirely
+    // (a silent sender must never leave its ghost sprinting on the spot).
+    const frozen = aheadMs >= cfg.maxExtrapolationMs;
+    const stale = aheadMs >= cfg.staleStateFallbackMs;
+
     out.x = last.x + last.velocityX * dt;
     out.y = last.y + last.velocityY * dt;
     out.z = last.z + last.velocityZ * dt;
     out.yaw = last.yaw;
     out.pitch = last.pitch;
-    out.velocityX = last.velocityX;
-    out.velocityY = last.velocityY;
-    out.velocityZ = last.velocityZ;
-    out.movementState = last.movementState;
+    out.velocityX = frozen ? 0 : last.velocityX;
+    out.velocityY = frozen ? 0 : last.velocityY;
+    out.velocityZ = frozen ? 0 : last.velocityZ;
+    out.movementState = stale ? NetworkMovementState.IDLE : last.movementState;
     out.teleported = false;
     out.extrapolating = aheadMs > 1 && clampedMs > 1;
     return true;

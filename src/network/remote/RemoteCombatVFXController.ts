@@ -1,6 +1,9 @@
 import * as THREE from "three";
 import { audio, LoopHandle } from "../../audio/AudioManager";
 import { PlasmaBeam } from "../../weapons/PlasmaBeam";
+import { ObliterreurBeamVFX } from "../../weapons/obliterreur/ObliterreurBeamVFX";
+import { ObliterreurConfig as oc } from "../../weapons/obliterreur/ObliterreurConfig";
+import type { ParticleSystem } from "../../effects/ParticleSystem";
 import {
   NetworkWeaponConfig as W,
   NetworkWeaponId,
@@ -33,8 +36,14 @@ interface RemoteProjectile {
 interface RemoteOblit {
   /** Anchor meshes by server index (0 = A, 1 = B). */
   anchors: (THREE.Group | null)[];
-  tube: THREE.Group | null;
-  tubeTimer: number;
+  /** The REAL vortex beam VFX — exact same shaders as the local weapon. */
+  beam: ObliterreurBeamVFX | null;
+  /** Remaining ACTIVE time; ≤ 0 while imploding / off. */
+  beamTimer: number;
+  /** Sampled centerline of the active beam (particle emission spine). */
+  samples: THREE.Vector3[];
+  particleAccum: number;
+  sparkAccum: number;
 }
 
 interface Tracer {
@@ -73,11 +82,15 @@ export class RemoteCombatVFXController {
   private raycastTargets: THREE.Object3D[] = [];
   private readonly raycaster = new THREE.Raycaster();
 
+  /** Shared particle system (suction/spark parity with the local beam). */
+  private particles: ParticleSystem | null = null;
+
   private elapsed = 0;
   private disposed = false;
 
   /** One-frame shader/pipeline warm-up (removed shortly after start). */
   private warmupBeam: PlasmaBeam | null = null;
+  private warmupOblit: ObliterreurBeamVFX | null = null;
   private warmupTimer = 0;
 
   // Scratch
@@ -86,6 +99,20 @@ export class RemoteCombatVFXController {
   private readonly dirScratch = new THREE.Vector3();
   private readonly endScratch = new THREE.Vector3();
   private readonly vecScratch = new THREE.Vector3();
+  private readonly particlePosScratch = new THREE.Vector3();
+  private readonly particleVelScratch = new THREE.Vector3();
+
+  // Obliterreur suction/spark palettes (identical to the local weapon).
+  private readonly oblitParticleColors = [
+    new THREE.Color(0xa855f7),
+    new THREE.Color(0x7c3aed),
+    new THREE.Color(0x4c1d95),
+  ];
+  private readonly oblitSparkColors = [
+    new THREE.Color(0xe9d5ff),
+    new THREE.Color(0xc084fc),
+    new THREE.Color(0xa855f7),
+  ];
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -96,6 +123,11 @@ export class RemoteCombatVFXController {
   /** World meshes remote plasma beams get visually blocked by (optional). */
   setRaycastTargets(targets: THREE.Object3D[]): void {
     this.raycastTargets = targets;
+  }
+
+  /** Shared ParticleSystem: remote beams emit the same suction/sparks. */
+  setParticles(particles: ParticleSystem): void {
+    this.particles = particles;
   }
 
   /**
@@ -117,6 +149,19 @@ export class RemoteCombatVFXController {
       0,
     );
     this.warmupTimer = 0.5;
+
+    // Obliterreur vortex shells (3 custom ShaderMaterials): compile them
+    // now so a remote OBLITERREUR_FIRE never hitches mid-fight.
+    this.warmupOblit = new ObliterreurBeamVFX(this.scene);
+    this.warmupOblit.activate(
+      new THREE.CubicBezierCurve3(
+        new THREE.Vector3(far.x, far.y, far.z),
+        new THREE.Vector3(far.x + 1, far.y + 1, far.z),
+        new THREE.Vector3(far.x + 2, far.y + 1, far.z),
+        new THREE.Vector3(far.x + 3, far.y, far.z),
+      ),
+      3,
+    );
 
     // Additive transparent MeshBasicMaterial family (bursts / rings /
     // anchors / tube glow all share this program).
@@ -208,7 +253,8 @@ export class RemoteCombatVFXController {
         this.obliterreurFire(ev);
         return;
       case ACTION_OBLITERREUR_STOP:
-        this.removeOblitTube(ev.playerId);
+        // RMB cancel on the shooter's side → fast implode (local parity).
+        this.stopOblitBeam(ev.playerId, true);
         return;
       default:
         return; // unknown action — silently ignored
@@ -219,7 +265,7 @@ export class RemoteCombatVFXController {
   onPlayerDied(playerId: string): void {
     this.stopPlasma(playerId, null);
     // The server clears its anchors on death without a broadcast — mirror.
-    this.removeOblitTube(playerId);
+    this.stopOblitBeam(playerId, true);
     this.clearOblitAnchors(playerId);
     // NOTE: thrown revolver projectiles legitimately survive their owner.
   }
@@ -234,7 +280,7 @@ export class RemoteCombatVFXController {
     }
     for (const id of [...this.oblits.keys()]) {
       if (!validIds.has(id)) {
-        this.removeOblitTube(id);
+        this.destroyOblitBeam(id);
         this.clearOblitAnchors(id);
         this.oblits.delete(id);
       }
@@ -249,13 +295,16 @@ export class RemoteCombatVFXController {
     if (this.disposed) return;
     this.elapsed += dt;
 
-    // Warm-up beam: rendered for a few frames, then removed for good.
+    // Warm-up VFX: rendered for a few frames, then removed for good.
     if (this.warmupBeam) {
       this.warmupTimer -= dt;
+      this.warmupOblit?.update(dt, this.elapsed);
       if (this.warmupTimer <= 0) {
         this.warmupBeam.setActive(false);
         this.scene.remove(this.warmupBeam.group);
         this.warmupBeam = null;
+        this.warmupOblit?.dispose();
+        this.warmupOblit = null;
       }
     }
 
@@ -349,13 +398,22 @@ export class RemoteCombatVFXController {
       }
     }
 
-    // ---- Obliterreur: anchor pulse + tube expiry ----
-    for (const [id, o] of this.oblits) {
+    // ---- Obliterreur: anchor pulse + REAL vortex beam lifecycle ----
+    for (const o of this.oblits.values()) {
       const pulse = 1 + 0.14 * Math.sin(this.elapsed * 6);
       for (const anchor of o.anchors) anchor?.scale.setScalar(pulse);
-      if (o.tube) {
-        o.tubeTimer -= dt;
-        if (o.tubeTimer <= 0) this.removeOblitTube(id);
+      if (o.beam) {
+        if (o.beamTimer > 0) {
+          o.beamTimer -= dt;
+          if (o.beamTimer <= 0) {
+            // Natural expiry → slow implode (same as the local weapon).
+            o.beam.deactivate(false);
+          } else {
+            this.emitOblitParticles(o, dt);
+          }
+        }
+        // Drives appear / active flicker / implode + endpoint lights.
+        o.beam.update(dt, this.elapsed);
       }
     }
   }
@@ -369,7 +427,7 @@ export class RemoteCombatVFXController {
     for (const id of [...this.plasma.keys()]) this.removePlasma(id);
     for (const id of [...this.projectiles.keys()]) this.removeProjectile(id);
     for (const id of [...this.oblits.keys()]) {
-      this.removeOblitTube(id);
+      this.destroyOblitBeam(id);
       this.clearOblitAnchors(id);
     }
     this.oblits.clear();
@@ -538,7 +596,14 @@ export class RemoteCombatVFXController {
   private oblitOf(playerId: string): RemoteOblit {
     let o = this.oblits.get(playerId);
     if (!o) {
-      o = { anchors: [null, null], tube: null, tubeTimer: 0 };
+      o = {
+        anchors: [null, null],
+        beam: null,
+        beamTimer: 0,
+        samples: [],
+        particleAccum: 0,
+        sparkAccum: 0,
+      };
       this.oblits.set(playerId, o);
     }
     return o;
@@ -565,11 +630,14 @@ export class RemoteCombatVFXController {
   private obliterreurFire(ev: WeaponActionConfirmedEvent): void {
     if (typeof ev.px !== "number") return;
     const o = this.oblitOf(ev.playerId);
-    this.removeOblitTube(ev.playerId);
 
     const a = new THREE.Vector3(ev.ox, ev.oy, ev.oz);
     const b = new THREE.Vector3(ev.px, ev.py ?? 0, ev.pz ?? 0);
-    // EXACT same curve as the server damage volume (shared constants).
+    // EXACT same curve as the server damage volume (shared constants):
+    // a quadratic bezier with an upward mid handle, expressed here as the
+    // EQUIVALENT cubic (C1 = A + ⅔(M−A), C2 = B + ⅔(M−B)) so the REAL
+    // ObliterreurBeamVFX — identical shaders to the local weapon — can
+    // build its tube shells along it.
     const chord = a.distanceTo(b);
     const handle = Math.min(
       Math.max(chord * W.obliterreur.curveStrength, W.obliterreur.curveHandleMin),
@@ -577,57 +645,87 @@ export class RemoteCombatVFXController {
     );
     const mid = a.clone().add(b).multiplyScalar(0.5);
     mid.y += handle;
-    const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
+    const c1 = new THREE.Vector3().lerpVectors(a, mid, 2 / 3);
+    const c2 = new THREE.Vector3().lerpVectors(b, mid, 2 / 3);
+    const curve = new THREE.CubicBezierCurve3(a, c1, c2, b);
 
-    const tube = new THREE.Group();
-    const coreGeo = new THREE.TubeGeometry(
-      curve,
-      W.obliterreur.curveSampleCount,
-      W.obliterreur.beamRadius * 0.55,
-      10,
-      false,
-    );
-    const coreMat = new THREE.MeshBasicMaterial({ color: 0x0a0312 });
-    const core = new THREE.Mesh(coreGeo, coreMat);
-    core.frustumCulled = false;
+    if (!o.beam) o.beam = new ObliterreurBeamVFX(this.scene);
+    o.beam.activate(curve, curve.getLength());
+    o.beamTimer = W.obliterreur.beamDuration;
+    o.particleAccum = 0;
+    o.sparkAccum = 0;
 
-    const glowGeo = new THREE.TubeGeometry(
-      curve,
-      W.obliterreur.curveSampleCount,
-      W.obliterreur.beamRadius * 0.85,
-      10,
-      false,
-    );
-    const glowMat = new THREE.MeshBasicMaterial({
-      color: 0x7c3aed,
-      transparent: true,
-      opacity: 0.32,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    const glow = new THREE.Mesh(glowGeo, glowMat);
-    glow.frustumCulled = false;
-
-    tube.add(core, glow);
-    this.scene.add(tube);
-    o.tube = tube;
-    o.tubeTimer = W.obliterreur.beamDuration;
+    // Centerline samples: suction/spark particle spine (local parity).
+    o.samples.length = 0;
+    const n = W.obliterreur.curveSampleCount;
+    for (let i = 0; i <= n; i++) {
+      o.samples.push(curve.getPoint(i / n));
+    }
 
     audio.playAt("hammer_slam_sub", mid, { bus: "weapons", volume: 0.95, rate: 0.7 });
     audio.playAt("phase_warp", mid, { bus: "weapons", volume: 0.55, rate: 0.8 });
   }
 
-  private removeOblitTube(playerId: string): void {
+  /** Stop an active remote vortex with the weapon's real implosion. */
+  private stopOblitBeam(playerId: string, fast: boolean): void {
     const o = this.oblits.get(playerId);
-    if (!o?.tube) return;
-    this.scene.remove(o.tube);
-    for (const child of o.tube.children) {
-      const mesh = child as THREE.Mesh;
-      mesh.geometry?.dispose();
-      (mesh.material as THREE.Material)?.dispose();
+    if (!o?.beam) return;
+    o.beam.deactivate(fast);
+    o.beamTimer = 0;
+  }
+
+  /** Full teardown of a remote vortex (owner left / session ended). */
+  private destroyOblitBeam(playerId: string): void {
+    const o = this.oblits.get(playerId);
+    if (!o?.beam) return;
+    o.beam.dispose();
+    o.beam = null;
+    o.beamTimer = 0;
+    o.samples.length = 0;
+  }
+
+  /**
+   * Suction + spark particles along the active remote beam — same rates,
+   * colors and motion as ObliterreurWeapon.emitSuctionParticles().
+   */
+  private emitOblitParticles(o: RemoteOblit, dt: number): void {
+    if (!this.particles || o.samples.length === 0) return;
+    const pos = this.particlePosScratch;
+    const vel = this.particleVelScratch;
+
+    // Matter dragged INTO the vortex.
+    o.particleAccum += oc.obliterreurParticleRate * dt;
+    while (o.particleAccum >= 1) {
+      o.particleAccum -= 1;
+      const sample = o.samples[Math.floor(Math.random() * o.samples.length)];
+      vel
+        .set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5)
+        .normalize()
+        .multiplyScalar(1.5 + Math.random() * 1.5);
+      pos.copy(sample).add(vel);
+      vel.subVectors(sample, pos).normalize().multiplyScalar(6 + Math.random() * 4);
+      const color =
+        this.oblitParticleColors[Math.floor(Math.random() * this.oblitParticleColors.length)];
+      this.particles.spawn(pos, vel, 0.4, color, 0, 0);
     }
-    o.tube = null;
-    o.tubeTimer = 0;
+
+    // Bright electric sparks whipped OUTWARD from the tube surface.
+    o.sparkAccum += oc.obliterreurSparkRate * dt;
+    while (o.sparkAccum >= 1) {
+      o.sparkAccum -= 1;
+      const sample = o.samples[Math.floor(Math.random() * o.samples.length)];
+      vel.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+      pos
+        .copy(sample)
+        .addScaledVector(vel, W.obliterreur.beamRadius * (0.9 + Math.random() * 0.6));
+      vel.multiplyScalar(3 + Math.random() * 5);
+      vel.x += (Math.random() - 0.5) * 3;
+      vel.y += (Math.random() - 0.5) * 3;
+      vel.z += (Math.random() - 0.5) * 3;
+      const color =
+        this.oblitSparkColors[Math.floor(Math.random() * this.oblitSparkColors.length)];
+      this.particles.spawn(pos, vel, 0.12 + Math.random() * 0.2, color, 0, 2);
+    }
   }
 
   private clearOblitAnchors(playerId: string): void {
