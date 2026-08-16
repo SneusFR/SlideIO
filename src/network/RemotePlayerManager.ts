@@ -3,7 +3,11 @@ import { GLTFLoader, GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { MovementConfig as moveCfg } from "../player/MovementConfig";
 import { RemoteInterpolationConfig as icfg } from "./interpolation/RemoteInterpolationConfig";
-import { SnapshotBuffer, SampledPlayerState } from "./interpolation/SnapshotBuffer";
+import {
+  SnapshotBuffer,
+  SampledPlayerState,
+  shortestAngleDelta,
+} from "./interpolation/SnapshotBuffer";
 import { NetworkClock } from "./interpolation/NetworkClock";
 import {
   RemotePlayerAnimationController,
@@ -13,9 +17,10 @@ import { NetworkMovementState, sanitizeNetworkMovementState } from "./NetworkMov
 import { RemoteWeaponController } from "./remote/RemoteWeaponController";
 import type { NetworkPlayerInfo } from "./MultiplayerClient";
 // Character GLB (mesh + skeleton + "Alert" idle clip) — loaded ONCE, cloned
-// per player. The run clip lives in the second GLB (same skeleton).
+// per player. The run/jump clips live in sibling GLBs (same skeleton).
 import characterUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_Running_withSkin.glb?url";
 import runClipUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_Walking_withSkin.glb?url";
+import jumpClipUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_Regular_Jump_withSkin.glb?url";
 
 /** Capsule center → feet distance (model root sits at the feet). */
 const FEET_OFFSET = moveCfg.standHalfHeight + moveCfg.capsuleRadius;
@@ -46,7 +51,8 @@ function loadCharacterAsset(): Promise<CharacterAsset> {
   cachedCharacter = Promise.all([
     loader.loadAsync(characterUrl),
     loader.loadAsync(runClipUrl),
-  ]).then(([gltf, runGltf]: [GLTF, GLTF]) => {
+    loader.loadAsync(jumpClipUrl),
+  ]).then(([gltf, runGltf, jumpGltf]: [GLTF, GLTF, GLTF]) => {
     const model = gltf.scene;
 
     // Normalize ONCE on the template: target height, feet at local y = 0,
@@ -76,24 +82,51 @@ function loadCharacterAsset(): Promise<CharacterAsset> {
     template.add(model);
 
     // Real clips (inspected in the assets): "Armature|Alert|baselayer"
-    // (idle) and "Armature|running|baselayer" (run). Same skeleton — the
-    // run clip retargets onto every clone by bone name. Frozen pose clips
-    // are cheap CLONES sharing the keyframe data (distinct actions only).
+    // (idle), "Armature|running|baselayer" (run) and
+    // "Armature|Regular_Jump|baselayer" (jump). Same skeleton — the clips
+    // retarget onto every clone by bone name. The frozen slide pose is a
+    // cheap CLONE sharing the keyframe data (distinct action only).
     const idle =
       gltf.animations?.find((c) => /alert|idle/i.test(c.name)) ?? gltf.animations?.[0];
     const run =
       runGltf.animations?.find((c) => /run/i.test(c.name)) ?? runGltf.animations?.[0];
-    if (!idle || !run) throw new Error("Remote character clips missing");
+    const jump =
+      jumpGltf.animations?.find((c) => /jump/i.test(c.name)) ?? jumpGltf.animations?.[0];
+    if (!idle || !run || !jump) throw new Error("Remote character clips missing");
+
+    // The jump clip carries hips ROOT MOTION (the character rises inside
+    // the clip). The avatar's actual jump arc already comes from the
+    // NETWORK position — keeping both would double the motion and leave
+    // the model floating above its capsule. Flatten the hips translation.
+    stripHipsRootMotion(jump);
 
     const clips: RemoteCharacterClips = {
       idle,
       run,
-      airPose: run.clone(),
+      jump,
       slidePose: run.clone(),
     };
     return { template, clips };
   });
   return cachedCharacter;
+}
+
+/**
+ * Flatten the Hips translation track of a clip to its FIRST keyframe:
+ * removes the baked root motion (vertical jump arc / forward travel)
+ * while keeping every rotation — the character animates in place and the
+ * NETWORK position provides the real trajectory.
+ */
+function stripHipsRootMotion(clip: THREE.AnimationClip): void {
+  for (const track of clip.tracks) {
+    if (!/Hips\.position$/i.test(track.name)) continue;
+    const values = track.values;
+    for (let i = 3; i < values.length; i += 3) {
+      values[i] = values[0];
+      values[i + 1] = values[1];
+      values[i + 2] = values[2];
+    }
+  }
 }
 
 /**
@@ -239,7 +272,15 @@ class RemotePlayer {
     this.lastPitch = s.pitch;
 
     const horizontalSpeed = Math.hypot(s.velocityX, s.velocityZ);
-    this.anim.update(dt, s.movementState, horizontalSpeed, s.velocityY, s.pitch);
+    // Direction-aware locomotion: signed angle between the aim yaw and
+    // the actual movement direction (0 = running straight forward).
+    // Yaw convention: yaw = 0 → forward = -Z.
+    let moveLocalYaw = 0;
+    if (horizontalSpeed > 0.1) {
+      const moveYaw = Math.atan2(-s.velocityX, -s.velocityZ);
+      moveLocalYaw = shortestAngleDelta(s.yaw, moveYaw);
+    }
+    this.anim.update(dt, s.movementState, horizontalSpeed, s.velocityY, s.pitch, moveLocalYaw);
 
     if (this.debugMarker) {
       const newest = this.buffer.newest;

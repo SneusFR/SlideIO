@@ -86,6 +86,12 @@ export class GameRoom extends Room<GameRoomState> {
     this.combat.onPlayerDied = (event) => this.onPlayerDied(event);
     this.respawns = new RespawnManager(this.clock);
 
+    // State patches at 30 Hz (Colyseus default: 20 Hz). Transforms are
+    // relayed through the synced state, so the patch rate is a direct
+    // term of the remote-player latency chain:
+    //   client send (30 Hz) → server patch (30 Hz) → interpolation delay.
+    this.setPatchRate(1000 / 30);
+
     // Phase 5 — GameRoom stays an orchestrator: receive message →
     // WeaponManager (validation + hit detection) → CombatManager →
     // broadcast result. All weapon logic lives in backend/src/weapons/.

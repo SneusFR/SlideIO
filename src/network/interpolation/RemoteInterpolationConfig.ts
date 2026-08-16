@@ -12,10 +12,12 @@
 export const RemoteInterpolationConfig = {
   /**
    * Remote players are rendered this many milliseconds in the PAST so two
-   * snapshots normally bracket the render time (smooth interpolation even
-   * at ~20 network updates/sec).
+   * snapshots normally bracket the render time. At ~30 network updates/sec
+   * (≈33 ms between snapshots) 70 ms still covers two intervals + jitter
+   * while cutting ~30 ms of the visible remote latency (what you FEEL as
+   * "he lands later on my screen").
    */
-  interpolationDelayMs: 100,
+  interpolationDelayMs: 70,
 
   /**
    * When no future snapshot exists (packet delay/loss/jitter), extrapolate

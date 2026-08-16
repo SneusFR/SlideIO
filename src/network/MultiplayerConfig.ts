@@ -27,8 +27,13 @@ export const MultiplayerConfig = {
   minPlayersToStart: 2,
 
   // ---- Network tick (SEPARATE from the render tick) ----
-  /** Local transform updates sent per second (~20 Hz — tuned later). */
-  transformSendRate: 20,
+  /**
+   * Local transform updates sent per second. 30 Hz halves the average
+   * sampling latency vs 20 Hz (payload is tiny) — combined with the
+   * server patch rate + interpolation delay this is what other players
+   * FEEL as responsiveness.
+   */
+  transformSendRate: 30,
   /** Don't resend while perfectly still: min position delta (meters). */
   positionEpsilon: 0.01,
   /** Min yaw/pitch delta (radians) before a resend. */
