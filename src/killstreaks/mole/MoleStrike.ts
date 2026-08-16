@@ -32,6 +32,12 @@ const easeInOut = (t: number) => t * t * (3 - 2 * t);
  * callback passed to activate() — this class never touches slot state.
  */
 export class MoleStrike {
+  // ---- Network hooks (wired by Game — multiplayer only) ----
+  /** Fired at the dive start with the FEET position (MOLE_BURROW send). */
+  onBurrowStart: ((feet: THREE.Vector3) => void) | null = null;
+  /** Fired at the eruption with the FEET position (MOLE_EMERGE send). */
+  onEmerge: ((feet: THREE.Vector3) => void) | null = null;
+
   private phase = MolePhase.INACTIVE;
   private phaseTimer = 0;
   private undergroundTimer = 0;
@@ -109,6 +115,7 @@ export class MoleStrike {
     this.getFeetPosition(this.feet);
     this.vfx.enterBurst(this.feet);
     this.gameAudio.moleEnter();
+    this.onBurrowStart?.(this.feet);
   }
 
   /** Player pressed E while burrowed → erupt right here. */
@@ -191,6 +198,7 @@ export class MoleStrike {
     this.fpsCamera.addShake(cfg.moleStrikeEmergeCameraShake);
     this.gameAudio.moleEmerge(hitCount);
     this.gameAudio.setUndergroundLayer(false);
+    this.onEmerge?.(this.feet);
   }
 
   /** Damage + radial knockback on every combatant caught in the blast. */

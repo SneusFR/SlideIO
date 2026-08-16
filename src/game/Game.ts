@@ -1077,20 +1077,39 @@ export class Game {
     };
 
     const prevPlaced = this.obliterreur.onPointPlaced;
-    this.obliterreur.onPointPlaced = (index) => {
-      prevPlaced?.(index);
-      // The server re-raycasts the same camera ray for the real anchor.
-      this.netSendAimedAction(WeaponActionType.OBLITERREUR_PLACE);
+    this.obliterreur.onPointPlaced = (index, point) => {
+      prevPlaced?.(index, point);
+      // The EXACT local hit point + SLOT travel with the action so the
+      // server (and every remote client) anchor the very same point in
+      // the very same slot — the placement can never desynchronize.
+      this.netSendAimedAction(WeaponActionType.OBLITERREUR_PLACE, point, index);
     };
     const prevBeamStart = this.obliterreur.onBeamStart;
     this.obliterreur.onBeamStart = () => {
       prevBeamStart?.();
       this.netSendAimedAction(WeaponActionType.OBLITERREUR_FIRE);
     };
+
+    // MOLE STRIKE: burrow/emerge are server-validated actions — the
+    // server owns the invulnerability window AND the eruption AoE.
+    const prevBurrow = this.moleStrike.onBurrowStart;
+    this.moleStrike.onBurrowStart = (feet) => {
+      prevBurrow?.(feet);
+      this.netSendAimedAction(WeaponActionType.MOLE_BURROW, feet);
+    };
+    const prevEmerge = this.moleStrike.onEmerge;
+    this.moleStrike.onEmerge = (feet) => {
+      prevEmerge?.(feet);
+      this.netSendAimedAction(WeaponActionType.MOLE_EMERGE, feet);
+    };
   }
 
   /** Send one aimed WEAPON_ACTION (camera eye origin + facing direction). */
-  private netSendAimedAction(action: string, extraPoint?: THREE.Vector3): void {
+  private netSendAimedAction(
+    action: string,
+    extraPoint?: THREE.Vector3,
+    pointIndex?: number,
+  ): void {
     if (!this.multiplayer || !this.multiplayerClient?.isConnected) return;
     const cam = this.fpsCamera.camera;
     cam.getWorldPosition(this.netOrigin);
@@ -1103,6 +1122,7 @@ export class Game {
       dy: this.netDir.y,
       dz: this.netDir.z,
       ...(extraPoint ? { px: extraPoint.x, py: extraPoint.y, pz: extraPoint.z } : {}),
+      ...(pointIndex !== undefined ? { pi: pointIndex } : {}),
     });
   }
 
@@ -1187,6 +1207,8 @@ function networkKillMethod(damageType: string): KillMethod {
       return KillMethod.SPEAR_SWEEP;
     case "OBLITERREUR":
       return KillMethod.OBLITERREUR;
+    case "MOLE_STRIKE":
+      return KillMethod.MOLE_STRIKE;
     default:
       return KillMethod.PLASMA;
   }

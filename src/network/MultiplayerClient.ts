@@ -249,6 +249,8 @@ export class MultiplayerClient {
       px?: number;
       py?: number;
       pz?: number;
+      /** Obliterreur anchor slot (0 = A, 1 = B). */
+      pi?: number;
     } = {},
   ): void {
     if (!this.room) return;
@@ -259,6 +261,7 @@ export class MultiplayerClient {
       ...(data.ox !== undefined ? { ox: round3(data.ox), oy: round3(data.oy ?? 0), oz: round3(data.oz ?? 0) } : {}),
       ...(data.dx !== undefined ? { dx: round3(data.dx), dy: round3(data.dy ?? 0), dz: round3(data.dz ?? 0) } : {}),
       ...(data.px !== undefined ? { px: round3(data.px), py: round3(data.py ?? 0), pz: round3(data.pz ?? 0) } : {}),
+      ...(data.pi !== undefined ? { pi: data.pi } : {}),
     });
   }
 

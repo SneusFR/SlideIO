@@ -5,6 +5,7 @@ import {
   WeaponActionType,
   isNetworkWeaponId,
   PLAYER_EYE_OFFSET,
+  PLAYER_FEET_OFFSET,
   WeaponActionMessage,
   WeaponActionConfirmedEvent,
 } from "../../../shared/combat/NetworkWeapons";
@@ -74,8 +75,13 @@ class PlayerWeaponState {
   // Obliterreur
   oblitA: Vec3 | null = null;
   oblitB: Vec3 | null = null;
+  /** Fallback A/B alternation for clients that don't declare a slot. */
+  oblitNextIndex: 0 | 1 = 0;
   beamSamples: Vec3[] | null = null;
   beamEndsAt = 0;
+  // Mole strike (burrowed = INVULNERABLE + untargetable, mirrors local)
+  burrowed = false;
+  burrowedUntil = 0;
 }
 
 /** IO the room provides — WeaponManager stays free of Colyseus types. */
@@ -144,6 +150,8 @@ export class WeaponManager {
     const targets: HitTarget[] = [];
     for (const p of this.host.players()) {
       if (!p.isAlive || p.id === excludeId) continue;
+      // A burrowed MOLE STRIKE player is untargetable — rays pass through.
+      if (this.states.get(p.id)?.burrowed) continue;
       const h = this.history.get(p.id);
       let x = p.x;
       let y = p.y;
@@ -176,9 +184,13 @@ export class WeaponManager {
     if (!isNetworkWeaponId(rawWeapon)) return;
     const s = this.stateOf(player.id);
     if (s.weapon === rawWeapon) return;
-    // Switching away drops continuous actions cleanly.
+    // Switching away drops continuous actions cleanly. Anchors never
+    // survive a weapon swap (mirrors the local obliterreur.reset()).
     this.stopPlasma(player, s);
     this.cancelObliterreurBeam(player, s);
+    s.oblitA = null;
+    s.oblitB = null;
+    s.oblitNextIndex = 0;
     s.weapon = rawWeapon;
     player.weapon = rawWeapon; // synced schema state → all clients
   }
@@ -243,10 +255,16 @@ export class WeaponManager {
         this.confirm(player, NetworkWeaponId.SPEAR, action, seq, this.playerPos(player), s.rushDir);
         return;
       case WeaponActionType.OBLITERREUR_PLACE:
-        this.handleObliterreurPlace(player, s, seq, origin, dir);
+        this.handleObliterreurPlace(player, s, seq, origin, dir, msg);
         return;
       case WeaponActionType.OBLITERREUR_FIRE:
         this.handleObliterreurFire(player, s, seq);
+        return;
+      case WeaponActionType.MOLE_BURROW:
+        this.handleMoleBurrow(player, s, seq, msg);
+        return;
+      case WeaponActionType.MOLE_EMERGE:
+        this.handleMoleEmerge(player, s, seq, msg);
         return;
       default:
         return; // unknown action — silently refused
@@ -266,6 +284,8 @@ export class WeaponManager {
       if (s.rushActive) this.tickSpearRush(player, s, now);
       if (s.beamSamples && now < s.beamEndsAt) this.tickObliterreurBeam(player, s, dt);
       else if (s.beamSamples && now >= s.beamEndsAt) s.beamSamples = null;
+      // Burrow safety: never invulnerable forever if MOLE_EMERGE is lost.
+      if (s.burrowed && now >= s.burrowedUntil) s.burrowed = false;
     }
     this.tickProjectiles(dt);
   }
@@ -560,24 +580,54 @@ export class WeaponManager {
     seq: number,
     origin: Vec3 | null,
     dir: Vec3 | null,
+    msg: WeaponActionMessage,
   ): void {
     if (s.weapon !== NetworkWeaponId.OBLITERREUR || !origin || !dir) return;
+
+    // Server raycast along the aim ray (authoritative surface check).
     const t = raycastMap(origin, dir, W.obliterreur.placementRange);
-    if (t === null) return; // no static surface hit → refused
-    const anchor = pointAt(origin, dir, t);
+    const serverHit = t !== null ? pointAt(origin, dir, t) : null;
+
+    // The CLIENT's exact anchor point (px/py/pz) is used whenever it is
+    // plausible — BOTH sides then show/damage the exact same point. A
+    // client/server collider mismatch falls back to the server hit so a
+    // placement the client saw succeed is almost never silently refused.
+    const reported = this.readPoint(msg);
+    let anchor: Vec3 | null = null;
+    if (reported && distance(reported, origin) <= W.obliterreur.placementRange) {
+      if (serverHit && distance(reported, serverHit) <= W.obliterreur.anchorTolerance) {
+        anchor = reported; // both raycasts agree → client point wins
+      } else {
+        // Aim ray missed / disagreed: re-check straight toward the point.
+        const toReported = normalize({
+          x: reported.x - origin.x,
+          y: reported.y - origin.y,
+          z: reported.z - origin.z,
+        });
+        if (toReported) {
+          const t2 = raycastMap(origin, toReported, W.obliterreur.placementRange);
+          const d = distance(origin, reported);
+          if (t2 !== null && Math.abs(t2 - d) <= W.obliterreur.anchorTolerance) {
+            anchor = reported;
+          }
+        }
+      }
+    }
+    if (!anchor) anchor = serverHit;
+    if (!anchor) return; // nothing plausible was hit → refused
 
     // Active beam is cancelled by a new placement (mirrors local gameplay).
     this.cancelObliterreurBeam(player, s);
 
-    let index: number;
-    if (!s.oblitA || (s.oblitA && s.oblitB)) {
-      s.oblitA = anchor;
-      s.oblitB = null;
-      index = 0;
-    } else {
-      s.oblitB = anchor;
-      index = 1;
-    }
+    // SLOT: the client drives the SAME 0→1→0→1 alternation as its local
+    // weapon — replacing one slot NEVER clears the other (this was the
+    // desync: the server used to wipe B when A was re-placed). Clients
+    // that don't declare a slot fall back to the server alternation.
+    const index: 0 | 1 = msg.pi === 0 || msg.pi === 1 ? msg.pi : s.oblitNextIndex;
+    if (index === 0) s.oblitA = anchor;
+    else s.oblitB = anchor;
+    s.oblitNextIndex = index === 0 ? 1 : 0;
+
     this.confirm(player, s.weapon, WeaponActionType.OBLITERREUR_PLACE, seq, origin, dir, anchor, {
       x: index,
       y: 0,
@@ -627,6 +677,78 @@ export class WeaponManager {
   }
 
   // ------------------------------------------------------------------
+  // Mole strike (killstreak — burrow / eruption AoE)
+  // ------------------------------------------------------------------
+
+  /** Dive underground: burrowed players are INVULNERABLE + untargetable. */
+  private handleMoleBurrow(
+    player: NetworkPlayer,
+    s: PlayerWeaponState,
+    seq: number,
+    msg: WeaponActionMessage,
+  ): void {
+    if (s.burrowed) return;
+    s.burrowed = true;
+    s.burrowedUntil = this.host.now() + W.mole.maxBurrowSeconds * 1000;
+
+    // Feet point for the dirt-burst VFX — must be plausibly at the player.
+    const reported = this.readPoint(msg);
+    const feet =
+      reported && distance(reported, this.playerPos(player)) <= W.mole.maxImpactDistance
+        ? reported
+        : { x: player.x, y: player.y - PLAYER_FEET_OFFSET, z: player.z };
+
+    this.confirm(player, s.weapon, WeaponActionType.MOLE_BURROW, seq, feet, { x: 0, y: -1, z: 0 });
+  }
+
+  /** Eruption: AoE damage + radial knockback around the emerge point. */
+  private handleMoleEmerge(
+    player: NetworkPlayer,
+    s: PlayerWeaponState,
+    seq: number,
+    msg: WeaponActionMessage,
+  ): void {
+    if (!s.burrowed) return;
+    s.burrowed = false;
+
+    const reported = this.readPoint(msg);
+    const impact =
+      reported && distance(reported, this.playerPos(player)) <= W.mole.maxImpactDistance
+        ? reported
+        : { x: player.x, y: player.y - PLAYER_FEET_OFFSET, z: player.z };
+
+    this.confirm(player, s.weapon, WeaponActionType.MOLE_EMERGE, seq, impact, { x: 0, y: 1, z: 0 });
+
+    for (const target of this.host.players()) {
+      if (!target.isAlive || target.id === player.id) continue;
+      const center = { x: target.x, y: target.y, z: target.z };
+      const flat = Math.sqrt((center.x - impact.x) ** 2 + (center.z - impact.z) ** 2);
+      if (flat > W.mole.radius) continue;
+      if (Math.abs(center.y - impact.y) > W.mole.heightTolerance) continue;
+      const result = this.dealDamage(
+        player,
+        target.id,
+        target.maxHealth * W.mole.damageFraction,
+        DamageType.MOLE_STRIKE,
+        HitZone.BODY,
+        s.weapon,
+      );
+      if (result.applied) {
+        const away = normalize({ x: center.x - impact.x, y: 0, z: center.z - impact.z }) ?? {
+          x: 0,
+          y: 0,
+          z: 1,
+        };
+        this.host.sendImpulse(target.id, {
+          x: away.x * W.mole.knockback,
+          y: W.mole.verticalKnockback,
+          z: away.z * W.mole.knockback,
+        });
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------
   // Lifecycle hooks (death / respawn / leave)
   // ------------------------------------------------------------------
 
@@ -642,6 +764,8 @@ export class WeaponManager {
     s.rushActive = false;
     s.oblitA = null;
     s.oblitB = null;
+    s.oblitNextIndex = 0;
+    s.burrowed = false;
   }
 
   /** Respawn: clean combat state + fresh revolver cylinder. */
@@ -654,6 +778,8 @@ export class WeaponManager {
     s.beamSamples = null;
     s.oblitA = null;
     s.oblitB = null;
+    s.oblitNextIndex = 0;
+    s.burrowed = false;
     s.revolverAmmo = W.revolver.capacity;
     s.revolverUnavailableUntil = 0;
   }
@@ -702,6 +828,11 @@ export class WeaponManager {
     hitZone: HitZone,
     weapon: NetworkWeaponId,
   ): DamageResult {
+    // A burrowed MOLE STRIKE player is INVULNERABLE (mirrors the local
+    // health.invulnerable flag) — no weapon can damage them server-side.
+    if (this.states.get(targetId)?.burrowed) {
+      return { applied: false, damageDealt: 0, victimDied: false, refusedReason: "target_untargetable" };
+    }
     const result = this.host.applyDamage({
       attackerId: attacker.id,
       targetId,

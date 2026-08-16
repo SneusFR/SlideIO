@@ -114,6 +114,8 @@ class RemotePlayer {
   extrapolating = false;
   /** SERVER-owned alive flag — a dead avatar is hidden, never standing. */
   alive = true;
+  /** MOLE STRIKE: burrowed (movement state) — the avatar is hidden. */
+  burrowed = false;
   /** Phase 5: the REAL equipped weapon GLB in this avatar's hand. */
   readonly weapons: RemoteWeaponController;
   /** Latest INTERPOLATED aim (drives remote beams; never raw packets). */
@@ -219,11 +221,16 @@ class RemotePlayer {
       // First snapshot or teleport-distance jump (respawn / anomaly):
       // SNAP — never lerp across the map for seconds.
       this.group.position.set(s.x, s.y, s.z);
-      this.group.visible = true;
       this.hasVisual = true;
     } else {
       this.group.position.set(s.x, s.y, s.z);
     }
+
+    // MOLE STRIKE: a burrowed player is UNDERGROUND — the whole avatar
+    // (model + nametag + health bar) disappears; the position keeps
+    // updating so the dirt trail VFX can follow the burrowing path.
+    this.burrowed = s.movementState === NetworkMovementState.BURROWED;
+    this.group.visible = this.hasVisual && !this.burrowed;
 
     // Yaw only on the root — the character NEVER tilts with pitch; the
     // sampled yaw is already shortest-arc interpolated (359°→1° = 2°).
@@ -449,6 +456,18 @@ export class RemotePlayerManager {
     out.pos.copy(remote.group.position);
     out.yaw = remote.lastYaw;
     out.pitch = remote.lastPitch;
+    return true;
+  }
+
+  /**
+   * INTERPOLATED capsule-center position even while the avatar mesh is
+   * HIDDEN (MOLE STRIKE burrow) — drives the remote dirt-trail VFX.
+   * Returns false when the player is dead / unknown / never seen.
+   */
+  getBurrowPosition(sessionId: string, out: THREE.Vector3): boolean {
+    const remote = this.remotes.get(sessionId);
+    if (!remote || !remote.alive || !remote.burrowed) return false;
+    out.copy(remote.group.position);
     return true;
   }
 

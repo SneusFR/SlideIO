@@ -184,9 +184,11 @@ export class MultiplayerGameController {
     this.remotes.update(dt);
 
     // Phase 5: remote weapon VFX (beams follow the interpolated aim) +
-    // cleanup of VFX owned by players who left the room.
+    // cleanup of VFX owned by players who left the room. Obliterreur
+    // anchors are also dropped when their owner switches weapons.
     this.vfx.update(dt);
     this.vfx.prune(new Set(players.map((p) => p.id)));
+    this.vfx.syncEquippedWeapons(players);
 
     // ---- Phase 4: server-owned local combat state ----
     const me = this.client.getLocalPlayer();

@@ -52,6 +52,10 @@ export enum WeaponActionType {
   OBLITERREUR_PLACE = "OBLITERREUR_PLACE",
   /** Obliterreur vortex beam fired between the two anchors. */
   OBLITERREUR_FIRE = "OBLITERREUR_FIRE",
+  /** MOLE STRIKE: dive underground (untargetable while burrowed). */
+  MOLE_BURROW = "MOLE_BURROW",
+  /** MOLE STRIKE: eruption — server computes the AoE around the point. */
+  MOLE_EMERGE = "MOLE_EMERGE",
 }
 
 export function isWeaponActionType(raw: unknown): raw is WeaponActionType {
@@ -161,6 +165,24 @@ export const NetworkWeaponConfig = {
     curveHandleMin: 2.0,
     curveHandleMax: 14.0,
     curveSampleCount: 48,
+    /** Client-reported anchor accepted when within this distance of the
+     *  server raycast hit (client/server collider mismatch tolerance, m). */
+    anchorTolerance: 3.0,
+  },
+  /** MOLE STRIKE killstreak (mirrors frontend MoleStrikeConfig). */
+  mole: {
+    /** Damage radius around the emergence point (m). */
+    radius: 7,
+    /** Fraction of each victim's MAX HP dealt by the eruption. */
+    damageFraction: 0.75,
+    /** Vertical band around the emergence point that can be hit (m). */
+    heightTolerance: 3.5,
+    knockback: 16,
+    verticalKnockback: 6,
+    /** Reported emerge point must be near the attacker transform (m). */
+    maxImpactDistance: 6,
+    /** Max legal burrow time (underground + transitions + margin, s). */
+    maxBurrowSeconds: 6.5,
   },
 } as const;
 
@@ -186,10 +208,13 @@ export interface WeaponActionMessage {
   dx?: number;
   dy?: number;
   dz?: number;
-  /** Extra point (slam impact, oblit anchor…). */
+  /** Extra point (slam impact, oblit anchor, mole feet…). */
   px?: number;
   py?: number;
   pz?: number;
+  /** Obliterreur anchor SLOT (0 = A, 1 = B) — keeps both sides in
+   *  lockstep with the local placement alternation. */
+  pi?: number;
 }
 
 /** Server → all clients: a VALIDATED action to replay (VFX / audio / anim). */

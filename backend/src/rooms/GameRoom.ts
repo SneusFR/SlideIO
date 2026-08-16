@@ -53,7 +53,7 @@ const MAX_ABS_ANGLE = Math.PI * 2;
 /** Max plausible per-axis speed (m/s) for client-reported velocity. */
 const MAX_ABS_VELOCITY = 100;
 /** NetworkMovementState range (see frontend NetworkMovementState enum). */
-const MAX_MOVEMENT_STATE = 4;
+const MAX_MOVEMENT_STATE = 5; // 5 = BURROWED (MOLE STRIKE)
 
 /**
  * Private game room.

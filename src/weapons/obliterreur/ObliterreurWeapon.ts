@@ -40,7 +40,8 @@ export class ObliterreurWeapon {
 
   // ---- Hooks (wired by Game) ----
   onCameraShake: ((amount: number) => void) | null = null;
-  onPointPlaced: ((index: number) => void) | null = null;
+  /** An anchor was placed: SLOT index (0 = A, 1 = B) + exact hit point. */
+  onPointPlaced: ((index: number, point: THREE.Vector3) => void) | null = null;
   onBeamStart: (() => void) | null = null;
   onBeamEnd: ((cancelled: boolean) => void) | null = null;
 
@@ -154,7 +155,7 @@ export class ObliterreurWeapon {
 
     this.viewmodel.playPlace();
     this.onCameraShake?.(oc.obliterreurPlaceShake);
-    this.onPointPlaced?.(index);
+    this.onPointPlaced?.(index, h.point);
   }
 
   // ------------------------------------------------------------------

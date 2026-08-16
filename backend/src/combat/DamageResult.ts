@@ -13,5 +13,6 @@ export interface DamageResult {
     | "attacker_not_found"
     | "attacker_dead"
     | "invalid_amount"
-    | "spawn_protected";
+    | "spawn_protected"
+    | "target_untargetable";
 }

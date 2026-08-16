@@ -3,6 +3,7 @@ import { audio, LoopHandle } from "../../audio/AudioManager";
 import { PlasmaBeam } from "../../weapons/PlasmaBeam";
 import { ObliterreurBeamVFX } from "../../weapons/obliterreur/ObliterreurBeamVFX";
 import { ObliterreurConfig as oc } from "../../weapons/obliterreur/ObliterreurConfig";
+import { MoleStrikeConfig as mole } from "../../killstreaks/mole/MoleStrikeConfig";
 import type { ParticleSystem } from "../../effects/ParticleSystem";
 import {
   NetworkWeaponConfig as W,
@@ -10,6 +11,7 @@ import {
   WeaponActionType,
   WeaponActionConfirmedEvent,
   PLAYER_EYE_OFFSET,
+  PLAYER_FEET_OFFSET,
 } from "../../../shared/combat/NetworkWeapons";
 import { loadRemoteWeaponTemplate } from "./RemoteWeaponController";
 import type { RemotePlayerManager } from "../RemotePlayerManager";
@@ -46,6 +48,13 @@ interface RemoteOblit {
   sparkAccum: number;
 }
 
+/** One remote MOLE STRIKE burrow in progress (dirt trail follower). */
+interface RemoteBurrow {
+  trailAccum: number;
+  /** Local-elapsed safety expiry (the emerge event normally ends it). */
+  expiresAt: number;
+}
+
 interface Tracer {
   line: THREE.Line;
   mat: THREE.LineBasicMaterial;
@@ -75,6 +84,7 @@ export class RemoteCombatVFXController {
   private readonly plasma = new Map<string, RemotePlasma>();
   private readonly projectiles = new Map<string, RemoteProjectile>();
   private readonly oblits = new Map<string, RemoteOblit>();
+  private readonly burrows = new Map<string, RemoteBurrow>();
   private readonly tracers: Tracer[] = [];
   private readonly bursts: Burst[] = [];
 
@@ -113,6 +123,13 @@ export class RemoteCombatVFXController {
     new THREE.Color(0xc084fc),
     new THREE.Color(0xa855f7),
   ];
+
+  // Mole strike palette (identical to the local MoleStrikeVFX).
+  private readonly moleDirt = new THREE.Color(mole.moleStrikeDirtColor);
+  private readonly moleDirtDark = new THREE.Color(mole.moleStrikeDirtDarkColor);
+  private readonly moleBlast = new THREE.Color(mole.moleStrikeBlastColor);
+  private readonly moleFlash = new THREE.Color(mole.moleStrikeFlashColor);
+  private readonly upVec = new THREE.Vector3(0, 1, 0);
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -256,18 +273,37 @@ export class RemoteCombatVFXController {
         // RMB cancel on the shooter's side → fast implode (local parity).
         this.stopOblitBeam(ev.playerId, true);
         return;
+      case WeaponActionType.MOLE_BURROW:
+        this.moleBurrow(ev);
+        return;
+      case WeaponActionType.MOLE_EMERGE:
+        this.moleEmerge(ev);
+        return;
       default:
         return; // unknown action — silently ignored
     }
   }
 
-  /** A player died: no ghost beams / anchors from corpses. */
+  /** A player died: no ghost beams / anchors / dirt trails from corpses. */
   onPlayerDied(playerId: string): void {
     this.stopPlasma(playerId, null);
     // The server clears its anchors on death without a broadcast — mirror.
     this.stopOblitBeam(playerId, true);
     this.clearOblitAnchors(playerId);
+    this.burrows.delete(playerId);
     // NOTE: thrown revolver projectiles legitimately survive their owner.
+  }
+
+  /**
+   * SYNCED equipped weapon changed: obliterreur anchors never survive a
+   * weapon swap (mirrors the local obliterreur.reset() + the server).
+   */
+  syncEquippedWeapons(players: ReadonlyArray<{ id: string; weapon: string }>): void {
+    for (const p of players) {
+      if (p.weapon === NetworkWeaponId.OBLITERREUR) continue;
+      const o = this.oblits.get(p.id);
+      if (o && (o.anchors[0] || o.anchors[1])) this.clearOblitAnchors(p.id);
+    }
   }
 
   /** Drop every per-player VFX whose owner left the room. */
@@ -284,6 +320,9 @@ export class RemoteCombatVFXController {
         this.clearOblitAnchors(id);
         this.oblits.delete(id);
       }
+    }
+    for (const id of [...this.burrows.keys()]) {
+      if (!validIds.has(id)) this.burrows.delete(id);
     }
   }
 
@@ -395,6 +434,22 @@ export class RemoteCombatVFXController {
         b.mesh.geometry.dispose();
         b.mat.dispose();
         this.bursts.splice(i, 1);
+      }
+    }
+
+    // ---- Mole strike: dirt trail follows every burrowed remote player ----
+    for (const [id, burrow] of this.burrows) {
+      if (this.elapsed >= burrow.expiresAt) {
+        this.burrows.delete(id);
+        continue;
+      }
+      if (!this.remotes.getBurrowPosition(id, this.vecScratch)) continue;
+      // Ground surface ≈ the feet of the (hidden) capsule while burrowed.
+      this.vecScratch.y -= PLAYER_FEET_OFFSET;
+      burrow.trailAccum += mole.moleStrikeTrailParticleRate * dt;
+      while (burrow.trailAccum >= 1) {
+        burrow.trailAccum -= 1;
+        this.moleTrailPuff(this.vecScratch);
       }
     }
 
@@ -614,10 +669,9 @@ export class RemoteCombatVFXController {
     const o = this.oblitOf(ev.playerId);
     const index = ev.px === 1 ? 1 : 0;
 
-    // Mirror the server alternation: placing A again clears BOTH anchors
-    // (and any active tube was already cancelled by an OBLITERREUR_STOP).
-    if (index === 0) this.clearOblitAnchors(ev.playerId);
-
+    // EXACT local-weapon semantics: placing into a slot replaces ONLY that
+    // slot — the other anchor always survives (any active beam was already
+    // cancelled by an OBLITERREUR_STOP broadcast).
     const anchor = this.makeOblitAnchor();
     anchor.position.set(ev.hx, ev.hy ?? 0, ev.hz ?? 0);
     this.scene.add(anchor);
@@ -767,6 +821,67 @@ export class RemoteCombatVFXController {
       mesh.geometry?.dispose();
       (mesh.material as THREE.Material)?.dispose();
     }
+  }
+
+  // ------------------------------------------------------------------
+  // Mole strike (killstreak) — same visuals as the local MoleStrikeVFX
+  // ------------------------------------------------------------------
+
+  /** Dive-in: dirt burst at the feet, then the trail follows the player. */
+  private moleBurrow(ev: WeaponActionConfirmedEvent): void {
+    const feet = { x: ev.ox, y: ev.oy, z: ev.oz };
+    this.burrows.set(ev.playerId, {
+      trailAccum: 0,
+      expiresAt: this.elapsed + W.mole.maxBurrowSeconds,
+    });
+
+    if (this.particles) {
+      this.vecScratch.set(feet.x, feet.y, feet.z);
+      this.particles.burst(this.vecScratch, 40, 6, 0.7, this.moleDirt, 12);
+      this.particles.burst(this.vecScratch, 24, 3.5, 0.55, this.moleDirtDark, 10);
+      this.particles.ring(this.vecScratch, this.upVec, 22, 0.7, 5, 0.5, this.moleDirt);
+    }
+    this.spawnGroundRing(feet, 2.2, 0.4, mole.moleStrikeDirtColor);
+
+    audio.playAt("hammer_slam_descent", feet, { bus: "movement", volume: 0.7, rate: 0.8 });
+  }
+
+  /** Eruption: massive dirt blast + expanding ring at the emerge point. */
+  private moleEmerge(ev: WeaponActionConfirmedEvent): void {
+    this.burrows.delete(ev.playerId);
+    const at = { x: ev.ox, y: ev.oy, z: ev.oz };
+
+    if (this.particles) {
+      this.vecScratch.set(at.x, at.y, at.z);
+      this.particles.burst(this.vecScratch, 70, 11, 0.9, this.moleDirt, 14);
+      this.particles.burst(this.vecScratch, 40, 7, 0.7, this.moleBlast, 10);
+      this.particles.burst(this.vecScratch, 24, 14, 0.45, this.moleFlash, 6);
+      this.particles.ring(this.vecScratch, this.upVec, 36, 1.2, 9, 0.6, this.moleDirt);
+      this.particles.ring(this.vecScratch, this.upVec, 26, 0.8, 6, 0.5, this.moleBlast);
+    }
+    this.spawnGroundRing(at, mole.moleStrikeRadius, 0.55, mole.moleStrikeBlastColor);
+
+    audio.playAt("hammer_slam_impact", at, { bus: "impacts", volume: 1, rateVar: 0.03 });
+    audio.playAt("hammer_slam_sub", at, { bus: "impacts", volume: 0.85 });
+  }
+
+  /** One small dirt spurt at the ground surface (burrow trail). */
+  private moleTrailPuff(surface: THREE.Vector3): void {
+    if (!this.particles) return;
+    const pos = this.particlePosScratch;
+    const vel = this.particleVelScratch;
+    vel.set(
+      (Math.random() - 0.5) * 2.2,
+      1.5 + Math.random() * 2.5,
+      (Math.random() - 0.5) * 2.2,
+    );
+    pos.set(
+      surface.x + (Math.random() - 0.5) * 0.6,
+      surface.y + 0.05,
+      surface.z + (Math.random() - 0.5) * 0.6,
+    );
+    const color = Math.random() < 0.65 ? this.moleDirt : this.moleDirtDark;
+    this.particles.spawn(pos, vel, 0.4 + Math.random() * 0.3, color, 9, 0.5);
   }
 
   // ------------------------------------------------------------------

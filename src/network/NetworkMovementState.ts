@@ -16,6 +16,8 @@ export enum NetworkMovementState {
   AIRBORNE = 2,
   SLIDING = 3,
   DASHING = 4,
+  /** MOLE STRIKE: burrowed underground — remote avatar is HIDDEN. */
+  BURROWED = 5,
 }
 
 /** Speed under which a grounded player is considered IDLE (m/s). */
@@ -40,7 +42,8 @@ export function toNetworkMovementState(
     case MoveState.WALL_SLIDING:
     case MoveState.GROUND_SLAMMING:
       return NetworkMovementState.AIRBORNE;
-    case MoveState.UNDERGROUND: // burrowed: remote sees fast ground movement
+    case MoveState.UNDERGROUND: // burrowed: remote avatar hidden + dirt trail
+      return NetworkMovementState.BURROWED;
     case MoveState.GROUNDED:
     default:
       return horizontalSpeed > IDLE_SPEED_THRESHOLD
@@ -52,7 +55,7 @@ export function toNetworkMovementState(
 /** Clamp an arbitrary network number into a valid NetworkMovementState. */
 export function sanitizeNetworkMovementState(raw: number): NetworkMovementState {
   const v = Math.round(raw);
-  return v >= NetworkMovementState.IDLE && v <= NetworkMovementState.DASHING
+  return v >= NetworkMovementState.IDLE && v <= NetworkMovementState.BURROWED
     ? (v as NetworkMovementState)
     : NetworkMovementState.IDLE;
 }
