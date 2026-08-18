@@ -28,6 +28,14 @@ export const RemoteInterpolationConfig = {
   adaptiveSafetyMarginMs: 8,
   /** Jitter envelope decay (ms of envelope per second of clean traffic). */
   adaptiveJitterDecayMsPerSec: 15,
+  /**
+   * Gap envelope decay (ms/s). The delay must cover the WORST recent
+   * snapshot gap, not the average: client sends (30 Hz) land in a single
+   * server schema slot patched at 30 Hz — when two sends fall inside one
+   * patch window the first is overwritten, producing regular ~2× gaps
+   * that an average would hide (→ extrapolation freezes mid-jump).
+   */
+  adaptiveGapDecayMsPerSec: 10,
   /** Applied-delay raise speed (ms/s) — fast: protect the next frames. */
   adaptiveRaiseRateMsPerSec: 240,
   /** Applied-delay lower speed (ms/s) — slow: invisible timeline drift. */

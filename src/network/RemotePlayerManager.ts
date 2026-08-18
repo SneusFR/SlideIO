@@ -24,6 +24,13 @@ import runClipUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_Wa
 import jumpClipUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_Regular_Jump_withSkin.glb?url";
 import slideClipUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_slide_right_withSkin.glb?url";
 
+/**
+ * TEMP DEBUG (remote jump investigation) — set to false to silence.
+ * [SNAP] = stored snapshots (with real gaps), [RVIS] = per-frame visual
+ * state of the remote avatar during/after AIRBORNE.
+ */
+export const JUMP_DEBUG = true;
+
 /** Capsule center → feet distance (model root sits at the feet). */
 const FEET_OFFSET = moveCfg.standHalfHeight + moveCfg.capsuleRadius;
 /** Visual character height (matches the local capsule: 2 × feetOffset). */
@@ -103,6 +110,10 @@ function loadCharacterAsset(): Promise<CharacterAsset> {
     // the clip). The avatar's actual jump arc already comes from the
     // NETWORK position — keeping both would double the motion and leave
     // the model floating above its capsule. Flatten the hips translation.
+    // (Verified offline with scripts/inspect-glb-anim.mjs: Hips.translation
+    // is the ONLY animated position track in the jump GLB — Y 61.9→163.2 cm,
+    // pinned to its first key 95.1 cm, consistent with idle 92–98 / run
+    // 86–93. No Armature/Root-level position track exists.)
     stripHipsRootMotion(jump);
     // The slide clip travels ~4.9 m forward (baked hips X/Z motion) — the
     // network position provides the real travel, so flatten X/Z. The hips
@@ -167,6 +178,11 @@ class RemotePlayer {
   lastPitch = 0;
 
   private readonly anim: RemotePlayerAnimationController;
+  /** TEMP DEBUG: model root + hips bone for the [RVIS] jump logs. */
+  private readonly modelRef: THREE.Object3D;
+  private readonly hipsBone: THREE.Object3D | null;
+  private readonly hipsScratch = new THREE.Vector3();
+  private debugLogUntil = 0;
   private readonly sample: SampledPlayerState = {
     x: 0,
     y: 0,
@@ -204,6 +220,8 @@ class RemotePlayer {
     model.position.y = -FEET_OFFSET;
     this.group.add(model);
     this.group.visible = false; // hidden until the first snapshot arrives
+    this.modelRef = model.children[0] ?? model; // inner model (has the rest Y offset)
+    this.hipsBone = model.getObjectByName("Hips") ?? null;
 
     this.anim = new RemotePlayerAnimationController(model, -FEET_OFFSET, asset.clips);
     this.weapons = new RemoteWeaponController(model);
@@ -252,7 +270,7 @@ class RemotePlayer {
   }
 
   /** Sample the buffer at renderTime (server ms) and drive visuals. */
-  update(dt: number, renderTime: number): void {
+  update(dt: number, renderTime: number, delayMs = 0): void {
     // Dead: stay hidden, don't animate — respawn resets everything.
     if (!this.alive) return;
     this.updateHealthBar(dt);
@@ -296,6 +314,32 @@ class RemotePlayer {
     if (this.debugMarker) {
       const newest = this.buffer.newest;
       if (newest) this.debugMarker.position.set(newest.x, newest.y, newest.z);
+    }
+
+    // ---- TEMP DEBUG: [RVIS] per-frame visual state during jumps ----
+    if (JUMP_DEBUG) {
+      const airborne = s.movementState === NetworkMovementState.AIRBORNE;
+      const nowMs = performance.now();
+      if (airborne || s.extrapolating) this.debugLogUntil = nowMs + 400;
+      if (airborne || s.extrapolating || nowMs < this.debugLogUntil) {
+        const newest = this.buffer.newest;
+        const ahead = newest ? (renderTime - newest.timestamp).toFixed(0) : "?";
+        const hipsY = this.hipsBone
+          ? this.hipsBone.getWorldPosition(this.hipsScratch).y.toFixed(2)
+          : "?";
+        console.log(
+          `[RVIS ${this.sessionId.slice(0, 4)}]`,
+          `st=${s.movementState}`,
+          `ext=${s.extrapolating ? 1 : 0}`,
+          `ahead=${ahead}`,
+          `delay=${delayMs.toFixed(0)}`,
+          `buf=${this.buffer.count}`,
+          `gY=${this.group.position.y.toFixed(2)}`,
+          `vy=${s.velocityY.toFixed(2)}`,
+          `mY=${this.modelRef.position.y.toFixed(2)}`,
+          `hipsY=${hipsY}`,
+        );
+      }
     }
   }
 
@@ -455,8 +499,9 @@ export class RemotePlayerManager {
       // Dead players push nothing: the server refuses their transforms and
       // the buffer is wiped at respawn (teleport, never interpolated).
       if (p.ts > 0 && p.isAlive) {
-        this.clock.noteServerTimestamp(p.ts);
-        const prevTs = remote.buffer.newest?.timestamp ?? null;
+        const prevSnap = remote.buffer.newest;
+        const prevTs = prevSnap?.timestamp ?? null;
+        const prevState = prevSnap?.movementState ?? null;
         const stored = remote.buffer.push(
           p.ts,
           p.seq,
@@ -470,9 +515,35 @@ export class RemotePlayerManager {
           p.vz,
           sanitizeNetworkMovementState(p.state),
         );
-        // Feed the adaptive delay with REAL arrivals only (sync() runs
-        // every frame on the same state — duplicates return false).
-        if (stored) this.adaptiveDelay.noteSnapshot(this.clock.now(), p.ts, prevTs);
+        // Feed the clock + adaptive delay with REAL arrivals only (sync()
+        // runs every frame on the same state — duplicates return false).
+        // A repeated stale ts must NEVER touch the clock (it would drag
+        // the estimated server time backward — see NetworkClock).
+        if (stored) {
+          this.clock.noteServerTimestamp(p.ts);
+          this.adaptiveDelay.noteSnapshot(this.clock.now(), p.ts, prevTs);
+
+          // ---- TEMP DEBUG: [SNAP] stored snapshots around jumps ----
+          if (JUMP_DEBUG) {
+            const st = sanitizeNetworkMovementState(p.state);
+            const gap = prevTs !== null ? p.ts - prevTs : -1;
+            if (
+              st === NetworkMovementState.AIRBORNE ||
+              prevState === NetworkMovementState.AIRBORNE ||
+              gap > 60
+            ) {
+              console.log(
+                `[SNAP ${p.id.slice(0, 4)}]`,
+                `ts=${p.ts % 100000}`,
+                `gap=${gap}`,
+                `y=${p.y.toFixed(2)}`,
+                `vy=${p.vy.toFixed(2)}`,
+                `st=${st}`,
+                `seq=${p.seq}`,
+              );
+            }
+          }
+        }
       }
     }
 
@@ -489,8 +560,9 @@ export class RemotePlayerManager {
   update(dt: number): void {
     if (!this.clock.hasSync) return;
     // ADAPTIVE delay: as low as the measured jitter safely allows.
-    const renderTime = this.clock.now() - this.adaptiveDelay.update(dt);
-    for (const remote of this.remotes.values()) remote.update(dt, renderTime);
+    const delayMs = this.adaptiveDelay.update(dt);
+    const renderTime = this.clock.now() - delayMs;
+    for (const remote of this.remotes.values()) remote.update(dt, renderTime, delayMs);
   }
 
   /**

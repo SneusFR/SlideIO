@@ -30,6 +30,15 @@ export class AdaptiveInterpolationDelay {
   private jitterEnvelopeMs = 0;
   /** Smoothed server-ts spacing of active senders (ms). */
   private avgGapMs = 1000 / 30;
+  /**
+   * Decaying MAX of recent snapshot gaps (ms). The delay must cover the
+   * WORST realistic gap, not the average: unaligned 30 Hz sends over a
+   * 30 Hz patch rate regularly merge two sends into one patch (~2× gap).
+   * With only the smoothed average, renderTime routinely overran the
+   * newest snapshot → extrapolation → FREEZE (a mid-air frozen avatar
+   * during jumps was the visible symptom). Decays toward the average.
+   */
+  private gapEnvelopeMs = 1000 / 30;
   /** Currently applied delay (ms) — starts at the static default. */
   private currentDelayMs: number = cfg.interpolationDelayMs;
 
@@ -60,6 +69,7 @@ export class AdaptiveInterpolationDelay {
       // conditions and must never inflate everyone's delay.
       if (gap > 0 && gap <= cfg.adaptiveGapCapMs) {
         this.avgGapMs += (gap - this.avgGapMs) * 0.1;
+        if (gap > this.gapEnvelopeMs) this.gapEnvelopeMs = gap;
       }
     }
   }
@@ -73,9 +83,16 @@ export class AdaptiveInterpolationDelay {
       0,
       this.jitterEnvelopeMs - cfg.adaptiveJitterDecayMsPerSec * dt,
     );
+    // Gap envelope decays toward the smoothed AVERAGE gap (never below):
+    // a quiet period slowly re-tightens the delay without ever pretending
+    // the worst-case spacing is smaller than the average.
+    this.gapEnvelopeMs = Math.max(
+      this.avgGapMs,
+      this.gapEnvelopeMs - cfg.adaptiveGapDecayMsPerSec * dt,
+    );
 
     const target = clamp(
-      this.avgGapMs + this.jitterEnvelopeMs + cfg.adaptiveSafetyMarginMs,
+      this.gapEnvelopeMs + this.jitterEnvelopeMs + cfg.adaptiveSafetyMarginMs,
       cfg.adaptiveDelayMinMs,
       cfg.adaptiveDelayMaxMs,
     );
@@ -104,6 +121,7 @@ export class AdaptiveInterpolationDelay {
   reset(): void {
     this.jitterEnvelopeMs = 0;
     this.avgGapMs = 1000 / 30;
+    this.gapEnvelopeMs = 1000 / 30;
     this.currentDelayMs = cfg.interpolationDelayMs;
   }
 }

@@ -6,7 +6,7 @@ import type {
   PlayerDiedEvent,
   PlayerRespawnedEvent,
 } from "./MultiplayerClient";
-import { RemotePlayerManager } from "./RemotePlayerManager";
+import { RemotePlayerManager, JUMP_DEBUG } from "./RemotePlayerManager";
 import { RemoteCombatVFXController } from "./remote/RemoteCombatVFXController";
 import { preloadRemoteWeaponTemplates } from "./remote/RemoteWeaponController";
 import { NetworkStatsSource } from "./NetworkStatsSource";
@@ -254,6 +254,21 @@ export class MultiplayerGameController {
     if (!moved && this.timeSinceSend < netCfg.transformHeartbeat) return;
 
     this.sendSequence++;
+    // TEMP DEBUG: what the jumping client actually sends (AIRBORNE frames
+    // + every state change, e.g. the landing GROUNDED transform).
+    if (
+      JUMP_DEBUG &&
+      (state === NetworkMovementState.AIRBORNE || state !== this.lastSent.state)
+    ) {
+      console.log(
+        `[LOCAL]`,
+        `seq=${this.sendSequence}`,
+        `y=${pos.y.toFixed(2)}`,
+        `vy=${vel.y.toFixed(2)}`,
+        `st=${state}`,
+        `mv=${this.movement.state}`,
+      );
+    }
     this.client.sendTransform({
       x: pos.x,
       y: pos.y,
@@ -285,6 +300,7 @@ export class MultiplayerGameController {
     if (!this.client.isConnected || !this.localAlive) return;
     const pos = this.player.getPosition(this.posScratch);
     this.sendSequence++;
+    
     this.client.sendTransform({
       x: pos.x,
       y: pos.y,

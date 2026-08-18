@@ -1,5 +1,6 @@
 import { NetworkMovementState } from "../NetworkMovementState";
 import { RemoteInterpolationConfig as cfg } from "./RemoteInterpolationConfig";
+import { MovementConfig as moveCfg } from "../../player/MovementConfig";
 
 /** One received network state of a remote player (server-time stamped). */
 export interface PlayerSnapshot {
@@ -195,13 +196,27 @@ export class SnapshotBuffer {
     const frozen = aheadMs >= cfg.maxExtrapolationMs;
     const stale = aheadMs >= cfg.staleStateFallbackMs;
 
+    // AIRBORNE gap → BALLISTIC extrapolation: gravity keeps acting during
+    // the data gap. A linear-velocity hold is worst at the APEX (vy ≈ 0):
+    // the avatar visually hangs mid-air in its jump pose while the sender
+    // has already landed. Integrating the same gravity as the local
+    // simulation keeps the remote arc physically plausible instead.
+    let dy: number;
+    let vy = last.velocityY;
+    if (last.movementState === NetworkMovementState.AIRBORNE) {
+      dy = vy * dt - 0.5 * moveCfg.gravity * dt * dt;
+      vy = Math.max(vy - moveCfg.gravity * dt, -moveCfg.maxFallSpeed);
+    } else {
+      dy = vy * dt;
+    }
+
     out.x = last.x + last.velocityX * dt;
-    out.y = last.y + last.velocityY * dt;
+    out.y = last.y + dy;
     out.z = last.z + last.velocityZ * dt;
     out.yaw = last.yaw;
     out.pitch = last.pitch;
     out.velocityX = frozen ? 0 : last.velocityX;
-    out.velocityY = frozen ? 0 : last.velocityY;
+    out.velocityY = frozen ? 0 : vy;
     out.velocityZ = frozen ? 0 : last.velocityZ;
     out.movementState = stale ? NetworkMovementState.IDLE : last.movementState;
     out.teleported = false;
