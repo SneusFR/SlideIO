@@ -24,5 +24,7 @@ export enum KillMethod {
   REVOLVER = "REVOLVER",
   /** Thrown revolver AoE explosion (never a headshot by definition). */
   REVOLVER_EXPLOSION = "REVOLVER_EXPLOSION",
+  /** Bass Blaster musical note projectile (SMG — no special medal). */
+  BASS_BLASTER = "BASS_BLASTER",
   ENVIRONMENT = "ENVIRONMENT",
 }

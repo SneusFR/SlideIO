@@ -333,6 +333,73 @@ export class AudioManager {
     this.voices.push({ key, endTime: start + lengthSec });
   }
 
+  /**
+   * Spatialized one-shot whose position can be UPDATED while it plays
+   * (sounds carried by moving projectiles — e.g. the Bass Blaster's
+   * music fragments riding on flying notes). Supports the same slice
+   * options (offset/duration) as play(). Returns a handle exposing
+   * setPosition()/stop(); null when the buffer isn't ready.
+   */
+  playTracked(
+    key: string,
+    pos: { x: number; y: number; z: number },
+    opts: SpatialOptions = {},
+  ): LoopHandle | null {
+    const ctx = this.ctx;
+    const buf = this.buffers.get(key);
+    if (!ctx || ctx.state !== "running" || !buf) return null;
+
+    // Same instance caps as one-shots (per key + global voice budget).
+    const t = ctx.currentTime;
+    this.voices = this.voices.filter((v) => v.endTime > t);
+    if (this.voices.length >= AudioManager.MAX_VOICES) return null;
+    const maxInst = opts.maxInstances ?? 6;
+    let count = 0;
+    for (const v of this.voices) if (v.key === key) count++;
+    if (count >= maxInst) return null;
+
+    const rate = Math.max(0.25, (opts.rate ?? 1) + (opts.rateVar ?? 0) * (Math.random() * 2 - 1));
+    const vol = Math.max(
+      0,
+      (opts.volume ?? 1) + (opts.volumeVar ?? 0) * (Math.random() * 2 - 1),
+    );
+
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = rate;
+
+    const gain = ctx.createGain();
+    gain.gain.value = vol;
+    src.connect(gain);
+
+    const panner = this.createPanner(opts);
+    panner.setPosition(pos.x, pos.y, pos.z);
+    gain.connect(panner);
+    panner.connect(this.buses.get(opts.bus ?? "master")!);
+
+    const start = t + (opts.delay ?? 0);
+    const offset = opts.offset ?? 0;
+    const dur = opts.duration;
+
+    // Short envelope on sliced plays to avoid clicks (granular fragments).
+    if (offset > 0 || dur !== undefined) {
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.linearRampToValueAtTime(vol, start + 0.012);
+      if (dur !== undefined) {
+        const end = start + dur / rate;
+        gain.gain.setValueAtTime(vol, Math.max(start + 0.012, end - 0.05));
+        gain.gain.linearRampToValueAtTime(0.0001, end);
+      }
+    }
+
+    if (dur !== undefined) src.start(start, offset, dur);
+    else src.start(start, offset);
+
+    const lengthSec = (dur ?? buf.duration - offset) / rate;
+    this.voices.push({ key, endTime: start + lengthSec });
+    return new LoopHandle(ctx, src, gain, panner, vol);
+  }
+
   // ------------------------------------------------------------------
   // Loops
   // ------------------------------------------------------------------

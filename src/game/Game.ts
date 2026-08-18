@@ -27,6 +27,9 @@ import { loadLoadout, MeleeWeaponId, PrimaryWeaponId } from "../loadout/Loadout"
 import { ObliterreurWeapon } from "../weapons/obliterreur/ObliterreurWeapon";
 import { RevolverWeapon } from "../weapons/revolver/RevolverWeapon";
 import { RevolverHUD } from "../ui/RevolverHUD";
+import { BassBlasterWeapon } from "../weapons/bassblaster/BassBlasterWeapon";
+import { BassBlasterHUD } from "../ui/BassBlasterHUD";
+import { MusicSelectorHUD } from "../ui/MusicSelectorHUD";
 import { KillstreakManager } from "../killstreaks/KillstreakManager";
 import { MoleStrike } from "../killstreaks/mole/MoleStrike";
 import { MoleStrikeVFX } from "../killstreaks/mole/MoleStrikeVFX";
@@ -108,6 +111,11 @@ export class Game {
   // ---- REVOLVER (primary alternative — equipped via the Loadout menu) ----
   private revolver: RevolverWeapon;
   private revolverHud: RevolverHUD;
+
+  // ---- BASS BLASTER (musical SMG — LOCAL-ONLY, never networked yet) ----
+  private bassBlaster: BassBlasterWeapon;
+  private bassBlasterHud: BassBlasterHUD;
+  private musicSelector: MusicSelectorHUD;
 
   // ---- FFA combat ----
   private gameAudio: GameAudio;
@@ -326,6 +334,26 @@ export class Game {
     this.revolver.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
     this.revolverHud = new RevolverHUD();
 
+    // ---- BASS BLASTER (musical SMG — equipped from the Loadout menu):
+    // LMB full-auto note projectiles cycling Do→Do' colors, each shot
+    // playing a positional micro-fragment of the selected music track;
+    // R = musical note-swirl reload; ↑/↓ = track selection. LOCAL-ONLY.
+    this.bassBlaster = new BassBlasterWeapon(
+      this.scene,
+      this.fpsCamera.camera,
+      this.particles,
+    );
+    this.bassBlaster.owner = this.playerCombatant;
+    this.bassBlaster.setFeedback(this.hitFeedback);
+    this.bassBlaster.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
+    this.bassBlasterHud = new BassBlasterHUD();
+    this.musicSelector = new MusicSelectorHUD();
+    // Arrows → weapon track cycle → UI mirrors the new active index.
+    this.musicSelector.onCycle = (delta) => {
+      this.bassBlaster.cycleTrack(delta);
+      this.musicSelector.setActiveIndex(this.bassBlaster.music.currentTrackIndex);
+    };
+
     // ---- Audio: pure observation of existing gameplay events ----
     this.gameAudio = new GameAudio();
     this.movement.sfx = this.gameAudio.movementSfx;
@@ -350,6 +378,13 @@ export class Game {
     this.revolver.onThrow = () => this.gameAudio.revolverThrow();
     this.revolver.onExplosion = (pos) => this.gameAudio.revolverExplosion(pos);
     this.revolver.onMaterializeStart = () => this.gameAudio.revolverMaterialize();
+    // Bass Blaster: per-note pitched blip layered under the music grain,
+    // reload swirl cues and spatial wall "plinks" (pure observers).
+    this.bassBlaster.onShot = (note) => this.gameAudio.bassBlasterShot(note.pitch);
+    this.bassBlaster.onReloadStart = () => this.gameAudio.bassBlasterReloadStart();
+    this.bassBlaster.onReloadEnd = () => this.gameAudio.bassBlasterReloadEnd();
+    this.bassBlaster.onWorldImpact = (pos, note) =>
+      this.gameAudio.bassBlasterNoteImpact(pos, note.pitch);
 
     this.playerCombatant.health.onDamaged = (amount, attacker) => {
       this.combatHud.notifyDamage(amount, this.damageAngleFrom(attacker));
@@ -390,6 +425,7 @@ export class Game {
       this.spear.reset();
       this.obliterreur.reset(); // vortex off + anchors cleared on death
       this.revolver.reset(); // fan fire dropped, fresh 6/6 for the respawn
+      this.bassBlaster.reset(); // reload cancelled, notes cleared, fresh 30/30
       this.meleeHoldPending = false;
       // Death mid-burrow: instant cleanup WITHOUT the AoE, then every
       // killstreak slot (progress / ready / spent) resets to LOCKED.
@@ -498,6 +534,7 @@ export class Game {
       this.primaryWeapon = selection.primary;
       this.obliterreur.reset();
       this.revolver.reset();
+      this.bassBlaster.reset();
     }
     // MULTIPLAYER: the server must know the equipped primary (loadout ids
     // are IDENTICAL strings to NetworkWeaponId — no mapping table).
@@ -741,6 +778,7 @@ export class Game {
       // when another primary (OBLITERREUR / REVOLVER) is equipped.
       const obliEquipped = this.primaryWeapon === "OBLITERREUR";
       const revolverEquipped = this.primaryWeapon === "REVOLVER";
+      const bassEquipped = this.primaryWeapon === "BASS_BLASTER";
       const meleeBlocked =
         this.hammer.blocksFiring || this.spear.blocksFiring || this.moleStrike.blocksWeapons;
       const wantFire =
@@ -749,13 +787,15 @@ export class Game {
         this.input.isMouseDown(0) &&
         !meleeBlocked &&
         !obliEquipped &&
-        !revolverEquipped;
+        !revolverEquipped &&
+        !bassEquipped;
       this.rifle.setViewmodelHidden(
         this.hammer.isBusy ||
           this.spear.isBusy ||
           this.moleStrike.active ||
           obliEquipped ||
-          revolverEquipped,
+          revolverEquipped ||
+          bassEquipped,
       );
       this.rifle.update(dt, wantFire, this.hittables, this.elapsed);
       // MULTIPLAYER: plasma has no callbacks — edge-detect isFiring here
@@ -795,6 +835,30 @@ export class Game {
         hittables: this.hittables,
         time: this.elapsed,
       });
+
+      // BASS BLASTER: LMB full-auto note projectiles + music grains,
+      // R musical reload, ↑/↓ track selection (LOCAL-ONLY weapon —
+      // no network sends). In-flight notes keep ticking even while blocked.
+      this.bassBlaster.setViewmodelHidden(
+        !bassEquipped || this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
+      );
+      this.bassBlaster.update(dt, {
+        fireHeld:
+          bassEquipped &&
+          this.input.pointerLocked &&
+          this.input.isMouseDown(0) &&
+          !meleeBlocked,
+        reloadPressed: bassEquipped && this.input.wasPressed("KeyR"),
+        canAct: bassEquipped && playerAlive && !meleeBlocked,
+        hittables: this.hittables,
+        time: this.elapsed,
+      });
+      // Track selection arrows (expand the selector panel on interaction).
+      if (bassEquipped && this.input.pointerLocked) {
+        if (this.input.wasPressed("ArrowUp")) this.musicSelector.interact(-1);
+        if (this.input.wasPressed("ArrowDown")) this.musicSelector.interact(1);
+      }
+
       this.botManager.updateWeapons(dt, this.hittables, this.elapsed);
       this.handlePhaseEffects();
       this.particles.update(dt);
@@ -825,6 +889,10 @@ export class Game {
     this.spearHud.update(this.spear);
     this.revolverHud.setVisible(this.primaryWeapon === "REVOLVER");
     this.revolverHud.update(this.revolver);
+    this.bassBlasterHud.setVisible(this.primaryWeapon === "BASS_BLASTER");
+    this.bassBlasterHud.update(this.bassBlaster);
+    this.musicSelector.setVisible(this.primaryWeapon === "BASS_BLASTER");
+    this.musicSelector.update(dt);
     this.combatHud.update(dt, this.playerCombatant.health, this.playerDeathTimer);
     this.comboHud.update(this.combo);
 
@@ -1008,10 +1076,13 @@ export class Game {
       }
       return;
     }
-    // R = manual respawn — EXCEPT with the Revolver equipped, where R is
-    // the weapon's explosive throw (the kill plane still works normally).
+    // R = manual respawn — EXCEPT with the Revolver (explosive throw) or
+    // the Bass Blaster (musical reload) equipped, where R belongs to the
+    // weapon (the kill plane still works normally).
     const manualRespawn =
-      this.input.wasPressed("KeyR") && this.primaryWeapon !== "REVOLVER";
+      this.input.wasPressed("KeyR") &&
+      this.primaryWeapon !== "REVOLVER" &&
+      this.primaryWeapon !== "BASS_BLASTER";
     if (fellOut || manualRespawn) {
       // Suicide / kill plane → normal death + respawn flow.
       this.playerCombatant.health.kill(null);
@@ -1129,7 +1200,11 @@ export class Game {
   /** WEAPON_EQUIP for the current primary (dedup unless forced). */
   private sendNetworkEquip(force = false): void {
     if (!this.multiplayer || !this.multiplayerClient?.isConnected) return;
-    const weapon: string = this.primaryWeapon; // ids match NetworkWeaponId
+    // Loadout ids match NetworkWeaponId — EXCEPT the LOCAL-ONLY Bass
+    // Blaster, unknown to the server: report the default rifle instead so
+    // the server never rejects the equip (the blaster sends no actions).
+    const weapon: string =
+      this.primaryWeapon === "BASS_BLASTER" ? "PLASMA_RIFLE" : this.primaryWeapon;
     if (!force && weapon === this.lastSentEquip) return;
     this.lastSentEquip = weapon;
     this.multiplayerClient.sendWeaponEquip(weapon);

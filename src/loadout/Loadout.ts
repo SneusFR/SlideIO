@@ -4,6 +4,7 @@ import { WeaponConfig as wc } from "../weapons/WeaponConfig";
 import { MoleStrikeConfig as mole } from "../killstreaks/mole/MoleStrikeConfig";
 import { ObliterreurConfig as oc } from "../weapons/obliterreur/ObliterreurConfig";
 import { RevolverConfig as rc } from "../weapons/revolver/RevolverConfig";
+import { BassBlasterConfig as bb } from "../weapons/bassblaster/BassBlasterConfig";
 
 /**
  * Player loadout: the single source of truth for what is equipped.
@@ -12,7 +13,7 @@ import { RevolverConfig as rc } from "../weapons/revolver/RevolverConfig";
  */
 
 export type MeleeWeaponId = "HAMMER" | "SPEAR";
-export type PrimaryWeaponId = "PLASMA_RIFLE" | "OBLITERREUR" | "REVOLVER";
+export type PrimaryWeaponId = "PLASMA_RIFLE" | "OBLITERREUR" | "REVOLVER" | "BASS_BLASTER";
 export type KillstreakId = "NONE" | "MOLE_STRIKE" | "ORBITAL_SCAN" | "NOVA_STRIKE";
 
 /** Exactly three equippable killstreak slots (keys 1 / 2 / 3 in game). */
@@ -70,7 +71,9 @@ export function loadLoadout(): LoadoutSelection {
     return {
       melee: parsed.melee === "SPEAR" ? "SPEAR" : "HAMMER",
       primary:
-        parsed.primary === "OBLITERREUR" || parsed.primary === "REVOLVER"
+        parsed.primary === "OBLITERREUR" ||
+        parsed.primary === "REVOLVER" ||
+        parsed.primary === "BASS_BLASTER"
           ? parsed.primary
           : "PLASMA_RIFLE",
       killstreaks,
@@ -277,6 +280,47 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
           { label: "RAYON", value: `${rc.revolverExplosionRadius} m` },
           { label: "VITESSE", value: `${rc.revolverThrowSpeed} m/s` },
           { label: "MATÉRIALISATION", value: `${rc.revolverMaterializeDuration}s` },
+        ],
+      },
+    ],
+  },
+  {
+    id: "BASS_BLASTER",
+    name: "BASS BLASTER",
+    tagline: "SMG musicale à notes chromatiques",
+    summary:
+      "Mitraillette expérimentale qui tire de véritables notes de musique colorées (Do→Do') et diffuse, tir après tir, des micro-fragments du morceau sélectionné — la musique voyage AVEC les notes. Flèches ↑/↓ en jeu pour choisir le morceau. (Solo/local uniquement pour l'instant.)",
+    abilities: [
+      {
+        trigger: "CLIC GAUCHE — MAINTENIR",
+        name: "RAFALE DE NOTES",
+        description:
+          "Tir automatique rapide : chaque balle est une note lumineuse (couleur cyclique Do→Ré→Mi→Fa→Sol→La→Si→Do') qui joue un micro-fragment du morceau actif, spatialisé sur le projectile.",
+        stats: [
+          { label: "DÉGÂTS", value: `${bb.bodyDamage} PV (tête ${bb.headDamage})` },
+          { label: "CADENCE", value: `${Math.round(1 / bb.fireInterval)} notes/s` },
+          { label: "CHARGEUR", value: `${bb.magazineSize}` },
+          { label: "VITESSE", value: `${bb.projectileSpeed} m/s` },
+        ],
+      },
+      {
+        trigger: "TOUCHE R",
+        name: "RECHARGE HARMONIQUE",
+        description:
+          "Invoque un tourbillon de notes de musique qui convergent et entrent dans l'arme pour recharger le chargeur — pure énergie musicale.",
+        stats: [
+          { label: "DURÉE", value: `${bb.reloadDuration}s` },
+          { label: "AUTO", value: "CHARGEUR VIDE" },
+        ],
+      },
+      {
+        trigger: "FLÈCHES ↑ / ↓",
+        name: "SÉLECTION DU MORCEAU",
+        description:
+          "Fait défiler les morceaux disponibles dans le panneau sous le leaderboard. Reprendre le tir reprend le morceau là où il s'était arrêté ; re-sélectionner un morceau abandonné le fait repartir de zéro.",
+        stats: [
+          { label: "FRAGMENT", value: `${Math.round(bb.fragmentDuration * 1000)} ms / note` },
+          { label: "AUDIO", value: "SPATIALISÉ" },
         ],
       },
     ],

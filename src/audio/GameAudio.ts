@@ -468,6 +468,53 @@ export class GameAudio {
   }
 
   // ------------------------------------------------------------------
+  // BASS BLASTER (musical SMG — layered from existing SFX; the music
+  // fragments themselves are positional grains played by the weapon)
+  // ------------------------------------------------------------------
+
+  /**
+   * Percussive per-shot "note blip", tuned to the fired note's pitch
+   * (Do→Do' equal-tempered ratios). Sits UNDER the music fragment so
+   * every trigger pull keeps a crisp rhythmic identity.
+   */
+  bassBlasterShot(pitch: number): void {
+    audio.play("coin_pickup", {
+      bus: "weapons",
+      volume: 0.15,
+      volumeVar: 0.03,
+      rate: 1.1 * pitch,
+      throttleMs: 30,
+      maxInstances: 6,
+    });
+  }
+
+  /** Musical reload swirl begins: rising energy + warp shimmer. */
+  bassBlasterReloadStart(): void {
+    audio.play("phase_warp", { bus: "weapons", volume: 0.38, rate: 1.35, throttleMs: 120 });
+    audio.play("dash_energy", { bus: "weapons", volume: 0.35, rate: 1.15, delay: 0.06 });
+  }
+
+  /** Magazine refilled: bright "ready" arpeggio (three quick dings). */
+  bassBlasterReloadEnd(): void {
+    audio.play("ready_ping", { bus: "ui", volume: 0.32, rate: 1.25 });
+    audio.play("coin_pickup", { bus: "ui", volume: 0.18, rate: 1.4, delay: 0.05 });
+    audio.play("coin_pickup", { bus: "ui", volume: 0.16, rate: 1.75, delay: 0.12 });
+  }
+
+  /** A note hit a wall/floor: tiny spatial musical "plink". */
+  bassBlasterNoteImpact(pos: THREE.Vector3, pitch: number): void {
+    audio.playAt("coin_pickup", pos, {
+      bus: "impacts",
+      volume: 0.13,
+      rate: 0.85 * pitch,
+      throttleMs: 70,
+      maxInstances: 4,
+      refDistance: 7,
+      maxDistance: 60,
+    });
+  }
+
+  // ------------------------------------------------------------------
   // Killstreaks (layered from existing SFX — no new assets)
   // ------------------------------------------------------------------
 
