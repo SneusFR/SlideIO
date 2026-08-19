@@ -96,6 +96,11 @@ export class RevolverWeapon {
     void loadRevolverTemplate().then((t) => (this.template = t));
   }
 
+  /** Resolves once the viewmodel + thrown-clone template are loaded. */
+  get ready(): Promise<void> {
+    return this.viewmodel.ready;
+  }
+
   /** The combatant wielding this revolver (owner-immune everywhere). */
   set owner(value: Combatant | null) {
     this.ownerRef = value;
@@ -236,7 +241,7 @@ export class RevolverWeapon {
       const target = this.beamResult.combatant;
       const zone = this.beamResult.hitZone;
       // Explicit per-zone damage — the global x2 headshot multiplier is
-      // intentionally NOT applied (BODY one-shots, HEAD needs two).
+      // intentionally NOT applied (HEAD one-shots, BODY needs two).
       const damage =
         zone === HitZone.HEAD ? cfg.revolverHeadDamage : cfg.revolverBodyDamage;
       const applied = target.health.applyDamage(

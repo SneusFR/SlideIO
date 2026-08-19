@@ -19,6 +19,11 @@ const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2,
  * Camera space: x right, y up, -z forward.
  */
 export class HammerViewmodel {
+  /** Resolves once the GLB is parsed and attached (or failed) — used by
+   *  the Game's GPU warm-up so the first swing never compiles shaders. */
+  readonly ready: Promise<void>;
+  private readyResolve!: () => void;
+
   private readonly root = new THREE.Group();
   private readonly hammer = new THREE.Group();
   /** Emissive materials from the GLB, pulsed for a bit of life. */
@@ -43,6 +48,7 @@ export class HammerViewmodel {
   private static readonly BOTTOM_Y = -0.13;
 
   constructor(camera: THREE.Camera) {
+    this.ready = new Promise((resolve) => (this.readyResolve = resolve));
     this.loadModel();
     this.root.add(this.hammer);
     camera.add(this.root);
@@ -59,7 +65,9 @@ export class HammerViewmodel {
 
   private loadModel(): void {
     const loader = new GLTFLoader();
-    loader.load(hammerModelUrl, (gltf) => {
+    loader.load(
+      hammerModelUrl,
+      (gltf) => {
       const model = gltf.scene;
 
       // Uniform scale so the model's height matches the old hammer exactly.
@@ -91,7 +99,11 @@ export class HammerViewmodel {
       });
 
       this.hammer.add(model);
-    });
+      this.readyResolve();
+      },
+      undefined,
+      () => this.readyResolve(), // failed load must never hang the warm-up
+    );
   }
 
   // ------------------------------------------------------------------

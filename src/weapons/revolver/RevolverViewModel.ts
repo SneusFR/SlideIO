@@ -14,6 +14,9 @@ import { ParticleSystem } from "../../effects/ParticleSystem";
  * without ever affecting the template or the thrown-revolver clones.
  */
 export class RevolverViewmodel {
+  /** Resolves once the shared GLB template is cloned in (or failed). */
+  readonly ready: Promise<void>;
+
   readonly group = new THREE.Group();
 
   private readonly basePosition = new THREE.Vector3(
@@ -46,12 +49,17 @@ export class RevolverViewmodel {
     this.muzzle.position.set(0, 0.03, -(cfg.revolverViewmodelLength * 0.5 + 0.03));
     this.group.add(this.muzzle);
 
-    // Warm ballistic muzzle flash light (violet hinted by sparks, not light).
+    // Warm ballistic muzzle flash light. Attached to the CAMERA (never
+    // the hidden/shown viewmodel group): toggling a light's effective
+    // visibility changes the scene light count and forces three.js to
+    // recompile every lit material — a one-time freeze on weapon swaps.
     this.muzzleLight = new THREE.PointLight(0xffd9a0, 0, 3.5, 2);
-    this.muzzle.add(this.muzzleLight);
+    this.muzzleLight.position.copy(this.basePosition).add(this.muzzle.position);
+    camera.add(this.muzzleLight);
 
     // Shared template → per-viewmodel clone with per-instance materials.
-    void loadRevolverTemplate().then((template) => {
+    this.ready = loadRevolverTemplate()
+      .then((template) => {
       const model = cloneRevolver(template);
       model.scale.setScalar(cfg.revolverViewmodelLength);
       model.traverse((obj) => {
@@ -67,12 +75,13 @@ export class RevolverViewmodel {
         }
       });
       this.group.add(model);
-      this.materializeVfx = new RevolverMaterializeVFX(model, this.particles);
+      this.materializeVfx = new RevolverMaterializeVFX(model, this.particles, camera);
       if (this.pendingMaterialize >= 0) {
         this.materializeVfx.start(this.pendingMaterialize);
         this.pendingMaterialize = -1;
       }
-    });
+      })
+      .catch(() => undefined); // failed load must never hang the warm-up
   }
 
   setHidden(hidden: boolean): void {

@@ -102,6 +102,11 @@ export class ObliterreurWeapon {
     this.raycaster.far = oc.obliterreurPlacementRange;
   }
 
+  /** Resolves once the viewmodel GLB is loaded (Game GPU warm-up). */
+  get ready(): Promise<void> {
+    return this.viewmodel.ready;
+  }
+
   /** Hide/show the view model (weapon swap, melee busy…). Purely visual. */
   setViewmodelHidden(hidden: boolean): void {
     this.viewmodel.setHidden(hidden);

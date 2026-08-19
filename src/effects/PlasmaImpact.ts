@@ -30,9 +30,14 @@ export class PlasmaImpact {
     );
     this.flash.renderOrder = 5;
 
+    // The light lives DIRECTLY in the scene, permanently visible
+    // (intensity 0 while inactive): hiding/revealing a light changes the
+    // scene light count and forces three.js to recompile every lit
+    // material — a visible freeze on the FIRST beam impact.
     this.light = new THREE.PointLight(0xa855f7, 0, 9, 2);
+    scene.add(this.light);
 
-    this.group.add(this.flash, this.light);
+    this.group.add(this.flash);
     this.group.visible = false;
     scene.add(this.group);
   }
@@ -55,8 +60,9 @@ export class PlasmaImpact {
     const s = 0.1 * (1 + 0.35 * Math.sin(time * 55) + 0.15 * Math.sin(time * 91));
     this.flash.scale.setScalar(Math.max(s, 0.02));
 
-    // Light sits slightly off the surface so it illuminates it.
-    this.light.position.copy(normal).multiplyScalar(0.35);
+    // Light sits slightly off the surface so it illuminates it
+    // (world-space — the light is scene-level, not part of the group).
+    this.light.position.copy(point).addScaledVector(normal, 0.38);
     this.light.intensity = 6 + Math.sin(time * 40) * 2;
 
     // Sparks flying off the surface.

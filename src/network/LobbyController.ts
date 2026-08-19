@@ -58,10 +58,10 @@ export class LobbyController {
     this.showMenu();
   }
 
-  /** Open the overlay and immediately try to join a room (invite link). */
+  /** Open the overlay on the NICKNAME prompt, then join (invite link). */
   openWithInvite(roomId: string): void {
     this.root.classList.remove("hidden");
-    void this.join(roomId);
+    this.showNamePrompt(roomId);
   }
 
   close(): void {
@@ -90,23 +90,57 @@ export class LobbyController {
     this.setScreen("join");
     this.panel.innerHTML = `
       <div class="mp-title">JOIN LOBBY</div>
+      <label class="mp-label" for="mp-join-name">YOUR NICKNAME</label>
+      <input id="mp-join-name" class="mp-input" maxlength="${MultiplayerConfig.maxNameLength}"
+             spellcheck="false" autocomplete="off" value="${escapeHtml(this.defaultName)}" />
       <label class="mp-label" for="mp-room">ENTER ROOM ID</label>
       <input id="mp-room" class="mp-input" spellcheck="false" autocomplete="off"
              placeholder="J4K8XZ" value="${escapeHtml(prefill)}" />
       <button class="mp-btn mp-btn-primary" data-mp="go">JOIN</button>
       <button class="mp-btn mp-btn-ghost" data-mp="back">BACK</button>
     `;
+    const nameInput = this.panel.querySelector<HTMLInputElement>("#mp-join-name")!;
     const input = this.panel.querySelector<HTMLInputElement>("#mp-room")!;
     const go = () => {
       const id = input.value.trim();
-      if (id.length > 0) void this.join(id);
+      if (id.length > 0) void this.join(id, nameInput.value.trim());
     };
     this.bind("go", go);
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") go();
     });
+    nameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") go();
+    });
     this.bind("back", () => this.showMenu());
     input.focus();
+  }
+
+  /**
+   * NICKNAME prompt shown before joining a lobby from an invite link:
+   * the pseudo entered here is displayed in-game (nametag above the
+   * avatar) and on the leaderboard.
+   */
+  private showNamePrompt(roomId: string): void {
+    this.setScreen("join");
+    this.panel.innerHTML = `
+      <div class="mp-title">JOIN LOBBY</div>
+      <div class="mp-room-row">Room: <span class="mp-room-id">${escapeHtml(roomId)}</span></div>
+      <label class="mp-label" for="mp-join-name">ENTER YOUR NICKNAME</label>
+      <input id="mp-join-name" class="mp-input" maxlength="${MultiplayerConfig.maxNameLength}"
+             spellcheck="false" autocomplete="off" value="${escapeHtml(this.defaultName)}" />
+      <button class="mp-btn mp-btn-primary" data-mp="go">JOIN</button>
+      <button class="mp-btn mp-btn-ghost" data-mp="back">CANCEL</button>
+    `;
+    const nameInput = this.panel.querySelector<HTMLInputElement>("#mp-join-name")!;
+    const go = () => void this.join(roomId, nameInput.value.trim());
+    this.bind("go", go);
+    nameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") go();
+    });
+    this.bind("back", () => this.close());
+    nameInput.focus();
+    nameInput.select();
   }
 
   private showLobby(): void {
@@ -163,9 +197,11 @@ export class LobbyController {
     }
   }
 
-  private async join(roomId: string): Promise<void> {
-    // Invite joins may happen before the user ever typed a name.
+  private async join(roomId: string, explicitName?: string): Promise<void> {
+    // The nickname prompt / join screen passes the name explicitly;
+    // fall back to the saved one, then to a generated guest name.
     const name =
+      explicitName ||
       this.panel.querySelector<HTMLInputElement>("#mp-name")?.value.trim() ||
       loadDisplayName() ||
       generateGuestName();

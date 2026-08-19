@@ -23,6 +23,11 @@ import { castBeam, BeamCastResult } from "./BeamCombat";
 export class PlasmaRifle {
   readonly heat = new HeatSystem();
 
+  /** Resolves once the GLB is parsed and attached (or failed) — used by
+   *  the Game's GPU warm-up so entering the map never compiles shaders. */
+  readonly ready: Promise<void>;
+  private readyResolve!: () => void;
+
   /** True while the beam is currently burning a target or a combatant. */
   hittingTarget = false;
 
@@ -92,6 +97,7 @@ export class PlasmaRifle {
   ) {
     this.camera = camera;
     this.particles = particles;
+    this.ready = new Promise((resolve) => (this.readyResolve = resolve));
     this.beam = new PlasmaBeam(scene);
     this.impact = new PlasmaImpact(scene);
 
@@ -152,15 +158,24 @@ export class PlasmaRifle {
     this.muzzle.position.set(0, 0.012, -0.58);
     this.viewmodel.add(this.muzzle);
 
+    // The light attaches to the CAMERA (never the hidden/shown viewmodel):
+    // toggling a light's effective visibility changes the scene light
+    // count and forces three.js to recompile every lit material — that
+    // was the freeze on the first melee swing (rifle viewmodel hidden).
     this.muzzleLight = new THREE.PointLight(0xa855f7, 0, 4, 2);
-    this.muzzle.add(this.muzzleLight);
+    this.muzzleLight.position
+      .copy(this.basePosition)
+      .add(this.muzzle.position);
+    this.camera.add(this.muzzleLight);
 
     this.loadModel();
   }
 
   private loadModel(): void {
     const loader = new GLTFLoader();
-    loader.load(rifleModelUrl, (gltf) => {
+    loader.load(
+      rifleModelUrl,
+      (gltf) => {
       const model = gltf.scene;
 
       // Source model lies along the X axis. Find the muzzle end (thinner
@@ -197,7 +212,11 @@ export class PlasmaRifle {
       });
 
       this.viewmodel.add(model);
-    });
+      this.readyResolve();
+      },
+      undefined,
+      () => this.readyResolve(), // failed load must never hang the warm-up
+    );
   }
 
   /**

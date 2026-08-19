@@ -26,6 +26,7 @@ import { SpearHUD } from "../ui/SpearHUD";
 import { loadLoadout, MeleeWeaponId, PrimaryWeaponId } from "../loadout/Loadout";
 import { ObliterreurWeapon } from "../weapons/obliterreur/ObliterreurWeapon";
 import { RevolverWeapon } from "../weapons/revolver/RevolverWeapon";
+import { loadRevolverTemplate } from "../weapons/revolver/RevolverModel";
 import { RevolverHUD } from "../ui/RevolverHUD";
 import { BassBlasterWeapon } from "../weapons/bassblaster/BassBlasterWeapon";
 import { BassBlasterHUD } from "../ui/BassBlasterHUD";
@@ -175,6 +176,8 @@ export class Game {
 
   private lastTime = 0;
   private elapsed = 0;
+  /** True once the one-time GPU warm-up pass has run. */
+  private gpuWarmedUp = false;
   private readonly playerPos = new THREE.Vector3();
   private readonly rightDir = new THREE.Vector3();
   private readonly attackerPos = new THREE.Vector3();
@@ -515,8 +518,94 @@ export class Game {
     // and kick off SFX preloading (cached — only the first call fetches).
     this.gameAudio.unlock();
     void this.gameAudio.preload();
-    this.applyLoadout();
+    // SOLO: (re)apply the persisted loadout on every re-entry.
+    // MULTIPLAYER: loadout changes made from the Escape menu only apply
+    // on the NEXT RESPAWN (see onLocalRespawned) — never mid-life.
+    if (!this.multiplayer) this.applyLoadout();
     this.input.requestPointerLock();
+  }
+
+  /**
+   * One-time GPU warm-up: waits for every weapon GLB, then renders ONE
+   * forced-visible frame so every shader is compiled and every texture is
+   * uploaded while the menu / transition still covers the canvas.
+   * Transient combat visuals that only exist mid-fight (thrown revolver
+   * clone, shockwave rings, particles) are spawned far below the map for
+   * that frame. Without this, the FIRST melee swing / revolver throw /
+   * weapon reveal compiled shaders mid-fight — a visible freeze.
+   */
+  async warmUpRendering(): Promise<void> {
+    if (this.gpuWarmedUp) return;
+    this.gpuWarmedUp = true;
+
+    // 1. Every async weapon asset must be parsed and attached first.
+    await Promise.all([
+      this.rifle.ready,
+      this.hammerViewmodel.ready,
+      this.spearViewmodel.ready,
+      this.obliterreur.ready,
+      this.revolver.ready,
+      this.bassBlaster.ready,
+    ]);
+
+    // 2. Transient visuals that never exist at rest: a thrown-revolver
+    // clone (opaque SHARED template materials ≠ the viewmodel's cloned
+    // transparent ones) + a shockwave ring + particles, far below the map.
+    const far = new THREE.Vector3(0, -400, 0);
+    const temp: THREE.Object3D[] = [];
+    try {
+      const template = await loadRevolverTemplate();
+      const thrown = template.clone(true);
+      thrown.position.copy(far);
+      temp.push(thrown);
+    } catch {
+      /* revolver asset failed — nothing to warm */
+    }
+    for (const obj of temp) this.scene.add(obj);
+    this.shockwave.spawn(far, 1, 0.5, this.phaseColor);
+    this.particles.burst(far, 4, 1, 0.3, this.phaseColor, 0);
+    this.shockwave.update(0.01);
+    this.particles.update(0.01);
+
+    // 3. Forced-visible renders: hidden viewmodels (hammer, spear,
+    // revolver, obliterreur, bass blaster), beams / impact meshes and
+    // pooled VFX meshes all get their programs compiled + textures
+    // uploaded right now. LIGHTS ARE NEVER TOUCHED: forcing a hidden
+    // light visible would change the scene light count, and light-count
+    // changes recompile every lit material (a freeze). A few frames are
+    // rendered so drivers that link programs lazily finish before play.
+    const saved: { obj: THREE.Object3D; visible: boolean; culled: boolean }[] = [];
+    this.scene.traverse((obj) => {
+      if ((obj as THREE.Light).isLight) return; // keep the light count real
+      saved.push({ obj, visible: obj.visible, culled: obj.frustumCulled });
+      obj.visible = true;
+      obj.frustumCulled = false;
+    });
+    this.scene.updateMatrixWorld(true);
+    for (let i = 0; i < 2; i++) {
+      this.renderer.render(this.scene, this.fpsCamera.camera);
+    }
+
+    // Light-count parity: the remote-VFX warm-up (multiplayer) owns 2
+    // TEMPORARY point lights. End it now and render again so the REAL
+    // runtime light count is also compiled (both variants cached).
+    this.multiplayer?.vfx.finishWarmUp();
+    for (let i = 0; i < 2; i++) {
+      this.renderer.render(this.scene, this.fpsCamera.camera);
+    }
+
+    for (const s of saved) {
+      s.obj.visible = s.visible;
+      s.obj.frustumCulled = s.culled;
+    }
+
+    // 4. Cleanup: transient warm objects removed, pools back at rest.
+    for (const obj of temp) this.scene.remove(obj);
+    this.shockwave.update(10);
+    this.particles.update(10);
+
+    // 5. Audio buffers decode in the background (no gesture required).
+    void this.gameAudio.preload();
   }
 
   /**
@@ -569,9 +658,26 @@ export class Game {
     this.multiplayer.setParticles(this.particles);
 
     // Phase 2 multiplayer runs with 0 bots (solo mode keeps them working).
+    // The Escape-menu bots panel is FULLY removed (inline display:none —
+    // never a class the panel's own CSS could override).
     this.botManager.setBotCount(0);
     this.rebuildHittables();
-    document.getElementById("bots-menu")?.classList.add("hidden");
+    const botsMenuEl = document.getElementById("bots-menu");
+    if (botsMenuEl) botsMenuEl.style.display = "none";
+
+    // Apply the loadout selected in the MAIN MENU before entering the map
+    // (afterwards, Escape-menu loadout changes only apply on respawn).
+    this.applyLoadout();
+
+    // Instantiate the remote avatars NOW (the roster is already known
+    // from the lobby) so their skinned meshes + nametags compile during
+    // the warm-up render below instead of on the first gameplay frame.
+    this.multiplayer.update(0);
+
+    // GPU warm-up: everything (viewmodels, melee weapons, thrown revolver,
+    // shockwaves, particles) is loaded, compiled and uploaded BEFORE the
+    // player enters the map — gameplay must be fluid from frame one.
+    await this.warmUpRendering();
 
     // Spawn where the server decided (position + facing, velocity zeroed).
     this.multiplayer.applyServerSpawn();
@@ -608,6 +714,9 @@ export class Game {
     // restore HP/protection and hand control back (weapons re-enabled).
     this.multiplayer.onLocalRespawned = () => {
       this.playerDeathTimer = 0;
+      // The loadout picked from the Escape menu applies HERE — changes
+      // are effective on the NEXT respawn, never mid-life.
+      this.applyLoadout();
       this.playerCombatant.health.reset(cc.spawnProtectionDuration);
       this.gameAudio.playerRespawn();
       // Equip is refused while dead — re-assert it after every respawn.
@@ -653,7 +762,8 @@ export class Game {
     this.multiplayerClient = null;
     this.lastSentEquip = "";
     this.netPlasmaWasFiring = false;
-    document.getElementById("bots-menu")?.classList.remove("hidden");
+    const botsMenuEl = document.getElementById("bots-menu");
+    if (botsMenuEl) botsMenuEl.style.display = "";
     // Back to LOCAL mode: the MatchStatsManager drives the leaderboard again.
     this.matchStats.onStatsChanged = () =>
       this.leaderboardHud.refresh(this.matchStats.getSortedStats());

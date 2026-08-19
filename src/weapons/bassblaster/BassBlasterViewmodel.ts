@@ -30,6 +30,9 @@ interface ReloadNote {
  * affect the template.
  */
 export class BassBlasterViewmodel {
+  /** Resolves once the shared GLB template is cloned in (or failed). */
+  readonly ready: Promise<void>;
+
   readonly group = new THREE.Group();
 
   private readonly basePosition = new THREE.Vector3(
@@ -70,9 +73,13 @@ export class BassBlasterViewmodel {
     this.muzzle.position.set(0, 0.02, -(cfg.viewmodelLength * 0.5 + 0.04));
     this.group.add(this.muzzle);
 
-    // Per-note colored muzzle flash light.
+    // Per-note colored muzzle flash light. Attached to the CAMERA (never
+    // the hidden/shown viewmodel group): toggling a light's effective
+    // visibility changes the scene light count and forces three.js to
+    // recompile every lit material — a one-time freeze on weapon swaps.
     this.muzzleLight = new THREE.PointLight(0xffffff, 0, 3.5, 2);
-    this.muzzle.add(this.muzzleLight);
+    this.muzzleLight.position.copy(this.basePosition).add(this.muzzle.position);
+    camera.add(this.muzzleLight);
 
     // Additive halo flash at the muzzle (tinted per note on every shot).
     this.muzzleHaloMat = new THREE.SpriteMaterial({
@@ -89,9 +96,11 @@ export class BassBlasterViewmodel {
     this.muzzleHalo.renderOrder = 105;
     this.muzzle.add(this.muzzleHalo);
 
-    // Reload glow (violet musical energy inside the weapon).
+    // Reload glow (violet musical energy inside the weapon) — also
+    // camera-attached for the same constant-light-count reason.
     this.reloadLight = new THREE.PointLight(0xc084fc, 0, 1.8, 2);
-    this.group.add(this.reloadLight);
+    this.reloadLight.position.copy(this.basePosition);
+    camera.add(this.reloadLight);
 
     // Pre-build the reload swirl notes (hidden until a reload starts).
     for (let i = 0; i < cfg.reloadNoteCount; i++) {
@@ -121,7 +130,8 @@ export class BassBlasterViewmodel {
     }
 
     // Shared template → per-viewmodel clone with per-instance materials.
-    void loadBassBlasterTemplate().then((template) => {
+    this.ready = loadBassBlasterTemplate()
+      .then((template) => {
       const model = cloneBassBlaster(template);
       model.scale.setScalar(cfg.viewmodelLength);
       model.traverse((obj) => {
@@ -137,7 +147,8 @@ export class BassBlasterViewmodel {
         }
       });
       this.group.add(model);
-    });
+      })
+      .catch(() => undefined); // failed load must never hang the warm-up
   }
 
   setHidden(hidden: boolean): void {

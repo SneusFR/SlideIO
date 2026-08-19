@@ -211,6 +211,22 @@ export class RemoteCombatVFXController {
     this.tracers.push({ line, mat: lineMat, age: 0 });
   }
 
+  /**
+   * Immediately end the warm-up (the Game renders its own warm frames):
+   * the warm-up obliterreur owns 2 temporary point lights — removing them
+   * BEFORE gameplay lets the Game compile the real runtime light count too
+   * (light-count changes recompile every lit material).
+   */
+  finishWarmUp(): void {
+    if (!this.warmupBeam) return;
+    this.warmupTimer = 0;
+    this.warmupBeam.setActive(false);
+    this.scene.remove(this.warmupBeam.group);
+    this.warmupBeam = null;
+    this.warmupOblit?.dispose();
+    this.warmupOblit = null;
+  }
+
   // ------------------------------------------------------------------
   // Server event entry point
   // ------------------------------------------------------------------

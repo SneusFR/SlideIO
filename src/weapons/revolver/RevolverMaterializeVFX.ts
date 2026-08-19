@@ -33,7 +33,7 @@ export class RevolverMaterializeVFX {
   private readonly worldPos = new THREE.Vector3();
   private sparkAccum = 0;
 
-  constructor(root: THREE.Object3D, particles: ParticleSystem) {
+  constructor(root: THREE.Object3D, particles: ParticleSystem, lightParent?: THREE.Object3D) {
     this.root = root;
     this.particles = particles;
 
@@ -82,8 +82,18 @@ export class RevolverMaterializeVFX {
     this.scanPlane.visible = false;
     root.add(this.scanPlane);
 
+    // The glow light attaches to a PERMANENTLY visible parent (the camera)
+    // when provided: a light inside the hidden/shown viewmodel group would
+    // change the scene light count on weapon swaps, forcing three.js to
+    // recompile every lit material (a visible one-time freeze).
     this.glow = new THREE.PointLight(0xa855f7, 0, 1.6, 2);
-    root.add(this.glow);
+    if (lightParent) {
+      root.getWorldPosition(this.worldPos);
+      lightParent.add(this.glow);
+      this.glow.position.copy(lightParent.worldToLocal(this.worldPos.clone()));
+    } else {
+      root.add(this.glow);
+    }
   }
 
   /** Begin the hologram: the mesh starts fully immaterial. */

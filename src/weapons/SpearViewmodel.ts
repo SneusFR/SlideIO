@@ -21,6 +21,11 @@ const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2,
  * Pointing the tip forward = rotation.x ≈ -PI/2.
  */
 export class SpearViewmodel {
+  /** Resolves once the GLB is parsed and attached (or failed) — used by
+   *  the Game's GPU warm-up so the first sweep never compiles shaders. */
+  readonly ready: Promise<void>;
+  private readyResolve!: () => void;
+
   private readonly root = new THREE.Group();
   private readonly spear = new THREE.Group();
   /** Emissive materials from the GLB, pulsed for a bit of life. */
@@ -41,6 +46,7 @@ export class SpearViewmodel {
   private static readonly BOTTOM_Y = -0.75;
 
   constructor(camera: THREE.Camera) {
+    this.ready = new Promise((resolve) => (this.readyResolve = resolve));
     this.loadModel();
     this.root.add(this.spear);
     camera.add(this.root);
@@ -57,7 +63,9 @@ export class SpearViewmodel {
 
   private loadModel(): void {
     const loader = new GLTFLoader();
-    loader.load(spearModelUrl, (gltf) => {
+    loader.load(
+      spearModelUrl,
+      (gltf) => {
       const model = gltf.scene;
 
       // Detect the shaft axis (longest dimension) and rotate it onto +Y.
@@ -98,7 +106,11 @@ export class SpearViewmodel {
       });
 
       this.spear.add(model);
-    });
+      this.readyResolve();
+      },
+      undefined,
+      () => this.readyResolve(), // failed load must never hang the warm-up
+    );
   }
 
   // ------------------------------------------------------------------

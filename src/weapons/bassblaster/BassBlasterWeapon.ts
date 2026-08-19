@@ -59,6 +59,9 @@ export class BassBlasterWeapon {
   /** Global shot counter → cyclic note/color selection (never resets). */
   private shotCounter = 0;
 
+  /** Resolves once the viewmodel GLB is loaded (Game GPU warm-up). */
+  readonly ready: Promise<void>;
+
   private readonly camera: THREE.Camera;
   private readonly viewmodel: BassBlasterViewmodel;
   private readonly projectiles: BassBlasterProjectileSystem;
@@ -75,6 +78,7 @@ export class BassBlasterWeapon {
     this.camera = camera;
     this.projectiles = new BassBlasterProjectileSystem(scene, particles);
     this.viewmodel = new BassBlasterViewmodel(camera, particles);
+    this.ready = this.viewmodel.ready;
     // Decode the music library early so the first shot already sings.
     this.music.preload();
   }

@@ -20,6 +20,11 @@ import obliterreurModelUrl from "../../assets/obliterreur_opt.glb?url";
 type VmMode = "idle" | "place" | "fireStart" | "fireLoop" | "fireEnd";
 
 export class ObliterreurViewmodel {
+  /** Resolves once the GLB is parsed and attached (or failed) — used by
+   *  the Game's GPU warm-up so equipping never compiles shaders. */
+  readonly ready: Promise<void>;
+  private readyResolve!: () => void;
+
   private readonly root = new THREE.Group();
   private readonly basePosition = new THREE.Vector3(
     oc.viewmodelOffset.x,
@@ -38,6 +43,7 @@ export class ObliterreurViewmodel {
   private hidden = false;
 
   constructor(camera: THREE.Camera) {
+    this.ready = new Promise((resolve) => (this.readyResolve = resolve));
     this.root.position.copy(this.basePosition);
     this.root.rotation.y = ObliterreurViewmodel.BASE_YAW;
     camera.add(this.root);
@@ -46,7 +52,9 @@ export class ObliterreurViewmodel {
 
   private loadModel(): void {
     const loader = new GLTFLoader();
-    loader.load(obliterreurModelUrl, (gltf) => {
+    loader.load(
+      obliterreurModelUrl,
+      (gltf) => {
       const model = gltf.scene;
 
       // Rotate the longest bbox axis onto Z so the weapon faces -Z.
@@ -95,7 +103,11 @@ export class ObliterreurViewmodel {
 
       this.root.add(model);
       this.root.visible = !this.hidden;
-    });
+      this.readyResolve();
+      },
+      undefined,
+      () => this.readyResolve(), // failed load must never hang the warm-up
+    );
   }
 
   /**

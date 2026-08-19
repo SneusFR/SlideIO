@@ -25,7 +25,10 @@ export class RevolverExplosion {
   private readonly particles: ParticleSystem;
   private readonly shockwave: Shockwave;
 
-  // Small pool of flash lights (an explosion is very short-lived).
+  // Small PERSISTENT pool of flash lights. The lights live in the scene
+  // FOREVER (intensity 0 while unused): adding/removing a light at runtime
+  // changes the scene light count and forces three.js to recompile every
+  // lit material — a visible one-time freeze on the first explosion.
   private readonly flashes: { light: THREE.PointLight; t: number }[] = [];
 
   private readonly violet = new THREE.Color(0xa855f7);
@@ -44,6 +47,18 @@ export class RevolverExplosion {
     this.combatants = combatants;
     this.particles = particles;
     this.shockwave = shockwave;
+
+    // Pre-create the pooled flash lights (constant scene light count).
+    for (let i = 0; i < 2; i++) {
+      const light = new THREE.PointLight(
+        0xa855f7,
+        0,
+        cfg.revolverExplosionRadius * 2.2,
+        2,
+      );
+      this.scene.add(light);
+      this.flashes.push({ light, t: 0 });
+    }
   }
 
   explode(center: THREE.Vector3): void {
@@ -54,10 +69,14 @@ export class RevolverExplosion {
     this.particles.burst(center, 14, 14, 0.22, this.flashWhite, 0); // flash sparks
     this.particles.ring(center, this.upNormal, 26, 0.6, 8, 0.4, this.violet);
 
-    const light = new THREE.PointLight(0xa855f7, 14, cfg.revolverExplosionRadius * 2.2, 2);
-    light.position.copy(center);
-    this.scene.add(light);
-    this.flashes.push({ light, t: 0.22 });
+    // Reuse the most-finished pooled flash light (never added/removed).
+    let flash = this.flashes[0];
+    for (const f of this.flashes) {
+      if (f.t < flash.t) flash = f;
+    }
+    flash.light.position.copy(center);
+    flash.light.intensity = 14;
+    flash.t = 0.22;
 
     this.onExplode?.(center);
 
@@ -93,14 +112,11 @@ export class RevolverExplosion {
   }
 
   update(dt: number): void {
-    for (let i = this.flashes.length - 1; i >= 0; i--) {
-      const f = this.flashes[i];
+    for (const f of this.flashes) {
+      if (f.t <= 0) continue;
       f.t -= dt;
       f.light.intensity = Math.max(0, f.light.intensity - dt * 70);
-      if (f.t <= 0) {
-        this.scene.remove(f.light);
-        this.flashes.splice(i, 1);
-      }
+      if (f.t <= 0) f.light.intensity = 0; // pooled light stays in scene
     }
   }
 }

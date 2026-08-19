@@ -103,8 +103,8 @@ export const NetworkWeaponConfig = {
   },
   revolver: {
     capacity: 6,
-    bodyDamage: 100,
-    headDamage: 50, // intentional weapon-specific rule (NOT the global ×2)
+    bodyDamage: 50,
+    headDamage: 100, // intentional weapon-specific rule (NOT the global ×2)
     range: 300,
     primaryFireInterval: 0.28,
     fanFireInterval: 0.1,

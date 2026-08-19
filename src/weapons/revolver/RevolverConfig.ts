@@ -9,8 +9,8 @@
  *   After any throw → a fresh revolver materializes holographically (6/6)
  *
  * Damage design (intentional, NOT the global x2 headshot rule):
- *   BODY = 100 (one-shot kill on a 100 HP bot)
- *   HEAD =  50 (two headshots to kill)
+ *   HEAD = 100 (one-shot kill on a 100 HP target)
+ *   BODY =  50 (two body shots to kill)
  */
 export const RevolverConfig = {
   // ---- Cylinder ----
@@ -26,8 +26,8 @@ export const RevolverConfig = {
   /** Max bullet range in meters (camera-center raycast). */
   revolverRange: 300,
   /** Flat damage per zone — explicitly NOT the global headshot multiplier. */
-  revolverBodyDamage: 100,
-  revolverHeadDamage: 50,
+  revolverBodyDamage: 50,
+  revolverHeadDamage: 100,
 
   // ---- Thrown revolver (grenade mode) ----
   /** Initial forward speed of the thrown revolver (m/s). */
