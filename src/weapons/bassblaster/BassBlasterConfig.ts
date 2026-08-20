@@ -19,16 +19,16 @@ export const BassBlasterConfig = {
   /** Seconds between shots while the trigger is held (~11.8 rounds/s). */
   fireInterval: 0.085,
   /** Manual/auto reload duration (musical note swirl animation). */
-  reloadDuration: 1.5,
+  reloadDuration: 1.2,
 
-  // ---- Damage (low per bullet — SMG) ----
-  bodyDamage: 10,
-  headDamage: 20, // weapon-specific ×2 head bonus
+  // ---- Damage (SMG) ----
+  bodyDamage: 20,
+  headDamage: 40, // weapon-specific ×2 head bonus
 
   // ---- Note projectiles ----
   /** Forward speed of a fired note (m/s). */
-  projectileSpeed: 70,
-  /** Max flight time before a note fizzles out (s) → ~110 m range. */
+  projectileSpeed: 140,
+  /** Max flight time before a note fizzles out (s) → ~224 m range. */
   projectileLifetime: 1.6,
   /** Camera-center aim raycast range used to converge the muzzle shot. */
   aimRange: 250,

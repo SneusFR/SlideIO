@@ -56,6 +56,8 @@ export class BassBlasterWeapon {
   private ammo = cfg.magazineSize;
   private fireCooldown = 0;
   private reloadTimer = 0; // > 0 while reloading (weapon locked)
+  /** Grain cadence timer while reloading — the music NEVER stops mid-song. */
+  private reloadGrainTimer = 0;
   /** Global shot counter → cyclic note/color selection (never resets). */
   private shotCounter = 0;
 
@@ -137,6 +139,7 @@ export class BassBlasterWeapon {
    */
   reset(): void {
     this.reloadTimer = 0;
+    this.reloadGrainTimer = 0;
     this.fireCooldown = 0;
     this.ammo = cfg.magazineSize;
     this.viewmodel.cancelReload();
@@ -153,6 +156,15 @@ export class BassBlasterWeapon {
     // Reload lock: no fire until the musical swirl completes.
     if (this.reloadTimer > 0) {
       this.reloadTimer -= dt;
+      // The music keeps playing during the reload: emit grains at the same
+      // cadence as sustained fire so the song continues uninterrupted
+      // (fire → music, reload → music, idle → silence).
+      this.reloadGrainTimer -= dt;
+      if (this.reloadGrainTimer <= 0) {
+        this.viewmodel.getMuzzleWorldPosition(this.muzzleWorld);
+        this.music.playFragmentAt(this.muzzleWorld);
+        this.reloadGrainTimer += cfg.fireInterval;
+      }
       if (this.reloadTimer <= 0) {
         this.reloadTimer = 0;
         this.ammo = cfg.magazineSize; // fresh magazine → READY
@@ -218,6 +230,8 @@ export class BassBlasterWeapon {
 
   private startReload(): void {
     this.reloadTimer = cfg.reloadDuration;
+    // Seamless hand-off from the last shot's grain to the reload grains.
+    this.reloadGrainTimer = cfg.fireInterval;
     this.viewmodel.startReload(cfg.reloadDuration);
     this.onReloadStart?.();
   }
