@@ -46,6 +46,7 @@ import { NavGrid } from "../navigation/NavGrid";
 import { BotManager } from "../bots/BotManager";
 import { GameAudio } from "../audio/GameAudio";
 import { PickupManager } from "../pickups/PickupManager";
+import { PickupConfig } from "../pickups/PickupConfig";
 import { ComboManager } from "../combo/ComboManager";
 import { MedalManager } from "../medals/MedalManager";
 import { MedalHUD } from "../ui/MedalHUD";
@@ -445,6 +446,14 @@ export class Game {
     this.pickups.onMedkitCollected = (healed) => {
       this.combatHud.notifyHeal(healed);
       this.gameAudio.healthPickup();
+      // Medkits also top up the Bass Blaster's magazine: random 25–75%
+      // of its capacity (clamped — never above a full magazine).
+      const refillFraction =
+        PickupConfig.medkitAmmoRefillMinFraction +
+        Math.random() *
+          (PickupConfig.medkitAmmoRefillMaxFraction -
+            PickupConfig.medkitAmmoRefillMinFraction);
+      this.bassBlaster.refillAmmo(refillFraction);
     };
     this.pickups.onCoinCollected = () => {
       // No economy yet: sound + disappear. A wallet hooks in here later.

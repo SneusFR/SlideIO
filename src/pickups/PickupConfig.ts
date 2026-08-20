@@ -14,6 +14,10 @@ export const PickupConfig = {
   medkitBobHeight: 0.07,
   medkitSpinSpeed: 1.1, // rad/s slow idle rotation
   medkitsPerKill: 1,
+  /** Ammo refill granted by a medkit: random fraction of the weapon's
+   *  magazine, rolled uniformly in [min, max] at collection time. */
+  medkitAmmoRefillMinFraction: 0.25,
+  medkitAmmoRefillMaxFraction: 0.75,
 
   // ---- Coins ----
   coinDropMin: 2,
