@@ -17,23 +17,38 @@ import {
 import { NetworkMovementState, sanitizeNetworkMovementState } from "./NetworkMovementState";
 import { RemoteWeaponController } from "./remote/RemoteWeaponController";
 import type { NetworkPlayerInfo } from "./MultiplayerClient";
+import { CombatConfig as cc } from "../combat/CombatConfig";
+import { CorpseManager } from "../ragdoll/CorpseManager";
+import { buildSkeletonRagdollParts } from "../ragdoll/SkeletonRagdollFactory";
 // Character GLB (mesh + skeleton + "Alert" idle clip) — loaded ONCE, cloned
-// per player. The run/jump clips live in sibling GLBs (same skeleton).
-import characterUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_Running_withSkin.glb?url";
-import runClipUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_Walking_withSkin.glb?url";
-import jumpClipUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_Regular_Jump_withSkin.glb?url";
-import slideClipUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_slide_right_withSkin.glb?url";
+// per player. The run/jump/slide clips live in sibling GLBs (same skeleton).
+//
+// NOTE: the Meshy "Sprouty Smile" export FILENAMES are mislabeled — each
+// file's actual clip was verified with scripts/inspect-glb.mjs and the
+// clips are always selected by CLIP NAME, never by filename:
+//   Regular_Jump_withSkin.glb → "Armature|Alert|baselayer"        (IDLE)
+//   Walking_withSkin.glb      → "Armature|running|baselayer"      (RUN)
+//   Running_withSkin.glb      → "Armature|Regular_Jump|baselayer" (JUMP)
+//   Character_output.glb      → "Armature|slide_right|baselayer"  (SLIDE)
+import characterUrl from "../assets/Meshy_AI_Sprouty_Smile_biped_Animation_Regular_Jump_withSkin.glb?url";
+import runClipUrl from "../assets/Meshy_AI_Sprouty_Smile_biped_Animation_Walking_withSkin.glb?url";
+import jumpClipUrl from "../assets/Meshy_AI_Sprouty_Smile_biped_Animation_Running_withSkin.glb?url";
+import slideClipUrl from "../assets/Meshy_AI_Sprouty_Smile_biped_Character_output.glb?url";
 
 /** Capsule center → feet distance (model root sits at the feet). */
 const FEET_OFFSET = moveCfg.standHalfHeight + moveCfg.capsuleRadius;
-/** Visual character height (matches the local capsule: 2 × feetOffset). */
-const CHARACTER_HEIGHT = FEET_OFFSET * 2;
+/** Visual upscale of the character model (purely cosmetic — hitbox unchanged). */
+const CHARACTER_SCALE = 1.25;
+/** Visual character height (capsule height × cosmetic upscale). */
+const CHARACTER_HEIGHT = FEET_OFFSET * 2 * CHARACTER_SCALE;
+/** Top of the (scaled) model relative to the capsule center (feet at -FEET_OFFSET). */
+const MODEL_TOP = CHARACTER_HEIGHT - FEET_OFFSET;
 /** Raw GLB faces +Z; game convention: yaw = 0 → forward = -Z. */
 const MODEL_YAW_OFFSET = Math.PI;
 /** Nametag height above the capsule center (meters). */
-const NAMETAG_HEIGHT = FEET_OFFSET + 0.42;
+const NAMETAG_HEIGHT = MODEL_TOP + 0.42;
 /** Health bar height above the capsule center (just under the nametag). */
-const HEALTHBAR_HEIGHT = FEET_OFFSET + 0.24;
+const HEALTHBAR_HEIGHT = MODEL_TOP + 0.24;
 /** Health bar dimensions (meters). */
 const HEALTHBAR_WIDTH = 0.62;
 const HEALTHBAR_THICKNESS = 0.055;
@@ -68,6 +83,35 @@ interface CharacterAsset {
 }
 let cachedCharacter: Promise<CharacterAsset> | null = null;
 
+/**
+ * Shared "enemy readability" rim material (one instance for every remote
+ * avatar): back faces of a duplicated skinned mesh, displaced along the
+ * vertex normals, render as a light red glow hugging the animated
+ * silhouette — same spirit as the solo bots' outline (BotModel), adapted
+ * to a SKINNED mesh. Depth test stays ON → walls occlude it (no X-ray).
+ */
+let enemyRimMat: THREE.MeshBasicMaterial | null = null;
+function getEnemyRimMaterial(): THREE.MeshBasicMaterial {
+  if (!enemyRimMat) {
+    enemyRimMat = new THREE.MeshBasicMaterial({
+      color: cc.enemyOutlineColor,
+      side: THREE.BackSide,
+      toneMapped: false,
+      transparent: true,
+      opacity: 0.85,
+    });
+    // Inflate along the (bind-pose) normals BEFORE skinning: the offset
+    // vertex then follows the bones exactly like the body vertex does.
+    enemyRimMat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader.replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>\n\ttransformed += normal * ${cc.enemyOutlineThickness.toFixed(4)};`,
+      );
+    };
+  }
+  return enemyRimMat;
+}
+
 function loadCharacterAsset(): Promise<CharacterAsset> {
   if (cachedCharacter) return cachedCharacter;
   const loader = new GLTFLoader();
@@ -101,6 +145,31 @@ function loadCharacterAsset(): Promise<CharacterAsset> {
       }
     });
 
+    // ---- Enemy readability: light red glow rim on the TEMPLATE ----
+    // A sibling SkinnedMesh per body part, bound to the SAME skeleton:
+    // it follows every animation for free and SkeletonUtils.clone()
+    // duplicates it per player (geometry + material stay shared). Every
+    // remote player is an enemy in multi, so the rim is always on.
+    const skinnedParts: THREE.SkinnedMesh[] = [];
+    model.traverse((obj) => {
+      const sm = obj as THREE.SkinnedMesh;
+      if (sm.isSkinnedMesh) skinnedParts.push(sm);
+    });
+    for (const src of skinnedParts) {
+      const rim = new THREE.SkinnedMesh(src.geometry, getEnemyRimMaterial());
+      rim.bind(src.skeleton, src.bindMatrix);
+      rim.position.copy(src.position);
+      rim.quaternion.copy(src.quaternion);
+      rim.scale.copy(src.scale);
+      rim.castShadow = false;
+      rim.receiveShadow = false;
+      rim.frustumCulled = false;
+      // Purely visual: never a raycast target (hits are server-side anyway).
+      rim.raycast = () => {};
+      src.parent!.add(rim);
+    }
+
+
     // Wrap in a container so the clone root is a plain, unrotated group.
     const template = new THREE.Group();
     template.add(model);
@@ -124,12 +193,12 @@ function loadCharacterAsset(): Promise<CharacterAsset> {
     // the clip). The avatar's actual jump arc already comes from the
     // NETWORK position — keeping both would double the motion and leave
     // the model floating above its capsule. Flatten the hips translation.
-    // (Verified offline with scripts/inspect-glb-anim.mjs: Hips.translation
-    // is the ONLY animated position track in the jump GLB — Y 61.9→163.2 cm,
-    // pinned to its first key 95.1 cm, consistent with idle 92–98 / run
-    // 86–93. No Armature/Root-level position track exists.)
+    // (Verified offline with scripts/inspect-glb-hips.mjs on the Sprouty
+    // Smile export: Hips.translation is the ONLY animated position track
+    // in the jump GLB — Y 27→60 cm, pinned to its first key 38.1 cm.
+    // No Armature/Root-level position track exists.)
     stripHipsRootMotion(jump);
-    // The slide clip travels ~4.9 m forward (baked hips X/Z motion) — the
+    // The slide clip travels ~1.9 m forward (baked hips X/Z motion) — the
     // network position provides the real travel, so flatten X/Z. The hips
     // Y is KEPT: it carries the crouch (drop to the ground) of the slide
     // pose itself, which must play on the spot.
@@ -250,6 +319,8 @@ function movementStateName(s: NetworkMovementState): string {
 class RemotePlayer {
   readonly group = new THREE.Group();
   readonly buffer = new SnapshotBuffer();
+  /** The skinned character clone (needed for the death-ragdoll snapshot). */
+  readonly model: THREE.Object3D;
   extrapolating = false;
   /** SERVER-owned alive flag — a dead avatar is hidden, never standing. */
   alive = true;
@@ -317,12 +388,15 @@ class RemotePlayer {
     asset: CharacterAsset,
     /** Anomaly sink (owned by the manager — ring buffer + dev console). */
     private readonly onAnomaly: (text: string) => void,
+    /** Death hook: the manager snapshots a physical ragdoll corpse. */
+    private readonly onDied: ((remote: RemotePlayer) => void) | null = null,
   ) {
     // SkeletonUtils clone: required for skinned meshes (shares geometry /
     // materials / textures with the cached template — cheap per player).
     const model = skeletonClone(asset.template);
     // The group's origin is the CAPSULE CENTER; the model root is the feet.
     model.position.y = -FEET_OFFSET;
+    this.model = model;
     this.group.add(model);
     this.group.visible = false; // hidden until the first snapshot arrives
 
@@ -382,7 +456,11 @@ class RemotePlayer {
     this.healthRatioTarget = maxHealth > 0 ? Math.max(0, Math.min(1, health / maxHealth)) : 0;
 
     if (this.alive && !isAlive) {
-      // DEATH: hide the avatar — a dead player never stays standing.
+      // DEATH: snapshot a physical ragdoll corpse from the CURRENT animated
+      // pose + interpolated velocity (momentum preserved), then hide the
+      // avatar — a dead player never stays standing. The corpse is an
+      // independent clone: the respawned avatar never teleports the body.
+      if (this.group.visible) this.onDied?.(this);
       this.alive = false;
       this.group.visible = false;
     } else if (!this.alive && isAlive) {
@@ -647,6 +725,9 @@ export class RemotePlayerManager {
   private asset: CharacterAsset | null = null;
   /** Latest ping per remote (from the synced state — HUD display only). */
   private readonly pings = new Map<string, number>();
+  /** Death ragdoll sink (owned by the Game — optional in tests). */
+  private corpses: CorpseManager | null = null;
+  private readonly corpseVelocity = new THREE.Vector3();
 
   // ---- Anomaly history (ring buffer for the F1 debug HUD) ----
   private readonly anomalies: NetworkAnomaly[] = [];
@@ -657,6 +738,51 @@ export class RemotePlayerManager {
   /** Load + cache the character asset (call once before the game starts). */
   async preload(): Promise<void> {
     this.asset = await loadCharacterAsset();
+  }
+
+  /** Wire the death-ragdoll corpse sink (visual only — never authoritative). */
+  setCorpseManager(corpses: CorpseManager | null): void {
+    this.corpses = corpses;
+  }
+
+  /**
+   * SERVER said this avatar died → snapshot an independent physical corpse:
+   * SkeletonUtils clone of the posed model (bones keep their CURRENT local
+   * transforms), placed at the avatar's world transform, simulated by a
+   * Rapier ragdoll seeded with the interpolated network velocity. The
+   * ragdoll is purely a visual/physical representation — the server's
+   * combat state stays the single source of truth (K/D/A untouched).
+   *
+   * NOTE: the server does not broadcast the killing blow's knockback to
+   * OTHER clients yet — the CorpseSpawnOptions.impact field is the ready
+   * slot for it once the PLAYER_DIED event carries impulse + point.
+   */
+  private spawnRemoteCorpse(remote: RemotePlayer): void {
+    if (!this.corpses) return;
+
+    const corpseModel = skeletonClone(remote.model);
+    // The corpse keeps the FULL living look: same Sprouty Smile skin, same
+    // +25% scale (baked into the cloned model) and the same red rim glow —
+    // the CorpseManager clones every material per corpse, so the fade-out
+    // owns its own rim copy and never tints the living avatars.
+
+    // Corpse root at the avatar's exact world transform (group = capsule
+    // center; the model keeps its own feet offset inside).
+    const corpseRoot = new THREE.Group();
+    corpseRoot.position.copy(remote.group.position);
+    corpseRoot.quaternion.copy(remote.group.quaternion);
+    corpseRoot.add(corpseModel);
+    corpseRoot.updateMatrixWorld(true);
+
+    const parts = buildSkeletonRagdollParts(corpseRoot);
+    if (!parts) return; // unexpected rig — skip silently (avatar just hides)
+
+    this.corpseVelocity.set(
+      remote.lastSample.velocityX,
+      remote.lastSample.velocityY,
+      remote.lastSample.velocityZ,
+    );
+    this.corpses.spawn(corpseRoot, parts, { velocity: this.corpseVelocity });
   }
 
   /**
@@ -679,7 +805,13 @@ export class RemotePlayerManager {
 
       let remote = this.remotes.get(p.id);
       if (!remote) {
-        remote = new RemotePlayer(p.id, p.name, this.asset, (text) => this.pushAnomaly(text));
+        remote = new RemotePlayer(
+          p.id,
+          p.name,
+          this.asset,
+          (text) => this.pushAnomaly(text),
+          (dead) => this.spawnRemoteCorpse(dead),
+        );
         this.remotes.set(p.id, remote);
         this.scene.add(remote.group);
         remote.attachDebugMarker(this.scene);

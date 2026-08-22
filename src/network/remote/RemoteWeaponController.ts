@@ -7,6 +7,7 @@ import rifleUrl from "../../assets/voidrifle_opt.glb?url";
 import spearUrl from "../../assets/lance_opt.glb?url";
 import obliterreurUrl from "../../assets/obliterreur_opt.glb?url";
 import revolverUrl from "../../assets/revolver_opt.glb?url";
+import bassBlasterUrl from "../../assets/bassblaster_opt.glb?url";
 
 /** How a weapon GLB sits in a remote character's hand (menu-proven recipe). */
 interface RemoteWeaponAttachment {
@@ -66,6 +67,15 @@ export const REMOTE_WEAPON_CONFIG: Record<NetworkWeaponId, RemoteWeaponAttachmen
     position: new THREE.Vector3(-0.02, 0.14, 0.06),
     rotation: new THREE.Euler(0.35, Math.PI / 2, 0.1),
     size: 1.0,
+    // Same hand + same forward convention as the plasma rifle.
+    modelRotation: new THREE.Euler(0, Math.PI, 0),
+  },
+  [NetworkWeaponId.BASS_BLASTER]: {
+    url: bassBlasterUrl,
+    bone: "LeftHand",
+    position: new THREE.Vector3(-0.02, 0.14, 0.06),
+    rotation: new THREE.Euler(0.35, Math.PI / 2, 0.1),
+    size: 0.75,
     // Same hand + same forward convention as the plasma rifle.
     modelRotation: new THREE.Euler(0, Math.PI, 0),
   },

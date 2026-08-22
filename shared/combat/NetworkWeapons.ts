@@ -15,6 +15,7 @@ export enum NetworkWeaponId {
   OBLITERREUR = "OBLITERREUR",
   HAMMER = "HAMMER",
   SPEAR = "SPEAR",
+  BASS_BLASTER = "BASS_BLASTER",
 }
 
 export function isNetworkWeaponId(raw: unknown): raw is NetworkWeaponId {
@@ -56,6 +57,11 @@ export enum WeaponActionType {
   MOLE_BURROW = "MOLE_BURROW",
   /** MOLE STRIKE: eruption — server computes the AoE around the point. */
   MOLE_EMERGE = "MOLE_EMERGE",
+  /** One Bass Blaster musical note projectile (server simulates flight).
+   *  px/py/pz piggyback the MUSIC GRAIN metadata (track index / playhead
+   *  offset seconds / note index) so remote clients replay the exact same
+   *  spatialized music fragment riding on the note. */
+  BASS_FIRE = "BASS_FIRE",
 }
 
 export function isWeaponActionType(raw: unknown): raw is WeaponActionType {
@@ -75,14 +81,23 @@ export enum NetworkHitZone {
 // Player hitbox constants (server hit detection ↔ frontend capsule)
 // ---------------------------------------------------------------------
 
-/** Matches frontend MovementConfig — the gameplay capsule everyone plays with. */
-export const PLAYER_CAPSULE_RADIUS = 0.35;
-export const PLAYER_CAPSULE_HALF_HEIGHT = 0.55; // cylinder half-height
+/**
+ * HIT capsule tuned to the "Sprouty Smile" avatar silhouette (chubby chibi:
+ * wider torso, huge head). Radius/half-height changed TOGETHER so that
+ * halfHeight + radius stays 0.90 — the capsule still spans exactly
+ * feet → top of head and PLAYER_FEET_OFFSET keeps matching the frontend
+ * MovementConfig feet offset (movement capsule center = network y).
+ */
+export const PLAYER_CAPSULE_RADIUS = 0.42;
+export const PLAYER_CAPSULE_HALF_HEIGHT = 0.48; // cylinder half-height
 /** Capsule center → feet distance (= halfHeight + radius). */
 export const PLAYER_FEET_OFFSET = PLAYER_CAPSULE_HALF_HEIGHT + PLAYER_CAPSULE_RADIUS;
-/** Head sphere center, relative to the CAPSULE CENTER (network y). */
-export const PLAYER_HEAD_OFFSET = 0.66;
-export const PLAYER_HEAD_RADIUS = 0.24;
+/** Head sphere center, relative to the CAPSULE CENTER (network y).
+ *  Sprouty Smile's head is nearly half the body: in the normalized 1.8 m
+ *  avatar it spans ≈ 1.04 → 1.80 above the feet → center ≈ 0.52 above the
+ *  capsule center with a ≈ 0.36 radius. */
+export const PLAYER_HEAD_OFFSET = 0.52;
+export const PLAYER_HEAD_RADIUS = 0.36;
 /** Eye height above the capsule center (fire-origin sanity checks). */
 export const PLAYER_EYE_OFFSET = 0.55;
 
@@ -168,6 +183,21 @@ export const NetworkWeaponConfig = {
     /** Client-reported anchor accepted when within this distance of the
      *  server raycast hit (client/server collider mismatch tolerance, m). */
     anchorTolerance: 3.0,
+  },
+  /** Bass Blaster — musical SMG (mirrors frontend BassBlasterConfig). */
+  bassBlaster: {
+    magazineSize: 30,
+    /** Seconds between shots while the trigger is held (~11.8 rounds/s). */
+    fireInterval: 0.085,
+    /** Cadence tolerance so honest clients never get refused by jitter. */
+    cadenceTolerance: 0.35,
+    reloadDuration: 1.2,
+    bodyDamage: 20,
+    headDamage: 40, // weapon-specific ×2 head bonus
+    /** Forward speed of a fired note (m/s) — straight flight, no gravity. */
+    projectileSpeed: 140,
+    /** Max flight time before a note fizzles out (s) → ~224 m range. */
+    projectileLifetime: 1.6,
   },
   /** MOLE STRIKE killstreak (mirrors frontend MoleStrikeConfig). */
   mole: {

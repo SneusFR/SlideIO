@@ -28,6 +28,14 @@ export interface Combatant {
    */
   applyImpulse(impulse: THREE.Vector3): void;
   /**
+   * Optional: report the PHYSICAL description of an incoming hit
+   * (knockback impulse + world impact point) BEFORE the damage is applied.
+   * Consumed by the ragdoll system: a lethal hit spawns a death ragdoll
+   * carrying this exact impulse; a big non-lethal hit knocks the victim
+   * down. Weapons stay generic — they never decide the ragdoll outcome.
+   */
+  registerImpact?(impulse: THREE.Vector3, point: THREE.Vector3 | null): void;
+  /**
    * Optional cosmetic reaction to a confirmed hit from the LOCAL player
    * (damage flash, headshot glint…). Purely visual — never gameplay.
    */

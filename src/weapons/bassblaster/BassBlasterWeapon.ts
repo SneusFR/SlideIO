@@ -23,7 +23,8 @@ export interface BassBlasterFrameInput {
 }
 
 /**
- * BASS BLASTER — the musical SMG (LOCAL-ONLY, not networked yet).
+ * BASS BLASTER — the musical SMG (networked: multiplayer shots are
+ * reported via onNetShot and validated/damaged server-side).
  *
  * Gameplay: classic SMG — full-auto, low damage per bullet, 30-round
  * magazine, manual reload (R) + auto-reload when empty.
@@ -45,6 +46,14 @@ export class BassBlasterWeapon {
   onCameraShake: ((amount: number) => void) | null = null;
   /** Audio hooks (pure observers, wired by the Game). */
   onShot: ((note: NoteDef) => void) | null = null;
+  /**
+   * Network observer (multiplayer): one shot happened. Carries the CYCLIC
+   * note index and the music-grain metadata (track index + playhead offset
+   * in seconds) so remote clients can replay the exact same fragment.
+   */
+  onNetShot:
+    | ((noteIndex: number, trackIndex: number, grainOffset: number) => void)
+    | null = null;
   onReloadStart: (() => void) | null = null;
   onReloadEnd: (() => void) | null = null;
 
@@ -226,6 +235,12 @@ export class BassBlasterWeapon {
     this.viewmodel.triggerShot(note);
     this.onCameraShake?.(cfg.shotCameraShake);
     this.onShot?.(note);
+    // Multiplayer report: WHAT was fired (note + exact music fragment).
+    this.onNetShot?.(
+      this.shotCounter - 1,
+      this.music.currentTrackIndex,
+      this.music.lastFragmentOffset,
+    );
   }
 
   private startReload(): void {

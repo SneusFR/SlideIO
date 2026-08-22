@@ -249,12 +249,9 @@ export class SpearWeapon {
   }
 
   private applySweepHit(target: Combatant, dx: number, dz: number, distXZ: number): void {
-    // Generic damage system — exactly like the other weapons.
-    const damage = target.health.max * sc.spearSweepDamageFraction;
-    const applied = target.health.applyDamage(damage, this.owner, KillMethod.SPEAR_SWEEP);
-    if (!applied) return; // spawn protection etc. → no knockback either
-
     // Knockback: attacker→victim direction + a share of attacker velocity.
+    // Computed BEFORE the damage so a LETHAL sweep hands the exact impulse
+    // + impact point to the victim's death ragdoll (§ ragdoll).
     const inv = distXZ > 0.001 ? 1 / distXZ : 0;
     this.tmpKb.set(dx * inv, 0, dz * inv).multiplyScalar(sc.spearSweepKnockback);
     if (this.owner) {
@@ -262,6 +259,19 @@ export class SpearWeapon {
       this.tmpKb.z += this.owner.velocity.z * sc.spearSweepVelocityInheritance;
     }
     this.tmpKb.y = sc.spearSweepVerticalKnockback;
+
+    // Impact point: torso height, on the side FACING the attacker.
+    target.getPosition(this.tmpPos);
+    this.tmpPos.x -= dx * inv * 0.3;
+    this.tmpPos.z -= dz * inv * 0.3;
+    this.tmpPos.y += 0.15;
+    target.registerImpact?.(this.tmpKb, this.tmpPos);
+
+    // Generic damage system — exactly like the other weapons.
+    const damage = target.health.max * sc.spearSweepDamageFraction;
+    const applied = target.health.applyDamage(damage, this.owner, KillMethod.SPEAR_SWEEP);
+    if (!applied) return; // spawn protection etc. → no knockback either
+
     target.applyImpulse(this.tmpKb);
 
     // Impact feedback: energy burst + flash + small directional ring.
@@ -326,6 +336,17 @@ export class SpearWeapon {
   }
 
   private applyRushHit(target: Combatant, rushDir: THREE.Vector3): void {
+    // Heavy knockback: mostly along the charge direction + small pop-up,
+    // ADDED to the victim's existing velocity (never a teleport/reset).
+    // Computed BEFORE the damage so a LETHAL rush hands the exact impulse
+    // + tip impact point to the victim's death ragdoll (§ ragdoll).
+    this.tmpKb
+      .set(rushDir.x, 0, rushDir.z)
+      .normalize()
+      .multiplyScalar(sc.spearRushKnockback);
+    this.tmpKb.y = sc.spearRushVerticalKnockback;
+    target.registerImpact?.(this.tmpKb, this.curTip);
+
     // Exactly 50% of the TARGET's max HP — generic damage system, own method.
     const damage = target.health.max * sc.spearRushDamageFraction;
     const applied = target.health.applyDamage(damage, this.owner, KillMethod.SPEAR_RUSH);
@@ -334,13 +355,6 @@ export class SpearWeapon {
     target.getPosition(this.tmpPos);
 
     if (applied) {
-      // Heavy knockback: mostly along the charge direction + small pop-up,
-      // ADDED to the victim's existing velocity (never a teleport/reset).
-      this.tmpKb
-        .set(rushDir.x, 0, rushDir.z)
-        .normalize()
-        .multiplyScalar(sc.spearRushKnockback);
-      this.tmpKb.y = sc.spearRushVerticalKnockback;
       target.applyImpulse(this.tmpKb);
     }
 

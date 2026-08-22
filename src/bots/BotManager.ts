@@ -7,6 +7,7 @@ import { HitZone } from "../combat/HitZone";
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import { SpawnManager } from "../combat/SpawnManager";
 import { NavGrid } from "../navigation/NavGrid";
+import { CorpseManager } from "../ragdoll/CorpseManager";
 import { Bot, BotContext } from "./Bot";
 
 /**
@@ -50,6 +51,8 @@ export class BotManager {
     nav: NavGrid,
     spawner: SpawnManager,
     private readonly combatants: Combatant[],
+    /** Death ragdoll sink — every bot death snapshots a physical corpse. */
+    private readonly corpses: CorpseManager | null = null,
   ) {
     this.ctx = { combatants, physics, nav, spawner, particles };
   }
@@ -77,6 +80,7 @@ export class BotManager {
       this.ctx.particles,
       this.ctx.spawner,
       this.combatants,
+      this.corpses,
     );
     bot.health.onDeath = (killer, method, hitZone) => {
       bot.onDeath();
@@ -126,7 +130,9 @@ export class BotManager {
     camera.getWorldPosition(this.camPos);
 
     for (const bot of this.bots) {
-      bot.model.setSeen(bot.health.alive && this.isVisible(bot));
+      // A knocked-down (ragdolled) bot hides its enemy UI/outline: the
+      // billboard bar can't follow a tumbling body cleanly.
+      bot.model.setSeen(bot.health.alive && !bot.ragdolled && this.isVisible(bot));
     }
   }
 

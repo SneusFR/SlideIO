@@ -1,6 +1,28 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 
 /**
+ * Rapier interaction groups (packed `membership << 16 | filter`).
+ *
+ * - STATIC world geometry keeps the DEFAULT groups (membership 0xffff /
+ *   filter 0xffff) — nothing to change there.
+ * - CHARACTER capsules (player + bots) live in their own membership bit so
+ *   ragdolls can explicitly IGNORE them: corpses never block doorways and
+ *   the gameplay capsule never fights the physical body of a knocked-down
+ *   character. Their filter stays 0xffff → capsule↔capsule and
+ *   capsule↔world collisions behave exactly as before.
+ * - RAGDOLL bodies collide with the WORLD bit only: they hit static
+ *   geometry (default membership includes bit 0) but never characters and
+ *   never OTHER ragdoll parts (no self-collision explosions between
+ *   jointed limbs, no corpse-vs-corpse jitter piles).
+ */
+export const CollisionGroups = {
+  /** Character capsules: member of bit 2, collides with everything. */
+  CHARACTER: (0x0004 << 16) | 0xffff,
+  /** Ragdoll parts: member of bit 1, collides with the world bit only. */
+  RAGDOLL: (0x0002 << 16) | 0x0001,
+} as const;
+
+/**
  * Thin wrapper around the Rapier world.
  * Owns initialization (WASM) and static geometry creation.
  */

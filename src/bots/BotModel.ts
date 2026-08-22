@@ -154,6 +154,17 @@ export class BotModel {
 
     this.group.add(this.legL, this.legR, this.torso, this.gunPivot);
 
+    // ---- Ragdoll part tags (consumed by BotRagdollFactory) ----
+    // The bot has no skinned skeleton: these nodes ARE its "bones". The
+    // tags survive cloning (createCorpseVisual) so death corpses build the
+    // exact same physical skeleton as the live knockdown ragdoll.
+    this.torso.userData.ragdollPart = "torso";
+    head.userData.ragdollPart = "head";
+    armL.userData.ragdollPart = "armL";
+    this.gunPivot.userData.ragdollPart = "armR";
+    this.legL.userData.ragdollPart = "legL";
+    this.legR.userData.ragdollPart = "legR";
+
     // ---- Silhouette outline (hull copies follow each animated part) ----
     if (cc.enemyOutlineEnabled) {
       this.addOutline(legGeoL);
@@ -321,6 +332,29 @@ export class BotModel {
       .multiply(camQuat);
     this.healthFill.scale.x = Math.max(hpRatio, 0.001);
     this.healthFill.position.x = -0.545 * (1 - hpRatio);
+  }
+
+  /**
+   * CORPSE SNAPSHOT (death ragdoll): clone the body parts at their CURRENT
+   * pose into an independent group placed at the model's world transform.
+   * The clone shares geometries/materials with the live model (cheap) and
+   * keeps the `ragdollPart` tags, so BotRagdollFactory can build the same
+   * physical skeleton on it. The enemy UI (health bar / nameplate) is
+   * intentionally NOT part of the corpse. Call setSeen(false) first so the
+   * cloned outline hulls stay hidden.
+   *
+   * The corpse is fully independent: the bot can respawn elsewhere while
+   * the body keeps simulating — it is never teleported to the new spawn.
+   */
+  createCorpseVisual(): THREE.Group {
+    const corpse = new THREE.Group();
+    corpse.position.copy(this.group.position);
+    corpse.quaternion.copy(this.group.quaternion);
+    corpse.scale.copy(this.group.scale);
+    for (const part of [this.legL, this.legR, this.torso, this.gunPivot]) {
+      corpse.add(part.clone(true));
+    }
+    return corpse;
   }
 
   dispose(): void {

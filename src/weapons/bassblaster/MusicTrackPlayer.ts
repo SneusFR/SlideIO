@@ -43,6 +43,9 @@ export class MusicTrackPlayer {
   /** Per-track playhead in seconds (persists while the track stays active). */
   private readonly playheads = new Map<string, number>();
   private preloaded = false;
+  /** Playhead offset (s) used by the LAST playFragmentAt call — networked
+   *  with the shot so remote clients replay the exact same fragment. */
+  lastFragmentOffset = 0;
 
   /** Kick off (or resume) decoding of every track. Safe to call often. */
   preload(): void {
@@ -104,6 +107,7 @@ export class MusicTrackPlayer {
     let head = this.playheads.get(track.id) ?? 0;
     // Clean wrap: never start a grain that would spill past the end.
     if (head + cfg.fragmentDuration >= dur) head = 0;
+    this.lastFragmentOffset = head;
 
     const handle = audio.playTracked(track.audioKey, pos, {
       bus: "weapons",

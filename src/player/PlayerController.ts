@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type RAPIER_API from "@dimforge/rapier3d-compat";
-import { PhysicsWorld, RAPIER } from "../physics/PhysicsWorld";
+import { PhysicsWorld, RAPIER, CollisionGroups } from "../physics/PhysicsWorld";
 import { MovementConfig as cfg } from "./MovementConfig";
 
 /**
@@ -31,7 +31,10 @@ export class PlayerController {
 
     const colliderDesc = RAPIER.ColliderDesc.capsule(cfg.standHalfHeight, cfg.capsuleRadius)
       .setFriction(0)
-      .setRestitution(0);
+      .setRestitution(0)
+      // CHARACTER group: ragdolls/corpses explicitly ignore capsules —
+      // dead bodies never block the player, and vice versa.
+      .setCollisionGroups(CollisionGroups.CHARACTER);
     this.collider = world.createCollider(colliderDesc, this.body);
 
     this.controller = world.createCharacterController(0.06);

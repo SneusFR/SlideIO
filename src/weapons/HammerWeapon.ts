@@ -221,14 +221,11 @@ export class HammerWeapon {
   }
 
   private applySwingHit(target: Combatant, dx: number, dz: number, distXZ: number): void {
-    // Generic damage system — exactly like the Plasma Rifle.
-    const damage = target.health.max * hc.hammerGroundDamageFraction;
-    const applied = target.health.applyDamage(damage, this.owner, KillMethod.HAMMER_SWING);
-    if (!applied) return; // spawn protection etc. → no knockback either
-
     // Violent knockback: mostly attacker→victim direction, slightly
     // influenced by the attacker's current velocity. Added as an impulse
     // on top of the victim's momentum — never a teleport, never a reset.
+    // Computed BEFORE the damage so a LETHAL hit can hand the exact
+    // impulse + impact point to the victim's death ragdoll (§ ragdoll).
     const inv = distXZ > 0.001 ? 1 / distXZ : 0;
     this.tmpKb.set(dx * inv, 0, dz * inv).multiplyScalar(hc.hammerGroundKnockback);
     if (this.owner) {
@@ -236,6 +233,21 @@ export class HammerWeapon {
       this.tmpKb.z += this.owner.velocity.z * hc.hammerVelocityInheritance;
     }
     this.tmpKb.y = hc.hammerGroundVerticalKnockback;
+
+    // Impact point: torso height, on the side FACING the attacker — the
+    // ragdoll receives the impulse exactly where the hammer connected.
+    target.getPosition(this.tmpPos);
+    this.tmpDir.set(dx * inv, 0, dz * inv);
+    this.tmpPos.x -= this.tmpDir.x * 0.3;
+    this.tmpPos.z -= this.tmpDir.z * 0.3;
+    this.tmpPos.y += 0.15;
+    target.registerImpact?.(this.tmpKb, this.tmpPos);
+
+    // Generic damage system — exactly like the Plasma Rifle.
+    const damage = target.health.max * hc.hammerGroundDamageFraction;
+    const applied = target.health.applyDamage(damage, this.owner, KillMethod.HAMMER_SWING);
+    if (!applied) return; // spawn protection etc. → no knockback either
+
     target.applyImpulse(this.tmpKb);
 
     // Impact feedback: energy burst + flash + small directional ring.
@@ -272,12 +284,10 @@ export class HammerWeapon {
 
       this.hitTargetsThisSwing.add(target); // one hit per impact
 
-      const damage = target.health.max * hc.groundSlamDamageFraction;
-      const applied = target.health.applyDamage(damage, this.owner, KillMethod.GROUND_SLAM);
-      if (!applied) continue;
-      hitCount++;
-
       // Radial knockback away from the impact + shockwave pop-up.
+      // Computed BEFORE the damage so a LETHAL slam hands the exact radial
+      // + vertical impulse to the victim's death ragdoll (SMASHED reads
+      // exactly like it looks: body lifted then ejected radially).
       if (distXZ > 0.001) {
         this.tmpKb.set(dx / distXZ, 0, dz / distXZ);
       } else {
@@ -286,6 +296,18 @@ export class HammerWeapon {
       }
       this.tmpKb.multiplyScalar(hc.groundSlamKnockback);
       this.tmpKb.y = hc.groundSlamVerticalKnockback;
+
+      // Impact point slightly BELOW the victim's center: the shockwave
+      // comes from the ground — the ragdoll tips as it is lifted.
+      this.tmpDir.copy(this.tmpPos);
+      this.tmpDir.y -= 0.4;
+      target.registerImpact?.(this.tmpKb, this.tmpDir);
+
+      const damage = target.health.max * hc.groundSlamDamageFraction;
+      const applied = target.health.applyDamage(damage, this.owner, KillMethod.GROUND_SLAM);
+      if (!applied) continue;
+      hitCount++;
+
       target.applyImpulse(this.tmpKb);
 
       // Per-victim hit feedback.

@@ -11,7 +11,9 @@
  *     track, carried by the note as it flies (granular playback);
  *   - reloading summons a swirl of musical notes into the weapon.
  *
- * LOCAL-ONLY for now: intentionally NOT networked (no server counterpart).
+ * NETWORKED: the server mirrors the gameplay values in
+ * shared/combat/NetworkWeapons.ts (NetworkWeaponConfig.bassBlaster) —
+ * keep both in sync when tuning damage / cadence / projectile flight.
  */
 export const BassBlasterConfig = {
   // ---- Magazine / cadence (SMG profile) ----

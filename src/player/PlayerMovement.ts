@@ -107,6 +107,17 @@ export class PlayerMovement {
   private preDashSpeed = 0;
   private readonly dashDir = new THREE.Vector3();
 
+  /**
+   * LOCAL KNOCKDOWN (§ ragdoll): while > 0 the player has been physically
+   * knocked down by a huge impact — every INPUT is suppressed (no wishdir
+   * acceleration, no jump/slide/dash) while the physics keeps integrating
+   * the knockback velocity, gravity and world collisions normally. The
+   * FPS player has no visible body, so the readable result is "the impact
+   * carries you and you can't fight it for a moment" — never a spinning
+   * camera glued to a ragdoll head.
+   */
+  private knockdownTimer = 0;
+
   private wallNormal = new THREE.Vector3();
   private touchingWall = false;
 
@@ -160,6 +171,24 @@ export class PlayerMovement {
 
   get dashReady(): boolean {
     return this.dashCooldownTimer <= 0 && !this.isDashing;
+  }
+
+  /** True while control is suppressed by a knockdown impact. */
+  get isKnockedDown(): boolean {
+    return this.knockdownTimer > 0;
+  }
+
+  /**
+   * Knockdown: suppress player control for `duration` seconds. Movement
+   * physics (velocity, gravity, collisions) keeps running untouched — the
+   * impact's momentum carries the capsule naturally.
+   */
+  applyKnockdown(duration: number): void {
+    this.knockdownTimer = Math.max(this.knockdownTimer, duration);
+    // Interrupt committed special moves cleanly.
+    if (this.state === MoveState.DASHING) this.dashTimer = 0;
+    if (this.state === MoveState.SLIDING) this.endSlide();
+    if (this.state === MoveState.SPEAR_RUSHING) this.endSpearRush("TIMEOUT");
   }
 
   /** True during the short visual phase window right after a traversal. */
@@ -309,9 +338,17 @@ export class PlayerMovement {
     this.readBufferedInputs();
     this.computeWishDir();
 
+    // KNOCKDOWN: control fully suppressed — the physics owns the capsule.
+    if (this.knockdownTimer > 0) {
+      this.knockdownTimer = Math.max(0, this.knockdownTimer - dt);
+      this.jumpBufferTimer = 0;
+      this.slideBufferTimer = 0;
+      this.wishDir.set(0, 0, 0);
+    }
+
     // Dash triggers instantly from any state (except while already dashing).
     // While UNDERGROUND, E means "emerge" (handled by the Game) — never dash.
-    if (this.input.wasPressed("KeyE")) {
+    if (this.input.wasPressed("KeyE") && this.knockdownTimer <= 0) {
       this.tryStartDash();
     }
 
@@ -351,6 +388,7 @@ export class PlayerMovement {
     this.player.respawn(pos);
     this.velocity.set(0, 0, 0);
     this.state = MoveState.GROUNDED;
+    this.knockdownTimer = 0;
     this.wallSide = 0;
     this.coyoteTimer = 0;
     this.jumpBufferTimer = 0;

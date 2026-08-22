@@ -71,6 +71,17 @@ interface RevolverProjectile {
   age: number;
 }
 
+/** One in-flight Bass Blaster musical note (server-simulated, no gravity). */
+interface BassNoteProjectile {
+  ownerId: string;
+  pos: Vec3;
+  vel: Vec3;
+  age: number;
+  /** Shooter view delay (now − viewTime) captured at fire time — every
+   *  flight tick rewinds the targets by this amount (already clamped). */
+  viewDelayMs: number;
+}
+
 /** Per-player server-side weapon state (never trusted from the client). */
 class PlayerWeaponState {
   weapon: NetworkWeaponId = NetworkWeaponId.PLASMA_RIFLE;
@@ -87,6 +98,9 @@ class PlayerWeaponState {
   revolverAmmo = W.revolver.capacity;
   lastRevolverShotAt = 0;
   revolverUnavailableUntil = 0;
+  // Bass Blaster (cadence floor — the magazine/reload stay client-paced,
+  // the low per-note damage makes the fan-fire-style tolerance safe)
+  lastBassShotAt = 0;
   // Melee
   lastHammerSweepAt = 0;
   lastSpearSweepAt = 0;
@@ -144,6 +158,7 @@ export class WeaponManager {
   private readonly states = new Map<string, PlayerWeaponState>();
   private readonly history = new Map<string, HistoryEntry[]>();
   private readonly projectiles: RevolverProjectile[] = [];
+  private readonly bassProjectiles: BassNoteProjectile[] = [];
 
   constructor(private readonly host: WeaponManagerHost) {}
 
@@ -323,6 +338,9 @@ export class WeaponManager {
       case WeaponActionType.OBLITERREUR_FIRE:
         this.handleObliterreurFire(player, s, seq);
         return;
+      case WeaponActionType.BASS_FIRE:
+        this.handleBassFire(player, s, seq, origin, dir, msg);
+        return;
       case WeaponActionType.MOLE_BURROW:
         this.handleMoleBurrow(player, s, seq, msg);
         return;
@@ -351,6 +369,7 @@ export class WeaponManager {
       if (s.burrowed && now >= s.burrowedUntil) s.burrowed = false;
     }
     this.tickProjectiles(dt);
+    this.tickBassProjectiles(dt);
   }
 
   private tickPlasma(player: NetworkPlayer, s: PlayerWeaponState, dt: number, now: number): void {
@@ -488,6 +507,99 @@ export class WeaponManager {
       if (!hasLineOfSight(at, center)) continue;
       const amount = target.maxHealth * W.revolver.explosionDamageFraction;
       this.dealDamage(owner, target.id, amount, DamageType.REVOLVER_EXPLOSION, HitZone.BODY, NetworkWeaponId.REVOLVER);
+    }
+  }
+
+  /**
+   * BASS_FIRE: one musical note projectile. The server owns the flight
+   * (speed / lifetime / wall stop) and the per-hit damage; the client's
+   * px/py/pz carry the MUSIC GRAIN metadata (track index / playhead
+   * offset / note index) which is ECHOED verbatim in the confirm so every
+   * remote client replays the exact same spatialized fragment.
+   */
+  private handleBassFire(
+    player: NetworkPlayer,
+    s: PlayerWeaponState,
+    seq: number,
+    origin: Vec3 | null,
+    dir: Vec3 | null,
+    msg: WeaponActionMessage,
+  ): void {
+    if (s.weapon !== NetworkWeaponId.BASS_BLASTER || !origin || !dir) return;
+    const now = this.host.now();
+    // Cadence floor (same tolerance policy as the revolver fan-fire).
+    const minInterval = W.bassBlaster.fireInterval * (1 - W.bassBlaster.cadenceTolerance) * 1000;
+    if (now - s.lastBassShotAt < minInterval) return;
+    s.lastBassShotAt = now;
+
+    this.bassProjectiles.push({
+      ownerId: player.id,
+      pos: { ...origin },
+      vel: {
+        x: dir.x * W.bassBlaster.projectileSpeed,
+        y: dir.y * W.bassBlaster.projectileSpeed,
+        z: dir.z * W.bassBlaster.projectileSpeed,
+      },
+      age: 0,
+      viewDelayMs: Math.min(now - this.resolveRewindTime(msg), LAG_COMP_MAX_REWIND_MS),
+    });
+
+    // Grain metadata (track / offset / note) — echoed for remote replay.
+    const grain = this.readPoint(msg) ?? { x: 0, y: 0, z: 0 };
+    this.confirm(player, s.weapon, WeaponActionType.BASS_FIRE, seq, origin, dir, undefined, grain);
+  }
+
+  /** Straight CCD flight of every note: walls stop it, players take damage. */
+  private tickBassProjectiles(dt: number): void {
+    const now = this.host.now();
+    for (let i = this.bassProjectiles.length - 1; i >= 0; i--) {
+      const p = this.bassProjectiles[i];
+      p.age += dt;
+      if (p.age >= W.bassBlaster.projectileLifetime) {
+        this.bassProjectiles.splice(i, 1);
+        continue;
+      }
+      const dir = normalize(p.vel);
+      if (!dir) {
+        this.bassProjectiles.splice(i, 1);
+        continue;
+      }
+      const stepLen = W.bassBlaster.projectileSpeed * dt;
+      // Rewind targets by the shooter's captured view delay so the note
+      // hits what the shooter aimed at when it was fired.
+      const rewindTime = now - p.viewDelayMs;
+      const wallT = raycastMap(p.pos, dir, stepLen);
+      const hit = hitscan(p.pos, dir, stepLen, this.rewindTargets(p.ownerId, rewindTime), p.ownerId);
+
+      if (
+        hit &&
+        hit.kind === "player" &&
+        hit.targetId &&
+        (wallT === null || hit.distance <= wallT)
+      ) {
+        const owner = this.host.getPlayer(p.ownerId);
+        if (owner) {
+          const zone = hit.zone === NetworkHitZone.HEAD ? HitZone.HEAD : HitZone.BODY;
+          const amount = zone === HitZone.HEAD ? W.bassBlaster.headDamage : W.bassBlaster.bodyDamage;
+          this.dealDamage(owner, hit.targetId, amount, DamageType.BASS_BLASTER, zone, NetworkWeaponId.BASS_BLASTER);
+        }
+        this.bassProjectiles.splice(i, 1);
+        continue;
+      }
+
+      // Wall (from either raycast) stops the note silently server-side —
+      // clients render their own local impact "plink"/burst.
+      const blockT =
+        hit && hit.kind === "wall"
+          ? wallT !== null
+            ? Math.min(wallT, hit.distance)
+            : hit.distance
+          : wallT;
+      if (blockT !== null && blockT <= stepLen) {
+        this.bassProjectiles.splice(i, 1);
+        continue;
+      }
+      p.pos = pointAt(p.pos, dir, stepLen);
     }
   }
 
@@ -857,6 +969,9 @@ export class WeaponManager {
     this.history.delete(playerId);
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       if (this.projectiles[i].ownerId === playerId) this.projectiles.splice(i, 1);
+    }
+    for (let i = this.bassProjectiles.length - 1; i >= 0; i--) {
+      if (this.bassProjectiles[i].ownerId === playerId) this.bassProjectiles.splice(i, 1);
     }
   }
 

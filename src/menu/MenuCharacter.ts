@@ -6,12 +6,13 @@ import {
   plasmaAttachment,
   WeaponAttachment,
 } from "./MenuConfig";
-// NOTE: the Meshy export filenames are mislabeled — the file named
-// "Animation_Running_withSkin.glb" actually contains the ALERT clip
-// ("Armature|Alert|baselayer"). We select the animation by CLIP NAME,
-// never by filename. This file also embeds the mesh + skeleton +
-// textures, so it is the single GLB the menu needs for the character.
-import characterAlertUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_Running_withSkin.glb?url";
+// NOTE: the Meshy "Sprouty Smile" export filenames are mislabeled — the
+// file named "Animation_Regular_Jump_withSkin.glb" actually contains the
+// ALERT clip ("Armature|Alert|baselayer"). We select the animation by
+// CLIP NAME, never by filename. This file also embeds the mesh +
+// skeleton + textures, so it is the single GLB the menu needs for the
+// character.
+import characterAlertUrl from "../assets/Meshy_AI_Sprouty_Smile_biped_Animation_Regular_Jump_withSkin.glb?url";
 import hammerUrl from "../assets/voidhammer_opt.glb?url";
 import rifleUrl from "../assets/voidrifle_opt.glb?url";
 

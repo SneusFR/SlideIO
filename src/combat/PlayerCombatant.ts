@@ -4,6 +4,7 @@ import { CombatConfig as cc } from "./CombatConfig";
 import { PlayerController } from "../player/PlayerController";
 import { PlayerMovement } from "../player/PlayerMovement";
 import { MovementConfig as mc } from "../player/MovementConfig";
+import { RagdollConfig as rc } from "../ragdoll/RagdollConfig";
 
 /**
  * The human player as an FFA combatant: shares the exact same Health
@@ -19,6 +20,9 @@ export class PlayerCombatant implements Combatant {
 
   /** Invisible cylinder matching the capsule — raycastable, never rendered. */
   readonly hitProxy: THREE.Mesh;
+
+  /** Fired when a knockdown-grade impulse hits the LOCAL player (camera FX). */
+  onKnockdown: ((magnitude: number) => void) | null = null;
 
   private readonly pos = new THREE.Vector3();
 
@@ -55,6 +59,17 @@ export class PlayerCombatant implements Combatant {
     if (!this.health.alive) return;
     this.movement.velocity.add(impulse);
     if (impulse.y > 0.5) this.movement.grounded = false;
+
+    // KNOCKDOWN (§ ragdoll — local FPS flavor): huge impacts (Hammer,
+    // Ground Slam, Spear Rush from the server in multiplayer) suppress the
+    // player's control for a short physical tumble window. The camera
+    // stays readable (no head-cam spinning) — the Game adds a shake.
+    const magnitude = impulse.length();
+    if (magnitude >= rc.knockdownImpulseThreshold) {
+      const t = Math.min(magnitude / (rc.knockdownImpulseThreshold * 2), 1);
+      this.movement.applyKnockdown(0.45 + 0.45 * t);
+      this.onKnockdown?.(magnitude);
+    }
   }
 
   /** Keep the hit proxy glued to the capsule (call once per frame). */

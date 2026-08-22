@@ -1,7 +1,11 @@
 import * as THREE from "three";
 import type RAPIER_API from "@dimforge/rapier3d-compat";
-import { PhysicsWorld, RAPIER } from "../physics/PhysicsWorld";
+import { PhysicsWorld, RAPIER, CollisionGroups } from "../physics/PhysicsWorld";
 import { MovementConfig as mc } from "../player/MovementConfig";
+import { RagdollController } from "../ragdoll/RagdollController";
+import { RagdollConfig as rc } from "../ragdoll/RagdollConfig";
+import { buildBotRagdollParts } from "../ragdoll/BotRagdollFactory";
+import { CorpseManager } from "../ragdoll/CorpseManager";
 import { WeaponConfig as wc } from "../weapons/WeaponConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import { Combatant, Health } from "../combat/Combatant";
@@ -46,6 +50,12 @@ export class Bot implements Combatant {
   grounded = false;
   sliding = false;
   dashing = false;
+  /**
+   * TEMPORARY RAGDOLL state: the bot is alive but physically knocked down —
+   * no AI, no locomotion, no firing; the Rapier ragdoll is the single
+   * source of truth for the body until recovery.
+   */
+  ragdolled = false;
   /** World position of the last death (loot drops read this). */
   readonly deathPosition = new THREE.Vector3();
   /** Fraction of intended horizontal movement that was blocked last frame. */
@@ -73,6 +83,19 @@ export class Bot implements Combatant {
   private readonly beamResult = new BeamCastResult();
   private readonly raycaster = new THREE.Raycaster();
 
+  // ---- Ragdoll (temporary knockdown + death corpse handoff) ----
+  private ragdoll: RagdollController | null = null;
+  /** Latest reported combat impact (impulse m/s + world point). */
+  private readonly pendingImpulse = new THREE.Vector3();
+  private readonly pendingPoint = new THREE.Vector3();
+  private pendingHasPoint = false;
+  private pendingImpactAt = -Infinity; // performance.now() ms
+  /** Guards the single-death flow (kill() + manual onDeath call paths). */
+  private deathHandled = false;
+  private readonly ragdollRootPos = new THREE.Vector3();
+  private readonly ragdollRootVel = new THREE.Vector3();
+  private readonly rayDown = { x: 0, y: -1, z: 0 };
+
   // scratch
   private readonly tmp = new THREE.Vector3();
   private readonly delta = new THREE.Vector3();
@@ -91,6 +114,8 @@ export class Bot implements Combatant {
     particles: ParticleSystem,
     spawner: SpawnManager,
     combatants: Combatant[],
+    /** Death ragdoll sink (corpse snapshots) — owned by the Game. */
+    private readonly corpses: CorpseManager | null = null,
   ) {
     this.scene = scene;
     this.physics = physics;
@@ -108,7 +133,9 @@ export class Bot implements Combatant {
     this.collider = physics.world.createCollider(
       RAPIER.ColliderDesc.capsule(mc.standHalfHeight, mc.capsuleRadius)
         .setFriction(0)
-        .setRestitution(0),
+        .setRestitution(0)
+        // CHARACTER group: ragdolls/corpses explicitly ignore capsules.
+        .setCollisionGroups(CollisionGroups.CHARACTER),
       this.body,
     );
     this.controller = physics.world.createCharacterController(0.06);
@@ -144,22 +171,176 @@ export class Bot implements Combatant {
   }
 
   /**
+   * PHYSICAL hit description reported by weapons BEFORE the damage: kept
+   * briefly so a lethal blow can hand the exact impulse + impact point to
+   * the death ragdoll, and a big non-lethal blow to the knockdown ragdoll.
+   */
+  registerImpact(impulse: THREE.Vector3, point: THREE.Vector3 | null): void {
+    this.pendingImpulse.copy(impulse);
+    this.pendingHasPoint = point !== null;
+    if (point) this.pendingPoint.copy(point);
+    this.pendingImpactAt = performance.now();
+  }
+
+  /** True while the last registered impact is fresh enough to trust. */
+  private get pendingImpactFresh(): boolean {
+    return performance.now() - this.pendingImpactAt < 300;
+  }
+
+  /**
    * Knockback: added ON TOP of the current velocity (never a reset).
    * Lifting the bot off the ground lets gravity + the character controller
    * integrate the shove naturally over the next frames.
+   *
+   * KNOCKDOWN: an impulse at/above the configurable ragdoll threshold
+   * (Hammer sweep, Ground Slam, Spear Rush, Mole eruption — never plasma)
+   * knocks the LIVING bot into a temporary physical ragdoll instead of
+   * shoving a perfectly standing capsule at 17 m/s.
    */
   applyImpulse(impulse: THREE.Vector3): void {
     if (!this.health.alive) return;
+
+    // Already down: feed the extra hit straight into the simulation.
+    if (this.ragdolled && this.ragdoll?.active) {
+      this.ragdoll.applyImpact({
+        impulse,
+        point: this.pendingImpactFresh && this.pendingHasPoint ? this.pendingPoint : null,
+      });
+      return;
+    }
+
+    if (impulse.length() >= rc.knockdownImpulseThreshold) {
+      if (this.enterTemporaryRagdoll(impulse)) return;
+    }
+
     this.velocity.add(impulse);
     if (impulse.y > 0.5) this.grounded = false;
     this.sliding = false;
   }
 
+  // ---- Temporary ragdoll (alive knockdown) ----
+
+  /**
+   * Animation → ragdoll with zero visual discontinuity: the physical
+   * skeleton is built from the CURRENT pose, inherits the bot's velocity
+   * and receives the triggering impulse at the impact point. The gameplay
+   * capsule is disabled (single source of truth = the ragdoll) and the AI
+   * is fully suspended until recovery.
+   */
+  private enterTemporaryRagdoll(impulse: THREE.Vector3): boolean {
+    const parts = buildBotRagdollParts(this.model.group);
+    if (!parts) return false;
+
+    if (!this.ragdoll) this.ragdoll = new RagdollController(this.physics, this.scene);
+
+    // Enemy UI/outline reads wrong on a tumbling body — hidden until up.
+    this.model.setSeen(false);
+    this.sliding = false;
+    this.dashing = false;
+    this.isFiring = false;
+    this.beam.setActive(false);
+    this.collider.setEnabled(false); // no invisible standing capsule fights
+
+    this.ragdoll.activate(this.model.group, parts, {
+      mode: "TEMPORARY",
+      velocity: this.velocity,
+      impact: {
+        impulse,
+        point: this.pendingImpactFresh && this.pendingHasPoint ? this.pendingPoint : null,
+      },
+    });
+    this.ragdolled = true;
+    return true;
+  }
+
+  /**
+   * GET-UP: reposition the capsule at the settled body, restore the pose
+   * (the procedural animation takes over from there) and give control back
+   * to the AI, keeping part of the pelvis momentum.
+   */
+  private recoverFromRagdoll(): void {
+    if (!this.ragdoll || !this.ragdolled) return;
+    this.ragdoll.getRootPosition(this.ragdollRootPos);
+    this.ragdoll.getRootVelocity(this.ragdollRootVel);
+    this.ragdoll.deactivate();
+    this.ragdoll.restorePose();
+    this.ragdolled = false;
+
+    // Valid capsule position: ground raycast below the pelvis, feet on the
+    // floor. Fallback: pelvis height + a safe margin (the character
+    // controller resolves the rest on the next steps).
+    const standCenter = mc.standHalfHeight + mc.capsuleRadius;
+    let y = this.ragdollRootPos.y + standCenter * 0.75;
+    const hit = this.physics.world.castRay(
+      new RAPIER.Ray(
+        { x: this.ragdollRootPos.x, y: this.ragdollRootPos.y + 0.4, z: this.ragdollRootPos.z },
+        this.rayDown,
+      ),
+      3,
+      true,
+      undefined,
+      undefined,
+      this.collider,
+      this.body,
+    );
+    if (hit) {
+      const groundY = this.ragdollRootPos.y + 0.4 - hit.timeOfImpact;
+      y = groundY + standCenter + 0.05;
+    }
+    this.body.setTranslation(
+      { x: this.ragdollRootPos.x, y, z: this.ragdollRootPos.z },
+      true,
+    );
+    this.collider.setEnabled(true);
+
+    // Keep a share of the body's momentum — never a hard velocity reset.
+    this.velocity.copy(this.ragdollRootVel).multiplyScalar(rc.recoveryMomentumRetention);
+    this.grounded = false;
+  }
+
   // ---- Death / respawn ----
   onDeath(): void {
+    // Health.kill() fires the manager's onDeath callback which calls this
+    // method, and some code paths ALSO call it directly — run exactly once.
+    if (this.deathHandled) return;
+    this.deathHandled = true;
+
     this.getPosition(this.tmp);
     this.deathPosition.copy(this.tmp);
     this.model.setSeen(false); // enemy UI/outline never lingers on a corpse
+
+    // ---- CORPSE SNAPSHOT (death ragdoll) ----
+    // Clone the body at its CURRENT pose (running / jumping / mid-ragdoll)
+    // and hand it to the CorpseManager with the full momentum + the fatal
+    // hit's impulse. The corpse is independent: the bot respawns elsewhere
+    // while the body keeps simulating for several seconds.
+    if (this.corpses) {
+      const corpseVisual = this.model.createCorpseVisual();
+      const parts = buildBotRagdollParts(corpseVisual);
+      if (parts) {
+        const velocity = this.ragdolled && this.ragdoll?.active
+          ? this.ragdoll.getRootVelocity(this.ragdollRootVel)
+          : this.velocity;
+        this.corpses.spawn(corpseVisual, parts, {
+          velocity,
+          impact: this.pendingImpactFresh
+            ? {
+                impulse: this.pendingImpulse,
+                point: this.pendingHasPoint ? this.pendingPoint : null,
+              }
+            : null,
+        });
+      }
+    }
+
+    // Exit any live knockdown ragdoll AFTER the corpse captured its pose.
+    if (this.ragdolled && this.ragdoll) {
+      this.ragdoll.deactivate();
+      this.ragdoll.restorePose();
+      this.ragdolled = false;
+    }
+    this.collider.setEnabled(true);
+
     this.particles.burst(this.tmp, 30, 8, 0.9, this.deathColorA, 5);
     this.particles.burst(this.tmp, 14, 3.5, 0.5, this.deathColorB, 2);
     this.model.group.visible = false;
@@ -175,6 +356,8 @@ export class Bot implements Combatant {
     this.velocity.set(0, 0, 0);
     this.sliding = false;
     this.dashing = false;
+    this.deathHandled = false;
+    this.pendingImpactAt = -Infinity;
     this.heat.heat = 0;
     this.heat.overheated = false;
     this.health.reset(cc.spawnProtectionDuration);
@@ -197,6 +380,17 @@ export class Bot implements Combatant {
     if (!this.health.alive) {
       this.respawnTimer -= dt;
       if (this.respawnTimer <= 0) this.respawn(ctx);
+      return;
+    }
+
+    // RAGDOLLED: no AI, no locomotion — the physics owns the body. The
+    // kinematic body itself follows the pelvis (see postStep) so weapons /
+    // other AIs keep targeting the real position.
+    if (this.ragdolled) {
+      if (this.ragdoll && this.ragdoll.getRootPosition(this.tmp).y < mc.killPlaneY) {
+        this.health.kill(null);
+        this.onDeath();
+      }
       return;
     }
 
@@ -345,6 +539,28 @@ export class Bot implements Combatant {
   /** Sync visuals after the physics step. */
   postStep(dt: number, camQuat: THREE.Quaternion, camPos: THREE.Vector3, time: number): void {
     if (!this.health.alive) return;
+
+    // ---- Temporary ragdoll: physics → visuals, then recovery checks ----
+    if (this.ragdolled && this.ragdoll) {
+      // Root group follows the pelvis so culling / targeting / joint math
+      // all track the real body (children are world-corrected anyway).
+      this.ragdoll.getRootPosition(this.ragdollRootPos);
+      this.model.group.position.copy(this.ragdollRootPos);
+      this.body.setTranslation(
+        { x: this.ragdollRootPos.x, y: this.ragdollRootPos.y, z: this.ragdollRootPos.z },
+        true,
+      );
+      this.model.group.visible = true;
+      this.ragdoll.update(dt);
+
+      // Recovery: min duration + physically settled (or hard timeout /
+      // corrupted sim safety) → stand back up and resume the AI.
+      if (this.ragdoll.corrupted || this.ragdoll.shouldRecover) {
+        this.recoverFromRagdoll();
+      }
+      return;
+    }
+
     const t = this.body.translation();
     this.model.group.position.set(t.x, t.y, t.z);
     const dist = camPos.distanceTo(this.model.group.position);
@@ -368,7 +584,7 @@ export class Bot implements Combatant {
    * Bot inaccuracy comes only from where the AI is aiming.
    */
   updateWeapon(dt: number, hittables: THREE.Object3D[], time: number): void {
-    const wantFire = this.health.alive && this.ai.out.wantFire;
+    const wantFire = this.health.alive && !this.ragdolled && this.ai.out.wantFire;
     const firing = wantFire && this.heat.canFire;
     this.isFiring = firing;
     this.heat.update(dt, firing);
@@ -432,6 +648,9 @@ export class Bot implements Combatant {
   }
 
   dispose(): void {
+    this.ragdoll?.dispose();
+    this.ragdoll = null;
+    this.ragdolled = false;
     this.scene.remove(this.model.group);
     this.model.dispose();
     this.beam.setActive(false);

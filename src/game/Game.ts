@@ -44,6 +44,7 @@ import { HitmarkerHUD } from "../ui/HitmarkerHUD";
 import { SpawnManager } from "../combat/SpawnManager";
 import { NavGrid } from "../navigation/NavGrid";
 import { BotManager } from "../bots/BotManager";
+import { CorpseManager } from "../ragdoll/CorpseManager";
 import { GameAudio } from "../audio/GameAudio";
 import { PickupManager } from "../pickups/PickupManager";
 import { PickupConfig } from "../pickups/PickupConfig";
@@ -115,7 +116,7 @@ export class Game {
   private revolver: RevolverWeapon;
   private revolverHud: RevolverHUD;
 
-  // ---- BASS BLASTER (musical SMG — LOCAL-ONLY, never networked yet) ----
+  // ---- BASS BLASTER (musical SMG — networked like the other primaries) ----
   private bassBlaster: BassBlasterWeapon;
   private bassBlasterHud: BassBlasterHUD;
   private musicSelector: MusicSelectorHUD;
@@ -142,6 +143,8 @@ export class Game {
   private spawner: SpawnManager;
   private botManager: BotManager;
   private pickups: PickupManager;
+  /** Death-ragdoll corpses (bots + remote players) — physical, transient. */
+  private corpses: CorpseManager;
 
   /** Non-null while running in MULTIPLAYER mode (Phase 2 transform sync). */
   private multiplayer: MultiplayerGameController | null = null;
@@ -171,6 +174,8 @@ export class Game {
   private lastNetHitFeedback = -1;
   private readonly netOrigin = new THREE.Vector3();
   private readonly netDir = new THREE.Vector3();
+  /** Bass Blaster grain metadata scratch (track / offset / note index). */
+  private readonly netGrain = new THREE.Vector3();
   private readonly netImpulse = new THREE.Vector3();
 
   /** Static map meshes + target groups (never changes after startup). */
@@ -256,6 +261,11 @@ export class Game {
     this.playerCombatant = new PlayerCombatant(this.player, this.movement, this.scene);
     this.combatants.push(this.playerCombatant);
     this.rifle.owner = this.playerCombatant;
+    // KNOCKDOWN feedback (local FPS flavor of the ragdoll): the control
+    // lock lives in PlayerMovement — here only a readable camera punch,
+    // never a head-cam spin (§ ragdoll / local player & camera).
+    this.playerCombatant.onKnockdown = (magnitude) =>
+      this.fpsCamera.addShake(Math.min(0.4 + magnitude * 0.015, 0.9));
 
     // Hit-confirmation feedback (hitmarker + sound + victim reaction) —
     // LOCAL PLAYER only; weapons report every applied damage tick to it.
@@ -344,7 +354,8 @@ export class Game {
     // ---- BASS BLASTER (musical SMG — equipped from the Loadout menu):
     // LMB full-auto note projectiles cycling Do→Do' colors, each shot
     // playing a positional micro-fragment of the selected music track;
-    // R = musical note-swirl reload; ↑/↓ = track selection. LOCAL-ONLY.
+    // R = musical note-swirl reload; ↑/↓ = track selection. In multiplayer
+    // every shot is reported to the server (BASS_FIRE) with its grain.
     this.bassBlaster = new BassBlasterWeapon(
       this.scene,
       this.fpsCamera.camera,
@@ -463,6 +474,10 @@ export class Game {
       this.gameAudio.coinPickup();
     };
 
+    // ---- Death ragdolls (corpses): one sink for bots AND remote players.
+    // Owned by the Game — updated right after each physics step.
+    this.corpses = new CorpseManager(this.scene, this.physics);
+
     // ---- Bots ----
     this.botManager = new BotManager(
       this.scene,
@@ -471,6 +486,7 @@ export class Game {
       this.nav,
       this.spawner,
       this.combatants,
+      this.corpses,
     );
     this.botManager.onBotKilled = (bot, killer, method, hitZone) => {
       if (killer === this.playerCombatant) {
@@ -668,6 +684,9 @@ export class Game {
     this.multiplayer.setRaycastTargets(this.staticHittables);
     // Remote obliterreur beams emit the same suction/spark particles.
     this.multiplayer.setParticles(this.particles);
+    // Remote deaths snapshot a physical ragdoll corpse (visual only —
+    // the server's combat state stays the single source of truth).
+    this.multiplayer.remotes.setCorpseManager(this.corpses);
 
     // Phase 2 multiplayer runs with 0 bots (solo mode keeps them working).
     // The Escape-menu bots panel is FULLY removed (inline display:none —
@@ -859,6 +878,9 @@ export class Game {
 
       this.botManager.update(dt); // AI + bot movement (pre-step)
       this.physics.step(dt);
+      // Corpses: bodies were just integrated — sync visuals, lifetimes,
+      // fades and the max-corpse cap (cheap when no corpse exists).
+      this.corpses.update(dt);
       this.handleSafety();
       this.targets.update(dt);
 
@@ -966,8 +988,9 @@ export class Game {
       });
 
       // BASS BLASTER: LMB full-auto note projectiles + music grains,
-      // R musical reload, ↑/↓ track selection (LOCAL-ONLY weapon —
-      // no network sends). In-flight notes keep ticking even while blocked.
+      // R musical reload, ↑/↓ track selection. In multiplayer each shot
+      // sends a BASS_FIRE action (see wrapNetworkWeaponCallbacks); the
+      // in-flight notes keep ticking even while blocked.
       this.bassBlaster.setViewmodelHidden(
         !bassEquipped || this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
       );
@@ -1303,6 +1326,17 @@ export class Game {
       prevEmerge?.(feet);
       this.netSendAimedAction(WeaponActionType.MOLE_EMERGE, feet);
     };
+
+    // BASS BLASTER: every fired note reports its MUSIC GRAIN metadata
+    // (track index / playhead offset / note index) in px/py/pz so the
+    // server echoes it and every remote client replays the exact same
+    // spatialized fragment riding on the note.
+    this.bassBlaster.onNetShot = (noteIndex, trackIndex, grainOffset) => {
+      this.netSendAimedAction(
+        WeaponActionType.BASS_FIRE,
+        this.netGrain.set(trackIndex, grainOffset, noteIndex),
+      );
+    };
   }
 
   /** Send one aimed WEAPON_ACTION (camera eye origin + facing direction). */
@@ -1335,11 +1369,8 @@ export class Game {
   /** WEAPON_EQUIP for the current primary (dedup unless forced). */
   private sendNetworkEquip(force = false): void {
     if (!this.multiplayer || !this.multiplayerClient?.isConnected) return;
-    // Loadout ids match NetworkWeaponId — EXCEPT the LOCAL-ONLY Bass
-    // Blaster, unknown to the server: report the default rifle instead so
-    // the server never rejects the equip (the blaster sends no actions).
-    const weapon: string =
-      this.primaryWeapon === "BASS_BLASTER" ? "PLASMA_RIFLE" : this.primaryWeapon;
+    // Loadout ids match NetworkWeaponId one-to-one (Bass Blaster included).
+    const weapon: string = this.primaryWeapon;
     if (!force && weapon === this.lastSentEquip) return;
     this.lastSentEquip = weapon;
     this.multiplayerClient.sendWeaponEquip(weapon);
@@ -1419,6 +1450,8 @@ function networkKillMethod(damageType: string): KillMethod {
       return KillMethod.OBLITERREUR;
     case "MOLE_STRIKE":
       return KillMethod.MOLE_STRIKE;
+    case "BASS_BLASTER":
+      return KillMethod.BASS_BLASTER;
     default:
       return KillMethod.PLASMA;
   }

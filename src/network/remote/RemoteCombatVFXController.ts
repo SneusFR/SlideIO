@@ -4,6 +4,14 @@ import { PlasmaBeam } from "../../weapons/PlasmaBeam";
 import { ObliterreurBeamVFX } from "../../weapons/obliterreur/ObliterreurBeamVFX";
 import { ObliterreurConfig as oc } from "../../weapons/obliterreur/ObliterreurConfig";
 import { MoleStrikeConfig as mole } from "../../killstreaks/mole/MoleStrikeConfig";
+import { BassBlasterConfig as bb } from "../../weapons/bassblaster/BassBlasterConfig";
+import {
+  NOTE_SEQUENCE,
+  NoteDef,
+  getNoteGlyphTexture,
+  getNoteHaloTexture,
+} from "../../weapons/bassblaster/BassBlasterNotes";
+import { MUSIC_TRACKS } from "../../weapons/bassblaster/MusicTrackPlayer";
 import type { ParticleSystem } from "../../effects/ParticleSystem";
 import {
   NetworkWeaponConfig as W,
@@ -33,6 +41,22 @@ interface RemoteProjectile {
   group: THREE.Group;
   vel: THREE.Vector3;
   age: number;
+}
+
+/** One remote Bass Blaster note in flight (visual sim + music grain). */
+interface RemoteNote {
+  root: THREE.Group;
+  glyph: THREE.Sprite;
+  halo: THREE.Sprite;
+  vel: THREE.Vector3;
+  prev: THREE.Vector3;
+  life: number;
+  note: NoteDef;
+  /** Positional music grain riding on this note (position per frame). */
+  grain: LoopHandle | null;
+  grainTimer: number;
+  trailAccum: number;
+  pulsePhase: number;
 }
 
 interface RemoteOblit {
@@ -87,6 +111,13 @@ export class RemoteCombatVFXController {
   private readonly burrows = new Map<string, RemoteBurrow>();
   private readonly tracers: Tracer[] = [];
   private readonly bursts: Burst[] = [];
+  /** In-flight remote Bass Blaster notes (short-lived, flat list). */
+  private readonly notes: RemoteNote[] = [];
+
+  /** Shared per-note sprite materials (created lazily on the first shot). */
+  private noteGlyphMats: THREE.SpriteMaterial[] | null = null;
+  private noteHaloMats: THREE.SpriteMaterial[] | null = null;
+  private readonly noteWhite = new THREE.Color(0xffffff);
 
   /** Static world meshes the remote plasma beam visually stops on. */
   private raycastTargets: THREE.Object3D[] = [];
@@ -135,7 +166,11 @@ export class RemoteCombatVFXController {
     private readonly scene: THREE.Scene,
     private readonly remotes: RemotePlayerManager,
     private readonly getLocalId: () => string | null,
-  ) {}
+  ) {
+    // Remote shooters may use any Bass Blaster track — decode the whole
+    // (tiny) music library up front so the FIRST remote note already sings.
+    for (const t of MUSIC_TRACKS) void audio.load(t.audioKey, t.url);
+  }
 
   /** World meshes remote plasma beams get visually blocked by (optional). */
   setRaycastTargets(targets: THREE.Object3D[]): void {
@@ -285,6 +320,9 @@ export class RemoteCombatVFXController {
       case WeaponActionType.OBLITERREUR_FIRE:
         this.obliterreurFire(ev);
         return;
+      case WeaponActionType.BASS_FIRE:
+        this.bassFire(ev);
+        return;
       case ACTION_OBLITERREUR_STOP:
         // RMB cancel on the shooter's side → fast implode (local parity).
         this.stopOblitBeam(ev.playerId, true);
@@ -421,6 +459,9 @@ export class RemoteCombatVFXController {
       proj.group.rotation.z += dt * 4;
     }
 
+    // ---- Bass Blaster notes: straight flight + music grain + trail ----
+    this.updateNotes(dt);
+
     // ---- Tracers fade out ----
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const t = this.tracers[i];
@@ -514,6 +555,16 @@ export class RemoteCombatVFXController {
       b.mat.dispose();
     }
     this.bursts.length = 0;
+    for (const n of this.notes) {
+      n.grain?.stop(0.05);
+      this.scene.remove(n.root);
+    }
+    this.notes.length = 0;
+    // Note sprite materials are shared — dispose once with the controller.
+    if (this.noteGlyphMats) for (const m of this.noteGlyphMats) m.dispose();
+    if (this.noteHaloMats) for (const m of this.noteHaloMats) m.dispose();
+    this.noteGlyphMats = null;
+    this.noteHaloMats = null;
   }
 
   // ------------------------------------------------------------------
@@ -637,6 +688,226 @@ export class RemoteCombatVFXController {
     if (!proj) return;
     this.scene.remove(proj.group);
     this.projectiles.delete(playerId);
+  }
+
+  // ------------------------------------------------------------------
+  // Bass Blaster (musical SMG) — remote notes + spatialized music grains
+  // ------------------------------------------------------------------
+
+  /** Lazily build the 8 glyph + 8 halo sprite materials (shared). */
+  private ensureNoteMaterials(): void {
+    if (this.noteGlyphMats && this.noteHaloMats) return;
+    this.noteGlyphMats = [];
+    this.noteHaloMats = [];
+    for (const note of NOTE_SEQUENCE) {
+      this.noteGlyphMats.push(
+        new THREE.SpriteMaterial({
+          map: getNoteGlyphTexture(note.glyph),
+          color: note.bright,
+          transparent: true,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+      this.noteHaloMats.push(
+        new THREE.SpriteMaterial({
+          map: getNoteHaloTexture(),
+          color: note.color,
+          transparent: true,
+          opacity: 0.8,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+    }
+  }
+
+  /**
+   * One confirmed remote Bass Blaster shot: spawn the SAME glowing note
+   * sprite as the local weapon and play the SAME music fragment (track /
+   * offset echoed by the server in px/py) as a tracked spatial grain that
+   * RIDES the flying note — listeners hear it louder/softer by distance.
+   */
+  private bassFire(ev: WeaponActionConfirmedEvent): void {
+    this.ensureNoteMaterials();
+
+    // Note start: the real in-hand blaster if ready, else the eye origin.
+    if (!this.remotes.getMuzzleWorldPosition(ev.playerId, this.originScratch)) {
+      this.originScratch.set(ev.ox, ev.oy, ev.oz);
+    }
+    this.dirScratch.set(ev.dx, ev.dy, ev.dz);
+    if (this.dirScratch.lengthSq() < 1e-6) this.dirScratch.set(0, 0, -1);
+    this.dirScratch.normalize();
+
+    const noteIndex = Math.max(0, Math.round(ev.pz ?? 0)) % NOTE_SEQUENCE.length;
+    const note = NOTE_SEQUENCE[noteIndex];
+
+    const root = new THREE.Group();
+    root.position.copy(this.originScratch);
+    const halo = new THREE.Sprite(this.noteHaloMats![noteIndex]);
+    halo.scale.setScalar(bb.noteHaloScale);
+    halo.renderOrder = 7;
+    root.add(halo);
+    const glyph = new THREE.Sprite(this.noteGlyphMats![noteIndex]);
+    glyph.scale.setScalar(bb.noteGlyphScale);
+    glyph.renderOrder = 8;
+    root.add(glyph);
+    this.scene.add(root);
+
+    // The exact music fragment (track index + playhead offset) rides the
+    // note — same spatialization values as the shooter's local weapon.
+    let grain: LoopHandle | null = null;
+    const trackIndex = Math.max(0, Math.round(ev.px ?? 0));
+    const track = MUSIC_TRACKS[trackIndex % MUSIC_TRACKS.length];
+    const offset = Math.max(0, ev.py ?? 0);
+    if (track) {
+      grain = audio.playTracked(track.audioKey, this.originScratch, {
+        bus: "weapons",
+        volume: bb.fragmentVolume,
+        offset,
+        duration: bb.fragmentDuration,
+        refDistance: bb.fragmentRefDistance,
+        maxDistance: bb.fragmentMaxDistance,
+        rolloff: bb.fragmentRolloff,
+        maxInstances: 8,
+      });
+    }
+
+    this.notes.push({
+      root,
+      glyph,
+      halo,
+      vel: this.dirScratch.clone().multiplyScalar(bb.projectileSpeed),
+      prev: this.originScratch.clone(),
+      life: bb.projectileLifetime,
+      note,
+      grain,
+      grainTimer: grain ? bb.fragmentDuration + 0.05 : 0,
+      trailAccum: 0,
+      pulsePhase: Math.random() * Math.PI * 2,
+    });
+
+    // Muzzle "ding" layered under the grain (spatial mirror of the local
+    // GameAudio.bassBlasterShot pitched blip).
+    audio.playAt("coin_pickup", this.originScratch, {
+      bus: "weapons",
+      volume: 0.15,
+      volumeVar: 0.03,
+      rate: 1.1 * note.pitch,
+      throttleMs: 30,
+      maxInstances: 6,
+      refDistance: 7,
+      maxDistance: 60,
+    });
+  }
+
+  /** Per-frame remote note sim: pulse, grain follow, trail, CCD walls. */
+  private updateNotes(dt: number): void {
+    for (let i = this.notes.length - 1; i >= 0; i--) {
+      const n = this.notes[i];
+
+      // Integrate (straight energy flight — no gravity on music).
+      n.prev.copy(n.root.position);
+      n.root.position.addScaledVector(n.vel, dt);
+
+      // Musical pulse: the note "beats" while flying (local parity).
+      n.pulsePhase += dt * 14;
+      const pulse = 1 + 0.16 * Math.sin(n.pulsePhase);
+      n.glyph.scale.setScalar(bb.noteGlyphScale * pulse);
+      n.halo.scale.setScalar(bb.noteHaloScale * (2 - pulse) * 0.75);
+
+      // The music grain rides on the note.
+      if (n.grain) {
+        n.grain.setPosition(n.root.position.x, n.root.position.y, n.root.position.z);
+        n.grainTimer -= dt;
+        if (n.grainTimer <= 0) n.grain = null; // grain finished — release
+      }
+
+      // Colored trail (same budget as the local projectile system).
+      if (this.particles) {
+        n.trailAccum += bb.trailParticlesPerSecond * dt;
+        while (n.trailAccum >= 1) {
+          n.trailAccum -= 1;
+          this.vecScratch.set(
+            (Math.random() - 0.5) * 1.6,
+            (Math.random() - 0.5) * 1.6 + 0.4,
+            (Math.random() - 0.5) * 1.6,
+          );
+          this.particles.spawn(
+            n.root.position,
+            this.vecScratch,
+            bb.trailParticleLife * (0.7 + Math.random() * 0.6),
+            n.note.color,
+            0,
+            1.2,
+          );
+        }
+      }
+
+      // CCD against the static world: the note visually pops on walls
+      // (players are the SERVER's job — damage is never computed here).
+      this.endScratch.subVectors(n.root.position, n.prev);
+      const dist = this.endScratch.length();
+      if (dist > 1e-6 && this.raycastTargets.length > 0) {
+        this.endScratch.multiplyScalar(1 / dist);
+        this.raycaster.set(n.prev, this.endScratch);
+        this.raycaster.far = dist;
+        const hit = this.raycaster.intersectObjects(this.raycastTargets, true)[0];
+        if (hit) {
+          this.noteImpact(n, hit.point, hit.face?.normal ?? null, hit.object);
+          this.removeNote(i);
+          continue;
+        }
+      }
+
+      n.life -= dt;
+      if (n.life <= 0) {
+        // Fizzle at max range: tiny sparkle, no impact (local parity).
+        this.particles?.burst(n.root.position, 4, 1.5, 0.25, n.note.color, 0);
+        this.removeNote(i);
+      }
+    }
+  }
+
+  /** Wall impact: colored burst + ring + spatial musical "plink". */
+  private noteImpact(
+    n: RemoteNote,
+    point: THREE.Vector3,
+    localNormal: THREE.Vector3 | null,
+    object: THREE.Object3D,
+  ): void {
+    if (this.particles) {
+      this.particles.burst(point, bb.impactBurstCount, 4, 0.35, n.note.color, 2);
+      this.particles.burst(point, 5, 2.5, 0.22, n.note.bright, 0);
+      this.particles.burst(point, 3, 1.5, 0.15, this.noteWhite, 0);
+      // World-space surface normal for the impact ring.
+      this.vecScratch.set(0, 1, 0);
+      if (localNormal) {
+        this.vecScratch
+          .copy(localNormal)
+          .transformDirection(object.matrixWorld)
+          .normalize();
+      }
+      this.particles.ring(point, this.vecScratch, bb.impactRingCount, 0.16, 2.6, 0.3, n.note.color);
+    }
+    // Spatial mirror of GameAudio.bassBlasterNoteImpact.
+    audio.playAt("coin_pickup", point, {
+      bus: "impacts",
+      volume: 0.13,
+      rate: 0.85 * n.note.pitch,
+      throttleMs: 70,
+      maxInstances: 4,
+      refDistance: 7,
+      maxDistance: 60,
+    });
+  }
+
+  private removeNote(index: number): void {
+    const n = this.notes[index];
+    n.grain?.stop(0.04); // the grain dies with the note (short fade)
+    // Sprites use SHARED materials/textures — nothing per-note to dispose.
+    this.scene.remove(n.root);
+    this.notes.splice(index, 1);
   }
 
   // ------------------------------------------------------------------

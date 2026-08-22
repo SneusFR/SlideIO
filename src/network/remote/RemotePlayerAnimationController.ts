@@ -296,11 +296,16 @@ export class RemotePlayerAnimationController {
     this.smoothedPitch += (clamped - this.smoothedPitch) * pk;
 
     const n = this.spineBones.length;
-    // AIRBORNE: procedural pitch/lean/counter-twist are DISABLED — layering
-    // them on top of the jump clip's animated spine made the head/torso
-    // roll mid-air (verified in isolation). The jump pose reads fine
-    // without them; they resume the instant any grounded state returns.
-    if (n > 0 && state !== NetworkMovementState.AIRBORNE) {
+    // AIRBORNE + SLIDING: procedural pitch/lean/counter-twist are
+    // DISABLED — layering them on top of a clip that animates the spine
+    // itself (jump AND slide both do) made the head/torso roll/pivot
+    // during those states (verified in isolation for the jump; the slide
+    // showed the exact same head-pivot artifact). The held jump-apex /
+    // deep-slide poses read fine without them; they resume the instant
+    // any grounded locomotion state returns.
+    const proceduralSpineOff =
+      state === NetworkMovementState.AIRBORNE || state === NetworkMovementState.SLIDING;
+    if (n > 0 && !proceduralSpineOff) {
       const perBonePitch = (this.smoothedPitch * cfg.remotePitchBoneSign) / n;
       const perBoneLean = (this.smoothedLean + fallLean) / n;
       // Counter-twist: the LEGS (model root) turned by smoothedLegYaw —

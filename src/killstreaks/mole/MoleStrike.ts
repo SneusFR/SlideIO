@@ -218,12 +218,9 @@ export class MoleStrike {
       const hDist = Math.hypot(dx, dz);
       if (hDist > cfg.moleStrikeRadius) continue;
 
-      const damage = target.health.max * cfg.moleStrikeDamageFraction;
-      const applied = target.health.applyDamage(damage, this.playerCombatant, KillMethod.MOLE_STRIKE);
-      if (!applied) continue; // spawn protection etc. → no knockback either
-      hitCount++;
-
       // Radial shove away from the eruption + vertical pop-up.
+      // Computed BEFORE the damage so a LETHAL eruption hands the exact
+      // impulse to the victim's death ragdoll (§ ragdoll).
       if (hDist > 0.001) {
         this.kb.set((dx / hDist) * cfg.moleStrikeKnockback, 0, (dz / hDist) * cfg.moleStrikeKnockback);
       } else {
@@ -231,6 +228,15 @@ export class MoleStrike {
         this.kb.set(Math.cos(a) * cfg.moleStrikeKnockback, 0, Math.sin(a) * cfg.moleStrikeKnockback);
       }
       this.kb.y = cfg.moleStrikeVerticalKnockback;
+      // Eruption comes from BELOW: impact point under the victim's center.
+      this.targetPos.y -= 0.5;
+      target.registerImpact?.(this.kb, this.targetPos);
+
+      const damage = target.health.max * cfg.moleStrikeDamageFraction;
+      const applied = target.health.applyDamage(damage, this.playerCombatant, KillMethod.MOLE_STRIKE);
+      if (!applied) continue; // spawn protection etc. → no knockback either
+      hitCount++;
+
       target.applyImpulse(this.kb);
     }
     return hitCount;
