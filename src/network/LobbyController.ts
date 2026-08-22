@@ -330,7 +330,7 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/** Inject the overlay styles once (violet theme matching the Main Menu). */
+/** Inject the overlay styles once (bean-green theme matching the Main Menu). */
 function injectStyles(): void {
   if (document.getElementById("mp-styles")) return;
   const style = document.createElement("style");
@@ -339,76 +339,76 @@ function injectStyles(): void {
 #mp-overlay {
   position: fixed; inset: 0; z-index: 60;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(7, 4, 15, 0.82);
+  background: rgba(4, 12, 7, 0.82);
   backdrop-filter: blur(6px);
-  font-family: "Rajdhani", sans-serif;
+  font-family: "Baloo 2", sans-serif;
 }
 #mp-overlay.hidden { display: none; }
 #mp-panel {
   width: min(420px, 92vw);
   padding: 34px 38px;
   display: flex; flex-direction: column; gap: 12px;
-  background: linear-gradient(160deg, rgba(21, 11, 38, 0.96), rgba(12, 7, 24, 0.96));
-  border: 1px solid rgba(124, 58, 237, 0.45);
-  border-radius: 10px;
-  box-shadow: 0 0 42px rgba(124, 58, 237, 0.25);
+  background: linear-gradient(160deg, rgba(11, 34, 18, 0.96), rgba(6, 18, 10, 0.96));
+  border: 2px solid rgba(22, 163, 74, 0.45);
+  border-radius: 22px;
+  box-shadow: 0 0 42px rgba(22, 163, 74, 0.25);
 }
 .mp-title {
-  font-family: "Orbitron", sans-serif;
-  font-size: 22px; font-weight: 700; letter-spacing: 3px;
-  color: #e9d5ff; text-align: center; margin-bottom: 8px;
+  font-family: "Luckiest Guy", cursive;
+  font-size: 22px; font-weight: 400; letter-spacing: 3px;
+  color: #dcfce7; text-align: center; margin-bottom: 8px;
 }
-.mp-title.mp-error { color: #f0abfc; }
+.mp-title.mp-error { color: #fbbf24; }
 .mp-label {
-  font-size: 12px; letter-spacing: 2.5px; color: #a78bfa; font-weight: 600;
+  font-size: 12px; letter-spacing: 2.5px; color: #86bd94; font-weight: 600;
 }
 .mp-input {
-  padding: 10px 12px; font-family: "Orbitron", sans-serif;
-  font-size: 14px; letter-spacing: 2px; color: #f5f3ff;
-  background: rgba(124, 58, 237, 0.08);
-  border: 1px solid rgba(124, 58, 237, 0.5); border-radius: 6px;
+  padding: 10px 12px; font-family: "Baloo 2", sans-serif;
+  font-size: 14px; letter-spacing: 2px; color: #f0fdf4; font-weight: 600;
+  background: rgba(22, 163, 74, 0.08);
+  border: 1px solid rgba(22, 163, 74, 0.5); border-radius: 12px;
   outline: none; text-transform: uppercase;
 }
-.mp-input:focus { border-color: #a855f7; box-shadow: 0 0 10px rgba(168, 85, 247, 0.35); }
+.mp-input:focus { border-color: #4ade80; box-shadow: 0 0 10px rgba(74, 222, 128, 0.35); }
 .mp-btn {
   padding: 12px 14px; cursor: pointer;
-  font-family: "Orbitron", sans-serif; font-size: 13px;
-  font-weight: 600; letter-spacing: 2.5px;
-  color: #e9d5ff; background: rgba(124, 58, 237, 0.14);
-  border: 1px solid rgba(124, 58, 237, 0.55); border-radius: 6px;
+  font-family: "Luckiest Guy", cursive; font-size: 13px;
+  font-weight: 400; letter-spacing: 2.5px;
+  color: #dcfce7; background: rgba(22, 163, 74, 0.14);
+  border: 1px solid rgba(22, 163, 74, 0.55); border-radius: 14px;
   transition: background 0.15s, box-shadow 0.15s, transform 0.06s;
 }
-.mp-btn:hover { background: rgba(124, 58, 237, 0.3); box-shadow: 0 0 14px rgba(168, 85, 247, 0.35); }
+.mp-btn:hover { background: rgba(22, 163, 74, 0.3); box-shadow: 0 0 14px rgba(74, 222, 128, 0.35); }
 .mp-btn:active { transform: scale(0.98); }
-.mp-btn-primary { background: rgba(124, 58, 237, 0.42); }
-.mp-btn-ghost { background: transparent; border-color: rgba(124, 58, 237, 0.3); color: #a78bfa; }
+.mp-btn-primary { background: rgba(22, 163, 74, 0.42); }
+.mp-btn-ghost { background: transparent; border-color: rgba(22, 163, 74, 0.3); color: #86bd94; }
 .mp-btn-disabled, .mp-btn:disabled {
   opacity: 0.4; cursor: not-allowed; box-shadow: none;
 }
-.mp-btn.mp-copied { background: rgba(52, 211, 153, 0.25); border-color: rgba(52, 211, 153, 0.6); color: #d1fae5; }
-.mp-room-row { text-align: center; font-size: 15px; color: #c4b5fd; letter-spacing: 1.5px; }
+.mp-btn.mp-copied { background: rgba(250, 204, 21, 0.25); border-color: rgba(250, 204, 21, 0.6); color: #fef9c3; }
+.mp-room-row { text-align: center; font-size: 15px; color: #bbf7d0; letter-spacing: 1.5px; }
 .mp-room-id {
-  font-family: "Orbitron", sans-serif; color: #f5f3ff; font-weight: 700;
+  font-family: "Luckiest Guy", cursive; color: #f0fdf4; font-weight: 400;
   letter-spacing: 3px; user-select: all;
 }
-.mp-sub { font-size: 12px; letter-spacing: 2.5px; color: #a78bfa; font-weight: 600; margin-top: 4px; }
-.mp-sep { height: 1px; background: rgba(124, 58, 237, 0.35); }
+.mp-sub { font-size: 12px; letter-spacing: 2.5px; color: #86bd94; font-weight: 600; margin-top: 4px; }
+.mp-sep { height: 1px; background: rgba(22, 163, 74, 0.35); }
 #mp-players { display: flex; flex-direction: column; gap: 6px; min-height: 54px; }
 .mp-player {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 12px; border-radius: 5px;
-  background: rgba(124, 58, 237, 0.1);
-  font-family: "Orbitron", sans-serif; font-size: 13px;
-  letter-spacing: 2px; color: #f5f3ff;
+  padding: 8px 12px; border-radius: 10px;
+  background: rgba(22, 163, 74, 0.1);
+  font-family: "Baloo 2", sans-serif; font-size: 13px; font-weight: 600;
+  letter-spacing: 2px; color: #f0fdf4;
 }
-.mp-player.mp-me { border: 1px solid rgba(168, 85, 247, 0.5); }
+.mp-player.mp-me { border: 1px solid rgba(74, 222, 128, 0.5); }
 .mp-host {
-  font-size: 10px; letter-spacing: 2px; color: #0e0817;
-  background: #a855f7; border-radius: 3px; padding: 2px 7px; font-weight: 700;
+  font-size: 10px; letter-spacing: 2px; color: #06140b;
+  background: #4ade80; border-radius: 6px; padding: 2px 7px; font-weight: 700;
 }
-.mp-waiting { padding: 8px 12px; color: #7c6f9b; font-size: 13px; letter-spacing: 1.5px; }
+.mp-waiting { padding: 8px 12px; color: #6f9b7c; font-size: 13px; letter-spacing: 1.5px; }
 .mp-status {
-  text-align: center; padding: 18px 0; color: #c4b5fd;
+  text-align: center; padding: 18px 0; color: #bbf7d0;
   font-size: 14px; letter-spacing: 2.5px; font-weight: 600;
 }
 .mp-dots::after { content: ""; animation: mp-dots 1.2s steps(4) infinite; }

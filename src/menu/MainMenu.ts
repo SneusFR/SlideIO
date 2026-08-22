@@ -64,8 +64,8 @@ export class MainMenu {
 
     // ---- Scene ----
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x07040f);
-    this.scene.fog = new THREE.FogExp2(0x0a0618, 0.012);
+    this.scene.background = new THREE.Color(0x07120a);
+    this.scene.fog = new THREE.FogExp2(0x0a1a0e, 0.012);
 
     this.background = new SpaceBackground();
     this.scene.add(this.background.group);

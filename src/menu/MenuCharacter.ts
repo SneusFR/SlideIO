@@ -185,12 +185,12 @@ export class MenuCharacter {
     shadow.position.y = 0.012;
     platform.add(shadow);
 
-    // Glowing violet disc.
+    // Glowing leafy-green disc.
     const glowTex = makeRadialTexture(256, [
-      [0, "rgba(168, 85, 247, 0.35)"],
-      [0.55, "rgba(124, 58, 237, 0.16)"],
-      [0.8, "rgba(168, 85, 247, 0.30)"],
-      [0.86, "rgba(168, 85, 247, 0.05)"],
+      [0, "rgba(74, 222, 128, 0.35)"],
+      [0.55, "rgba(22, 163, 74, 0.16)"],
+      [0.8, "rgba(74, 222, 128, 0.30)"],
+      [0.86, "rgba(74, 222, 128, 0.05)"],
       [1, "rgba(0, 0, 0, 0)"],
     ]);
     this.disposables.push(glowTex);
@@ -217,7 +217,7 @@ export class MenuCharacter {
     for (const [inner, outer, opacity] of ringDefs) {
       const geo = new THREE.RingGeometry(inner, outer, 72);
       const mat = new THREE.MeshBasicMaterial({
-        color: cfg.colors.violetBright,
+        color: cfg.colors.accentBright,
         transparent: true,
         opacity,
         side: THREE.DoubleSide,
@@ -235,7 +235,7 @@ export class MenuCharacter {
     this.group.add(platform);
   }
 
-  /** Large, very thin sci-fi scanner circle behind the character. */
+  /** Large, very thin "sprout halo" circle behind the character. */
   private setupHoloRing(): void {
     this.holoRing = new THREE.Group();
     const defs: [number, number, number][] = [
@@ -245,7 +245,7 @@ export class MenuCharacter {
     for (const [inner, outer, opacity] of defs) {
       const geo = new THREE.RingGeometry(inner, outer, 80);
       const mat = new THREE.MeshBasicMaterial({
-        color: cfg.colors.violet,
+        color: cfg.colors.accent,
         transparent: true,
         opacity,
         side: THREE.DoubleSide,
@@ -258,7 +258,7 @@ export class MenuCharacter {
     // Small arc accents for the "radar" feel.
     const arcGeo = new THREE.RingGeometry(1.68, 1.7, 80, 1, 0, Math.PI / 3);
     const arcMat = new THREE.MeshBasicMaterial({
-      color: cfg.colors.violetBright,
+      color: cfg.colors.accentBright,
       transparent: true,
       opacity: 0.28,
       side: THREE.DoubleSide,
@@ -272,21 +272,21 @@ export class MenuCharacter {
     this.group.add(this.holoRing);
   }
 
-  /** Sci-fi studio: soft key + violet rim + faint cool fill. No shadows. */
+  /** Prairie studio: warm sunny key + leafy rims + faint green fill. */
   private setupLights(): void {
     const key = new THREE.DirectionalLight(cfg.colors.keyLight, 2.1);
     key.position.set(2.2, 3.2, 3.5);
     this.group.add(key);
 
-    const rim = new THREE.DirectionalLight(cfg.colors.violet, 3.2);
+    const rim = new THREE.DirectionalLight(cfg.colors.accent, 3.2);
     rim.position.set(-2.5, 2.0, -3.0);
     this.group.add(rim);
 
-    const rim2 = new THREE.DirectionalLight(cfg.colors.violetDeep, 1.6);
+    const rim2 = new THREE.DirectionalLight(cfg.colors.accentDeep, 1.6);
     rim2.position.set(3.0, 1.0, -2.5);
     this.group.add(rim2);
 
-    const fill = new THREE.HemisphereLight(cfg.colors.fillLight, 0x0a0614, 0.55);
+    const fill = new THREE.HemisphereLight(cfg.colors.fillLight, 0x0a1408, 0.55);
     this.group.add(fill);
   }
 

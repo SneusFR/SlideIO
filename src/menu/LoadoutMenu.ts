@@ -25,8 +25,8 @@ const SLOTS: SlotDef[] = [
 ];
 
 /**
- * LOADOUT overlay — same sober futuristic language as the main menu
- * (near-black panels, thin violet borders, uppercase + letter-spacing).
+ * LOADOUT overlay — same goofy bean-prairie language as the main menu
+ * (dark leafy panels, thin green borders, uppercase + letter-spacing).
  * Three slots (melee / primary / killstreak); each slot lists its items on
  * the left and shows the selected item's summary, abilities, damage stats
  * and cooldowns on the right. "ÉQUIPER" persists via saveLoadout(); the
@@ -294,10 +294,10 @@ function injectStyles(): void {
       display: none;
       align-items: center;
       justify-content: center;
-      background: rgba(4, 2, 10, 0.82);
+      background: rgba(2, 10, 5, 0.82);
       backdrop-filter: blur(6px);
-      font-family: "Segoe UI", system-ui, sans-serif;
-      color: #e6defa;
+      font-family: "Baloo 2", "Segoe UI", system-ui, sans-serif;
+      color: #e3f7e6;
     }
     #loadout-menu.open { display: flex; animation: lo-fade 0.18s ease; }
     @keyframes lo-fade { from { opacity: 0; } to { opacity: 1; } }
@@ -307,9 +307,10 @@ function injectStyles(): void {
       max-height: 90vh;
       display: flex;
       flex-direction: column;
-      background: linear-gradient(160deg, rgba(16, 10, 30, 0.96), rgba(8, 5, 18, 0.96));
-      border: 1px solid rgba(168, 85, 247, 0.35);
-      box-shadow: 0 0 60px rgba(88, 28, 135, 0.35), inset 0 0 40px rgba(88, 28, 135, 0.08);
+      background: linear-gradient(160deg, rgba(10, 28, 16, 0.96), rgba(5, 15, 9, 0.96));
+      border: 2px solid rgba(74, 222, 128, 0.35);
+      border-radius: 22px;
+      box-shadow: 0 0 60px rgba(20, 83, 45, 0.35), inset 0 0 40px rgba(20, 83, 45, 0.08);
       padding: 26px 30px 30px;
     }
 
@@ -320,22 +321,24 @@ function injectStyles(): void {
       margin-bottom: 18px;
     }
     #loadout-menu .lo-title {
+      font-family: "Luckiest Guy", cursive;
       font-size: 26px;
-      font-weight: 700;
+      font-weight: 400;
       letter-spacing: 0.42em;
-      color: #f3ebff;
-      text-shadow: 0 0 18px rgba(168, 85, 247, 0.55);
+      color: #f0fdf4;
+      text-shadow: 0 0 18px rgba(74, 222, 128, 0.55);
     }
     #loadout-menu .lo-subtitle {
       margin-top: 4px;
       font-size: 10px;
       letter-spacing: 0.34em;
-      color: rgba(216, 180, 254, 0.5);
+      color: rgba(187, 247, 208, 0.5);
     }
     #loadout-menu .lo-back {
       background: none;
-      border: 1px solid rgba(168, 85, 247, 0.35);
-      color: #d8b4fe;
+      border: 1px solid rgba(74, 222, 128, 0.35);
+      border-radius: 12px;
+      color: #bbf7d0;
       font-size: 11px;
       letter-spacing: 0.28em;
       padding: 8px 18px;
@@ -343,8 +346,8 @@ function injectStyles(): void {
       transition: background 0.15s ease, border-color 0.15s ease;
     }
     #loadout-menu .lo-back:hover {
-      background: rgba(168, 85, 247, 0.14);
-      border-color: rgba(216, 180, 254, 0.7);
+      background: rgba(74, 222, 128, 0.14);
+      border-color: rgba(187, 247, 208, 0.7);
     }
 
     #loadout-menu .lo-tabs {
@@ -354,21 +357,22 @@ function injectStyles(): void {
     }
     #loadout-menu .lo-tab {
       flex: 1;
-      background: rgba(88, 28, 135, 0.08);
-      border: 1px solid rgba(168, 85, 247, 0.2);
-      color: rgba(216, 180, 254, 0.6);
+      background: rgba(20, 83, 45, 0.08);
+      border: 1px solid rgba(74, 222, 128, 0.2);
+      border-radius: 12px;
+      color: rgba(187, 247, 208, 0.6);
       font-size: 11px;
       letter-spacing: 0.26em;
       padding: 10px 0;
       cursor: pointer;
       transition: all 0.15s ease;
     }
-    #loadout-menu .lo-tab:hover { border-color: rgba(216, 180, 254, 0.55); color: #e6defa; }
+    #loadout-menu .lo-tab:hover { border-color: rgba(187, 247, 208, 0.55); color: #e3f7e6; }
     #loadout-menu .lo-tab.active {
-      background: rgba(147, 51, 234, 0.18);
-      border-color: rgba(216, 180, 254, 0.85);
-      color: #f3ebff;
-      box-shadow: 0 0 18px rgba(147, 51, 234, 0.25);
+      background: rgba(22, 163, 74, 0.18);
+      border-color: rgba(187, 247, 208, 0.85);
+      color: #f0fdf4;
+      box-shadow: 0 0 18px rgba(22, 163, 74, 0.25);
     }
 
     #loadout-menu .lo-subslots {
@@ -383,19 +387,20 @@ function injectStyles(): void {
       flex-direction: column;
       gap: 4px;
       align-items: center;
-      background: rgba(88, 28, 135, 0.06);
-      border: 1px solid rgba(168, 85, 247, 0.18);
-      color: rgba(216, 180, 254, 0.55);
+      background: rgba(20, 83, 45, 0.06);
+      border: 1px solid rgba(74, 222, 128, 0.18);
+      border-radius: 12px;
+      color: rgba(187, 247, 208, 0.55);
       padding: 8px 0;
       cursor: pointer;
       transition: all 0.15s ease;
     }
-    #loadout-menu .lo-subslot:hover { border-color: rgba(216, 180, 254, 0.5); color: #e6defa; }
+    #loadout-menu .lo-subslot:hover { border-color: rgba(187, 247, 208, 0.5); color: #e3f7e6; }
     #loadout-menu .lo-subslot.active {
-      background: rgba(147, 51, 234, 0.16);
-      border-color: rgba(216, 180, 254, 0.8);
-      color: #f3ebff;
-      box-shadow: 0 0 14px rgba(147, 51, 234, 0.2);
+      background: rgba(22, 163, 74, 0.16);
+      border-color: rgba(187, 247, 208, 0.8);
+      color: #f0fdf4;
+      box-shadow: 0 0 14px rgba(22, 163, 74, 0.2);
     }
     #loadout-menu .lo-subslot-key { font-size: 9px; letter-spacing: 0.3em; }
     #loadout-menu .lo-subslot-item { font-size: 11px; font-weight: 600; letter-spacing: 0.14em; }
@@ -417,22 +422,23 @@ function injectStyles(): void {
     #loadout-menu .lo-card {
       position: relative;
       text-align: left;
-      background: rgba(20, 12, 38, 0.7);
-      border: 1px solid rgba(168, 85, 247, 0.22);
+      background: rgba(12, 34, 20, 0.7);
+      border: 1px solid rgba(74, 222, 128, 0.22);
+      border-radius: 14px;
       padding: 14px 16px;
       cursor: pointer;
       color: inherit;
       transition: border-color 0.15s ease, background 0.15s ease, transform 0.1s ease;
     }
-    #loadout-menu .lo-card:hover { border-color: rgba(216, 180, 254, 0.6); transform: translateX(2px); }
+    #loadout-menu .lo-card:hover { border-color: rgba(187, 247, 208, 0.6); transform: translateX(2px); }
     #loadout-menu .lo-card.inspected {
-      background: rgba(147, 51, 234, 0.16);
-      border-color: rgba(216, 180, 254, 0.9);
-      box-shadow: 0 0 16px rgba(147, 51, 234, 0.25);
+      background: rgba(22, 163, 74, 0.16);
+      border-color: rgba(187, 247, 208, 0.9);
+      box-shadow: 0 0 16px rgba(22, 163, 74, 0.25);
     }
     #loadout-menu .lo-card.locked { opacity: 0.55; }
     #loadout-menu .lo-card-name { font-size: 14px; font-weight: 600; letter-spacing: 0.16em; }
-    #loadout-menu .lo-card-tagline { margin-top: 3px; font-size: 10px; letter-spacing: 0.14em; color: rgba(216, 180, 254, 0.55); }
+    #loadout-menu .lo-card-tagline { margin-top: 3px; font-size: 10px; letter-spacing: 0.14em; color: rgba(187, 247, 208, 0.55); }
     #loadout-menu .lo-card-equipped,
     #loadout-menu .lo-card-lock {
       position: absolute;
@@ -440,40 +446,43 @@ function injectStyles(): void {
       right: 12px;
       font-size: 9px;
       letter-spacing: 0.22em;
-      color: #d8b4fe;
-      border: 1px solid rgba(216, 180, 254, 0.5);
+      color: #bbf7d0;
+      border: 1px solid rgba(187, 247, 208, 0.5);
+      border-radius: 8px;
       padding: 3px 8px;
     }
-    #loadout-menu .lo-card-lock { color: rgba(230, 222, 250, 0.5); border-color: rgba(230, 222, 250, 0.25); }
+    #loadout-menu .lo-card-lock { color: rgba(227, 247, 230, 0.5); border-color: rgba(227, 247, 230, 0.25); }
 
     #loadout-menu .lo-detail {
       overflow-y: auto;
-      border: 1px solid rgba(168, 85, 247, 0.18);
-      background: rgba(12, 7, 24, 0.6);
+      border: 1px solid rgba(74, 222, 128, 0.18);
+      border-radius: 14px;
+      background: rgba(7, 20, 12, 0.6);
       padding: 22px 24px;
     }
     #loadout-menu .lo-detail-name {
+      font-family: "Luckiest Guy", cursive;
       font-size: 20px;
-      font-weight: 700;
+      font-weight: 400;
       letter-spacing: 0.3em;
-      color: #f3ebff;
-      text-shadow: 0 0 14px rgba(168, 85, 247, 0.45);
+      color: #f0fdf4;
+      text-shadow: 0 0 14px rgba(74, 222, 128, 0.45);
     }
-    #loadout-menu .lo-detail-tagline { margin-top: 4px; font-size: 10px; letter-spacing: 0.26em; color: rgba(216, 180, 254, 0.55); }
+    #loadout-menu .lo-detail-tagline { margin-top: 4px; font-size: 10px; letter-spacing: 0.26em; color: rgba(187, 247, 208, 0.55); }
     #loadout-menu .lo-detail-summary {
       margin: 14px 0 6px;
       font-size: 13px;
       line-height: 1.55;
-      color: rgba(230, 222, 250, 0.85);
+      color: rgba(227, 247, 230, 0.85);
     }
     #loadout-menu .lo-ability {
       margin-top: 16px;
-      border-top: 1px solid rgba(168, 85, 247, 0.16);
+      border-top: 1px solid rgba(74, 222, 128, 0.16);
       padding-top: 14px;
     }
-    #loadout-menu .lo-ability-trigger { font-size: 9px; letter-spacing: 0.26em; color: rgba(216, 180, 254, 0.5); }
-    #loadout-menu .lo-ability-name { margin-top: 3px; font-size: 14px; font-weight: 600; letter-spacing: 0.2em; color: #d8b4fe; }
-    #loadout-menu .lo-ability-desc { margin-top: 6px; font-size: 12px; line-height: 1.5; color: rgba(230, 222, 250, 0.75); }
+    #loadout-menu .lo-ability-trigger { font-size: 9px; letter-spacing: 0.26em; color: rgba(187, 247, 208, 0.5); }
+    #loadout-menu .lo-ability-name { margin-top: 3px; font-size: 14px; font-weight: 600; letter-spacing: 0.2em; color: #bbf7d0; }
+    #loadout-menu .lo-ability-desc { margin-top: 6px; font-size: 12px; line-height: 1.5; color: rgba(227, 247, 230, 0.75); }
     #loadout-menu .lo-stats {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
@@ -481,19 +490,21 @@ function injectStyles(): void {
       margin-top: 12px;
     }
     #loadout-menu .lo-stat {
-      background: rgba(88, 28, 135, 0.12);
-      border: 1px solid rgba(168, 85, 247, 0.2);
+      background: rgba(20, 83, 45, 0.12);
+      border: 1px solid rgba(74, 222, 128, 0.2);
+      border-radius: 10px;
       padding: 8px 10px;
     }
-    #loadout-menu .lo-stat-label { font-size: 8px; letter-spacing: 0.22em; color: rgba(216, 180, 254, 0.5); }
-    #loadout-menu .lo-stat-value { margin-top: 4px; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; color: #f3ebff; }
+    #loadout-menu .lo-stat-label { font-size: 8px; letter-spacing: 0.22em; color: rgba(187, 247, 208, 0.5); }
+    #loadout-menu .lo-stat-value { margin-top: 4px; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; color: #f0fdf4; }
 
     #loadout-menu .lo-equip {
       margin-top: 22px;
       width: 100%;
-      background: rgba(147, 51, 234, 0.2);
-      border: 1px solid rgba(216, 180, 254, 0.75);
-      color: #f3ebff;
+      background: rgba(22, 163, 74, 0.2);
+      border: 1px solid rgba(187, 247, 208, 0.75);
+      border-radius: 14px;
+      color: #f0fdf4;
       font-size: 13px;
       font-weight: 600;
       letter-spacing: 0.34em;
@@ -502,11 +513,11 @@ function injectStyles(): void {
       transition: background 0.15s ease, box-shadow 0.15s ease;
     }
     #loadout-menu .lo-equip:hover:not(:disabled) {
-      background: rgba(147, 51, 234, 0.38);
-      box-shadow: 0 0 22px rgba(147, 51, 234, 0.4);
+      background: rgba(22, 163, 74, 0.38);
+      box-shadow: 0 0 22px rgba(22, 163, 74, 0.4);
     }
     #loadout-menu .lo-equip:disabled { cursor: default; opacity: 0.55; }
-    #loadout-menu .lo-equip.equipped { border-color: rgba(134, 239, 172, 0.6); color: #bbf7d0; opacity: 0.85; }
+    #loadout-menu .lo-equip.equipped { border-color: rgba(250, 204, 21, 0.6); color: #fef9c3; opacity: 0.85; }
 
     @media (max-width: 760px) {
       #loadout-menu .lo-body { grid-template-columns: 1fr; }

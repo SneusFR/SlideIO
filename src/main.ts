@@ -11,10 +11,10 @@ import { parseJoinRoomId } from "./network/MultiplayerConfig";
  * Boot flow:
  *
  *   page load
- *   → minimal "SLIDE IO / LOADING…" screen
- *   → Game (physics/map) + Main Menu (character/weapons/space) preload in parallel
+ *   → minimal "BEANZO.IO / LOADING…" screen
+ *   → Game (physics/map) + Main Menu (character/weapons/prairie) preload in parallel
  *   → Main Menu revealed with a fade (cursor visible, no pointer lock)
- *   → PLAY → short violet transition → menu disposed → existing gameplay starts
+ *   → PLAY → short green transition → menu disposed → existing gameplay starts
  *
  * Multiplayer (Phase 2): the same Game instance powers both modes.
  *   MULTIPLAYER → lobby overlay → host clicks START GAME → server flips the
@@ -39,7 +39,7 @@ async function main(): Promise<void> {
   menu.start();
 
   // ---- Multiplayer client + lobby overlay ----
-  // Failures never block SlideIO: the overlay shows its own error screens.
+  // Failures never block Beanzo.io: the overlay shows its own error screens.
   const multiplayer = new MultiplayerClient();
   const lobby = new LobbyController(multiplayer, playerProfile.name);
   menu.onMultiplayer = () => lobby.open();
@@ -179,9 +179,9 @@ async function main(): Promise<void> {
 }
 
 /**
- * Full-screen MULTIPLAYER loading screen with an animated deep-space
- * background: two drifting star layers (different speeds → parallax),
- * a soft violet nebula glow and a pulsing "ENTERING THE MATCH" label.
+ * Full-screen MULTIPLAYER loading screen with an animated prairie-night
+ * background: two drifting firefly layers (different speeds → parallax),
+ * a soft green meadow glow and a pulsing "ENTERING THE MATCH" label.
  * Shown while the match assets / shaders / avatars are prepared, then
  * faded out once gameplay is ready.
  */
@@ -222,20 +222,20 @@ function showMpLoadingScreen(): { dispose: () => void } {
     "align-items: center",
     "justify-content: center",
     "gap: 18px",
-    // Deep-space violet gradient + nebula glows.
+    // Prairie-night green gradient + meadow glows.
     "background:" +
-      "radial-gradient(ellipse 60% 45% at 70% 25%, rgba(88, 28, 135, 0.35), transparent 70%)," +
-      "radial-gradient(ellipse 50% 40% at 25% 75%, rgba(49, 16, 91, 0.4), transparent 70%)," +
-      "linear-gradient(180deg, #05020c 0%, #0b0518 55%, #05020c 100%)",
+      "radial-gradient(ellipse 60% 45% at 70% 25%, rgba(21, 94, 47, 0.35), transparent 70%)," +
+      "radial-gradient(ellipse 50% 40% at 25% 75%, rgba(13, 62, 30, 0.4), transparent 70%)," +
+      "linear-gradient(180deg, #030c06 0%, #08160c 55%, #030c06 100%)",
   ].join(";");
 
-  // Two drifting star layers (box-shadow star fields, random each time).
+  // Two drifting firefly layers (box-shadow star fields, random each time).
   const makeStars = (count: number, size: number, duration: number, opacity: number) => {
     const shadows: string[] = [];
     for (let i = 0; i < count; i++) {
       const x = Math.round(Math.random() * 100);
       const y = Math.round(Math.random() * 200); // 200vh → seamless -50% loop
-      const c = Math.random() < 0.25 ? "#d8b4fe" : "#f5f3ff";
+      const c = Math.random() < 0.25 ? "#bbf7d0" : "#f0fdf4";
       shadows.push(`${x}vw ${y}vh 0 ${c}`);
     }
     const layer = document.createElement("div");
@@ -267,12 +267,12 @@ function showMpLoadingScreen(): { dispose: () => void } {
   title.textContent = "ENTERING THE MATCH";
   title.style.cssText = [
     "position: relative",
-    'font-family: "Orbitron", sans-serif',
+    'font-family: "Luckiest Guy", cursive',
     "font-size: 24px",
-    "font-weight: 700",
+    "font-weight: 400",
     "letter-spacing: 6px",
-    "color: #e9d5ff",
-    "text-shadow: 0 0 24px rgba(168, 85, 247, 0.7)",
+    "color: #dcfce7",
+    "text-shadow: 0 0 24px rgba(74, 222, 128, 0.7)",
     "animation: mp-load-pulse 1.8s ease-in-out infinite",
   ].join(";");
   root.appendChild(title);
@@ -282,11 +282,11 @@ function showMpLoadingScreen(): { dispose: () => void } {
   sub.textContent = "LOADING";
   sub.style.cssText = [
     "position: relative",
-    'font-family: "Rajdhani", sans-serif',
+    'font-family: "Baloo 2", sans-serif',
     "font-size: 15px",
     "font-weight: 600",
     "letter-spacing: 4px",
-    "color: #a78bfa",
+    "color: #86bd94",
   ].join(";");
   root.appendChild(sub);
 
@@ -314,14 +314,14 @@ function createLoadoutButton(overlay: HTMLElement): {
     "margin-top: 26px",
     "padding: 12px 34px",
     "cursor: pointer",
-    'font-family: "Orbitron", sans-serif',
+    'font-family: "Luckiest Guy", cursive',
     "font-size: 13px",
-    "font-weight: 600",
+    "font-weight: 400",
     "letter-spacing: 2.5px",
-    "color: #f3ebff",
-    "background: rgba(147, 51, 234, 0.35)",
-    "border: 1px solid rgba(216, 180, 254, 0.7)",
-    "border-radius: 6px",
+    "color: #f0fdf4",
+    "background: rgba(22, 163, 74, 0.35)",
+    "border: 1px solid rgba(187, 247, 208, 0.7)",
+    "border-radius: 12px",
   ].join(";");
   overlay.appendChild(btn);
 
@@ -331,10 +331,10 @@ function createLoadoutButton(overlay: HTMLElement): {
   hint.classList.add("hidden");
   hint.style.cssText = [
     "margin-top: 8px",
-    'font-family: "Rajdhani", sans-serif',
+    'font-family: "Baloo 2", sans-serif',
     "font-size: 13px",
     "letter-spacing: 1.5px",
-    "color: #a78bfa",
+    "color: #86bd94",
   ].join(";");
   overlay.appendChild(hint);
 
@@ -352,14 +352,14 @@ function createLeaveButton(overlay: HTMLElement): HTMLButtonElement {
     "margin-top: 26px",
     "padding: 12px 34px",
     "cursor: pointer",
-    'font-family: "Orbitron", sans-serif',
+    'font-family: "Luckiest Guy", cursive',
     "font-size: 13px",
-    "font-weight: 600",
+    "font-weight: 400",
     "letter-spacing: 2.5px",
-    "color: #e9d5ff",
-    "background: rgba(124, 58, 237, 0.2)",
-    "border: 1px solid rgba(124, 58, 237, 0.55)",
-    "border-radius: 6px",
+    "color: #dcfce7",
+    "background: rgba(22, 163, 74, 0.2)",
+    "border: 1px solid rgba(22, 163, 74, 0.55)",
+    "border-radius: 12px",
   ].join(";");
   overlay.appendChild(btn);
   return btn;
@@ -379,14 +379,14 @@ function showConnectionLost(): void {
     "align-items: center",
     "justify-content: center",
     "gap: 26px",
-    "background: rgba(7, 4, 15, 0.92)",
-    'font-family: "Orbitron", sans-serif',
+    "background: rgba(4, 12, 7, 0.92)",
+    'font-family: "Luckiest Guy", cursive',
   ].join(";");
 
   const title = document.createElement("div");
   title.textContent = "CONNECTION LOST";
   title.style.cssText =
-    "font-size: 28px; font-weight: 700; letter-spacing: 5px; color: #f0abfc;";
+    "font-size: 28px; font-weight: 400; letter-spacing: 5px; color: #fbbf24;";
 
   const btn = document.createElement("button");
   btn.type = "button";
@@ -394,14 +394,14 @@ function showConnectionLost(): void {
   btn.style.cssText = [
     "padding: 13px 38px",
     "cursor: pointer",
-    'font-family: "Orbitron", sans-serif',
+    'font-family: "Luckiest Guy", cursive',
     "font-size: 13px",
-    "font-weight: 600",
+    "font-weight: 400",
     "letter-spacing: 2.5px",
-    "color: #e9d5ff",
-    "background: rgba(124, 58, 237, 0.25)",
-    "border: 1px solid rgba(124, 58, 237, 0.6)",
-    "border-radius: 6px",
+    "color: #dcfce7",
+    "background: rgba(22, 163, 74, 0.25)",
+    "border: 1px solid rgba(22, 163, 74, 0.6)",
+    "border-radius: 12px",
   ].join(";");
   btn.addEventListener("click", () => window.location.assign("/"));
 

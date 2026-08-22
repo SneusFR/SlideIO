@@ -3,11 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SlideIO</title>
+    <title>Beanzo.io</title>
+    <link rel="icon" type="image/x-icon" href="/src/assets/fav.ico" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Rajdhani:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Luckiest+Guy&family=Baloo+2:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/src/style.css" />
@@ -20,18 +21,36 @@
       <!-- Three.js menu canvas is appended here (behind the UI) -->
 
       <div id="main-menu" class="menu-hidden">
+        <!-- Beanzo.io logo — top center -->
+        <img id="menu-logo" src="/src/assets/logo.png" alt="Beanzo.io" draggable="false" />
+
         <!-- Player info — top left -->
         <div id="menu-profile">
           <div id="menu-avatar">
             <svg viewBox="0 0 48 48" aria-hidden="true">
-              <path
-                d="M24 5 L38 12 L38 26 Q38 36 24 43 Q10 36 10 26 L10 12 Z"
-                fill="#150b26"
-                stroke="#7c3aed"
-                stroke-width="1.6"
+              <!-- Goofy bean buddy -->
+              <ellipse
+                cx="24"
+                cy="25"
+                rx="12"
+                ry="16"
+                transform="rotate(14 24 25)"
+                fill="#1b5e2f"
+                stroke="#4ade80"
+                stroke-width="1.8"
               />
-              <path d="M15 22 L33 22 L30 27 L18 27 Z" fill="#a855f7" opacity="0.9" />
-              <path d="M20 13 L28 13 L26 18 L22 18 Z" fill="#7c3aed" opacity="0.7" />
+              <circle cx="20" cy="20" r="3.2" fill="#f0fdf4" />
+              <circle cx="29" cy="21" r="3.2" fill="#f0fdf4" />
+              <circle cx="20.8" cy="20.6" r="1.4" fill="#14532d" />
+              <circle cx="29.8" cy="21.6" r="1.4" fill="#14532d" />
+              <path
+                d="M19 29 Q24 34 30 29.5"
+                fill="none"
+                stroke="#bbf7d0"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path d="M24 8 Q26 4 30 5 Q27 8 25 9 Z" fill="#4ade80" opacity="0.9" />
             </svg>
           </div>
           <div id="menu-profile-sep"></div>
@@ -43,8 +62,17 @@
             </div>
             <div id="menu-currency-row">
               <svg id="menu-coin" viewBox="0 0 20 20" aria-hidden="true">
-                <circle cx="10" cy="10" r="8" fill="none" stroke="#a855f7" stroke-width="1.6" />
-                <circle cx="10" cy="10" r="3.4" fill="#a855f7" opacity="0.85" />
+                <!-- Golden bean coin -->
+                <circle cx="10" cy="10" r="8" fill="none" stroke="#facc15" stroke-width="1.6" />
+                <ellipse
+                  cx="10"
+                  cy="10"
+                  rx="3"
+                  ry="4.2"
+                  transform="rotate(18 10 10)"
+                  fill="#facc15"
+                  opacity="0.9"
+                />
               </svg>
               <span id="menu-player-currency">1,245,870</span>
             </div>
@@ -88,13 +116,13 @@
         </div>
       </div>
 
-      <!-- Subtle violet flash used by the PLAY transition -->
+      <!-- Subtle green flash used by the PLAY transition -->
       <div id="menu-play-flash"></div>
     </div>
 
     <!-- Minimal preload screen shown while menu assets stream in -->
     <div id="menu-loading">
-      <div id="menu-loading-title">SLIDE&nbsp;IO</div>
+      <img id="menu-loading-logo" src="/src/assets/logo.png" alt="Beanzo.io" draggable="false" />
       <div id="menu-loading-sub">LOADING<span class="dots"></span></div>
     </div>
 

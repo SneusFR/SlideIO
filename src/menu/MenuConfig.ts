@@ -55,11 +55,12 @@ export const MenuSceneConfig = {
   },
 
   colors: {
-    violet: 0xa855f7,
-    violetBright: 0xc084fc,
-    violetDeep: 0x7c3aed,
-    keyLight: 0xf2ecff,
-    fillLight: 0x8090c0,
+    /* Beanzo prairie palette — fresh leafy greens. */
+    accent: 0x4ade80,
+    accentBright: 0x86efac,
+    accentDeep: 0x16a34a,
+    keyLight: 0xfff6dd,
+    fillLight: 0x9ad0a8,
   },
 
   /** Mouse parallax: max offsets in world units / radians. Very subtle. */

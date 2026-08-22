@@ -2,10 +2,11 @@ import * as THREE from "three";
 import { MenuSceneConfig as cfg } from "./MenuConfig";
 
 /**
- * Animated deep-space backdrop for the Main Menu.
+ * Animated "prairie night" backdrop for the Main Menu — a starry meadow
+ * sky full of fireflies with soft leafy-green glows and a big mossy moon.
  *
  * Layered for depth (far → near):
- *   far stars → nebula sprites → dark planet → dust particles
+ *   far fireflies → green glow sprites → mossy moon → drifting pollen
  *
  * Everything moves EXTREMELY slowly (drift + slow rotation) and the whole
  * group reacts subtly to mouse parallax (driven by MainMenu). Built from
@@ -38,12 +39,12 @@ export class SpaceBackground {
     this.starsNear = this.makeStars(cfg.background.starCountNear, 35, 60, 1.6, 0.8);
     this.midLayer.add(this.starsNear);
 
-    // ---- Nebula: big soft violet gradient sprites, additive ----
+    // ---- Meadow glow: big soft green gradient sprites, additive ----
     const nebulaTex = makeGlowTexture(256, [
-      [0.0, "rgba(168, 85, 247, 0.55)"],
-      [0.35, "rgba(124, 58, 237, 0.28)"],
-      [0.7, "rgba(60, 20, 120, 0.10)"],
-      [1.0, "rgba(20, 8, 40, 0)"],
+      [0.0, "rgba(74, 222, 128, 0.55)"],
+      [0.35, "rgba(22, 163, 74, 0.28)"],
+      [0.7, "rgba(16, 90, 40, 0.10)"],
+      [1.0, "rgba(6, 30, 14, 0)"],
     ]);
     this.disposables.push(nebulaTex);
     const nebulaPositions: [number, number, number, number, number][] = [
@@ -71,13 +72,13 @@ export class SpaceBackground {
       this.farLayer.add(sprite);
     }
 
-    // ---- Dark planet, bottom-left like the reference ----
+    // ---- Big mossy bean-moon, bottom-left like the reference ----
     const planetGeo = new THREE.SphereGeometry(11, 40, 28);
     const planetMat = new THREE.MeshStandardMaterial({
-      color: 0x1a1030,
+      color: 0x143520,
       roughness: 0.92,
       metalness: 0.1,
-      emissive: 0x160a2e,
+      emissive: 0x0e2e16,
       emissiveIntensity: 0.35,
     });
     this.disposables.push(planetGeo, planetMat);
@@ -86,13 +87,13 @@ export class SpaceBackground {
     this.planet.frustumCulled = true;
     this.midLayer.add(this.planet);
 
-    // Thin atmospheric halo behind the planet.
+    // Thin atmospheric halo behind the moon.
     const haloTex = makeGlowTexture(128, [
-      [0.0, "rgba(168, 85, 247, 0.0)"],
-      [0.62, "rgba(168, 85, 247, 0.0)"],
-      [0.74, "rgba(168, 85, 247, 0.28)"],
-      [0.85, "rgba(124, 58, 237, 0.10)"],
-      [1.0, "rgba(20, 8, 40, 0)"],
+      [0.0, "rgba(74, 222, 128, 0.0)"],
+      [0.62, "rgba(74, 222, 128, 0.0)"],
+      [0.74, "rgba(74, 222, 128, 0.28)"],
+      [0.85, "rgba(22, 163, 74, 0.10)"],
+      [1.0, "rgba(6, 30, 14, 0)"],
     ]);
     this.disposables.push(haloTex);
     const haloMat = new THREE.SpriteMaterial({
@@ -109,7 +110,7 @@ export class SpaceBackground {
     halo.scale.setScalar(26);
     this.midLayer.add(halo);
 
-    // ---- Drifting space dust (near layer) ----
+    // ---- Drifting pollen / fireflies (near layer) ----
     this.dust = this.makeStars(cfg.background.dustCount, 8, 25, 0.9, 0.28);
     this.nearLayer.add(this.dust);
   }
@@ -134,7 +135,7 @@ export class SpaceBackground {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     const mat = new THREE.PointsMaterial({
-      color: 0xd8ccf0,
+      color: 0xdcf5cd,
       size,
       sizeAttenuation: false,
       transparent: true,
