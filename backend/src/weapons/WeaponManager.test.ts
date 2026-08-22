@@ -49,7 +49,8 @@ function makeWorld() {
   const advance = (ms: number) => {
     now += ms;
   };
-  return { state, combat, wm, rec, addPlayer, advance };
+  const nowMs = () => now;
+  return { state, combat, wm, rec, addPlayer, advance, nowMs };
 }
 
 function dirTo(from: { x: number; y: number; z: number }, to: { x: number; y: number; z: number }) {
@@ -289,6 +290,102 @@ test("assists: contributor gets the assist on a real weapon kill", () => {
   assert.ok(died, "victim died");
   assert.strictEqual(died.killerId, "A");
   assert.ok(died.assistIds.includes("C"), "C earned the assist");
+});
+
+/**
+ * Lag compensation — the shooter declares its VIEW TIME (`vt`) and the
+ * server rewinds the transform history to that exact moment, with
+ * INTERPOLATION between the bracketing entries (no sample-and-hold).
+ */
+
+/** Builds a moving target B with history x = 0 → 2 → 4 over 200 ms. */
+function makeMovingTargetWorld() {
+  const w = makeWorld();
+  const a = w.addPlayer("A", 0, 0.9, 16);
+  const b = w.addPlayer("B", 0, 0.9, 10);
+  w.wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  // History: x=0 at t0, x=2 at t0+100, x=4 at t0+200 (current = 4).
+  b.x = 0;
+  w.wm.recordTransform(b);
+  w.advance(100);
+  b.x = 2;
+  w.wm.recordTransform(b);
+  w.advance(100);
+  b.x = 4;
+  w.wm.recordTransform(b);
+  return { ...w, a, b };
+}
+
+test("lag comp: vt rewinds to the INTERPOLATED historical position", () => {
+  const { wm, rec, a, nowMs } = makeMovingTargetWorld();
+  // vt = now-150 → halfway between (x=0 @ now-200) and (x=2 @ now-100) → x=1.
+  const eye = eyeOf(a);
+  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eye, dirTo(eye, { x: 1, y: 0.9, z: 10 }), {
+    vt: nowMs() - 150,
+  });
+  assert.strictEqual(rec.hits.length, 1, "shot at the rewound position must hit");
+  assert.strictEqual(rec.hits[0].ev.targetId, "B");
+});
+
+test("lag comp: with vt in the past, the CURRENT position is NOT hit", () => {
+  const { wm, rec, a, nowMs } = makeMovingTargetWorld();
+  // Aim at the CURRENT position (x=4) while rewinding 150 ms (target at x=1):
+  // the rewound hitbox is ~3 m away from the aim ray → clean miss.
+  const eye = eyeOf(a);
+  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eye, dirTo(eye, { x: 4, y: 0.9, z: 10 }), {
+    vt: nowMs() - 150,
+  });
+  assert.strictEqual(rec.hits.length, 0, "current position must miss under rewind");
+});
+
+test("lag comp: missing vt falls back to the fixed conservative rewind", () => {
+  const { wm, rec, a } = makeMovingTargetWorld();
+  // Fallback = 120 ms → between (x=0 @ now-200) and (x=2 @ now-100):
+  // k = 80/100 → x = 1.6.
+  const eye = eyeOf(a);
+  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eye, dirTo(eye, { x: 1.6, y: 0.9, z: 10 }));
+  assert.strictEqual(rec.hits.length, 1, "fallback rewind position must hit");
+});
+
+test("lag comp: aberrant vt is refused → fallback rewind", () => {
+  const { wm, rec, a, nowMs } = makeMovingTargetWorld();
+  // vt 10 s in the past is implausible → treated as absent (120 ms → x=1.6).
+  const eye = eyeOf(a);
+  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eye, dirTo(eye, { x: 1.6, y: 0.9, z: 10 }), {
+    vt: nowMs() - 10_000,
+  });
+  assert.strictEqual(rec.hits.length, 1, "aberrant vt must use the fallback");
+});
+
+test("lag comp: vt is HARD-CLAMPED to the max rewind window", () => {
+  const { wm, rec, a, nowMs } = makeMovingTargetWorld();
+  // vt = now-3000 is plausible-looking but beyond the 350 ms cap →
+  // clamped to now-350, which is before the oldest entry → holds x=0.
+  // (A cheater cannot resurrect very old positions.)
+  const eye = eyeOf(a);
+  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eye, dirTo(eye, { x: 0, y: 0.9, z: 10 }), {
+    vt: nowMs() - 3000,
+  });
+  assert.strictEqual(rec.hits.length, 1, "clamped rewind = oldest plausible position");
+});
+
+test("lag comp: idle-suppression gaps HOLD the older position (no lerp)", () => {
+  const w = makeWorld();
+  const a = w.addPlayer("A", 0, 0.9, 16);
+  const b = w.addPlayer("B", 0, 0.9, 10);
+  w.wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  // B stood at x=0, silent for 400 ms (idle suppression), then moved to x=4.
+  b.x = 0;
+  w.wm.recordTransform(b);
+  w.advance(400);
+  b.x = 4;
+  w.wm.recordTransform(b);
+  // vt inside the silent window → B truly WAS at x=0 the whole time.
+  const eye = eyeOf(a);
+  fire(w.wm, a, WeaponActionType.REVOLVER_FIRE, eye, dirTo(eye, { x: 0, y: 0.9, z: 10 }), {
+    vt: w.nowMs() - 200,
+  });
+  assert.strictEqual(w.rec.hits.length, 1, "idle gap must hold the older position");
 });
 
 console.log(`\n${passed} weapon tests passed`);

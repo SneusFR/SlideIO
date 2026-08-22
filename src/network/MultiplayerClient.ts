@@ -39,6 +39,8 @@ export interface NetworkPlayerInfo {
   respawnAt: number;
   // ---- Phase 5: SERVER-VALIDATED equipped weapon (NetworkWeaponId) ----
   weapon: string;
+  /** Smoothed RTT of this player (ms) — leaderboard display only. */
+  pingMs: number;
 }
 
 /** Server → clients: someone died (killfeed / medals / VFX hooks). */
@@ -126,6 +128,12 @@ export class MultiplayerClient {
   onDamageTaken: ((event: DamageTakenEvent) => void) | null = null;
   /** Server knockback impulse for the LOCAL player. */
   onApplyImpulse: ((event: ApplyImpulseEvent) => void) | null = null;
+  /**
+   * Fired after EVERY applied state patch (not once per render frame).
+   * Snapshot ingestion hooks here so a burst of patches arriving between
+   * two render frames never loses intermediate transforms.
+   */
+  onStatePatched: (() => void) | null = null;
 
   private client: Client | null = null;
   private room: Room | null = null;
@@ -135,6 +143,14 @@ export class MultiplayerClient {
   private lastPhase = "";
   /** Monotonic per-client weapon action sequence (server dedup). */
   private weaponSeq = 0;
+
+  // ---- RTT measurement (PING → PONG on the LOCAL clock only) ----
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private pingNonce = 0;
+  /** nonce → performance.now() at send (bounded — stale entries pruned). */
+  private readonly pendingPings = new Map<number, number>();
+  private rttSmoothed = Number.NaN;
+  private rttJitter = 0;
 
   get isConnected(): boolean {
     return this.room !== null;
@@ -151,6 +167,16 @@ export class MultiplayerClient {
   /** Current room phase ("LOBBY" | "PLAYING") or null if not connected. */
   get phase(): string | null {
     return (this.room?.state as RoomStateLike | undefined)?.phase ?? null;
+  }
+
+  /** Smoothed local RTT (ms) or null before the first PONG. */
+  get rttMs(): number | null {
+    return Number.isNaN(this.rttSmoothed) ? null : this.rttSmoothed;
+  }
+
+  /** Smoothed RTT jitter (ms) — mean deviation of recent samples. */
+  get rttJitterMs(): number {
+    return this.rttJitter;
   }
 
   /** Create a new private lobby and join it as HOST. */
@@ -251,6 +277,9 @@ export class MultiplayerClient {
       pz?: number;
       /** Obliterreur anchor slot (0 = A, 1 = B). */
       pi?: number;
+      /** View time (server ms) at which the shooter SAW the targets —
+       *  the server rewinds its lag-comp history to this exact time. */
+      vt?: number;
     } = {},
   ): void {
     if (!this.room) return;
@@ -262,6 +291,7 @@ export class MultiplayerClient {
       ...(data.dx !== undefined ? { dx: round3(data.dx), dy: round3(data.dy ?? 0), dz: round3(data.dz ?? 0) } : {}),
       ...(data.px !== undefined ? { px: round3(data.px), py: round3(data.py ?? 0), pz: round3(data.pz ?? 0) } : {}),
       ...(data.pi !== undefined ? { pi: data.pi } : {}),
+      ...(data.vt !== undefined ? { vt: Math.round(data.vt) } : {}),
     });
   }
 
@@ -295,6 +325,7 @@ export class MultiplayerClient {
         assists: p.assists ?? 0,
         respawnAt: p.respawnAt ?? 0,
         weapon: p.weapon ?? "PLASMA_RIFLE",
+        pingMs: p.pingMs ?? 0,
       });
     });
     return players;
@@ -325,6 +356,10 @@ export class MultiplayerClient {
     // Rooms are small: rebuild the full list on every state patch. Simple,
     // robust, and version-agnostic w.r.t. schema callbacks.
     room.onStateChange(() => {
+      // PER-PATCH hook FIRST: snapshot ingestion must observe every
+      // intermediate transform even when several patches land between
+      // two render frames (burst after a TCP stall, low receiver FPS).
+      this.onStatePatched?.();
       this.emitPlayers();
       this.emitPhase();
     });
@@ -402,10 +437,30 @@ export class MultiplayerClient {
       this.onApplyImpulse?.({ x: num(message?.x), y: num(message?.y), z: num(message?.z) });
     });
 
+    // ---- RTT measurement: PONG echoes our nonce; the RTT is computed
+    // exclusively on OUR performance.now() clock (never cross-client). ----
+    room.onMessage("PONG", (message: { n?: unknown }) => {
+      const n = typeof message?.n === "number" ? message.n : -1;
+      const sentAt = this.pendingPings.get(n);
+      if (sentAt === undefined) return;
+      this.pendingPings.delete(n);
+      const rtt = performance.now() - sentAt;
+      if (Number.isNaN(this.rttSmoothed)) {
+        this.rttSmoothed = rtt;
+      } else {
+        // Light smoothing: readable in the leaderboard without hiding
+        // real trends. The raw jitter stays visible in the debug HUD.
+        this.rttJitter += (Math.abs(rtt - this.rttSmoothed) - this.rttJitter) * 0.3;
+        this.rttSmoothed += (rtt - this.rttSmoothed) * 0.3;
+      }
+    });
+    this.startPingLoop();
+
     room.onLeave(() => {
       const intentional = this.leavingIntentionally;
       this.room = null;
       this.leavingIntentionally = false;
+      this.stopPingLoop();
       logDev(intentional ? "Left room" : "Disconnected from room");
       this.onLeft?.(intentional);
     });
@@ -413,6 +468,35 @@ export class MultiplayerClient {
     // Emit the initial state (already available after create/join).
     this.emitPlayers();
     this.emitPhase();
+  }
+
+  /** ~1 Hz PING: measures RTT + relays the smoothed value to the server. */
+  private startPingLoop(): void {
+    this.stopPingLoop();
+    const send = () => {
+      if (!this.room) return;
+      const n = ++this.pingNonce;
+      this.pendingPings.set(n, performance.now());
+      // Prune stale entries (lost PONGs) — bounded memory.
+      if (this.pendingPings.size > 8) {
+        const oldest = this.pendingPings.keys().next().value;
+        if (oldest !== undefined) this.pendingPings.delete(oldest);
+      }
+      const r = Number.isNaN(this.rttSmoothed) ? undefined : Math.round(this.rttSmoothed);
+      this.room.send("PING", { n, ...(r !== undefined ? { r } : {}) });
+    };
+    send(); // first measurement immediately (lobby ping display)
+    this.pingTimer = setInterval(send, 1000);
+  }
+
+  private stopPingLoop(): void {
+    if (this.pingTimer !== null) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+    this.pendingPings.clear();
+    this.rttSmoothed = Number.NaN;
+    this.rttJitter = 0;
   }
 
   private emitPlayers(): void {
@@ -460,6 +544,7 @@ interface NetworkPlayerLike {
   assists?: number;
   respawnAt?: number;
   weapon?: string;
+  pingMs?: number;
 }
 
 function round3(value: number): number {

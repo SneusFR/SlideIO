@@ -6,7 +6,7 @@ import type {
   PlayerDiedEvent,
   PlayerRespawnedEvent,
 } from "./MultiplayerClient";
-import { RemotePlayerManager, JUMP_DEBUG } from "./RemotePlayerManager";
+import { RemotePlayerManager, NetworkDebugReport } from "./RemotePlayerManager";
 import { RemoteCombatVFXController } from "./remote/RemoteCombatVFXController";
 import { preloadRemoteWeaponTemplates } from "./remote/RemoteWeaponController";
 import { NetworkStatsSource } from "./NetworkStatsSource";
@@ -20,6 +20,12 @@ import type { PlayerController } from "../player/PlayerController";
 import type { PlayerMovement } from "../player/PlayerMovement";
 import type { ParticleSystem } from "../effects/ParticleSystem";
 import { NetworkMovementState } from "./NetworkMovementState";
+
+/** Global debug report enriched with the LOCAL connection quality. */
+export interface MultiplayerNetworkDebug extends NetworkDebugReport {
+  localRttMs: number | null;
+  localRttJitterMs: number;
+}
 
 /**
  * Bridges the running game and the multiplayer session:
@@ -101,6 +107,14 @@ export class MultiplayerGameController {
     this.remotes = new RemotePlayerManager(scene);
     this.vfx = new RemoteCombatVFXController(scene, this.remotes, () => client.sessionId);
 
+    // PER-PATCH snapshot ingestion: every applied state patch pushes its
+    // transforms into the snapshot buffers IMMEDIATELY. A burst of patches
+    // arriving between two render frames (TCP stall recovery, low FPS)
+    // therefore never loses intermediate positions — the interpolation
+    // can replay the real trajectory instead of jumping to the newest.
+    client.onStatePatched = () =>
+      this.remotes.sync(this.client.getPlayers(), this.client.sessionId);
+
     // Server combat events (one-shot; the synced state is the backstop).
     client.onPlayerDied = (event) => this.handlePlayerDied(event);
     client.onPlayerRespawned = (event) => this.handlePlayerRespawned(event);
@@ -159,6 +173,23 @@ export class MultiplayerGameController {
   }
 
   /**
+   * VIEW TIME (server ms) at which remote players are displayed RIGHT NOW
+   * — attached to weapon actions for exact server-side lag compensation.
+   */
+  getViewTimestamp(): number | null {
+    return this.remotes.getRenderTimestamp();
+  }
+
+  /** Full network diagnostic report for the F1 debug HUD. */
+  getNetworkDebugReport(): MultiplayerNetworkDebug {
+    return {
+      ...this.remotes.getNetworkDebugReport(),
+      localRttMs: this.client.rttMs,
+      localRttJitterMs: this.client.rttJitterMs,
+    };
+  }
+
+  /**
    * Seconds until the server respawns the LOCAL player (server clock),
    * or null while no reliable estimate exists yet.
    */
@@ -179,7 +210,9 @@ export class MultiplayerGameController {
     this.lastFrameAt = performance.now();
     const players = this.client.getPlayers();
 
-    // Remote avatars: reconcile with the latest server state + smooth.
+    // Remote avatars: snapshots are ingested PER PATCH (onStatePatched);
+    // this per-frame sync is a cheap idempotent backstop (join/leave,
+    // combat state) — duplicate snapshots are rejected by sequence.
     this.remotes.sync(players, this.client.sessionId);
     this.remotes.update(dt);
 
@@ -254,21 +287,6 @@ export class MultiplayerGameController {
     if (!moved && this.timeSinceSend < netCfg.transformHeartbeat) return;
 
     this.sendSequence++;
-    // TEMP DEBUG: what the jumping client actually sends (AIRBORNE frames
-    // + every state change, e.g. the landing GROUNDED transform).
-    if (
-      JUMP_DEBUG &&
-      (state === NetworkMovementState.AIRBORNE || state !== this.lastSent.state)
-    ) {
-      console.log(
-        `[LOCAL]`,
-        `seq=${this.sendSequence}`,
-        `y=${pos.y.toFixed(2)}`,
-        `vy=${vel.y.toFixed(2)}`,
-        `st=${state}`,
-        `mv=${this.movement.state}`,
-      );
-    }
     this.client.sendTransform({
       x: pos.x,
       y: pos.y,
@@ -332,6 +350,7 @@ export class MultiplayerGameController {
     this.client.onHitConfirmed = null;
     this.client.onDamageTaken = null;
     this.client.onApplyImpulse = null;
+    this.client.onStatePatched = null;
     this.vfx.dispose();
     if (import.meta.env.DEV) {
       delete (window as unknown as Record<string, unknown>).mpDamage;

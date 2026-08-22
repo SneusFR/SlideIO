@@ -117,6 +117,18 @@ export class GameRoom extends Room<GameRoomState> {
     }, 50);
 
     this.onMessage("START_GAME", (client) => this.handleStartGame(client));
+    // RTT measurement: echo the nonce IMMEDIATELY (the client computes
+    // RTT from its own local clock — never cross-client Date.now math).
+    // The optional `r` field carries the client's SMOOTHED RTT which is
+    // published to everyone via the synced state (leaderboard ping).
+    this.onMessage("PING", (client, message: { n?: unknown; r?: unknown }) => {
+      const r = toFinite(message?.r);
+      if (r !== null && r >= 0) {
+        const player = this.state.players.get(client.sessionId);
+        if (player) player.pingMs = Math.min(999, Math.round(r));
+      }
+      client.send("PONG", { n: toFinite(message?.n) ?? 0 });
+    });
     this.onMessage("PLAYER_TRANSFORM", (client, message) =>
       this.handlePlayerTransform(client, message as TransformMessage),
     );

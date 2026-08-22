@@ -17,6 +17,10 @@ export interface PlayerMatchStats {
   kills: number;
   deaths: number;
   assists: number;
+
+  /** MULTIPLAYER only: smoothed RTT (ms) shown left of the name in the
+   *  leaderboard. Undefined in local mode (bots have no ping). */
+  pingMs?: number;
 }
 
 /** Safe K/D — never Infinity/NaN (deaths clamped to at least 1). */

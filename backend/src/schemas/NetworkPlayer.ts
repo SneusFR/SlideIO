@@ -66,6 +66,12 @@ export class NetworkPlayer extends Schema {
    *  lets clients render a server-time based respawn countdown. */
   @type("float64") respawnAt = 0;
 
+  /** Smoothed round-trip time of this client (ms) — measured by the
+   *  client via PING/PONG and relayed here so EVERY client can display
+   *  everyone's ping in the leaderboard. INFORMATIVE ONLY: the lag
+   *  compensation NEVER uses this value (it uses per-action viewTime). */
+  @type("uint16") pingMs = 0;
+
   // ---- Phase 5: SERVER-VALIDATED equipped weapon ----
   /** NetworkWeaponId string — written ONLY by the server (WeaponManager)
    *  after validating a WEAPON_EQUIP message. Remote clients read this to

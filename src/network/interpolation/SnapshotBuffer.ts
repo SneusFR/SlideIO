@@ -40,6 +40,10 @@ export interface SampledPlayerState {
   teleported: boolean;
   /** True while estimating past the newest snapshot (short window only). */
   extrapolating: boolean;
+  /** How far past the newest snapshot we are estimating (ms, real time —
+   *  keeps growing past maxExtrapolationMs while FROZEN). 0 when
+   *  interpolating normally. Diagnostic value for the network debug HUD. */
+  extrapolatedMs: number;
 }
 
 /**
@@ -146,6 +150,7 @@ export class SnapshotBuffer {
       copySnapshot(first, out);
       out.teleported = first.teleport;
       out.extrapolating = false;
+      out.extrapolatedMs = 0;
       return true;
     }
 
@@ -161,6 +166,7 @@ export class SnapshotBuffer {
         copySnapshot(after, out);
         out.teleported = true;
         out.extrapolating = false;
+        out.extrapolatedMs = 0;
         return true;
       }
 
@@ -180,6 +186,7 @@ export class SnapshotBuffer {
       out.movementState = after.movementState;
       out.teleported = false;
       out.extrapolating = false;
+      out.extrapolatedMs = 0;
       return true;
     }
 
@@ -221,6 +228,7 @@ export class SnapshotBuffer {
     out.movementState = stale ? NetworkMovementState.IDLE : last.movementState;
     out.teleported = false;
     out.extrapolating = aheadMs > 1 && clampedMs > 1;
+    out.extrapolatedMs = aheadMs;
     return true;
   }
 

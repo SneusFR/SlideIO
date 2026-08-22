@@ -34,8 +34,13 @@ export class NetworkStatsSource {
    * (so callers can poll every frame without re-rendering the DOM).
    */
   build(players: NetworkPlayerInfo[], localSessionId: string | null): PlayerMatchStats[] | null {
+    // Ping is BUCKETED (5 ms) in the signature so tiny RTT wobble never
+    // triggers a DOM re-render every second.
     const signature = players
-      .map((p) => `${p.id}:${p.name}:${p.kills}/${p.deaths}/${p.assists}`)
+      .map(
+        (p) =>
+          `${p.id}:${p.name}:${p.kills}/${p.deaths}/${p.assists}:${Math.round(p.pingMs / 5)}`,
+      )
       .sort()
       .join("|");
     if (signature === this.lastSignature) return null;
@@ -54,6 +59,7 @@ export class NetworkStatsSource {
       kills: p.kills,
       deaths: p.deaths,
       assists: p.assists,
+      pingMs: p.pingMs,
     }));
 
     // EXACT same ranking rules as the local MatchStatsManager:

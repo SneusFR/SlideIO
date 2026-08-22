@@ -200,6 +200,15 @@ export interface WeaponActionMessage {
   action: string;
   /** Monotonic per-client sequence — dedup / stale rejection. */
   seq: number;
+  /**
+   * VIEW TIME (ms, server clock estimate): the render timestamp at which
+   * the shooter SAW the remote players when the action was performed
+   * (renderTime = estimatedServerNow − interpolationDelay). The server
+   * rewinds its transform history to this exact time (clamped to a hard
+   * safety window) so hits match what the shooter actually aimed at.
+   * Absent/aberrant values fall back to a fixed conservative rewind.
+   */
+  vt?: number;
   /** Fire origin (eye position) — sanity-validated against the transform. */
   ox?: number;
   oy?: number;

@@ -1332,6 +1332,40 @@ body {
   font-size: 11px;
 }
 
+/* Ping column: hidden in LOCAL mode (bots have no ping); MULTIPLAYER adds
+   .with-ping on the panel which widens the grid and reveals the column. */
+.lb-ping {
+  display: none;
+  text-align: right;
+  padding-right: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(196, 181, 253, 0.7);
+}
+
+#leaderboard-hud.with-ping #leaderboard-header,
+#leaderboard-hud.with-ping .lb-row {
+  grid-template-columns: 16px 28px 1fr 22px 22px 22px 34px;
+}
+
+#leaderboard-hud.with-ping .lb-ping {
+  display: block;
+}
+
+/* Glanceable ping quality (consistent with the HUD palette — soft, never loud). */
+.lb-ping.good {
+  color: #35e07c;
+}
+.lb-ping.ok {
+  color: #e0b23c;
+}
+.lb-ping.bad {
+  color: #e07b3c;
+}
+.lb-ping.awful {
+  color: #e04848;
+}
+
 .lb-name {
   overflow: hidden;
   white-space: nowrap;
@@ -1519,4 +1553,80 @@ body {
     opacity: 0;
     transform: scale(0.5);
   }
+}
+
+/* ==========================================================================
+   F1 — Multiplayer Network Debug HUD (diagnostic overlay, multiplayer only)
+   ========================================================================== */
+#network-debug-hud {
+  position: fixed;
+  top: 64px;
+  left: 12px;
+  width: 320px;
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: rgba(8, 5, 16, 0.88);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  border-radius: 8px;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #cfc4ea;
+  pointer-events: none;
+  z-index: 25;
+}
+
+#network-debug-hud.hidden {
+  display: none;
+}
+
+#network-debug-hud .ndh-title {
+  font-family: "Orbitron", sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 3px;
+  color: #c084fc;
+  text-align: center;
+  margin-bottom: 6px;
+  text-shadow: 0 0 8px rgba(168, 85, 247, 0.55);
+}
+
+#network-debug-hud .ndh-section {
+  margin: 8px 0 3px;
+  padding-bottom: 2px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: rgba(192, 132, 252, 0.9);
+  border-bottom: 1px solid rgba(168, 85, 247, 0.25);
+}
+
+#network-debug-hud .ndh-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#network-debug-hud .ndh-label {
+  color: rgba(196, 181, 253, 0.6);
+  white-space: nowrap;
+}
+
+#network-debug-hud .ndh-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #e9e2f7;
+}
+
+#network-debug-hud .ndh-warn {
+  color: #f6a13c;
+  font-weight: 700;
+}
+
+#network-debug-hud .ndh-anomaly {
+  color: #e0b23c;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

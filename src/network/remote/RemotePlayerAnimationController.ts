@@ -2,7 +2,6 @@ import * as THREE from "three";
 import { NetworkMovementState } from "../NetworkMovementState";
 import { RemoteInterpolationConfig as cfg } from "../interpolation/RemoteInterpolationConfig";
 import { MovementConfig as moveCfg } from "../../player/MovementConfig";
-import { JUMP_DEBUG } from "../RemotePlayerManager";
 
 /**
  * Shared animation clips for the remote character. Loaded/derived ONCE
@@ -263,11 +262,6 @@ export class RemotePlayerAnimationController {
       if (this.current.time >= clip.duration * holdFrac) {
         this.current.time = clip.duration * holdFrac;
         this.current.paused = true;
-        if (JUMP_DEBUG) {
-          console.log(
-            `[ANIM] hold-pause ${this.current === this.actions.jump ? "jump" : "slide"} at t=${this.current.time.toFixed(2)}s`,
-          );
-        }
       }
     }
 
@@ -357,20 +351,6 @@ export class RemotePlayerAnimationController {
     // Landing must read INSTANTLY on other clients: leaving the airborne
     // pose toward any grounded state uses the snappiest safe fade.
     if (this.current === this.actions.jump && fade > LANDING_FADE) fade = LANDING_FADE;
-
-    if (JUMP_DEBUG) {
-      const nameOf = (a: THREE.AnimationAction): string =>
-        a === this.actions.idle
-          ? "idle"
-          : a === this.actions.run
-            ? "run"
-            : a === this.actions.jump
-              ? "jump"
-              : "slide";
-      console.log(
-        `[ANIM] state=${state} ${nameOf(this.current)} -> ${nameOf(next)} fade=${fade}`,
-      );
-    }
 
     // Restart the incoming action then crossfade — supports rapid
     // slide-hop chains (SLIDE→AIR→RUN→SLIDE…) without T-poses or a stuck

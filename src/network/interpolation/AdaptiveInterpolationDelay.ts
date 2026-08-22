@@ -41,6 +41,8 @@ export class AdaptiveInterpolationDelay {
   private gapEnvelopeMs = 1000 / 30;
   /** Currently applied delay (ms) — starts at the static default. */
   private currentDelayMs: number = cfg.interpolationDelayMs;
+  /** Last computed TARGET delay (ms) — diagnostic for the debug HUD. */
+  private targetDelayMsValue: number = cfg.interpolationDelayMs;
 
   /**
    * Feed one FRESH stored snapshot (never duplicates — the caller only
@@ -96,6 +98,7 @@ export class AdaptiveInterpolationDelay {
       cfg.adaptiveDelayMinMs,
       cfg.adaptiveDelayMaxMs,
     );
+    this.targetDelayMsValue = target;
 
     if (target > this.currentDelayMs) {
       // Raise FAST: jitter just happened — protect the next frames now.
@@ -118,11 +121,32 @@ export class AdaptiveInterpolationDelay {
     return this.currentDelayMs;
   }
 
+  /** Last computed TARGET delay (ms) — for the debug HUD. */
+  get targetDelayMs(): number {
+    return this.targetDelayMsValue;
+  }
+
+  /** Smoothed average snapshot gap (ms) — for the debug HUD. */
+  get averageGapMs(): number {
+    return this.avgGapMs;
+  }
+
+  /** Decaying MAX of recent snapshot gaps (ms) — for the debug HUD. */
+  get maxGapMs(): number {
+    return this.gapEnvelopeMs;
+  }
+
+  /** Decaying max arrival lateness (ms) — for the debug HUD. */
+  get jitterMs(): number {
+    return this.jitterEnvelopeMs;
+  }
+
   reset(): void {
     this.jitterEnvelopeMs = 0;
     this.avgGapMs = 1000 / 30;
     this.gapEnvelopeMs = 1000 / 30;
     this.currentDelayMs = cfg.interpolationDelayMs;
+    this.targetDelayMsValue = cfg.interpolationDelayMs;
   }
 }
 

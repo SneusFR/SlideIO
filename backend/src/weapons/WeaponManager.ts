@@ -29,8 +29,29 @@ export const SERVER_ACTION_OBLITERREUR_STOP = "OBLITERREUR_STOP";
 /** Client aim refresh for the continuous plasma beam (low rate). */
 export const ACTION_PLASMA_AIM = "PLASMA_AIM";
 
-/** Fixed rewind used to reconstruct target positions at fire time (ms). */
-const LAG_COMP_MS = 120;
+/**
+ * FALLBACK rewind when an action carries no (or an aberrant) viewTime —
+ * old clients / malformed packets still get a conservative estimate of
+ * "what the shooter saw" (ms).
+ */
+const LAG_COMP_FALLBACK_MS = 120;
+/**
+ * HARD CAP on the client-requested rewind (ms). The shooter's viewTime
+ * legitimately trails the server by ≈ RTT + interpolation delay; anything
+ * far beyond that is clamped so a client can never ask the server to
+ * resurrect very old positions. NOTE: this clamp is a safety net, NOT a
+ * complete anti-cheat.
+ */
+const LAG_COMP_MAX_REWIND_MS = 350;
+/** viewTime outside this plausibility window is treated as ABSENT (ms). */
+const LAG_COMP_ABERRANT_FUTURE_MS = 1000;
+const LAG_COMP_ABERRANT_PAST_MS = 5000;
+/**
+ * History spans larger than this are idle-suppression gaps (the sender
+ * stood still and sent nothing): the player truly WAS at the older
+ * position for the whole gap — hold it instead of lerping across.
+ */
+const HISTORY_LERP_MAX_SPAN_MS = 250;
 /** Transform history retention (ms). */
 const HISTORY_MS = 1000;
 /** Fire origin must be within this distance of the player transform. */
@@ -59,6 +80,9 @@ class PlayerWeaponState {
   plasmaSince = 0;
   plasmaDir: Vec3 = { x: 0, y: 0, z: -1 };
   plasmaOrigin: Vec3 | null = null;
+  /** Shooter view delay (now − viewTime) refreshed by START/AIM — the
+   *  continuous beam tick rewinds targets by this amount every tick. */
+  plasmaViewDelayMs = LAG_COMP_FALLBACK_MS;
   // Revolver
   revolverAmmo = W.revolver.capacity;
   lastRevolverShotAt = 0;
@@ -144,32 +168,69 @@ export class WeaponManager {
     while (h.length > 0 && now - h[0].t > HISTORY_MS) h.shift();
   }
 
-  /** Targets rewound ~LAG_COMP_MS into the past (alive players only). */
-  private rewindTargets(excludeId: string): HitTarget[] {
-    const t = this.host.now() - LAG_COMP_MS;
+  /**
+   * Resolve the rewind timestamp for one action:
+   *  - client-declared viewTime (`vt`) when plausible, HARD-CLAMPED to
+   *    [now − LAG_COMP_MAX_REWIND_MS, now];
+   *  - aberrant / missing values → fixed conservative fallback.
+   */
+  private resolveRewindTime(msg: WeaponActionMessage): number {
+    const now = this.host.now();
+    const vt = fin(msg.vt);
+    if (
+      vt === null ||
+      vt > now + LAG_COMP_ABERRANT_FUTURE_MS ||
+      vt < now - LAG_COMP_ABERRANT_PAST_MS
+    ) {
+      return now - LAG_COMP_FALLBACK_MS;
+    }
+    return Math.min(now, Math.max(now - LAG_COMP_MAX_REWIND_MS, vt));
+  }
+
+  /**
+   * Position of one player at `t` (server ms) from its transform history:
+   * INTERPOLATED between the two bracketing entries (never sample-and-hold
+   * inside normal send spacing). Idle-suppression gaps hold the OLDER
+   * entry — the sender truly stood there for the whole silent window.
+   */
+  private historyPositionAt(p: NetworkPlayer, t: number): Vec3 {
+    const h = this.history.get(p.id);
+    if (!h || h.length === 0) return { x: p.x, y: p.y, z: p.z };
+    const first = h[0];
+    if (t <= first.t) return { x: first.x, y: first.y, z: first.z };
+    const last = h[h.length - 1];
+    if (t >= last.t) return { x: last.x, y: last.y, z: last.z };
+    for (let i = h.length - 1; i >= 1; i--) {
+      if (h[i - 1].t <= t) {
+        const a = h[i - 1];
+        const b = h[i];
+        const span = b.t - a.t;
+        // Idle-suppression gap: hold the older sample (see constant doc).
+        if (span > HISTORY_LERP_MAX_SPAN_MS) return { x: a.x, y: a.y, z: a.z };
+        const k = span > 0 ? (t - a.t) / span : 1;
+        return {
+          x: a.x + (b.x - a.x) * k,
+          y: a.y + (b.y - a.y) * k,
+          z: a.z + (b.z - a.z) * k,
+        };
+      }
+    }
+    return { x: first.x, y: first.y, z: first.z };
+  }
+
+  /**
+   * Targets rewound to `rewindTime` (alive players only). When omitted,
+   * uses the conservative fallback rewind.
+   */
+  private rewindTargets(excludeId: string, rewindTime?: number): HitTarget[] {
+    const t = rewindTime ?? this.host.now() - LAG_COMP_FALLBACK_MS;
     const targets: HitTarget[] = [];
     for (const p of this.host.players()) {
       if (!p.isAlive || p.id === excludeId) continue;
       // A burrowed MOLE STRIKE player is untargetable — rays pass through.
       if (this.states.get(p.id)?.burrowed) continue;
-      const h = this.history.get(p.id);
-      let x = p.x;
-      let y = p.y;
-      let z = p.z;
-      if (h && h.length > 0) {
-        let best = h[h.length - 1];
-        for (let i = h.length - 1; i >= 0; i--) {
-          if (h[i].t <= t) {
-            best = h[i];
-            break;
-          }
-          best = h[i];
-        }
-        x = best.x;
-        y = best.y;
-        z = best.z;
-      }
-      targets.push({ id: p.id, x, y, z });
+      const pos = this.historyPositionAt(p, t);
+      targets.push({ id: p.id, x: pos.x, y: pos.y, z: pos.z });
     }
     return targets;
   }
@@ -215,25 +276,27 @@ export class WeaponManager {
         s.plasmaSince = this.host.now();
         s.plasmaOrigin = origin;
         s.plasmaDir = dir;
+        s.plasmaViewDelayMs = this.host.now() - this.resolveRewindTime(msg);
         this.confirm(player, s.weapon, action, seq, origin, dir);
         return;
       case ACTION_PLASMA_AIM:
         if (!s.plasmaActive || !origin || !dir) return;
         s.plasmaOrigin = origin;
         s.plasmaDir = dir;
+        s.plasmaViewDelayMs = this.host.now() - this.resolveRewindTime(msg);
         return; // aim refresh is silent (remotes follow the transform)
       case WeaponActionType.PLASMA_STOP:
         if (!s.plasmaActive) return;
         this.stopPlasma(player, s, seq);
         return;
       case WeaponActionType.REVOLVER_FIRE:
-        this.handleRevolverFire(player, s, seq, origin, dir);
+        this.handleRevolverFire(player, s, seq, origin, dir, this.resolveRewindTime(msg));
         return;
       case WeaponActionType.REVOLVER_THROW:
         this.handleRevolverThrow(player, s, seq, origin, dir);
         return;
       case WeaponActionType.HAMMER_SWEEP:
-        this.handleMeleeSweep(player, s, seq, origin, dir, NetworkWeaponId.HAMMER);
+        this.handleMeleeSweep(player, s, seq, origin, dir, NetworkWeaponId.HAMMER, this.resolveRewindTime(msg));
         return;
       case WeaponActionType.HAMMER_SLAM_START:
         if (!origin || !dir) return;
@@ -243,7 +306,7 @@ export class WeaponManager {
         this.handleSlamImpact(player, s, seq, msg);
         return;
       case WeaponActionType.SPEAR_SWEEP:
-        this.handleMeleeSweep(player, s, seq, origin, dir, NetworkWeaponId.SPEAR);
+        this.handleMeleeSweep(player, s, seq, origin, dir, NetworkWeaponId.SPEAR, this.resolveRewindTime(msg));
         return;
       case WeaponActionType.SPEAR_RUSH_START:
         this.handleSpearRushStart(player, s, seq, origin, dir);
@@ -300,7 +363,10 @@ export class WeaponManager {
     origin.x = player.x;
     origin.z = player.z;
     origin.y = player.y + PLAYER_EYE_OFFSET;
-    const hit = hitscan(origin, s.plasmaDir, W.plasma.range, this.rewindTargets(player.id), player.id);
+    // Rewind by the shooter's DECLARED view delay (refreshed on START/AIM,
+    // already hard-clamped) so the beam hits what the shooter sees.
+    const rewindTime = now - Math.min(s.plasmaViewDelayMs, LAG_COMP_MAX_REWIND_MS);
+    const hit = hitscan(origin, s.plasmaDir, W.plasma.range, this.rewindTargets(player.id, rewindTime), player.id);
     if (!hit || hit.kind !== "player" || !hit.targetId) return;
 
     const zone = hit.zone === NetworkHitZone.HEAD ? HitZone.HEAD : HitZone.BODY;
@@ -315,6 +381,7 @@ export class WeaponManager {
     seq: number,
     origin: Vec3 | null,
     dir: Vec3 | null,
+    rewindTime?: number,
   ): void {
     if (s.weapon !== NetworkWeaponId.REVOLVER || !origin || !dir) return;
     const now = this.host.now();
@@ -326,7 +393,7 @@ export class WeaponManager {
     s.lastRevolverShotAt = now;
     s.revolverAmmo--;
 
-    const hit = hitscan(origin, dir, W.revolver.range, this.rewindTargets(player.id), player.id);
+    const hit = hitscan(origin, dir, W.revolver.range, this.rewindTargets(player.id, rewindTime), player.id);
     const hitPoint = hit ? hit.point : pointAt(origin, dir, W.revolver.range);
     this.confirm(player, s.weapon, WeaponActionType.REVOLVER_FIRE, seq, origin, dir, hitPoint);
 
@@ -431,6 +498,7 @@ export class WeaponManager {
     origin: Vec3 | null,
     dir: Vec3 | null,
     weapon: NetworkWeaponId.HAMMER | NetworkWeaponId.SPEAR,
+    rewindTime?: number,
   ): void {
     if (!origin || !dir) return;
     const cfg = weapon === NetworkWeaponId.HAMMER ? W.hammer : W.spear;
@@ -445,7 +513,7 @@ export class WeaponManager {
     // Melee volume: horizontal arc in front of the attacker.
     const cosHalfArc = Math.cos(((cfg.sweepArcDegrees / 2) * Math.PI) / 180);
     const flatDir = normalize({ x: dir.x, y: 0, z: dir.z }) ?? { x: 0, y: 0, z: -1 };
-    for (const target of this.rewindTargets(player.id)) {
+    for (const target of this.rewindTargets(player.id, rewindTime)) {
       const t = this.host.getPlayer(target.id);
       if (!t || !t.isAlive) continue;
       const dx = target.x - player.x;

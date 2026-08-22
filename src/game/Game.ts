@@ -53,6 +53,7 @@ import { MedalHUD } from "../ui/MedalHUD";
 import { ComboHUD } from "../ui/ComboHUD";
 import { MatchStatsManager } from "../stats/MatchStatsManager";
 import { LeaderboardHUD } from "../ui/LeaderboardHUD";
+import { NetworkDebugHUD } from "../ui/NetworkDebugHUD";
 import { MultiplayerGameController } from "../network/MultiplayerGameController";
 import type { MultiplayerClient } from "../network/MultiplayerClient";
 import { KillMethod } from "../combat/KillMethod";
@@ -144,6 +145,8 @@ export class Game {
 
   /** Non-null while running in MULTIPLAYER mode (Phase 2 transform sync). */
   private multiplayer: MultiplayerGameController | null = null;
+  /** F1 network diagnostic overlay (multiplayer sessions only). */
+  private netDebugHud: NetworkDebugHUD | null = null;
   /** The raw client, kept for weapon equip/action sends (Phase 5). */
   private multiplayerClient: MultiplayerClient | null = null;
   private playerCombatant: PlayerCombatant;
@@ -762,10 +765,17 @@ export class Game {
     this.wrapNetworkWeaponCallbacks();
     // Tell the server which primary we start with.
     this.sendNetworkEquip(true);
+
+    // F1 — Network Debug HUD (diagnostics for real Internet sessions).
+    this.netDebugHud = new NetworkDebugHUD(() =>
+      this.multiplayer ? this.multiplayer.getNetworkDebugReport() : null,
+    );
   }
 
   /** Tear down the multiplayer session (leave game / connection lost). */
   disableMultiplayer(): void {
+    this.netDebugHud?.dispose();
+    this.netDebugHud = null;
     this.multiplayer?.dispose();
     this.multiplayer = null;
     this.multiplayerClient = null;
@@ -1018,6 +1028,7 @@ export class Game {
     // Multiplayer (Phase 2): remote avatars + fixed-rate transform send.
     // Runs its own network accumulator — never one send per render frame.
     this.multiplayer?.update(dt);
+    this.netDebugHud?.update(dt); // F1 overlay (throttled; free when hidden)
     this.netAttackerAge += dt; // network damage-direction memory decays
 
     this.renderer.render(this.scene, this.fpsCamera.camera);
@@ -1304,6 +1315,10 @@ export class Game {
     const cam = this.fpsCamera.camera;
     cam.getWorldPosition(this.netOrigin);
     cam.getWorldDirection(this.netDir);
+    // VIEW TIME: the server-clock timestamp at which remote players are
+    // DISPLAYED right now — the server rewinds its hit history to this
+    // exact moment (clamped), so hits match what this player sees.
+    const vt = this.multiplayer.getViewTimestamp();
     this.multiplayerClient.sendWeaponAction(action, {
       ox: this.netOrigin.x,
       oy: this.netOrigin.y,
@@ -1313,6 +1328,7 @@ export class Game {
       dz: this.netDir.z,
       ...(extraPoint ? { px: extraPoint.x, py: extraPoint.y, pz: extraPoint.z } : {}),
       ...(pointIndex !== undefined ? { pi: pointIndex } : {}),
+      ...(vt !== null ? { vt } : {}),
     });
   }
 

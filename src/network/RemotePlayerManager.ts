@@ -24,13 +24,6 @@ import runClipUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_Wa
 import jumpClipUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_Regular_Jump_withSkin.glb?url";
 import slideClipUrl from "../assets/Meshy_AI_Neon_Void_Sentinel_biped_Animation_slide_right_withSkin.glb?url";
 
-/**
- * TEMP DEBUG (remote jump investigation) — set to false to silence.
- * [SNAP] = stored snapshots (with real gaps), [RVIS] = per-frame visual
- * state of the remote avatar during/after AIRBORNE.
- */
-export const JUMP_DEBUG = true;
-
 /** Capsule center → feet distance (model root sits at the feet). */
 const FEET_OFFSET = moveCfg.standHalfHeight + moveCfg.capsuleRadius;
 /** Visual character height (matches the local capsule: 2 × feetOffset). */
@@ -46,6 +39,27 @@ const HEALTHBAR_WIDTH = 0.62;
 const HEALTHBAR_THICKNESS = 0.055;
 /** Visual-only easing speed of the health bar fill (logic is never delayed). */
 const HEALTHBAR_EASE = 10;
+
+// ---- Recovery smoothing (visual error offset — see RemotePlayer.update) ----
+/** Sampled-position jump (m) above which the recovery offset engages. */
+const CORRECTION_MIN_JUMP = 0.35;
+/** Exponential decay rate of the visual error offset (1/s). ~16 → the
+ *  offset is fully resorbed in ≈150 ms — brief enough that the displayed
+ *  position converges to the exact renderTime position the SERVER rewinds
+ *  to (the shooter's view and the hit validation stay coherent). */
+const CORRECTION_DECAY_RATE = 16;
+/** Offsets below this magnitude are cleared (m). */
+const CORRECTION_EPSILON = 0.02;
+
+// ---- Anomaly detection thresholds (debug HUD + dev-only console) ----
+/** Snapshot server-ts gap considered anomalous (ms). */
+const ANOMALY_SNAP_GAP_MS = 100;
+/** Extrapolation episode reported above this duration (ms). */
+const ANOMALY_EXTRAP_MS = 60;
+/** Max entries kept in the anomaly history (ring). */
+const ANOMALY_HISTORY_MAX = 30;
+/** Min interval between dev console anomaly logs (ms) — never spam. */
+const ANOMALY_CONSOLE_THROTTLE_MS = 500;
 
 // ---- Shared, cached character asset (load once → clone per player) ----
 interface CharacterAsset {
@@ -151,6 +165,76 @@ function stripHipsRootMotion(
   }
 }
 
+// ---------------------------------------------------------------------
+// Network debug data shapes (consumed by the F1 NetworkDebugHUD)
+// ---------------------------------------------------------------------
+
+/** One timestamped anomaly entry (ring buffer — newest last). */
+export interface NetworkAnomaly {
+  /** Wall-clock ms (Date.now) — formatted by the HUD. */
+  at: number;
+  text: string;
+}
+
+/** Per-remote diagnostic values (one row per remote player in the HUD). */
+export interface RemotePlayerNetDebug {
+  id: string;
+  name: string;
+  pingMs: number;
+  lastSeq: number;
+  lastSeqGap: number;
+  seqGapTotal: number;
+  /** Age of the NEWEST stored snapshot vs estimated server now (ms). */
+  snapshotAgeMs: number;
+  /** Local wall-clock spacing between the last two stored snapshots (ms). */
+  lastArrivalGapMs: number;
+  /** Server-timestamp spacing between the last two snapshots (ms). */
+  lastSnapGapMs: number;
+  /** Decaying max of recent server-ts snapshot gaps (ms). */
+  maxSnapGapMs: number;
+  /** Smoothed snapshot receive rate (Hz). */
+  rateHz: number;
+  buffer: number;
+  state: string;
+  interpolating: boolean;
+  extrapolating: boolean;
+  extrapolatedMs: number;
+  /** Magnitude of the ACTIVE visual recovery offset (m). */
+  correctionM: number;
+  rawY: number;
+  interpY: number;
+  visualY: number;
+  vx: number;
+  vy: number;
+  vz: number;
+}
+
+/** Full report assembled per HUD refresh (never per frame when hidden). */
+export interface NetworkDebugReport {
+  remotePlayers: number;
+  interpDelayMs: number;
+  targetDelayMs: number;
+  avgGapMs: number;
+  maxGapMs: number;
+  jitterMs: number;
+  serverNow: number;
+  renderTime: number;
+  players: RemotePlayerNetDebug[];
+  anomalies: NetworkAnomaly[];
+}
+
+/** Human-readable movement state (debug HUD). */
+function movementStateName(s: NetworkMovementState): string {
+  switch (s) {
+    case NetworkMovementState.RUNNING: return "RUNNING";
+    case NetworkMovementState.AIRBORNE: return "AIRBORNE";
+    case NetworkMovementState.SLIDING: return "SLIDING";
+    case NetworkMovementState.DASHING: return "DASHING";
+    case NetworkMovementState.BURROWED: return "BURROWED";
+    default: return "IDLE";
+  }
+}
+
 /**
  * One remote player's visual representation (Phase 3):
  *
@@ -177,12 +261,21 @@ class RemotePlayer {
   lastYaw = 0;
   lastPitch = 0;
 
+  // ---- Network instrumentation (per remote — fed on snapshot arrival) ----
+  lastSeq = -1;
+  lastSeqGap = 0;
+  seqGapTotal = 0;
+  lastArrivalAt = 0; // performance.now() of the last STORED snapshot
+  lastArrivalGapMs = 0;
+  lastSnapGapMs = 0;
+  maxSnapGapMs = 0; // decaying max (decayed in update)
+  rateHz = 0; // EMA of the snapshot receive rate
+  lastExtrapolatedMs = 0;
+  /** Extrapolation episode tracking (report once per episode, at the max). */
+  private extrapEpisodeMaxMs = 0;
+  private extrapEpisodeActive = false;
+
   private readonly anim: RemotePlayerAnimationController;
-  /** TEMP DEBUG: model root + hips bone for the [RVIS] jump logs. */
-  private readonly modelRef: THREE.Object3D;
-  private readonly hipsBone: THREE.Object3D | null;
-  private readonly hipsScratch = new THREE.Vector3();
-  private debugLogUntil = 0;
   private readonly sample: SampledPlayerState = {
     x: 0,
     y: 0,
@@ -195,11 +288,21 @@ class RemotePlayer {
     movementState: NetworkMovementState.IDLE,
     teleported: false,
     extrapolating: false,
+    extrapolatedMs: 0,
   };
+  /** Last sampled state (for debug rows without re-sampling). */
+  lastSample: SampledPlayerState = { ...this.sample };
   private hasVisual = false;
   private nametagTexture: THREE.CanvasTexture | null = null;
   private nametagMaterial: THREE.SpriteMaterial | null = null;
   private debugMarker: THREE.Mesh | null = null;
+
+  // ---- Recovery smoothing: brief visual error offset after a stall ----
+  /** Displayed = sampled + offset; the offset decays to zero in ~150 ms. */
+  private readonly correctionOffset = new THREE.Vector3();
+  /** Sampled position of the PREVIOUS frame (discontinuity detection). */
+  private readonly prevSampled = new THREE.Vector3();
+  private hasPrevSampled = false;
 
   // ---- Server-driven health bar (Phase 4) ----
   private healthBarBg: THREE.Sprite | null = null;
@@ -212,6 +315,8 @@ class RemotePlayer {
     readonly sessionId: string,
     readonly name: string,
     asset: CharacterAsset,
+    /** Anomaly sink (owned by the manager — ring buffer + dev console). */
+    private readonly onAnomaly: (text: string) => void,
   ) {
     // SkeletonUtils clone: required for skinned meshes (shares geometry /
     // materials / textures with the cached template — cheap per player).
@@ -220,8 +325,6 @@ class RemotePlayer {
     model.position.y = -FEET_OFFSET;
     this.group.add(model);
     this.group.visible = false; // hidden until the first snapshot arrives
-    this.modelRef = model.children[0] ?? model; // inner model (has the rest Y offset)
-    this.hipsBone = model.getObjectByName("Hips") ?? null;
 
     this.anim = new RemotePlayerAnimationController(model, -FEET_OFFSET, asset.clips);
     this.weapons = new RemoteWeaponController(model);
@@ -235,6 +338,39 @@ class RemotePlayer {
         new THREE.SphereGeometry(0.12, 8, 8),
         new THREE.MeshBasicMaterial({ color: 0xff2244 }),
       );
+    }
+  }
+
+  /**
+   * Instrumentation: called for every STORED snapshot (never duplicates).
+   * Detects sequence gaps (client send lost OR patch coalescing) and
+   * abnormal server-ts spacing — the two signatures that distinguish
+   * "the sender never sent" from "Colyseus merged two sends".
+   */
+  noteStoredSnapshot(seq: number, snapGapMs: number | null): void {
+    const nowMs = performance.now();
+    if (this.lastArrivalAt > 0) this.lastArrivalGapMs = nowMs - this.lastArrivalAt;
+    this.lastArrivalAt = nowMs;
+    if (this.lastArrivalGapMs > 0) {
+      const instRate = 1000 / this.lastArrivalGapMs;
+      this.rateHz = this.rateHz === 0 ? instRate : this.rateHz + (instRate - this.rateHz) * 0.1;
+    }
+
+    if (this.lastSeq >= 0 && seq > this.lastSeq + 1) {
+      this.lastSeqGap = seq - this.lastSeq - 1;
+      this.seqGapTotal += this.lastSeqGap;
+      this.onAnomaly(`${this.name}: seq gap +${this.lastSeqGap} (→${seq})`);
+    } else {
+      this.lastSeqGap = 0;
+    }
+    this.lastSeq = seq;
+
+    if (snapGapMs !== null && snapGapMs > 0) {
+      this.lastSnapGapMs = snapGapMs;
+      if (snapGapMs > this.maxSnapGapMs) this.maxSnapGapMs = snapGapMs;
+      if (snapGapMs > ANOMALY_SNAP_GAP_MS) {
+        this.onAnomaly(`${this.name}: snapshot gap ${Math.round(snapGapMs)}ms`);
+      }
     }
   }
 
@@ -263,6 +399,8 @@ class RemotePlayer {
   prepareRespawn(): void {
     this.buffer.clear();
     this.hasVisual = false;
+    this.hasPrevSampled = false;
+    this.correctionOffset.set(0, 0, 0);
     this.alive = true;
     this.group.visible = false; // shown again on the first fresh snapshot
     this.healthRatioShown = 1; // full bar instantly — no dead→full easing
@@ -270,23 +408,86 @@ class RemotePlayer {
   }
 
   /** Sample the buffer at renderTime (server ms) and drive visuals. */
-  update(dt: number, renderTime: number, delayMs = 0): void {
+  update(dt: number, renderTime: number): void {
     // Dead: stay hidden, don't animate — respawn resets everything.
     if (!this.alive) return;
     this.updateHealthBar(dt);
     this.weapons.update(dt);
+    // Decaying max of snapshot gaps (a calm minute clears an old spike).
+    this.maxSnapGapMs = Math.max(0, this.maxSnapGapMs - 20 * dt);
+
     if (!this.buffer.sample(renderTime, this.sample)) return;
     const s = this.sample;
     this.extrapolating = s.extrapolating;
+    this.lastExtrapolatedMs = s.extrapolatedMs;
+    // Copy for the debug HUD (cheap primitive copies, no allocation).
+    Object.assign(this.lastSample, s);
+
+    // ---- Extrapolation episode tracking (one anomaly per episode) ----
+    if (s.extrapolating && s.extrapolatedMs > ANOMALY_EXTRAP_MS) {
+      this.extrapEpisodeActive = true;
+      if (s.extrapolatedMs > this.extrapEpisodeMaxMs) this.extrapEpisodeMaxMs = s.extrapolatedMs;
+    } else if (this.extrapEpisodeActive && !s.extrapolating) {
+      this.onAnomaly(`${this.name}: extrapolation ${Math.round(this.extrapEpisodeMaxMs)}ms`);
+      this.extrapEpisodeActive = false;
+      this.extrapEpisodeMaxMs = 0;
+    }
 
     if (!this.hasVisual || s.teleported) {
-      // First snapshot or teleport-distance jump (respawn / anomaly):
-      // SNAP — never lerp across the map for seconds.
+      // First snapshot or teleport-distance jump (respawn / legitimate
+      // relocation): SNAP instantly — never glide across the map.
       this.group.position.set(s.x, s.y, s.z);
+      this.correctionOffset.set(0, 0, 0);
       this.hasVisual = true;
     } else {
-      this.group.position.set(s.x, s.y, s.z);
+      // ---- RECOVERY SMOOTHING (visual only, coherent with the rewind) --
+      // After a data stall (freeze → burst) the sampled position can jump
+      // several meters in one frame. Instead of a hard visual snap, keep a
+      // small ERROR OFFSET that decays in ~150 ms: the avatar glides onto
+      // its exact renderTime position. The offset engages ONLY on a real
+      // discontinuity and never crosses the teleport threshold — respawns
+      // and legitimate teleports still snap instantly above.
+      if (this.hasPrevSampled) {
+        const jumpX = s.x - this.prevSampled.x;
+        const jumpY = s.y - this.prevSampled.y;
+        const jumpZ = s.z - this.prevSampled.z;
+        const jump = Math.sqrt(jumpX * jumpX + jumpY * jumpY + jumpZ * jumpZ);
+        const speed = Math.sqrt(
+          s.velocityX * s.velocityX + s.velocityY * s.velocityY + s.velocityZ * s.velocityZ,
+        );
+        // Expected per-frame travel + margin: anything far beyond it is a
+        // timeline discontinuity (stall recovery / clock catch-up).
+        const expected = Math.max(CORRECTION_MIN_JUMP, speed * dt * 4 + 0.25);
+        if (jump > expected && jump < icfg.teleportThreshold) {
+          this.correctionOffset.set(
+            this.group.position.x - s.x,
+            this.group.position.y - s.y,
+            this.group.position.z - s.z,
+          );
+          this.onAnomaly(`${this.name}: correction ${jump.toFixed(1)}m`);
+        } else if (jump >= icfg.teleportThreshold) {
+          // Too large to smooth — snap (mirrors the teleport rule).
+          this.correctionOffset.set(0, 0, 0);
+        }
+      }
+
+      // Decay the offset toward zero (visual convergence to renderTime).
+      if (this.correctionOffset.lengthSq() > 0) {
+        const decay = Math.exp(-dt * CORRECTION_DECAY_RATE);
+        this.correctionOffset.multiplyScalar(decay);
+        if (this.correctionOffset.lengthSq() < CORRECTION_EPSILON * CORRECTION_EPSILON) {
+          this.correctionOffset.set(0, 0, 0);
+        }
+      }
+
+      this.group.position.set(
+        s.x + this.correctionOffset.x,
+        s.y + this.correctionOffset.y,
+        s.z + this.correctionOffset.z,
+      );
     }
+    this.prevSampled.set(s.x, s.y, s.z);
+    this.hasPrevSampled = true;
 
     // MOLE STRIKE: a burrowed player is UNDERGROUND — the whole avatar
     // (model + nametag + health bar) disappears; the position keeps
@@ -315,32 +516,11 @@ class RemotePlayer {
       const newest = this.buffer.newest;
       if (newest) this.debugMarker.position.set(newest.x, newest.y, newest.z);
     }
+  }
 
-    // ---- TEMP DEBUG: [RVIS] per-frame visual state during jumps ----
-    if (JUMP_DEBUG) {
-      const airborne = s.movementState === NetworkMovementState.AIRBORNE;
-      const nowMs = performance.now();
-      if (airborne || s.extrapolating) this.debugLogUntil = nowMs + 400;
-      if (airborne || s.extrapolating || nowMs < this.debugLogUntil) {
-        const newest = this.buffer.newest;
-        const ahead = newest ? (renderTime - newest.timestamp).toFixed(0) : "?";
-        const hipsY = this.hipsBone
-          ? this.hipsBone.getWorldPosition(this.hipsScratch).y.toFixed(2)
-          : "?";
-        console.log(
-          `[RVIS ${this.sessionId.slice(0, 4)}]`,
-          `st=${s.movementState}`,
-          `ext=${s.extrapolating ? 1 : 0}`,
-          `ahead=${ahead}`,
-          `delay=${delayMs.toFixed(0)}`,
-          `buf=${this.buffer.count}`,
-          `gY=${this.group.position.y.toFixed(2)}`,
-          `vy=${s.velocityY.toFixed(2)}`,
-          `mY=${this.modelRef.position.y.toFixed(2)}`,
-          `hipsY=${hipsY}`,
-        );
-      }
-    }
+  /** Magnitude of the currently active recovery offset (m, debug HUD). */
+  get correctionMagnitude(): number {
+    return this.correctionOffset.length();
   }
 
   attachDebugMarker(scene: THREE.Scene): void {
@@ -453,7 +633,11 @@ class RemotePlayer {
  * buffer, leave → clean removal. The LOCAL player is always excluded.
  *
  * PHASE 3: remote transforms flow through SNAPSHOT INTERPOLATION —
- * network rate (~20 Hz) is fully decoupled from the render rate.
+ * network rate (~30 Hz) is fully decoupled from the render rate.
+ *
+ * INGESTION: sync() must be called from the PER-PATCH hook
+ * (MultiplayerClient.onStatePatched) so every intermediate transform is
+ * stored even when several patches arrive between two render frames.
  */
 export class RemotePlayerManager {
   private readonly remotes = new Map<string, RemotePlayer>();
@@ -461,6 +645,12 @@ export class RemotePlayerManager {
   /** Measured snapshot rate + jitter → lowest SAFE interpolation delay. */
   private readonly adaptiveDelay = new AdaptiveInterpolationDelay();
   private asset: CharacterAsset | null = null;
+  /** Latest ping per remote (from the synced state — HUD display only). */
+  private readonly pings = new Map<string, number>();
+
+  // ---- Anomaly history (ring buffer for the F1 debug HUD) ----
+  private readonly anomalies: NetworkAnomaly[] = [];
+  private lastAnomalyConsoleAt = 0;
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -473,6 +663,10 @@ export class RemotePlayerManager {
    * Reconcile avatars with the latest network state: spawns joiners,
    * pushes fresh snapshots (stale sequences rejected in the buffer),
    * removes leavers. Keyed strictly by sessionId.
+   *
+   * Called on EVERY state patch (not per render frame) — duplicates are
+   * rejected by the per-player sequence, so calling it more often only
+   * improves capture, never corrupts it.
    */
   sync(players: NetworkPlayerInfo[], localSessionId: string | null): void {
     if (!this.asset) return;
@@ -481,10 +675,11 @@ export class RemotePlayerManager {
     for (const p of players) {
       if (p.id === localSessionId) continue; // never an avatar for yourself
       seen.add(p.id);
+      this.pings.set(p.id, p.pingMs);
 
       let remote = this.remotes.get(p.id);
       if (!remote) {
-        remote = new RemotePlayer(p.id, p.name, this.asset);
+        remote = new RemotePlayer(p.id, p.name, this.asset, (text) => this.pushAnomaly(text));
         this.remotes.set(p.id, remote);
         this.scene.add(remote.group);
         remote.attachDebugMarker(this.scene);
@@ -499,9 +694,7 @@ export class RemotePlayerManager {
       // Dead players push nothing: the server refuses their transforms and
       // the buffer is wiped at respawn (teleport, never interpolated).
       if (p.ts > 0 && p.isAlive) {
-        const prevSnap = remote.buffer.newest;
-        const prevTs = prevSnap?.timestamp ?? null;
-        const prevState = prevSnap?.movementState ?? null;
+        const prevTs = remote.buffer.newest?.timestamp ?? null;
         const stored = remote.buffer.push(
           p.ts,
           p.seq,
@@ -515,34 +708,14 @@ export class RemotePlayerManager {
           p.vz,
           sanitizeNetworkMovementState(p.state),
         );
-        // Feed the clock + adaptive delay with REAL arrivals only (sync()
-        // runs every frame on the same state — duplicates return false).
-        // A repeated stale ts must NEVER touch the clock (it would drag
-        // the estimated server time backward — see NetworkClock).
+        // Feed the clock + adaptive delay with REAL arrivals only (this
+        // may run several times on the same state — duplicates return
+        // false). A repeated stale ts must NEVER touch the clock (it
+        // would drag the estimated server time backward — NetworkClock).
         if (stored) {
           this.clock.noteServerTimestamp(p.ts);
           this.adaptiveDelay.noteSnapshot(this.clock.now(), p.ts, prevTs);
-
-          // ---- TEMP DEBUG: [SNAP] stored snapshots around jumps ----
-          if (JUMP_DEBUG) {
-            const st = sanitizeNetworkMovementState(p.state);
-            const gap = prevTs !== null ? p.ts - prevTs : -1;
-            if (
-              st === NetworkMovementState.AIRBORNE ||
-              prevState === NetworkMovementState.AIRBORNE ||
-              gap > 60
-            ) {
-              console.log(
-                `[SNAP ${p.id.slice(0, 4)}]`,
-                `ts=${p.ts % 100000}`,
-                `gap=${gap}`,
-                `y=${p.y.toFixed(2)}`,
-                `vy=${p.vy.toFixed(2)}`,
-                `st=${st}`,
-                `seq=${p.seq}`,
-              );
-            }
-          }
+          remote.noteStoredSnapshot(p.seq, prevTs !== null ? p.ts - prevTs : null);
         }
       }
     }
@@ -552,6 +725,7 @@ export class RemotePlayerManager {
       if (!seen.has(id)) {
         remote.dispose(this.scene);
         this.remotes.delete(id);
+        this.pings.delete(id);
       }
     }
   }
@@ -562,7 +736,7 @@ export class RemotePlayerManager {
     // ADAPTIVE delay: as low as the measured jitter safely allows.
     const delayMs = this.adaptiveDelay.update(dt);
     const renderTime = this.clock.now() - delayMs;
-    for (const remote of this.remotes.values()) remote.update(dt, renderTime, delayMs);
+    for (const remote of this.remotes.values()) remote.update(dt, renderTime);
   }
 
   /**
@@ -624,6 +798,17 @@ export class RemotePlayerManager {
     return this.clock.hasSync ? this.clock.now() : null;
   }
 
+  /**
+   * VIEW TIME for lag-compensated weapon actions: the render timestamp
+   * (server ms) at which remote players are DISPLAYED right now. Sent
+   * with WEAPON_ACTION so the server rewinds to exactly what the shooter
+   * saw. Null before the first server-time sync.
+   */
+  getRenderTimestamp(): number | null {
+    if (!this.clock.hasSync) return null;
+    return this.clock.now() - this.adaptiveDelay.delayMs;
+  }
+
   get count(): number {
     return this.remotes.size;
   }
@@ -649,8 +834,73 @@ export class RemotePlayerManager {
     };
   }
 
+  /**
+   * Full diagnostic report for the F1 Network Debug HUD. Called at the
+   * HUD refresh rate ONLY while the HUD is visible (never per frame).
+   */
+  getNetworkDebugReport(): NetworkDebugReport {
+    const serverNow = this.clock.hasSync ? this.clock.now() : 0;
+    const renderTime = serverNow - this.adaptiveDelay.delayMs;
+    const players: RemotePlayerNetDebug[] = [];
+    for (const r of this.remotes.values()) {
+      const newest = r.buffer.newest;
+      players.push({
+        id: r.sessionId,
+        name: r.name,
+        pingMs: this.pings.get(r.sessionId) ?? 0,
+        lastSeq: r.lastSeq,
+        lastSeqGap: r.lastSeqGap,
+        seqGapTotal: r.seqGapTotal,
+        snapshotAgeMs: newest ? serverNow - newest.timestamp : -1,
+        lastArrivalGapMs: r.lastArrivalGapMs,
+        lastSnapGapMs: r.lastSnapGapMs,
+        maxSnapGapMs: r.maxSnapGapMs,
+        rateHz: r.rateHz,
+        buffer: r.buffer.count,
+        state: movementStateName(r.lastSample.movementState),
+        interpolating: !r.extrapolating && r.buffer.count > 0,
+        extrapolating: r.extrapolating,
+        extrapolatedMs: r.lastExtrapolatedMs,
+        correctionM: r.correctionMagnitude,
+        rawY: newest?.y ?? 0,
+        interpY: r.lastSample.y,
+        visualY: r.group.position.y,
+        vx: r.lastSample.velocityX,
+        vy: r.lastSample.velocityY,
+        vz: r.lastSample.velocityZ,
+      });
+    }
+    return {
+      remotePlayers: this.remotes.size,
+      interpDelayMs: this.adaptiveDelay.delayMs,
+      targetDelayMs: this.adaptiveDelay.targetDelayMs,
+      avgGapMs: this.adaptiveDelay.averageGapMs,
+      maxGapMs: this.adaptiveDelay.maxGapMs,
+      jitterMs: this.adaptiveDelay.jitterMs,
+      serverNow,
+      renderTime,
+      players,
+      anomalies: this.anomalies,
+    };
+  }
+
+  /** Ring-buffered anomaly sink + throttled DEV-ONLY console echo. */
+  private pushAnomaly(text: string): void {
+    this.anomalies.push({ at: Date.now(), text });
+    if (this.anomalies.length > ANOMALY_HISTORY_MAX) this.anomalies.shift();
+    if (import.meta.env.DEV) {
+      const nowMs = performance.now();
+      if (nowMs - this.lastAnomalyConsoleAt >= ANOMALY_CONSOLE_THROTTLE_MS) {
+        this.lastAnomalyConsoleAt = nowMs;
+        console.warn(`[NET] ${text}`);
+      }
+    }
+  }
+
   dispose(): void {
     for (const remote of this.remotes.values()) remote.dispose(this.scene);
     this.remotes.clear();
+    this.pings.clear();
+    this.anomalies.length = 0;
   }
 }

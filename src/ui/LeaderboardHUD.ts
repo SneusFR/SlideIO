@@ -4,11 +4,20 @@ import { PlayerMatchStats, getKDRatio } from "../stats/MatchStatsManager";
 interface RowRefs {
   el: HTMLDivElement;
   rank: HTMLSpanElement;
+  ping: HTMLSpanElement;
   name: HTMLSpanElement;
   k: HTMLSpanElement;
   d: HTMLSpanElement;
   a: HTMLSpanElement;
   kd: HTMLSpanElement;
+}
+
+/** Glanceable ping color buckets (ms → CSS class suffix). */
+function pingClass(pingMs: number): string {
+  if (pingMs < 60) return "good";
+  if (pingMs < 120) return "ok";
+  if (pingMs < 200) return "bad";
+  return "awful";
 }
 
 /**
@@ -34,6 +43,11 @@ export class LeaderboardHUD {
   refresh(sorted: PlayerMatchStats[]): void {
     const seen = new Set<number>();
 
+    // MULTIPLAYER rows carry a ping — the panel switches to the grid that
+    // includes the ping column. Local mode (bots) keeps the classic grid.
+    const withPing = sorted.some((s) => s.pingMs !== undefined);
+    this.root.classList.toggle("with-ping", withPing);
+
     sorted.forEach((s, index) => {
       seen.add(s.combatantId);
       let row = this.rows.get(s.combatantId);
@@ -44,6 +58,13 @@ export class LeaderboardHUD {
       }
 
       row.rank.textContent = String(index + 1);
+      if (s.pingMs !== undefined) {
+        row.ping.textContent = `${Math.min(999, Math.round(s.pingMs))}`;
+        row.ping.className = `lb-ping ${pingClass(s.pingMs)}`;
+      } else {
+        row.ping.textContent = "";
+        row.ping.className = "lb-ping";
+      }
       row.k.textContent = String(s.kills);
       row.d.textContent = String(s.deaths);
       row.a.textContent = String(s.assists);
@@ -84,6 +105,9 @@ export class LeaderboardHUD {
     const rank = document.createElement("span");
     rank.className = "lb-rank";
 
+    const ping = document.createElement("span");
+    ping.className = "lb-ping";
+
     const name = document.createElement("span");
     name.className = "lb-name";
     name.textContent = s.displayName.toUpperCase();
@@ -103,7 +127,7 @@ export class LeaderboardHUD {
     const kd = document.createElement("span");
     kd.className = "lb-kd";
 
-    el.append(rank, name, k, d, a, kd);
-    return { el, rank, name, k, d, a, kd };
+    el.append(rank, ping, name, k, d, a, kd);
+    return { el, rank, ping, name, k, d, a, kd };
   }
 }
