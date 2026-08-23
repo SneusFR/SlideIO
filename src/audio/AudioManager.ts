@@ -133,6 +133,7 @@ export class AudioManager {
   private lastPlay = new Map<string, number>();
   private voices: ActiveVoice[] = [];
   private busVolumes = new Map<AudioBus, number>();
+  private stateListeners = new Set<() => void>();
 
   private static readonly MAX_VOICES = 28;
 
@@ -151,12 +152,25 @@ export class AudioManager {
   }
 
   /**
+   * Subscribe to AudioContext state changes (fires on running/suspended
+   * transitions — including when the browser unblocks the context on its
+   * own after a user gesture). Returns an unsubscribe function.
+   */
+  onStateChange(listener: () => void): () => void {
+    this.stateListeners.add(listener);
+    return () => this.stateListeners.delete(listener);
+  }
+
+  /**
    * Create / resume the AudioContext. MUST be called from a user gesture
    * (the CLICK TO PLAY overlay) to satisfy browser autoplay policies.
    */
   unlock(): void {
     if (!this.ctx) {
       this.ctx = new AudioContext();
+      this.ctx.onstatechange = () => {
+        for (const l of this.stateListeners) l();
+      };
       const master = this.ctx.createGain();
       master.gain.value = this.busVolumes.get("master") ?? 1;
       master.connect(this.ctx.destination);
@@ -179,6 +193,11 @@ export class AudioManager {
   /**
    * Ensure the context exists and try to resume it, awaiting the result.
    * Resolves true when the context is actually running (audio can play).
+   *
+   * NOTE: on Chrome a blocked ctx.resume() promise does NOT reject — it
+   * stays pending until the autoplay policy allows it. We race it against
+   * a short timeout so this method can never hang a caller (which would
+   * otherwise deadlock gesture-driven retry logic).
    */
   async resume(): Promise<boolean> {
     this.unlock();
@@ -186,7 +205,10 @@ export class AudioManager {
     if (!ctx) return false;
     if (ctx.state === "suspended") {
       try {
-        await ctx.resume();
+        await Promise.race([
+          ctx.resume(),
+          new Promise<void>((r) => setTimeout(r, 400)),
+        ]);
       } catch {
         /* blocked by autoplay policy — caller retries on next gesture */
       }

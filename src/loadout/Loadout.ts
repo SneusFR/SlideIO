@@ -104,11 +104,19 @@ export interface LoadoutAbility {
   stats: { label: string; value: string }[];
 }
 
+/** 0–100 gauges displayed as chunky bars in the loadout menu. */
+export interface LoadoutRatings {
+  power: number;
+  precision: number;
+  difficulty: number;
+}
+
 export interface LoadoutItem {
   id: string;
   name: string;
   tagline: string;
   summary: string;
+  ratings?: LoadoutRatings;
   abilities: LoadoutAbility[];
   locked?: boolean;
 }
@@ -122,6 +130,7 @@ export const MELEE_ITEMS: LoadoutItem[] = [
     tagline: "Marteau à énergie lourde",
     summary:
       "Arme de mêlée polyvalente : balayages alternés au sol, et une charge verticale dévastatrice depuis les airs.",
+    ratings: { power: 85, precision: 55, difficulty: 35 },
     abilities: [
       {
         trigger: "AU SOL — TOUCHE A",
@@ -154,6 +163,7 @@ export const MELEE_ITEMS: LoadoutItem[] = [
     tagline: "Arme d'hast à ruée chargée",
     summary:
       "Longue portée et agressivité pure : un balayage ample pour le corps à corps, une ruée chargée à 2× la vitesse de course pour percer une cible à la pointe.",
+    ratings: { power: 72, precision: 62, difficulty: 55 },
     abilities: [
       {
         trigger: "CLIC RAPIDE — TOUCHE A",
@@ -190,6 +200,7 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
     tagline: "Faisceau plasma continu",
     summary:
       "Rayon d'énergie continu à dégâts constants. Gérez la chaleur : une surchauffe verrouille l'arme pendant sa purge.",
+    ratings: { power: 58, precision: 82, difficulty: 30 },
     abilities: [
       {
         trigger: "CLIC GAUCHE — MAINTENIR",
@@ -214,6 +225,7 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
     tagline: "Faille de vortex ancrée",
     summary:
       "Arme de zone tactique : ancrez deux mini trous noirs sur les surfaces de la carte, puis ouvrez entre eux un immense faisceau de vortex noir incurvé qui dévore tout combattant pris dans son volume — même à travers les murs.",
+    ratings: { power: 90, precision: 45, difficulty: 82 },
     abilities: [
       {
         trigger: "CLIC DROIT",
@@ -247,6 +259,7 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
     tagline: "Barillet parfait & lancer explosif",
     summary:
       "Précision absolue : chaque balle part exactement au centre du viseur, quel que soit votre mouvement. Corps = kill instantané, tête = 2 balles. Videz le barillet d'un coup au clic droit, puis l'arme vide est lancée comme une grenade — et un nouveau revolver se matérialise dans votre main.",
+    ratings: { power: 95, precision: 100, difficulty: 68 },
     abilities: [
       {
         trigger: "CLIC GAUCHE",
@@ -290,6 +303,7 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
     tagline: "SMG musicale à notes chromatiques",
     summary:
       "Mitraillette expérimentale qui tire de véritables notes de musique colorées (Do→Do') et diffuse, tir après tir, des micro-fragments du morceau sélectionné — la musique voyage AVEC les notes. Flèches ↑/↓ en jeu pour choisir le morceau. (Solo/local uniquement pour l'instant.)",
+    ratings: { power: 55, precision: 70, difficulty: 42 },
     abilities: [
       {
         trigger: "CLIC GAUCHE — MAINTENIR",
@@ -341,6 +355,7 @@ export const KILLSTREAK_ITEMS: LoadoutItem[] = [
     tagline: "Frappe souterraine dévastatrice",
     summary:
       "Plongez sous la surface et devenez intouchable : invulnérable, invisible pour les ennemis, seule une traînée de terre trahit votre position. Ressortez où vous voulez — l'éruption inflige des dégâts massifs de zone et projette tous les ennemis proches. Usage unique par vie.",
+    ratings: { power: 88, precision: 50, difficulty: 45 },
     abilities: [
       {
         trigger: `${mole.moleStrikeRequiredKills} KILLS SANS MOURIR — TOUCHE 1/2/3`,

@@ -1,29 +1,47 @@
 import * as THREE from "three";
+import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { MovementConfig as mc } from "../player/MovementConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import { HitZone } from "../combat/HitZone";
 import { HitFeedbackConfig as hfc } from "../combat/HitFeedbackConfig";
+import { NetworkMovementState } from "../network/NetworkMovementState";
+import { shortestAngleDelta } from "../network/interpolation/SnapshotBuffer";
+import { RemotePlayerAnimationController } from "../network/remote/RemotePlayerAnimationController";
+import {
+  loadRemoteWeaponTemplate,
+  REMOTE_WEAPON_CONFIG,
+} from "../network/remote/RemoteWeaponController";
+import { NetworkWeaponId } from "../../shared/combat/NetworkWeapons";
+import {
+  loadCharacterAsset,
+  FEET_OFFSET,
+  MODEL_TOP,
+} from "../characters/SproutyCharacter";
 
-const BODY_COLORS = [0xd4a03b, 0x3bb0d4, 0x7ed43b, 0xd43b9a, 0xd4573b, 0x3bd4a8, 0x8a3bd4, 0xd4cf3b];
+/** Per-frame pose data fed by the Bot (drives the animation state). */
+export interface BotPose {
+  /** Horizontal speed (m/s). */
+  speed: number;
+  /** Body facing (radians). */
+  yaw: number;
+  /** Aim pitch (radians). */
+  pitch: number;
+  sliding: boolean;
+  grounded: boolean;
+  dashing: boolean;
+  /** Vertical velocity (m/s) — falling hint for the airborne pose. */
+  velocityY: number;
+  /** Horizontal velocity components (direction-aware legs). */
+  vx: number;
+  vz: number;
+}
+
+/** Vertical extent reserved for the HEAD hit zone at the capsule top (m). */
+const HEAD_ZONE_HEIGHT = 0.35;
+/** Enemy UI heights above the capsule center (model is MODEL_TOP tall). */
+const HEALTHBAR_HEIGHT = MODEL_TOP + 0.24;
 
 // ---- Shared enemy-readability resources (created once for all bots) ----
-
-/**
- * Inverted-hull outline material: back faces of a slightly enlarged copy
- * of each body box render as a thin red rim hugging the silhouette.
- * Depth test stays ON → walls fully occlude the outline (no X-ray).
- */
-let outlineMat: THREE.MeshBasicMaterial | null = null;
-function getOutlineMaterial(): THREE.MeshBasicMaterial {
-  if (!outlineMat) {
-    outlineMat = new THREE.MeshBasicMaterial({
-      color: cc.enemyOutlineColor,
-      side: THREE.BackSide,
-      toneMapped: false,
-    });
-    outlineMat.userData.shared = true;
-  }
-  return outlineMat;
-}
 
 /** "BOT" nameplate texture + material, shared by every bot. */
 let labelMat: THREE.MeshBasicMaterial | null = null;
@@ -56,129 +74,83 @@ function getLabelMaterial(): THREE.MeshBasicMaterial {
 }
 
 /**
- * Low-poly humanoid bot: head, torso, legs, arms and a mini Plasma Rifle.
- * Procedural animation (leg swing, bob, gun pitch) + billboarded enemy UI
- * (name + big red health bar) and a red silhouette outline. Outline and
- * UI are only shown while the PLAYER actually sees the bot (`setSeen`) —
- * never through walls.
+ * Bot avatar: the SAME Sprouty Smile skinned character as the human
+ * players (multiplayer remote avatars), driven by the SAME animation
+ * controller (idle / run / jump / slide clips), holding a real Plasma
+ * Rifle GLB and wearing the same red rim glow.
+ *
+ *   - The shared character asset loads asynchronously (cached — one fetch
+ *     for the whole game). Until it resolves, the bot is fully playable:
+ *     invisible capsule-shaped hitboxes carry the raycast gameplay.
+ *   - Hit detection: the visible skinned meshes are NEVER raycast
+ *     targets (expensive + imprecise). Invisible primitive hitboxes do
+ *     the job — a body box matching the physics capsule plus a HEAD box
+ *     that follows the actual Head bone (headshots track the animation).
+ *   - Enemy readability (red rim + BOT label + HP bar) is toggled by
+ *     `setSeen` with the REAL line-of-sight result — never through walls.
  */
 export class BotModel {
   readonly group = new THREE.Group();
-  private readonly legL: THREE.Group;
-  private readonly legR: THREE.Group;
-  private readonly torso: THREE.Group;
-  private readonly gunPivot: THREE.Group;
-  private readonly muzzle: THREE.Object3D;
+
+  /** Skinned character clone (null until the shared asset resolves). */
+  private model: THREE.Object3D | null = null;
+  private anim: RemotePlayerAnimationController | null = null;
+  /** Red rim glow meshes of THIS clone (visibility follows setSeen). */
+  private readonly rimMeshes: THREE.Object3D[] = [];
+  /** Per-bot cloned materials (damage flash via emissive — never shared). */
+  private readonly flashMats: THREE.Material[] = [];
+  /** In-hand Plasma Rifle grip (muzzle anchor) — null until loaded. */
+  private grip: THREE.Group | null = null;
+
+  // ---- Invisible hitboxes (raycast gameplay) ----
+  private readonly bodyHitbox: THREE.Mesh;
+  private readonly headHitbox: THREE.Mesh;
+  private headBone: THREE.Object3D | null = null;
+  private headEndBone: THREE.Object3D | null = null;
+
+  // ---- Enemy UI ----
   private readonly healthBar: THREE.Group;
   private readonly healthFill: THREE.Mesh;
   private readonly nameLabel: THREE.Mesh;
-  private readonly bodyMat: THREE.MeshLambertMaterial;
-  /** Head-only material (same base color) so headshot flashes stay local. */
-  private readonly headMat: THREE.MeshLambertMaterial;
-  private readonly visorMat: THREE.MeshBasicMaterial;
-  private readonly chestMat: THREE.MeshBasicMaterial;
-
-  /** Inverted-hull outline meshes (share source geometry + one material). */
-  private readonly outlineMeshes: THREE.Mesh[] = [];
   private seen = false;
 
-  private walkPhase = Math.random() * 10;
   private flashAmount = 0;
   private headFlashAmount = 0;
-  private readonly baseColor: THREE.Color;
-  private readonly flashColor = new THREE.Color(0xffffff);
-  private readonly visorBaseColor = new THREE.Color(0xc084fc);
-  private readonly tmpColor = new THREE.Color();
-  private readonly tmpSize = new THREE.Vector3();
+  private disposed = false;
 
-  constructor(index: number) {
-    const color = BODY_COLORS[index % BODY_COLORS.length];
-    this.baseColor = new THREE.Color(color);
-    this.bodyMat = new THREE.MeshLambertMaterial({ color });
-    this.headMat = new THREE.MeshLambertMaterial({ color });
-    const darkMat = new THREE.MeshLambertMaterial({ color: 0x2a2e38 });
-    this.visorMat = new THREE.MeshBasicMaterial({ color: 0xc084fc });
-    this.chestMat = new THREE.MeshBasicMaterial({ color: 0xa855f7 });
+  // scratch
+  private readonly tmpA = new THREE.Vector3();
+  private readonly tmpB = new THREE.Vector3();
 
-    const mesh = (g: THREE.BufferGeometry, m: THREE.Material) => {
-      const me = new THREE.Mesh(g, m);
-      me.castShadow = true;
-      return me;
-    };
+  constructor(_index: number) {
+    // ---- Hitboxes (synchronous — gameplay never waits for the GLB) ----
+    // Body: matches the physics capsule (minus the head zone at the top).
+    const bodyHeight = FEET_OFFSET * 2 - HEAD_ZONE_HEIGHT;
+    this.bodyHitbox = new THREE.Mesh(
+      new THREE.BoxGeometry(mc.capsuleRadius * 2, bodyHeight, mc.capsuleRadius * 2),
+      HITBOX_MATERIAL,
+    );
+    this.bodyHitbox.position.y = -HEAD_ZONE_HEIGHT / 2;
+    this.bodyHitbox.visible = false;
+    this.bodyHitbox.castShadow = false;
 
-    // Legs (pivot at hips, feet reach y -0.9)
-    this.legL = new THREE.Group();
-    this.legL.position.set(-0.12, -0.18, 0);
-    const legGeoL = mesh(new THREE.BoxGeometry(0.15, 0.62, 0.18), darkMat);
-    legGeoL.position.y = -0.35;
-    this.legL.add(legGeoL);
-    this.legR = new THREE.Group();
-    this.legR.position.set(0.12, -0.18, 0);
-    const legGeoR = mesh(new THREE.BoxGeometry(0.15, 0.62, 0.18), darkMat);
-    legGeoR.position.y = -0.35;
-    this.legR.add(legGeoR);
+    // Head: fallback static box at the capsule top; re-anchored onto the
+    // REAL Head bone as soon as the skinned model is attached (headshots
+    // then track every animation, including the slide crouch).
+    this.headHitbox = new THREE.Mesh(
+      new THREE.BoxGeometry(HEAD_ZONE_HEIGHT, HEAD_ZONE_HEIGHT, HEAD_ZONE_HEIGHT),
+      HITBOX_MATERIAL,
+    );
+    this.headHitbox.position.y = FEET_OFFSET - HEAD_ZONE_HEIGHT / 2;
+    this.headHitbox.visible = false;
+    this.headHitbox.castShadow = false;
+    this.headHitbox.userData.hitZone = HitZone.HEAD;
 
-    // Torso + head + chest light
-    this.torso = new THREE.Group();
-    const chest = mesh(new THREE.BoxGeometry(0.48, 0.55, 0.26), this.bodyMat);
-    chest.position.y = 0.14;
-    const chestGlow = mesh(new THREE.BoxGeometry(0.2, 0.08, 0.02), this.chestMat);
-    chestGlow.position.set(0, 0.22, -0.14);
-    const head = mesh(new THREE.BoxGeometry(0.26, 0.26, 0.26), this.headMat);
-    head.position.y = 0.58;
-    const visor = mesh(new THREE.BoxGeometry(0.2, 0.07, 0.02), this.visorMat);
-    visor.position.set(0, 0.6, -0.14);
-    // The head mesh IS the headshot hitbox: parented to the animated torso,
-    // it follows every pose automatically. The visor sits on the face and
-    // counts as head too.
-    head.userData.hitZone = HitZone.HEAD;
-    visor.userData.hitZone = HitZone.HEAD;
-    // Left arm (supports the rifle)
-    const armL = mesh(new THREE.BoxGeometry(0.11, 0.4, 0.11), this.bodyMat);
-    armL.position.set(-0.3, 0.12, -0.08);
-    armL.rotation.x = -0.5;
-    this.torso.add(chest, chestGlow, head, visor, armL);
-
-    // Gun pivot at right shoulder — pitches toward the aim target.
-    this.gunPivot = new THREE.Group();
-    this.gunPivot.position.set(0.24, 0.28, 0);
-    const armR = mesh(new THREE.BoxGeometry(0.11, 0.11, 0.4), this.bodyMat);
-    armR.position.set(0, -0.06, -0.18);
-    const gunBody = mesh(new THREE.BoxGeometry(0.09, 0.12, 0.55), darkMat);
-    gunBody.position.set(0, 0, -0.42);
-    const gunGlow = mesh(new THREE.BoxGeometry(0.03, 0.05, 0.3), this.chestMat);
-    gunGlow.position.set(0, 0.07, -0.42);
-    this.muzzle = new THREE.Object3D();
-    this.muzzle.position.set(0, 0, -0.72);
-    this.gunPivot.add(armR, gunBody, gunGlow, this.muzzle);
-
-    this.group.add(this.legL, this.legR, this.torso, this.gunPivot);
-
-    // ---- Ragdoll part tags (consumed by BotRagdollFactory) ----
-    // The bot has no skinned skeleton: these nodes ARE its "bones". The
-    // tags survive cloning (createCorpseVisual) so death corpses build the
-    // exact same physical skeleton as the live knockdown ragdoll.
-    this.torso.userData.ragdollPart = "torso";
-    head.userData.ragdollPart = "head";
-    armL.userData.ragdollPart = "armL";
-    this.gunPivot.userData.ragdollPart = "armR";
-    this.legL.userData.ragdollPart = "legL";
-    this.legR.userData.ragdollPart = "legR";
-
-    // ---- Silhouette outline (hull copies follow each animated part) ----
-    if (cc.enemyOutlineEnabled) {
-      this.addOutline(legGeoL);
-      this.addOutline(legGeoR);
-      this.addOutline(chest);
-      this.addOutline(head);
-      this.addOutline(armL);
-      this.addOutline(armR);
-      this.addOutline(gunBody);
-    }
+    this.group.add(this.bodyHitbox, this.headHitbox);
 
     // ---- Enemy UI (billboarded, above the head): BOT + big red HP bar ----
     this.healthBar = new THREE.Group();
-    this.healthBar.position.y = 1.32;
+    this.healthBar.position.y = HEALTHBAR_HEIGHT;
     const barBg = new THREE.Mesh(
       new THREE.PlaneGeometry(1.15, 0.16),
       new THREE.MeshBasicMaterial({
@@ -203,46 +175,111 @@ export class BotModel {
     this.healthFill.raycast = NO_RAYCAST;
     this.nameLabel.raycast = NO_RAYCAST;
     this.group.add(this.healthBar);
+
+    // ---- Async: shared Sprouty character (cached — one load, N clones) ----
+    void loadCharacterAsset().then((asset) => {
+      if (this.disposed) return;
+
+      // SkeletonUtils clone: shares geometry/materials/textures with the
+      // cached template — cheap per bot.
+      const model = skeletonClone(asset.template);
+      // Group origin = CAPSULE CENTER; the model root is the feet.
+      model.position.y = -FEET_OFFSET;
+      this.model = model;
+      this.group.add(model);
+
+      model.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        // The skinned meshes are purely visual: the invisible hitboxes are
+        // the ONLY raycast targets (cheap + zone-accurate).
+        mesh.raycast = NO_RAYCAST;
+        if (mesh.userData.enemyRim) {
+          // Red glow rim: same shared material as the remote players, but
+          // toggled by line-of-sight visibility (never through walls).
+          this.rimMeshes.push(mesh);
+          mesh.visible = this.seen && cc.enemyOutlineEnabled;
+        } else {
+          // Per-bot material clone → the damage flash never tints the
+          // template (and therefore never the remote players / menu).
+          const mat = mesh.material as THREE.Material;
+          const cloned = mat.clone();
+          mesh.material = cloned;
+          this.flashMats.push(cloned);
+        }
+      });
+
+      // Head hitbox follows the REAL head from now on.
+      this.headBone = model.getObjectByName("Head") ?? null;
+      this.headEndBone = model.getObjectByName("head_end") ?? null;
+
+      // Same animations as the human players. slideRaise: 0 — the bot
+      // capsule never shrinks, the crouch comes from the clip alone.
+      this.anim = new RemotePlayerAnimationController(model, -FEET_OFFSET, asset.clips, {
+        slideRaise: 0,
+      });
+
+      this.attachRifle(model);
+    });
   }
 
-  /** Create an inverted-hull copy of `source` on the same animated parent. */
-  private addOutline(source: THREE.Mesh): void {
-    const geo = source.geometry;
-    geo.computeBoundingBox();
-    geo.boundingBox!.getSize(this.tmpSize);
-    const t = cc.enemyOutlineThickness * 2;
-    const o = new THREE.Mesh(geo, getOutlineMaterial());
-    o.position.copy(source.position);
-    o.rotation.copy(source.rotation);
-    o.scale.set(
-      (this.tmpSize.x + t) / this.tmpSize.x,
-      (this.tmpSize.y + t) / this.tmpSize.y,
-      (this.tmpSize.z + t) / this.tmpSize.z,
-    );
-    o.visible = false;
-    o.castShadow = false;
-    // The hull is purely visual: exclude it from beam raycasts so the
-    // effective hitbox of the bot does not grow by the outline thickness.
-    o.raycast = NO_RAYCAST;
-    source.parent!.add(o);
-    this.outlineMeshes.push(o);
+  /** Real Plasma Rifle GLB in the left hand (menu-proven attachment). */
+  private attachRifle(model: THREE.Object3D): void {
+    void loadRemoteWeaponTemplate(NetworkWeaponId.PLASMA_RIFLE).then((template) => {
+      if (this.disposed || this.model !== model) return;
+      const att = REMOTE_WEAPON_CONFIG[NetworkWeaponId.PLASMA_RIFLE];
+      const bone = model.getObjectByName(att.bone);
+      if (!bone) return;
+
+      const weapon = template.clone(true);
+      weapon.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (mesh.isMesh) mesh.raycast = NO_RAYCAST; // visual only
+      });
+
+      const grip = new THREE.Group();
+      grip.add(weapon);
+      grip.position.copy(att.position);
+      grip.rotation.copy(att.rotation);
+
+      // Compensate every ancestor scale (character normalization +
+      // armature) so the configured size stays a true world size.
+      let accumulated = 1;
+      let node: THREE.Object3D | null = bone;
+      while (node) {
+        accumulated *= node.scale.x;
+        if (node === model) break;
+        node = node.parent;
+      }
+      const inv = 1 / Math.max(Math.abs(accumulated), 1e-6);
+      grip.scale.setScalar(inv);
+      grip.position.multiplyScalar(inv);
+
+      bone.add(grip);
+      this.grip = grip;
+    });
   }
 
   /**
-   * Toggle the enemy readability visuals (outline + name + HP bar).
+   * Toggle the enemy readability visuals (red rim glow + name + HP bar).
    * Called every frame by BotManager.updateVisibility with the REAL
    * line-of-sight result — nothing here ever shows through walls.
    */
   setSeen(seen: boolean): void {
     if (seen === this.seen) return;
     this.seen = seen;
-    const outlineOn = seen && cc.enemyOutlineEnabled;
-    for (const o of this.outlineMeshes) o.visible = outlineOn;
+    const rimOn = seen && cc.enemyOutlineEnabled;
+    for (const rim of this.rimMeshes) rim.visible = rimOn;
     this.healthBar.visible = seen && cc.enemyHealthBarVisible;
   }
 
+  /** World position of the in-hand rifle (beam start anchor). */
   getMuzzleWorld(out: THREE.Vector3): THREE.Vector3 {
-    return this.muzzle.getWorldPosition(out);
+    if (this.grip) return this.grip.getWorldPosition(out);
+    // Fallback before the rifle GLB resolves: shoulder-ish offset.
+    this.group.getWorldPosition(out);
+    out.y += 0.2;
+    return out;
   }
 
   /** Trigger the damage flash (throttle-friendly: just refreshes intensity). */
@@ -252,8 +289,7 @@ export class BotModel {
 
   /**
    * Zone-aware hit reaction from the local player's confirmed hits:
-   * BODY refreshes the classic white body flash, HEAD lights up ONLY the
-   * head + visor (the rest of the bot keeps its color — §readability).
+   * a headshot flashes brighter than a body hit.
    */
   hitFlash(zone: HitZone): void {
     if (zone === HitZone.HEAD) this.headFlashAmount = 1;
@@ -261,87 +297,99 @@ export class BotModel {
   }
 
   /**
-   * @param speed     horizontal speed (drives legs)
-   * @param yaw       body facing
-   * @param pitch     gun aim pitch
-   * @param sliding   true while the bot is sliding
-   * @param hpRatio   0..1 health bar fill
-   * @param camQuat   camera quaternion for billboarding
-   * @param protectedNow spawn protection indicator
+   * Per-frame visual update (after physics, before render).
+   *
+   * @param pose         bot movement pose (drives the animation state)
+   * @param hpRatio      0..1 health bar fill
+   * @param camQuat      camera quaternion for billboarding
+   * @param protectedNow spawn protection indicator (white pulse)
    */
   update(
     dt: number,
-    speed: number,
-    yaw: number,
-    pitch: number,
-    sliding: boolean,
+    pose: BotPose,
     hpRatio: number,
     camQuat: THREE.Quaternion,
     protectedNow: boolean,
     time: number,
   ): void {
-    this.group.rotation.y = yaw;
+    this.group.rotation.y = pose.yaw;
 
-    // Legs + bob
-    this.walkPhase += speed * dt * 1.7;
-    const swing = Math.min(speed / 9.5, 1.4) * 0.65;
-    this.legL.rotation.x = Math.sin(this.walkPhase) * swing;
-    this.legR.rotation.x = -Math.sin(this.walkPhase) * swing;
-    this.torso.position.y = Math.abs(Math.sin(this.walkPhase)) * 0.035;
+    // ---- Animation state (same mapping as the network movement states) --
+    let state = NetworkMovementState.IDLE;
+    if (pose.sliding) state = NetworkMovementState.SLIDING;
+    else if (!pose.grounded) state = NetworkMovementState.AIRBORNE;
+    else if (pose.dashing) state = NetworkMovementState.DASHING;
+    else if (pose.speed > 0.75) state = NetworkMovementState.RUNNING;
 
-    // Slide posture: lean back, crouch low.
-    const targetTilt = sliding ? 0.55 : 0;
-    this.torso.rotation.x = THREE.MathUtils.damp(this.torso.rotation.x, targetTilt, 12, dt);
-    const targetY = sliding ? -0.32 : 0;
-    this.torso.position.z = sliding ? 0.1 : 0;
-    this.torso.position.y += targetY * 0.5;
+    // Direction-aware legs: signed angle between the aim yaw and the
+    // actual movement direction (yaw convention: 0 → forward = -Z).
+    let moveLocalYaw = 0;
+    if (pose.speed > 0.1) {
+      const moveYaw = Math.atan2(-pose.vx, -pose.vz);
+      moveLocalYaw = shortestAngleDelta(pose.yaw, moveYaw);
+    }
+    this.anim?.update(dt, state, pose.speed, pose.velocityY, pose.pitch, moveLocalYaw);
 
-    this.gunPivot.rotation.x = pitch;
+    // ---- HEAD hitbox follows the real head bone (animated headshots) ----
+    if (this.headBone) {
+      this.headBone.getWorldPosition(this.tmpA);
+      if (this.headEndBone) {
+        this.headEndBone.getWorldPosition(this.tmpB);
+        this.tmpA.add(this.tmpB).multiplyScalar(0.5);
+      }
+      this.headHitbox.position.copy(this.group.worldToLocal(this.tmpA));
+    }
 
-    // Damage flash on the body material.
+    this.updateUI(dt, hpRatio, camQuat, protectedNow, time);
+  }
+
+  /**
+   * Damage flash + enemy UI billboard. Split from update() so a KNOCKED
+   * DOWN (ragdolled but ALIVE) bot keeps its health bar, its BOT label and
+   * its damage feedback — otherwise it reads as dead while it isn't.
+   * The red rim glow needs nothing here: the rim meshes are skinned to the
+   * same bones the ragdoll drives, so they follow the tumbling body free.
+   */
+  updateUI(
+    dt: number,
+    hpRatio: number,
+    camQuat: THREE.Quaternion,
+    protectedNow: boolean,
+    time: number,
+  ): void {
+    // ---- Damage flash (emissive on the per-bot cloned materials) ----
     if (this.flashAmount > 0) {
       this.flashAmount = Math.max(0, this.flashAmount - dt * hfc.bodyHitFlashDecay);
-      this.tmpColor.lerpColors(this.baseColor, this.flashColor, this.flashAmount * 0.8);
-      this.bodyMat.color.copy(this.tmpColor);
     }
-
-    // Head flash: the brightest of the general body flash (head is part of
-    // the body) and the dedicated headshot flash, which also lights the visor.
-    if (this.flashAmount > 0 || this.headFlashAmount > 0) {
+    if (this.headFlashAmount > 0) {
       this.headFlashAmount = Math.max(0, this.headFlashAmount - dt * hfc.headHitFlashDecay);
-      const headAmt = Math.max(this.flashAmount * 0.8, this.headFlashAmount);
-      this.tmpColor.lerpColors(this.baseColor, this.flashColor, headAmt);
-      this.headMat.color.copy(this.tmpColor);
-      this.tmpColor.lerpColors(this.visorBaseColor, this.flashColor, this.headFlashAmount);
-      this.visorMat.color.copy(this.tmpColor);
+    }
+    let glow = Math.max(this.flashAmount * 0.55, this.headFlashAmount * 0.85);
+    // Spawn protection: soft white pulse over the whole body.
+    if (protectedNow) glow = Math.max(glow, 0.16 + 0.16 * Math.sin(time * 20));
+    for (const mat of this.flashMats) {
+      const m = mat as THREE.MeshStandardMaterial;
+      if (m.emissive) m.emissive.setScalar(glow);
     }
 
-    // Spawn protection: chest glow pulses white.
-    if (protectedNow) {
-      const pulse = 0.5 + 0.5 * Math.sin(time * 20);
-      this.chestMat.color.setRGB(1, 1, pulse);
-    } else {
-      this.chestMat.color.setHex(0xa855f7);
-    }
-
-    // Enemy UI: pure billboard (never rotates with the skeleton) + fill.
+    // Enemy UI: pure billboard (never rotates with the body) + fill.
     // The group itself rotates with the body yaw, so cancel it by applying
     // the camera quaternion in world terms (premultiply the inverse yaw).
     this.healthBar.quaternion
-      .setFromAxisAngle(Y_AXIS, -yaw)
+      .setFromAxisAngle(Y_AXIS, -this.group.rotation.y)
       .multiply(camQuat);
     this.healthFill.scale.x = Math.max(hpRatio, 0.001);
     this.healthFill.position.x = -0.545 * (1 - hpRatio);
   }
 
   /**
-   * CORPSE SNAPSHOT (death ragdoll): clone the body parts at their CURRENT
-   * pose into an independent group placed at the model's world transform.
-   * The clone shares geometries/materials with the live model (cheap) and
-   * keeps the `ragdollPart` tags, so BotRagdollFactory can build the same
-   * physical skeleton on it. The enemy UI (health bar / nameplate) is
-   * intentionally NOT part of the corpse. Call setSeen(false) first so the
-   * cloned outline hulls stay hidden.
+   * CORPSE SNAPSHOT (death ragdoll): SkeletonUtils clone of the posed
+   * character (bones keep their CURRENT local transforms) placed at the
+   * model's world transform. The clone shares geometries/textures with
+   * the live model and keeps the full living look (skin + rifle in hand);
+   * buildSkeletonRagdollParts() then builds the physical skeleton on it.
+   * The enemy UI (health bar / nameplate) and the invisible hitboxes are
+   * intentionally NOT part of the corpse.
    *
    * The corpse is fully independent: the bot can respawn elsewhere while
    * the body keeps simulating — it is never teleported to the new spawn.
@@ -351,19 +399,30 @@ export class BotModel {
     corpse.position.copy(this.group.position);
     corpse.quaternion.copy(this.group.quaternion);
     corpse.scale.copy(this.group.scale);
-    for (const part of [this.legL, this.legR, this.torso, this.gunPivot]) {
-      corpse.add(part.clone(true));
+    if (this.model) {
+      const clone = skeletonClone(this.model);
+      corpse.add(clone);
+      corpse.updateMatrixWorld(true);
     }
     return corpse;
   }
 
   dispose(): void {
-    this.group.traverse((o) => {
+    this.disposed = true;
+    this.anim?.dispose();
+    this.anim = null;
+    this.grip?.removeFromParent();
+    this.grip = null;
+    // Per-bot cloned materials only — the template/shared ones stay alive.
+    for (const mat of this.flashMats) mat.dispose();
+    this.flashMats.length = 0;
+    this.bodyHitbox.geometry.dispose();
+    this.headHitbox.geometry.dispose();
+    this.healthBar.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.isMesh) {
         m.geometry.dispose();
         const mat = m.material as THREE.Material;
-        // Never dispose shared resources (outline / nameplate materials).
         if (!mat.userData.shared) mat.dispose();
       }
     });
@@ -372,3 +431,6 @@ export class BotModel {
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const NO_RAYCAST = () => {};
+/** Shared material for the invisible hitbox meshes (never rendered). */
+const HITBOX_MATERIAL = new THREE.MeshBasicMaterial({ visible: false });
+HITBOX_MATERIAL.userData.shared = true;

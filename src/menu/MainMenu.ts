@@ -64,8 +64,9 @@ export class MainMenu {
 
     // ---- Scene ----
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x07120a);
-    this.scene.fog = new THREE.FogExp2(0x0a1a0e, 0.012);
+    // Sunny prairie day: pale sky-blue backdrop + light airy haze.
+    this.scene.background = new THREE.Color(0x8ed3f7);
+    this.scene.fog = new THREE.FogExp2(0xbfe6f7, 0.005);
 
     this.background = new SpaceBackground();
     this.scene.add(this.background.group);

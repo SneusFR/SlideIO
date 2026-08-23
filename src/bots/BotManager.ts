@@ -130,9 +130,10 @@ export class BotManager {
     camera.getWorldPosition(this.camPos);
 
     for (const bot of this.bots) {
-      // A knocked-down (ragdolled) bot hides its enemy UI/outline: the
-      // billboard bar can't follow a tumbling body cleanly.
-      bot.model.setSeen(bot.health.alive && !bot.ragdolled && this.isVisible(bot));
+      // A knocked-down (ragdolled) bot is STILL ALIVE: it keeps its red
+      // glow and its health bar (hiding them read as a death). Only real
+      // death or losing line of sight hides the enemy readability UI.
+      bot.model.setSeen(bot.health.alive && this.isVisible(bot));
     }
   }
 

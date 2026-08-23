@@ -1,13 +1,16 @@
 import { audio } from "../audio/AudioManager";
 
 const MENU_MANIFEST: Record<string, string> = {
-  menu_music: "/assets/audio/menu/menu_music_space_loop_01.mp3",
+  // Goofy prairie ukulele loop — "Happy For Kids - ukulele (loop ver.2)"
+  // by Migfus20 (freesound.org #726513, CC BY-NC 4.0).
+  menu_music: "/assets/audio/menu/menu_music_prairie_loop_01.mp3",
   ui_hover: "/assets/audio/ui/ui_hover_01.mp3",
-  ui_click: "/assets/audio/ui/ui_click_01.mp3",
+  // Cartoon "plop" — by Breviceps (freesound.org #447910, CC0).
+  ui_click: "/assets/audio/ui/ui_click_plop_01.mp3",
 };
 
 /**
- * Main Menu audio: melancholic space music (looped, faded in/out) and
+ * Main Menu audio: goofy sunny ukulele music (looped, faded in/out) and
  * short UI hover / click ticks. Plays through the shared AudioManager,
  * so the browser autoplay policy is respected — the music starts as soon
  * as the browser allows it (immediately when autoplay is permitted, or
@@ -24,6 +27,7 @@ export class MenuAudio {
   private retryTimer: number | null = null;
   private starting = false;
   private removeGestureHooks: (() => void) | null = null;
+  private removeStateHook: (() => void) | null = null;
   private warnedOnce = false;
 
   /** Fetch + decode the menu sounds (cached — safe to call anytime). */
@@ -38,6 +42,7 @@ export class MenuAudio {
   startMusic(): void {
     this.musicWanted = true;
     this.installGestureHooks();
+    this.installStateHook();
     void this.attemptStart();
     this.armRetry();
   }
@@ -45,6 +50,12 @@ export class MenuAudio {
   /** Called on user gestures — starts the music once audio is unlocked. */
   tryResume(): void {
     if (!this.musicWanted || this.musicHandle) return;
+    // Issue the resume() SYNCHRONOUSLY inside the user gesture — this is
+    // what actually satisfies the autoplay policy. It must NOT be gated
+    // behind the `starting` flag: a timer-driven attemptStart() may still
+    // be in flight (its resume() promise pending outside a gesture), and
+    // skipping this call would deadlock the unlock forever.
+    audio.unlock();
     void this.attemptStart();
     this.armRetry();
   }
@@ -73,6 +84,8 @@ export class MenuAudio {
     this.clearRetry();
     this.removeGestureHooks?.();
     this.removeGestureHooks = null;
+    this.removeStateHook?.();
+    this.removeStateHook = null;
   }
 
   /**
@@ -133,6 +146,20 @@ export class MenuAudio {
     };
   }
 
+  /**
+   * Start the loop the instant the AudioContext transitions to "running"
+   * (Chrome may unblock it on its own after a gesture, resolving an old
+   * pending resume() — no need to wait for the next retry tick).
+   */
+  private installStateHook(): void {
+    if (this.removeStateHook) return;
+    this.removeStateHook = audio.onStateChange(() => {
+      if (!this.musicWanted || this.musicHandle) return;
+      if (this.tryStartLoop()) this.onMusicStarted();
+      else void this.attemptStart();
+    });
+  }
+
   private tryStartLoop(): boolean {
     if (!this.musicWanted || this.musicHandle) return true;
     if (!audio.unlocked || !audio.has("menu_music")) return false;
@@ -150,6 +177,8 @@ export class MenuAudio {
     this.clearRetry();
     this.removeGestureHooks?.();
     this.removeGestureHooks = null;
+    this.removeStateHook?.();
+    this.removeStateHook = null;
     this.musicHandle?.stop(seconds);
     this.musicHandle = null;
   }
@@ -166,7 +195,8 @@ export class MenuAudio {
   }
 
   click(): void {
-    audio.play("ui_click", { bus: "ui", volume: 0.65, maxInstances: 2 });
+    // Goofy plop: tiny pitch wobble so repeated clicks stay fun.
+    audio.play("ui_click", { bus: "ui", volume: 0.7, rateVar: 0.08, maxInstances: 2 });
   }
 
   dispose(): void {

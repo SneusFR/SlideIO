@@ -18,9 +18,9 @@ import rifleUrl from "../assets/voidrifle_opt.glb?url";
 
 /**
  * The Main Menu hero: full character playing the looping ALERT animation,
- * real hammer + Plasma Rifle GLBs attached to the hand bones, an energy
- * platform under the feet and thin holographic rings behind — all lit by
- * a small sci-fi studio setup (key + violet rim + cool fill).
+ * real hammer + Plasma Rifle GLBs attached to the hand bones and a goofy
+ * stone-and-grass garden pedestal under the feet — all lit by a sunny
+ * prairie studio setup (warm key + leafy rims + soft sky fill).
  *
  * Loaded ONCE (single GLTFLoader pass per asset), one AnimationMixer,
  * no shadow maps — a fake soft shadow disc sits on the platform instead.
@@ -29,8 +29,6 @@ export class MenuCharacter {
   readonly group = new THREE.Group();
 
   private mixer: THREE.AnimationMixer | null = null;
-  private platformRings: THREE.Group | null = null;
-  private holoRing: THREE.Group | null = null;
   private characterRoot: THREE.Object3D | null = null;
 
   private readonly disposables: { dispose(): void }[] = [];
@@ -49,7 +47,6 @@ export class MenuCharacter {
 
     if (charGltf) mc.setupCharacter(charGltf, hammerGltf, rifleGltf);
     mc.setupPlatform();
-    mc.setupHoloRing();
     mc.setupLights();
     return mc;
   }
@@ -161,16 +158,68 @@ export class MenuCharacter {
   }
 
   // ------------------------------------------------------------------
-  // Platform + rings + lights
+  // Platform + lights
   // ------------------------------------------------------------------
 
+  /**
+   * Goofy garden pedestal (like the reference mock): a wide stone rim,
+   * a sandy flagstone top the character stands on, and a few chunky
+   * grass tufts around the edge. Top face sits exactly at y = 0.
+   */
   private setupPlatform(): void {
     const platform = new THREE.Group();
 
+    // Stone rim (bottom, wider) — warm brown brick tone.
+    const rimGeo = new THREE.CylinderGeometry(1.62, 1.74, 0.22, 36);
+    const rimMat = new THREE.MeshStandardMaterial({
+      color: 0x8a6240,
+      roughness: 0.95,
+      metalness: 0.02,
+    });
+    this.disposables.push(rimGeo, rimMat);
+    const rim = new THREE.Mesh(rimGeo, rimMat);
+    rim.position.y = -0.27;
+    platform.add(rim);
+
+    // Sandy flagstone top — the character stands on this.
+    const topGeo = new THREE.CylinderGeometry(1.42, 1.56, 0.16, 36);
+    const topMat = new THREE.MeshStandardMaterial({
+      color: 0xd9bd8a,
+      roughness: 0.9,
+      metalness: 0.02,
+    });
+    this.disposables.push(topGeo, topMat);
+    const top = new THREE.Mesh(topGeo, topMat);
+    top.position.y = -0.08;
+    platform.add(top);
+
+    // Chunky grass tufts hugging the rim (flattened goofy spheres).
+    const tuftGeo = new THREE.SphereGeometry(0.16, 10, 8);
+    const tuftMat = new THREE.MeshStandardMaterial({
+      color: 0x6fae35,
+      roughness: 0.85,
+      metalness: 0.0,
+    });
+    this.disposables.push(tuftGeo, tuftMat);
+    const tuftCount = 9;
+    for (let i = 0; i < tuftCount; i++) {
+      const angle = (i / tuftCount) * Math.PI * 2 + 0.35;
+      const radius = 1.58 + Math.sin(i * 12.9) * 0.06;
+      const tuft = new THREE.Mesh(tuftGeo, tuftMat);
+      tuft.position.set(
+        Math.cos(angle) * radius,
+        -0.12,
+        Math.sin(angle) * radius,
+      );
+      const s = 0.8 + ((i * 7919) % 5) * 0.12;
+      tuft.scale.set(s, s * 0.62, s);
+      platform.add(tuft);
+    }
+
     // Soft fake shadow under the feet (no shadow maps needed).
     const shadowTex = makeRadialTexture(128, [
-      [0, "rgba(0, 0, 0, 0.55)"],
-      [0.6, "rgba(0, 0, 0, 0.3)"],
+      [0, "rgba(0, 0, 0, 0.45)"],
+      [0.6, "rgba(0, 0, 0, 0.22)"],
       [1, "rgba(0, 0, 0, 0)"],
     ]);
     this.disposables.push(shadowTex);
@@ -185,108 +234,25 @@ export class MenuCharacter {
     shadow.position.y = 0.012;
     platform.add(shadow);
 
-    // Glowing leafy-green disc.
-    const glowTex = makeRadialTexture(256, [
-      [0, "rgba(74, 222, 128, 0.35)"],
-      [0.55, "rgba(22, 163, 74, 0.16)"],
-      [0.8, "rgba(74, 222, 128, 0.30)"],
-      [0.86, "rgba(74, 222, 128, 0.05)"],
-      [1, "rgba(0, 0, 0, 0)"],
-    ]);
-    this.disposables.push(glowTex);
-    const glowMat = new THREE.MeshBasicMaterial({
-      map: glowTex,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    this.disposables.push(glowMat);
-    const glow = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 3.4), glowMat);
-    glow.rotation.x = -Math.PI / 2;
-    glow.position.y = 0.006;
-    platform.add(glow);
-
-    // Concentric holographic line rings (rotate very slowly).
-    this.platformRings = new THREE.Group();
-    const ringDefs: [number, number, number][] = [
-      // innerRadius, outerRadius, opacity
-      [0.82, 0.845, 0.55],
-      [1.05, 1.062, 0.32],
-      [1.3, 1.315, 0.22],
-    ];
-    for (const [inner, outer, opacity] of ringDefs) {
-      const geo = new THREE.RingGeometry(inner, outer, 72);
-      const mat = new THREE.MeshBasicMaterial({
-        color: cfg.colors.accentBright,
-        transparent: true,
-        opacity,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      });
-      this.disposables.push(geo, mat);
-      const ring = new THREE.Mesh(geo, mat);
-      ring.rotation.x = -Math.PI / 2;
-      this.platformRings.add(ring);
-    }
-    this.platformRings.position.y = 0.02;
-    platform.add(this.platformRings);
-
     this.group.add(platform);
   }
 
-  /** Large, very thin "sprout halo" circle behind the character. */
-  private setupHoloRing(): void {
-    this.holoRing = new THREE.Group();
-    const defs: [number, number, number][] = [
-      [1.55, 1.565, 0.16],
-      [1.8, 1.81, 0.1],
-    ];
-    for (const [inner, outer, opacity] of defs) {
-      const geo = new THREE.RingGeometry(inner, outer, 80);
-      const mat = new THREE.MeshBasicMaterial({
-        color: cfg.colors.accent,
-        transparent: true,
-        opacity,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      });
-      this.disposables.push(geo, mat);
-      this.holoRing.add(new THREE.Mesh(geo, mat));
-    }
-    // Small arc accents for the "radar" feel.
-    const arcGeo = new THREE.RingGeometry(1.68, 1.7, 80, 1, 0, Math.PI / 3);
-    const arcMat = new THREE.MeshBasicMaterial({
-      color: cfg.colors.accentBright,
-      transparent: true,
-      opacity: 0.28,
-      side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    this.disposables.push(arcGeo, arcMat);
-    this.holoRing.add(new THREE.Mesh(arcGeo, arcMat));
-
-    this.holoRing.position.set(0, 1.05, -0.65);
-    this.group.add(this.holoRing);
-  }
-
-  /** Prairie studio: warm sunny key + leafy rims + faint green fill. */
+  /** Prairie studio: warm sunny key + leafy rims + soft sky fill. */
   private setupLights(): void {
-    const key = new THREE.DirectionalLight(cfg.colors.keyLight, 2.1);
+    const key = new THREE.DirectionalLight(cfg.colors.keyLight, 2.3);
     key.position.set(2.2, 3.2, 3.5);
     this.group.add(key);
 
-    const rim = new THREE.DirectionalLight(cfg.colors.accent, 3.2);
+    const rim = new THREE.DirectionalLight(cfg.colors.accent, 2.2);
     rim.position.set(-2.5, 2.0, -3.0);
     this.group.add(rim);
 
-    const rim2 = new THREE.DirectionalLight(cfg.colors.accentDeep, 1.6);
+    const rim2 = new THREE.DirectionalLight(cfg.colors.accentDeep, 1.2);
     rim2.position.set(3.0, 1.0, -2.5);
     this.group.add(rim2);
 
-    const fill = new THREE.HemisphereLight(cfg.colors.fillLight, 0x0a1408, 0.55);
+    // Daytime fill: pale sky from above, warm meadow bounce from below.
+    const fill = new THREE.HemisphereLight(0xbfe3f5, 0x3a5a24, 0.85);
     this.group.add(fill);
   }
 
@@ -296,10 +262,6 @@ export class MenuCharacter {
 
   update(dt: number, elapsed: number): void {
     this.mixer?.update(dt);
-
-    // Extremely slow decorative rotations — never touches the Alert anim.
-    if (this.platformRings) this.platformRings.rotation.z = elapsed * 0.08;
-    if (this.holoRing) this.holoRing.rotation.z = -elapsed * 0.04;
 
     // Micro "presence" sway on the whole character (breathing-scale).
     if (this.characterRoot) {

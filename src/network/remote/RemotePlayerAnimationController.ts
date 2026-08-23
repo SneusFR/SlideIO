@@ -136,12 +136,21 @@ export class RemotePlayerAnimationController {
   private smoothedLegYaw = 0;
   private backpedaling = false;
 
+  /**
+   * Extra model raise applied while SLIDING. Remote players need it (their
+   * network capsule center drops while sliding); solo BOTS keep a fixed
+   * capsule, so they pass 0 (the crouch comes from the clip alone).
+   */
+  private readonly slideRaise: number;
+
   constructor(
     private readonly model: THREE.Object3D,
     /** Model's rest local Y (feet offset) — raise is applied relative to it. */
     private readonly modelRestY: number,
     clips: RemoteCharacterClips,
+    options: { slideRaise?: number } = {},
   ) {
+    this.slideRaise = options.slideRaise ?? SLIDE_MODEL_RAISE;
     this.mixer = new THREE.AnimationMixer(model);
 
     const make = (clip: THREE.AnimationClip): THREE.AnimationAction => {
@@ -274,7 +283,7 @@ export class RemotePlayerAnimationController {
     // Slide capsule compensation: the network capsule center sits LOWER
     // while sliding — raise the model root so the feet stay on the ground.
     // The crouch itself comes from the REAL slide clip (baked hips drop).
-    const targetRaise = state === NetworkMovementState.SLIDING ? SLIDE_MODEL_RAISE : 0;
+    const targetRaise = state === NetworkMovementState.SLIDING ? this.slideRaise : 0;
     this.smoothedRaise += (targetRaise - this.smoothedRaise) * k;
     this.model.position.y = this.modelRestY + this.smoothedRaise;
 

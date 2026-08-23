@@ -4,7 +4,7 @@ import { PhysicsWorld, RAPIER, CollisionGroups } from "../physics/PhysicsWorld";
 import { MovementConfig as mc } from "../player/MovementConfig";
 import { RagdollController } from "../ragdoll/RagdollController";
 import { RagdollConfig as rc } from "../ragdoll/RagdollConfig";
-import { buildBotRagdollParts } from "../ragdoll/BotRagdollFactory";
+import { buildSkeletonRagdollParts } from "../ragdoll/SkeletonRagdollFactory";
 import { CorpseManager } from "../ragdoll/CorpseManager";
 import { WeaponConfig as wc } from "../weapons/WeaponConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
@@ -17,7 +17,7 @@ import { ParticleSystem } from "../effects/ParticleSystem";
 import { HeatSystem } from "../weapons/HeatSystem";
 import { PlasmaBeam } from "../weapons/PlasmaBeam";
 import { castBeam, BeamCastResult } from "../weapons/BeamCombat";
-import { BotModel } from "./BotModel";
+import { BotModel, BotPose } from "./BotModel";
 import { BotAI } from "./BotAI";
 
 /** Shared context handed to every bot each frame. */
@@ -95,6 +95,19 @@ export class Bot implements Combatant {
   private readonly ragdollRootPos = new THREE.Vector3();
   private readonly ragdollRootVel = new THREE.Vector3();
   private readonly rayDown = { x: 0, y: -1, z: 0 };
+
+  /** Reused per-frame pose fed to the skinned model (no allocations). */
+  private readonly pose: BotPose = {
+    speed: 0,
+    yaw: 0,
+    pitch: 0,
+    sliding: false,
+    grounded: true,
+    dashing: false,
+    velocityY: 0,
+    vx: 0,
+    vz: 0,
+  };
 
   // scratch
   private readonly tmp = new THREE.Vector3();
@@ -228,13 +241,11 @@ export class Bot implements Combatant {
    * is fully suspended until recovery.
    */
   private enterTemporaryRagdoll(impulse: THREE.Vector3): boolean {
-    const parts = buildBotRagdollParts(this.model.group);
+    const parts = buildSkeletonRagdollParts(this.model.group);
     if (!parts) return false;
 
     if (!this.ragdoll) this.ragdoll = new RagdollController(this.physics, this.scene);
 
-    // Enemy UI/outline reads wrong on a tumbling body — hidden until up.
-    this.model.setSeen(false);
     this.sliding = false;
     this.dashing = false;
     this.isFiring = false;
@@ -316,7 +327,7 @@ export class Bot implements Combatant {
     // while the body keeps simulating for several seconds.
     if (this.corpses) {
       const corpseVisual = this.model.createCorpseVisual();
-      const parts = buildBotRagdollParts(corpseVisual);
+      const parts = buildSkeletonRagdollParts(corpseVisual);
       if (parts) {
         const velocity = this.ragdolled && this.ragdoll?.active
           ? this.ragdoll.getRootVelocity(this.ragdollRootVel)
@@ -553,6 +564,11 @@ export class Bot implements Combatant {
       this.model.group.visible = true;
       this.ragdoll.update(dt);
 
+      // ALIVE but knocked down: keep the enemy UI alive (health bar + BOT
+      // label + damage flash) — a bot without its bar reads as dead. The
+      // red rim glow follows automatically (skinned to the same bones).
+      this.model.updateUI(dt, this.health.ratio, camQuat, this.health.protected, time);
+
       // Recovery: min duration + physically settled (or hard timeout /
       // corrupted sim safety) → stand back up and resume the AI.
       if (this.ragdoll.corrupted || this.ragdoll.shouldRecover) {
@@ -565,17 +581,16 @@ export class Bot implements Combatant {
     this.model.group.position.set(t.x, t.y, t.z);
     const dist = camPos.distanceTo(this.model.group.position);
     this.model.group.visible = dist < 200;
-    this.model.update(
-      dt,
-      Math.hypot(this.velocity.x, this.velocity.z),
-      this.ai.lookYaw,
-      this.ai.lookPitch,
-      this.sliding,
-      this.health.ratio,
-      camQuat,
-      this.health.protected,
-      time,
-    );
+    this.pose.speed = Math.hypot(this.velocity.x, this.velocity.z);
+    this.pose.yaw = this.ai.lookYaw;
+    this.pose.pitch = this.ai.lookPitch;
+    this.pose.sliding = this.sliding;
+    this.pose.grounded = this.grounded;
+    this.pose.dashing = this.dashing;
+    this.pose.velocityY = this.velocity.y;
+    this.pose.vx = this.velocity.x;
+    this.pose.vz = this.velocity.z;
+    this.model.update(dt, this.pose, this.health.ratio, camQuat, this.health.protected, time);
   }
 
   /**
