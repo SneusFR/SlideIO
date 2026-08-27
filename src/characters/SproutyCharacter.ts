@@ -96,8 +96,13 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       if (mesh.isMesh) {
         mesh.castShadow = true;
         mesh.receiveShadow = false;
-        // Skinned bounds move with the animation; avoid stale-culling pops.
-        mesh.frustumCulled = false;
+        // PERF: frustum culling STAYS ON. Skinned bounds move with the
+        // animation, so the bind-pose bounding sphere is inflated once
+        // (per shared geometry) with a generous margin covering every
+        // in-place pose (root motion is stripped from the clips). An
+        // off-screen character then skips BOTH its skinning and its draw
+        // — with no stale-culling pop possible inside the margin.
+        inflateCullingBounds(mesh.geometry);
       }
     });
 
@@ -120,7 +125,9 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       rim.scale.copy(src.scale);
       rim.castShadow = false;
       rim.receiveShadow = false;
-      rim.frustumCulled = false;
+      // Shares the source geometry — its culling bounds are already
+      // inflated above, so normal frustum culling is safe (and skips the
+      // duplicated skinning entirely when off-screen).
       rim.userData.enemyRim = true;
       // Purely visual: never a raycast target.
       rim.raycast = () => {};
@@ -165,6 +172,21 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
     return { template, clips };
   });
   return cachedCharacter;
+}
+
+/** Bounding-sphere inflation factor for skinned culling (see above). */
+const SKINNED_CULL_MARGIN = 2.5;
+
+/**
+ * Inflate a geometry's bounding sphere so frustum culling stays valid
+ * for every animated pose. Idempotent — geometries shared between the
+ * body mesh and its rim duplicate are only inflated once.
+ */
+function inflateCullingBounds(geometry: THREE.BufferGeometry): void {
+  if (geometry.userData.cullBoundsInflated) return;
+  geometry.userData.cullBoundsInflated = true;
+  if (!geometry.boundingSphere) geometry.computeBoundingSphere();
+  if (geometry.boundingSphere) geometry.boundingSphere.radius *= SKINNED_CULL_MARGIN;
 }
 
 /**

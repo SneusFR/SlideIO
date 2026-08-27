@@ -16,15 +16,15 @@
   <body>
     <div id="app"></div>
 
-    <!-- ================= MAIN MENU ================= -->
+    <!-- ================= MAIN MENU =================
+         The game renderer (in #app) is visible BEHIND this transparent
+         overlay: the actual map preview is the menu background. -->
     <div id="main-menu-root">
-      <!-- Three.js menu canvas is appended here (behind the UI) -->
-
       <div id="main-menu" class="menu-hidden">
-        <!-- Beanzo.io logo — top center -->
+        <!-- Beanzo.io logo — top center, compact -->
         <img id="menu-logo" src="/src/assets/logo.png" alt="Beanzo.io" draggable="false" />
 
-        <!-- Player info — top left -->
+        <!-- Player profile card — top left -->
         <div id="menu-profile">
           <div id="menu-avatar">
             <svg viewBox="0 0 48 48" aria-hidden="true">
@@ -53,11 +53,21 @@
               <path d="M24 8 Q26 4 30 5 Q27 8 25 9 Z" fill="#4ade80" opacity="0.9" />
             </svg>
           </div>
-          <div id="menu-profile-sep"></div>
           <div id="menu-profile-info">
-            <div id="menu-player-name">VALENTIN</div>
+            <div id="menu-name-row">
+              <span id="menu-player-name">GUEST</span>
+              <button id="menu-name-edit" type="button" title="Change name" aria-label="Change name">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
+                    fill="currentColor"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div id="menu-profile-guest" class="hidden">Playing as guest — no account needed!</div>
             <div id="menu-level-row">
-              <span id="menu-player-level">LVL 27</span>
+              <span id="menu-player-level">LVL 1</span>
               <div id="menu-xp-bar"><div id="menu-xp-fill"></div></div>
             </div>
             <div id="menu-currency-row">
@@ -74,92 +84,145 @@
                   opacity="0.9"
                 />
               </svg>
-              <span id="menu-player-currency">1,245,870</span>
+              <span id="menu-player-currency">0</span>
             </div>
           </div>
         </div>
 
-        <!-- Navigation — left column (wooden frame + parchment buttons) -->
-        <nav id="menu-nav">
-          <button class="menu-btn menu-btn-primary" data-action="play" type="button">
-            <span class="menu-btn-label">Play</span>
-            <span class="menu-btn-icon">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M8 5v14l11-7z" fill="currentColor" />
-              </svg>
-            </span>
-          </button>
-          <button class="menu-btn" data-action="multiplayer" type="button">
-            <span class="menu-btn-label">Multiplayer</span>
-            <span class="menu-btn-icon">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"
-                  fill="currentColor"
-                />
-              </svg>
-            </span>
-          </button>
-          <button class="menu-btn" data-action="editor" type="button">
-            <span class="menu-btn-label">Editor</span>
-            <span class="menu-btn-icon">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
-                  fill="currentColor"
-                />
-              </svg>
-            </span>
-          </button>
-          <button class="menu-btn" data-action="shop" type="button">
-            <span class="menu-btn-label">Shop</span>
-            <span class="menu-btn-icon">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 20 4H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"
-                  fill="currentColor"
-                />
-              </svg>
-            </span>
-          </button>
-          <button class="menu-btn" data-action="settings" type="button">
-            <span class="menu-btn-label">Settings</span>
-            <span class="menu-btn-icon">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
-                  fill="currentColor"
-                />
-              </svg>
-            </span>
-          </button>
-          <button class="menu-btn" data-action="credits" type="button">
-            <span class="menu-btn-label">Credits</span>
-            <span class="menu-btn-icon">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L2.82 21z"
-                  fill="currentColor"
-                />
-              </svg>
-            </span>
-          </button>
-        </nav>
-
-        <!-- Loadout — under the character, right side -->
-        <div id="menu-loadout-wrap">
-          <button class="menu-btn menu-btn-loadout" data-action="loadout" type="button">
-            <span class="menu-btn-icon">
+        <!-- Right column: nav bar + settings popover + ad slot -->
+        <div id="menu-right-col">
+          <nav id="menu-nav">
+            <button class="nav-btn" data-menu="inventory" type="button">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path
                   d="M20 8v12c0 1.1-.9 2-2 2H6c-1.1 0-2-.9-2-2V8c0-1.86 1.28-3.41 3-3.86V3c0-1.1.9-2 2-2h6c1.1 0 2 .9 2 2v1.14c1.72.45 3 2 3 3.86zM9 3v1h6V3H9zm9 9H6v2h10v2h2v-4z"
                   fill="currentColor"
                 />
               </svg>
+              <span>INVENTORY</span>
+            </button>
+            <button class="nav-btn nav-btn-disabled" data-menu="shop" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 20 4H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"
+                  fill="currentColor"
+                />
+              </svg>
+              <span>SHOP</span>
+              <em class="nav-soon">SOON</em>
+            </button>
+            <button class="nav-btn" data-menu="settings" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
+                  fill="currentColor"
+                />
+              </svg>
+              <span>SETTINGS</span>
+            </button>
+          </nav>
+
+          <!-- SETTINGS popover (graphics quality — the real system) -->
+          <div id="menu-settings-pop" class="hidden">
+            <div class="settings-title">SETTINGS</div>
+            <button id="menu-quality-btn" type="button">GRAPHICS: AUTO</button>
+            <div class="settings-hint">Applying a new preset reloads the game</div>
+          </div>
+
+          <!-- Web advertisement placement (AdSlot renders here) -->
+          <div id="menu-ad-anchor"></div>
+        </div>
+
+        <!-- Main action — CLICK TO PLAY, centered over the map preview -->
+        <div id="menu-cta" role="button" tabindex="0">
+          <div id="menu-play-title">CLICK TO PLAY</div>
+          <div id="menu-play-sub">
+            <span class="cta-sprout">🌱</span> JUMP RIGHT IN. NO WAITING.
+          </div>
+        </div>
+
+        <!-- Server / lobby panel — bottom left -->
+        <div id="menu-server-panel">
+          <div class="srv-row srv-row-top">
+            <div class="srv-block">
+              <div class="srv-label">REGION</div>
+              <div class="srv-value" id="menu-region-value">EUROPE</div>
+            </div>
+            <div class="srv-sep"></div>
+            <div class="srv-block">
+              <div class="srv-label">LOBBY</div>
+              <div class="srv-value" id="menu-lobby-value">SOLO · VS BOTS</div>
+            </div>
+            <button class="srv-change" data-menu="change-lobby" type="button">CHANGE</button>
+          </div>
+          <div class="srv-row">
+            <div class="srv-block">
+              <div class="srv-label">GAME MODE</div>
+              <div class="srv-value">FREE FOR ALL</div>
+              <div class="srv-sub" id="menu-mode-sub">Every bean for themselves!</div>
+            </div>
+          </div>
+          <div class="srv-row srv-row-ping">
+            <span id="menu-ping-dot" class="off"></span>
+            <span id="menu-ping-value">— ms</span>
+          </div>
+        </div>
+
+        <!-- Loadout + Customize — bottom center -->
+        <div id="menu-actions">
+          <button class="action-btn" data-menu="loadout" type="button">
+            <span class="action-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M7 5h10l4 4-9 11L3 9l4-4zm.83 2L5.6 9.23 12 17l6.4-7.77L16.17 7H7.83z"
+                  fill="currentColor"
+                />
+              </svg>
             </span>
-            <span class="menu-btn-label">Loadout</span>
+            <span class="action-text">
+              <span class="action-title">LOADOUT</span>
+              <span class="action-sub">Edit weapons &amp; perks</span>
+            </span>
           </button>
-          <div id="menu-loadout-glow"></div>
+          <button class="action-btn" data-menu="customize" type="button">
+            <span class="action-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 2a5 5 0 0 0-5 5c0 1.5.66 2.84 1.7 3.76C6.5 11.9 5 14.28 5 17v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3c0-2.72-1.5-5.1-3.7-6.24A4.98 4.98 0 0 0 17 7a5 5 0 0 0-5-5z"
+                  fill="currentColor"
+                />
+              </svg>
+            </span>
+            <span class="action-text">
+              <span class="action-title">CUSTOMIZE</span>
+              <span class="action-sub">Skins, hats &amp; more!</span>
+            </span>
+          </button>
+          <button class="action-btn action-btn-leave hidden" data-menu="leave" type="button">
+            <span class="action-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M10.09 15.59 11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM19 3H5c-1.1 0-2 .9-2 2v4h2V5h14v14H5v-4H3v4c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"
+                  fill="currentColor"
+                />
+              </svg>
+            </span>
+            <span class="action-text">
+              <span class="action-title">LEAVE GAME</span>
+              <span class="action-sub">Back to the lobby</span>
+            </span>
+          </button>
+        </div>
+
+        <!-- Solo BOTS panel — visible only while PAUSED in a solo game -->
+        <div id="bots-menu">
+          <div id="bots-title">BOTS</div>
+          <div id="bots-row">
+            <button id="bots-minus" type="button">−</button>
+            <span id="bots-count">0</span>
+            <button id="bots-plus" type="button">+</button>
+          </div>
+          <div id="bots-hint">Maximum: 8 · FFA — everyone fights everyone · applied instantly</div>
         </div>
       </div>
 
@@ -173,23 +236,10 @@
       <div id="menu-loading-sub">LOADING<span class="dots"></span></div>
     </div>
 
-    <!-- ================= GAMEPLAY (unchanged) ================= -->
-    <div id="overlay" class="hidden">
-      <div id="overlay-title">CLICK TO PLAY</div>
-      <div id="overlay-controls">
-        WASD — Move&nbsp;&nbsp;·&nbsp;&nbsp;SPACE — Jump&nbsp;&nbsp;·&nbsp;&nbsp;SHIFT — Slide&nbsp;&nbsp;·&nbsp;&nbsp;E — Dash&nbsp;&nbsp;·&nbsp;&nbsp;LMB — Fire&nbsp;&nbsp;·&nbsp;&nbsp;R — Respawn
-      </div>
-
-      <div id="bots-menu">
-        <div id="bots-title">BOTS</div>
-        <div id="bots-row">
-          <button id="bots-minus" type="button">−</button>
-          <span id="bots-count">0</span>
-          <button id="bots-plus" type="button">+</button>
-        </div>
-        <div id="bots-hint">Maximum: 8 · FFA — everyone fights everyone · applied instantly</div>
-      </div>
-    </div>
+    <!-- ================= GAMEPLAY ================= -->
+    <!-- Legacy Escape overlay: kept as an inert element (Escape now
+         reopens the main menu overlay instead). -->
+    <div id="overlay" class="hidden"></div>
 
     <div id="hud" class="menu-active">
       <div id="phase-overlay"></div>

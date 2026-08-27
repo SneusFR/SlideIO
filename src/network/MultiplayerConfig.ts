@@ -14,6 +14,14 @@ export const MultiplayerConfig = {
   /** Room type registered on the backend (see backend serverConfig). */
   roomName: "game_room",
 
+  /**
+   * Human-readable region of the current server deployment (single
+   * region today). Shown in the menu's server panel — override with
+   * VITE_MULTIPLAYER_REGION when more regions exist.
+   */
+  serverRegion:
+    (import.meta.env.VITE_MULTIPLAYER_REGION as string | undefined) ?? "EUROPE",
+
   /** URL prefix used for invite links: {origin}/join/{roomId}. */
   joinPathPrefix: "/join/",
 

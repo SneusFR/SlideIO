@@ -60,6 +60,7 @@ import type { MultiplayerClient } from "../network/MultiplayerClient";
 import { KillMethod } from "../combat/KillMethod";
 import { WeaponActionType } from "../../shared/combat/NetworkWeapons";
 import type { HitConfirmedEvent } from "../../shared/combat/NetworkWeapons";
+import { getQualitySettings } from "./GraphicsQuality";
 
 /**
  * Top-level game: rendering, main loop and wiring between subsystems.
@@ -187,6 +188,9 @@ export class Game {
   private elapsed = 0;
   /** True once the one-time GPU warm-up pass has run. */
   private gpuWarmedUp = false;
+  /** LOW preset: shadow pass rendered every other frame (30 Hz shadows). */
+  private readonly halfRateShadows: boolean;
+  private shadowFrameParity = false;
   private readonly playerPos = new THREE.Vector3();
   private readonly rightDir = new THREE.Vector3();
   private readonly attackerPos = new THREE.Vector3();
@@ -203,11 +207,21 @@ export class Game {
   private constructor(container: HTMLElement, physics: PhysicsWorld) {
     this.physics = physics;
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    // Quality preset (auto-detected iGPU → LOW, override in the Escape
+    // menu): resolution cap, MSAA, shadow budget — see GraphicsQuality.
+    const quality = getQualitySettings();
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: quality.antialias,
+      powerPreference: "high-performance",
+    });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    // LOW: the shadow pass is manually re-rendered every OTHER frame in
+    // frame() — shadows update at 30 Hz while gameplay stays at 60.
+    this.halfRateShadows = quality.halfRateShadows;
+    if (this.halfRateShadows) this.renderer.shadowMap.autoUpdate = false;
     // Light "color grading": filmic curve → deep blacks, cool highlights.
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = spaceCfg.toneMappingExposure;
@@ -611,6 +625,7 @@ export class Game {
     });
     this.scene.updateMatrixWorld(true);
     for (let i = 0; i < 2; i++) {
+      if (this.halfRateShadows) this.renderer.shadowMap.needsUpdate = true;
       this.renderer.render(this.scene, this.fpsCamera.camera);
     }
 
@@ -619,6 +634,7 @@ export class Game {
     // runtime light count is also compiled (both variants cached).
     this.multiplayer?.vfx.finishWarmUp();
     for (let i = 0; i < 2; i++) {
+      if (this.halfRateShadows) this.renderer.shadowMap.needsUpdate = true;
       this.renderer.render(this.scene, this.fpsCamera.camera);
     }
 
@@ -811,6 +827,125 @@ export class Game {
   start(): void {
     this.lastTime = performance.now();
     this.renderer.setAnimationLoop(() => this.frame());
+  }
+
+  // ------------------------------------------------------------------
+  // MAIN MENU PREVIEW — the real map rendered as a living menu backdrop
+  // ------------------------------------------------------------------
+
+  /** Non-null while the cinematic menu preview loop owns the renderer. */
+  private menuPreview: {
+    camera: THREE.PerspectiveCamera;
+    elapsed: number;
+    onResize: () => void;
+  } | null = null;
+
+  /**
+   * Start the cinematic MENU PREVIEW: an elevated camera slowly orbiting
+   * the actual map (real lighting / assets / sky), rendered by the SAME
+   * renderer and scene the gameplay uses — no second scene, no duplicate
+   * GPU resources. Physics / AI / combat are NOT stepped: the world is
+   * purely observed, so nothing can happen to the player from the menu.
+   */
+  startMenuPreview(): void {
+    if (this.menuPreview) return;
+    const camera = new THREE.PerspectiveCamera(
+      48,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      400,
+    );
+    const onResize = () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener("resize", onResize);
+    this.menuPreview = { camera, elapsed: 0, onResize };
+
+    // Shadows: render one fresh pass for the preview even on the LOW
+    // preset (autoUpdate=false) — the scene is static afterwards.
+    if (this.halfRateShadows) this.renderer.shadowMap.needsUpdate = true;
+
+    this.lastTime = performance.now();
+    this.renderer.setAnimationLoop(() => this.menuPreviewFrame());
+  }
+
+  private readonly menuLookAt = new THREE.Vector3(0, 1.0, 0);
+
+  private menuPreviewFrame(): void {
+    const p = this.menuPreview;
+    if (!p) return;
+    const now = performance.now();
+    const dt = Math.min((now - this.lastTime) / 1000, 1 / 20);
+    this.lastTime = now;
+    p.elapsed += dt;
+
+    // Slow cinematic orbit inside the dome: elevated, slightly angled
+    // top-down, with a gentle radius drift + height bob so the shot
+    // never feels mechanical.
+    const angle = 0.55 + p.elapsed * 0.035; // very slow orbit
+    const radius = 30 + Math.sin(p.elapsed * 0.11) * 2.5;
+    const height = 12.2 + Math.sin(p.elapsed * 0.17) * 0.7;
+    p.camera.position.set(
+      Math.cos(angle) * radius,
+      height,
+      Math.sin(angle) * radius * 0.82,
+    );
+    p.camera.lookAt(this.menuLookAt);
+
+    // The animated deep-space backdrop keeps living behind the map.
+    this.spaceSky?.update(dt, p.elapsed, p.camera);
+
+    this.renderer.render(this.scene, p.camera);
+  }
+
+  /**
+   * CLICK TO PLAY transition: fly the cinematic camera down to the
+   * player's first-person eye pose (position + orientation + FOV), then
+   * hand the renderer back. Resolves when the flight is complete — the
+   * caller then runs start() and gameplay begins seamlessly.
+   */
+  beginMenuPlayTransition(durationMs = 950): Promise<void> {
+    const p = this.menuPreview;
+    if (!p) return Promise.resolve();
+
+    // Compute the exact gameplay camera pose (player eye at spawn).
+    this.updateCamera(0);
+    this.fpsCamera.camera.updateMatrixWorld(true);
+    const targetPos = this.fpsCamera.camera.getWorldPosition(new THREE.Vector3());
+    const targetQuat = this.fpsCamera.camera.getWorldQuaternion(new THREE.Quaternion());
+    const targetFov = this.fpsCamera.camera.fov;
+
+    const startPos = p.camera.position.clone();
+    const startQuat = p.camera.quaternion.clone();
+    const startFov = p.camera.fov;
+    const t0 = performance.now();
+
+    return new Promise((resolve) => {
+      this.renderer.setAnimationLoop(() => {
+        const t = Math.min((performance.now() - t0) / durationMs, 1);
+        // Smooth ease-in-out (accelerate → glide in).
+        const e = t * t * (3 - 2 * t);
+        p.camera.position.lerpVectors(startPos, targetPos, e);
+        p.camera.quaternion.slerpQuaternions(startQuat, targetQuat, e);
+        p.camera.fov = startFov + (targetFov - startFov) * e;
+        p.camera.updateProjectionMatrix();
+        this.renderer.render(this.scene, p.camera);
+        if (t >= 1) {
+          this.stopMenuPreview();
+          resolve();
+        }
+      });
+    });
+  }
+
+  /** Stop the preview loop immediately and free its listeners. */
+  stopMenuPreview(): void {
+    const p = this.menuPreview;
+    if (!p) return;
+    this.menuPreview = null;
+    this.renderer.setAnimationLoop(null);
+    window.removeEventListener("resize", p.onResize);
   }
 
   /** Rebuild the beam raycast list after the bot roster changes. */
@@ -1054,6 +1189,12 @@ export class Game {
     this.netDebugHud?.update(dt); // F1 overlay (throttled; free when hidden)
     this.netAttackerAge += dt; // network damage-direction memory decays
 
+    // LOW preset: refresh the shadow map every other frame only (the
+    // whole caster re-render is the single most expensive fixed pass).
+    if (this.halfRateShadows) {
+      this.shadowFrameParity = !this.shadowFrameParity;
+      if (this.shadowFrameParity) this.renderer.shadowMap.needsUpdate = true;
+    }
     this.renderer.render(this.scene, this.fpsCamera.camera);
     this.input.endFrame();
   }

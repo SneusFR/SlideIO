@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { getQualitySettings } from "../game/GraphicsQuality";
 
 /**
  * One force-field segment. Coordinates mirror the physics collider:
@@ -33,11 +34,20 @@ const FIELD = {
   /** Violet light emitted by each wall segment. */
   lightColor: 0x9d5cff,
   lightIntensity: 1.6,
-  /** Light range scales with segment length, clamped to this window. */
+  /**
+   * Light range scales with segment length, clamped to this window.
+   * PERF: three.js is a FORWARD renderer — every point light in the scene
+   * is evaluated by EVERY lit fragment, every frame, whatever its range.
+   * The field therefore emits ONE centered light per significant segment
+   * (never two) with a wider clamp so the violet wash keeps the same
+   * footprint, and tiny filler segments (door lintels) emit none: the
+   * scene light count drops ~2× for a visually identical result.
+   */
   lightMinDistance: 18,
-  lightMaxDistance: 42,
-  /** Segments longer than this get two lights instead of one. */
-  twoLightsAbove: 40,
+  lightMaxDistance: 60,
+  lightDistanceScale: 0.7,
+  /** Segments shorter than this never get their own light. */
+  lightMinSegmentLength: 10,
 
   // ---- Meteor impacts on the dome ----
   /** Seconds between meteor strikes (random in [min, max]). */
@@ -297,7 +307,17 @@ export class ForceFieldWalls {
   private lastEffectsTime = performance.now();
 
   constructor(segments: ForceFieldSegment[]) {
-    for (const seg of segments) this.buildSegment(seg);
+    // Light budget (quality preset): on LOW only the N BIGGEST segments
+    // emit their violet point light — the field shader itself is identical,
+    // only the subtle violet cast on nearby surfaces fades on small walls.
+    const budget = getQualitySettings().maxFieldLights;
+    const lit = new Set(
+      segments
+        .filter((s) => s.length >= FIELD.lightMinSegmentLength)
+        .sort((a, b) => b.length - a.length)
+        .slice(0, Number.isFinite(budget) ? budget : segments.length),
+    );
+    for (const seg of segments) this.buildSegment(seg, lit.has(seg));
     if (this.roofs.length > 0) this.buildMeteorSystem();
   }
 
@@ -309,7 +329,7 @@ export class ForceFieldWalls {
   // Field planes
   // ------------------------------------------------------------------
 
-  private buildSegment(seg: ForceFieldSegment): void {
+  private buildSegment(seg: ForceFieldSegment, emitsLight: boolean): void {
     const isRoof = seg.horizontal === true;
 
     const segGroup = new THREE.Group();
@@ -363,10 +383,12 @@ export class ForceFieldWalls {
     // ---- Energy particles rising along the wall (vertical walls only) ----
     let pMat: THREE.ShaderMaterial | null = null;
     if (!isRoof) {
+      // LOW preset: half the particle density (additive fill-rate savings).
+      const densityScale = getQualitySettings().fieldParticleScale;
       const area = seg.length * seg.height;
       const count = Math.min(
-        FIELD.maxParticlesPerSegment,
-        Math.max(24, Math.round(area * FIELD.particleDensity)),
+        Math.max(24, Math.round(FIELD.maxParticlesPerSegment * densityScale)),
+        Math.max(24, Math.round(area * FIELD.particleDensity * densityScale)),
       );
       const positions = new Float32Array(count * 3);
       const seeds = new Float32Array(count);
@@ -413,20 +435,18 @@ export class ForceFieldWalls {
     };
     segGroup.add(plane);
 
-    // ---- Violet light emitted by the field ----
-    const distance = THREE.MathUtils.clamp(
-      seg.length * 0.55,
-      FIELD.lightMinDistance,
-      FIELD.lightMaxDistance,
-    );
-    const lightY = isRoof ? -1.5 : seg.height * 0.5;
-    const offsets =
-      seg.length > FIELD.twoLightsAbove
-        ? [-seg.length / 4, seg.length / 4]
-        : [0];
-    for (const off of offsets) {
+    // ---- Violet light emitted by the field (ONE per significant segment;
+    // see the PERF note on the light tunables above + the quality budget
+    // in the constructor) ----
+    if (emitsLight) {
+      const distance = THREE.MathUtils.clamp(
+        seg.length * FIELD.lightDistanceScale,
+        FIELD.lightMinDistance,
+        FIELD.lightMaxDistance,
+      );
+      const lightY = isRoof ? -1.5 : seg.height * 0.5;
       const l = new THREE.PointLight(FIELD.lightColor, FIELD.lightIntensity, distance, 1.8);
-      l.position.set(off, lightY, 0);
+      l.position.set(0, lightY, 0);
       segGroup.add(l);
     }
   }

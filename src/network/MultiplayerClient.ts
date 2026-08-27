@@ -97,6 +97,13 @@ export class MultiplayerError extends Error {
   }
 }
 
+/** Compact summary of a joinable room (lobby browser rows). */
+export interface AvailableLobby {
+  roomId: string;
+  clients: number;
+  maxClients: number;
+}
+
 /**
  * Thin wrapper around the Colyseus client — the ONLY place in the frontend
  * that talks to the multiplayer server. Centralizes connect / create / join /
@@ -188,6 +195,44 @@ export class MultiplayerClient {
       logDev(`Created + joined room ${room.roomId}`);
     } catch (err) {
       throw toMultiplayerError(err);
+    }
+  }
+
+  /**
+   * List the currently OPEN lobbies of our room type (real server data —
+   * the compact lobby browser renders these rows). Errors resolve to an
+   * empty list so the menu never breaks when the server is unreachable.
+   */
+  async getAvailableLobbies(): Promise<AvailableLobby[]> {
+    try {
+      const rooms = await this.ensureClient().getAvailableRooms(
+        MultiplayerConfig.roomName,
+      );
+      return rooms.map((r) => ({
+        roomId: r.roomId,
+        clients: r.clients,
+        maxClients: r.maxClients,
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Rough server latency estimate BEFORE any room connection: one timed
+   * HTTP request to the Colyseus endpoint. Once connected, the real
+   * PING/PONG RTT (rttMs) takes over. Returns null when unreachable.
+   */
+  async probeLatency(): Promise<number | null> {
+    const httpUrl = MultiplayerConfig.serverUrl
+      .replace(/^wss:/, "https:")
+      .replace(/^ws:/, "http:");
+    const start = performance.now();
+    try {
+      await fetch(httpUrl, { mode: "no-cors", cache: "no-store" });
+      return Math.round(performance.now() - start);
+    } catch {
+      return null;
     }
   }
 

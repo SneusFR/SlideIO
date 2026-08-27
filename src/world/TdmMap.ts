@@ -1,7 +1,9 @@
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { SpaceConfig as space } from "./SpaceConfig";
 import { ForceFieldWalls, ForceFieldSegment } from "./ForceFieldWall";
+import { getQualitySettings } from "../game/GraphicsQuality";
 
 /**
  * "Block Party" — compact Red vs Blue TDM arena (Nuketown-like spirit).
@@ -36,6 +38,26 @@ export class TdmMap {
 
   private physics: PhysicsWorld;
   private readonly fieldSegments: ForceFieldSegment[] = [];
+
+  // ---- Static geometry batching (PERF, zero visual change) ----
+  // Every box/deco/glow strip used to be its OWN Mesh with its OWN
+  // geometry + material: ~250 draw calls, doubled by the shadow pass.
+  // Boxes are instead accumulated per (color, shadow role) and merged
+  // into ONE Mesh per bucket after construction — same triangles, same
+  // colors, same lighting/shadows, ~15 draw calls total. The physics
+  // colliders are untouched (still one static box each).
+  /** color → pre-transformed box geometries (Lambert, casts shadows). */
+  private readonly lambertCastBatch = new Map<number, THREE.BufferGeometry[]>();
+  /** color → pre-transformed box geometries (Lambert, receive-only). */
+  private readonly lambertDecoBatch = new Map<number, THREE.BufferGeometry[]>();
+  /** color → pre-transformed box geometries (unlit glow, no shadows). */
+  private readonly glowBatch = new Map<number, THREE.BufferGeometry[]>();
+  /** Phase-panel geometries (all panels share ONE emissive material). */
+  private readonly phasePanelBatch: THREE.BufferGeometry[] = [];
+  // Scratch for baking transforms into batched geometries.
+  private readonly batchEuler = new THREE.Euler();
+  private readonly batchMatrix = new THREE.Matrix4();
+  private readonly batchQuat = new THREE.Quaternion();
 
   // Stylized daytime palette
   private static COLORS = {
@@ -85,6 +107,7 @@ export class TdmMap {
     this.buildCenterStreet();
     this.buildLanes();
     this.buildTrainingRange();
+    this.buildBatchedMeshes();
     this.buildForceFields();
   }
 
@@ -92,7 +115,37 @@ export class TdmMap {
   // Helpers
   // ------------------------------------------------------------------
 
-  /** Axis-aligned (or rotated) box: visual mesh + static collider. */
+  /**
+   * Bake a box's transform into a geometry and file it into a batch
+   * bucket (merged into one mesh per bucket in buildBatchedMeshes).
+   */
+  private pushBatchedBox(
+    batch: Map<number, THREE.BufferGeometry[]>,
+    color: number,
+    x: number,
+    y: number,
+    z: number,
+    sx: number,
+    sy: number,
+    sz: number,
+    rotX = 0,
+    rotZ = 0,
+  ): void {
+    const geo = new THREE.BoxGeometry(sx, sy, sz);
+    if (rotX !== 0 || rotZ !== 0) {
+      this.batchEuler.set(rotX, 0, rotZ);
+      geo.applyMatrix4(this.batchMatrix.makeRotationFromEuler(this.batchEuler));
+    }
+    geo.translate(x, y, z);
+    let list = batch.get(color);
+    if (!list) {
+      list = [];
+      batch.set(color, list);
+    }
+    list.push(geo);
+  }
+
+  /** Axis-aligned (or rotated) box: batched visual + static collider. */
   private box(
     x: number,
     y: number,
@@ -104,17 +157,10 @@ export class TdmMap {
     rotX = 0,
     rotZ = 0,
   ): void {
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(sx, sy, sz),
-      new THREE.MeshLambertMaterial({ color }),
-    );
-    mesh.position.set(x, y, z);
-    mesh.rotation.set(rotX, 0, rotZ);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    this.group.add(mesh);
+    this.pushBatchedBox(this.lambertCastBatch, color, x, y, z, sx, sy, sz, rotX, rotZ);
 
-    const q = mesh.quaternion;
+    this.batchEuler.set(rotX, 0, rotZ);
+    const q = this.batchQuat.setFromEuler(this.batchEuler);
     this.physics.addStaticBox(x, y, z, sx, sy, sz, {
       x: q.x,
       y: q.y,
@@ -133,13 +179,7 @@ export class TdmMap {
     sz: number,
     color: number,
   ): void {
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(sx, sy, sz),
-      new THREE.MeshLambertMaterial({ color }),
-    );
-    mesh.position.set(x, y, z);
-    mesh.receiveShadow = true;
-    this.group.add(mesh);
+    this.pushBatchedBox(this.lambertDecoBatch, color, x, y, z, sx, sy, sz);
   }
 
   /** Visual-only emissive strip (no collider) — markings, accents. */
@@ -152,12 +192,63 @@ export class TdmMap {
     sz: number,
     color: number,
   ): void {
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(sx, sy, sz),
-      new THREE.MeshBasicMaterial({ color }),
-    );
-    mesh.position.set(x, y, z);
-    this.group.add(mesh);
+    this.pushBatchedBox(this.glowBatch, color, x, y, z, sx, sy, sz);
+  }
+
+  /**
+   * Merge every batched bucket into a single Mesh (one draw call per
+   * color + shadow role) and add them to the map group. Intermediate
+   * geometries are disposed — only the merged buffers stay on the GPU.
+   */
+  private buildBatchedMeshes(): void {
+    const addMerged = (
+      geos: THREE.BufferGeometry[],
+      material: THREE.Material,
+      castShadow: boolean,
+      receiveShadow: boolean,
+    ): void => {
+      const merged = mergeGeometries(geos);
+      for (const g of geos) g.dispose();
+      if (!merged) return;
+      const mesh = new THREE.Mesh(merged, material);
+      mesh.castShadow = castShadow;
+      mesh.receiveShadow = receiveShadow;
+      this.group.add(mesh);
+    };
+
+    for (const [color, geos] of this.lambertCastBatch) {
+      addMerged(geos, new THREE.MeshLambertMaterial({ color }), true, true);
+    }
+    this.lambertCastBatch.clear();
+
+    // Deco boxes never cast shadows (thin overlays) — receive only.
+    for (const [color, geos] of this.lambertDecoBatch) {
+      addMerged(geos, new THREE.MeshLambertMaterial({ color }), false, true);
+    }
+    this.lambertDecoBatch.clear();
+
+    // Unlit glow strips: no shadow interaction at all.
+    for (const [color, geos] of this.glowBatch) {
+      addMerged(geos, new THREE.MeshBasicMaterial({ color }), false, false);
+    }
+    this.glowBatch.clear();
+
+    // All phase panels share one emissive "tech metal" material.
+    if (this.phasePanelBatch.length > 0) {
+      addMerged(
+        this.phasePanelBatch,
+        new THREE.MeshLambertMaterial({
+          color: TdmMap.COLORS.phasePanel,
+          emissive: 0x5b21b6,
+          emissiveIntensity: 0.28,
+          transparent: true,
+          opacity: 0.92,
+        }),
+        true,
+        true,
+      );
+      this.phasePanelBatch.length = 0;
+    }
   }
 
   /**
@@ -247,20 +338,11 @@ export class TdmMap {
     sy: number,
     sz: number,
   ): void {
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(sx, sy, sz),
-      new THREE.MeshLambertMaterial({
-        color: TdmMap.COLORS.phasePanel,
-        emissive: 0x5b21b6,
-        emissiveIntensity: 0.28,
-        transparent: true,
-        opacity: 0.92,
-      }),
-    );
-    mesh.position.set(x, y, z);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    this.group.add(mesh);
+    // Batched like every other static box (all panels share ONE emissive
+    // material + ONE draw call — see buildBatchedMeshes).
+    const geo = new THREE.BoxGeometry(sx, sy, sz);
+    geo.translate(x, y, z);
+    this.phasePanelBatch.push(geo);
 
     // Thin glowing seams framing the panel — subtle but learnable.
     const g = TdmMap.COLORS.phaseGlow;
@@ -366,7 +448,10 @@ export class TdmMap {
       .normalize()
       .multiplyScalar(90);
     moon.castShadow = true;
-    moon.shadow.mapSize.set(2048, 2048);
+    // Shadow resolution follows the quality preset (LOW halves it — the
+    // night scene hides the softer edges almost completely).
+    const shadowRes = getQualitySettings().shadowMapSize;
+    moon.shadow.mapSize.set(shadowRes, shadowRes);
     moon.shadow.camera.left = -120;
     moon.shadow.camera.right = 120;
     moon.shadow.camera.top = 120;

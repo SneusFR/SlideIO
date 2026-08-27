@@ -1,48 +1,70 @@
 import { Game } from "./game/Game";
-import { MainMenu } from "./menu/MainMenu";
 import { LoadoutMenu } from "./menu/LoadoutMenu";
 import { MenuAudio } from "./menu/MenuAudio";
-import { playerProfile } from "./menu/MenuConfig";
+import { MenuOverlay } from "./menu/MenuOverlay";
+import { LobbyBrowser } from "./menu/LobbyBrowser";
 import { LobbyController } from "./network/LobbyController";
 import { MultiplayerClient } from "./network/MultiplayerClient";
 import { parseJoinRoomId } from "./network/MultiplayerConfig";
 
 /**
- * Boot flow:
+ * Boot flow — "the menu is just an overlay on top of the game":
  *
  *   page load
- *   → minimal "BEANZO.IO / LOADING…" screen
- *   → Game (physics/map) + Main Menu (character/weapons/prairie) preload in parallel
- *   → Main Menu revealed with a fade (cursor visible, no pointer lock)
- *   → PLAY → short green transition → menu disposed → existing gameplay starts
+ *   → ONE loading phase (physics WASM + map + NavGrid + every weapon GLB
+ *     + full GPU shader warm-up — everything gameplay needs)
+ *   → Main Menu revealed: the REAL map renders behind the UI with a slow
+ *     cinematic orbit camera (same renderer/scene as gameplay — no
+ *     duplicate scene, no second loading later)
+ *   → CLICK TO PLAY → camera flies down to the player's eye → FPS
+ *     controls active immediately. No second loading screen.
  *
- * Multiplayer (Phase 2): the same Game instance powers both modes.
- *   MULTIPLAYER → lobby overlay → host clicks START GAME → server flips the
- *   room phase to PLAYING → EVERY client transitions Lobby → Game in-app
- *   (same map, 0 bots, server-assigned spawns, 20 Hz transform sync).
+ * PAUSE: pressing Escape in game reopens the SAME menu overlay
+ * (CLICK TO RESUME + solo bots panel / multiplayer LEAVE GAME) —
+ * there is no separate pause screen anymore.
+ *
+ * Multiplayer: the same Game instance powers both modes. CHANGE (server
+ * panel) opens the lobby browser; create/join reuse the existing
+ * LobbyController; the SERVER flips the room phase to PLAYING and every
+ * client enters the match (assets are already warm → near-instant).
  */
 async function main(): Promise<void> {
   const container = document.getElementById("app")!;
-  const overlay = document.getElementById("overlay")!;
   const hud = document.getElementById("hud")!;
   const loading = document.getElementById("menu-loading")!;
-  const menuRoot = document.getElementById("main-menu-root")!;
 
-  // ---- Preload gameplay + menu together behind the loading screen ----
-  const [game, menu] = await Promise.all([
-    Game.create(container),
-    MainMenu.create(menuRoot),
-  ]);
+  // ---- ONE loading phase: build + warm EVERYTHING now ----
+  // The map, physics, nav grid, every weapon GLB and every shader are
+  // ready before the menu appears — CLICK TO PLAY is then instant.
+  const game = await Game.create(container);
+  await game.warmUpRendering();
 
-  // ---- Reveal the Main Menu ----
-  loading.classList.add("hidden");
-  menu.start();
+  // ---- Menu overlay over the live game renderer ----
+  const sounds = new MenuAudio();
+  void sounds.preload();
+  const loadoutMenu = new LoadoutMenu(sounds);
 
-  // ---- Multiplayer client + lobby overlay ----
-  // Failures never block Beanzo.io: the overlay shows its own error screens.
   const multiplayer = new MultiplayerClient();
-  const lobby = new LobbyController(multiplayer, playerProfile.name);
-  menu.onMultiplayer = () => lobby.open();
+  const menu = new MenuOverlay(sounds, multiplayer);
+  const lobby = new LobbyController(multiplayer, menu.playerName);
+  const browser = new LobbyBrowser(multiplayer, sounds);
+
+  // ---- Reveal: cinematic map preview + UI fade-in + menu music ----
+  loading.classList.add("hidden");
+  game.startMenuPreview();
+  menu.reveal();
+  sounds.startMusic();
+
+  // ---- Menu wiring ----
+  menu.onLoadout = () => loadoutMenu.open();
+  // No dedicated skin system yet: CUSTOMIZE opens the same inventory
+  // (weapons/killstreaks) surface rather than a fake duplicate screen.
+  menu.onCustomize = () => loadoutMenu.open();
+  menu.onChangeLobby = () => browser.open();
+
+  browser.onCreate = () => lobby.open();
+  browser.onJoinByCode = () => lobby.open();
+  browser.onJoin = (roomId) => lobby.openWithInvite(roomId);
 
   // Invite link: /join/{roomId} → open the lobby overlay and auto-join.
   const inviteRoomId = parseJoinRoomId(window.location.pathname);
@@ -53,63 +75,86 @@ async function main(): Promise<void> {
   }
 
   let inGame = false;
+  let entering = false;
   let inMultiplayerGame = false;
 
   /**
-   * Shared Menu → Game transition (solo PLAY and multiplayer START GAME):
-   * violet fade, menu disposal, HUD swap, pointer-lock wiring, game loop.
+   * Shared Menu → Game hand-off (solo PLAY and multiplayer START GAME).
+   * Solo uses the cinematic camera flight; multiplayer skips it (the mp
+   * loading screen covers the swap while remote avatars are prepared).
+   * The menu is only HIDDEN — Escape brings it back as the pause menu.
    */
-  const enterGameplay = async (): Promise<void> => {
+  const enterGameplay = async (withCameraFlight: boolean): Promise<void> => {
     inGame = true;
 
-    // GPU warm-up BEFORE the transition (no-op if multiplayer already ran
-    // it): every weapon GLB loaded + every shader compiled while the menu
-    // still covers the canvas — gameplay is fluid from the first frame.
-    await game.warmUpRendering();
+    sounds.fadeOutMusic(0.8);
+    menu.fadeOut();
+    browser.close();
 
-    // Short fade + violet flash (music fades out inside).
-    await menu.beginPlayTransition();
+    if (withCameraFlight) {
+      // Cinematic camera flies down into the player's first-person eye.
+      await game.beginMenuPlayTransition();
+    } else {
+      game.stopMenuPreview();
+    }
 
-    // Free menu resources: render loop, GPU buffers, DOM, listeners, music.
-    menu.dispose();
-
-    // Gameplay HUD becomes visible again; menu never renders behind the game.
+    menu.hide();
+    // Gameplay HUD becomes visible.
     hud.classList.remove("menu-active");
-
-    // Pointer lock overlay behaviour (Escape ↔ pause) — wired only now so
-    // it never appears over the Main Menu.
-    overlay.addEventListener("click", () => {
-      game.requestPointerLock();
-    });
-    document.addEventListener("pointerlockchange", () => {
-      const locked = document.pointerLockElement === game.domElement;
-      // Losing WINDOW FOCUS (Alt-Tab / clicking another window) also exits
-      // pointer lock — keep the Escape overlay HIDDEN in that case so
-      // side-by-side sessions stay fully visible. The overlay only appears
-      // for an intentional Escape while the window is focused.
-      overlay.classList.toggle("hidden", locked || !document.hasFocus());
-    });
-    // After a focus-loss unlock the overlay stays hidden — clicking the
-    // game view directly re-locks the pointer and resumes play.
-    container.addEventListener("click", () => {
-      if (inGame && document.pointerLockElement !== game.domElement) {
-        game.requestPointerLock();
-      }
-    });
 
     game.start();
 
     // The click keeps transient user activation for a few seconds — enough
-    // to enter pointer lock right after the ~500 ms transition.
+    // to enter pointer lock right after the camera flight.
     game.requestPointerLock();
-    setTimeout(() => {
-      const locked = document.pointerLockElement === game.domElement;
-      overlay.classList.toggle("hidden", locked);
-    }, 400);
   };
 
-  // ---- SOLO: PLAY → transition → gameplay (bots untouched) ----
-  menu.onPlay = () => void enterGameplay();
+  // ---- CLICK TO PLAY (first time) / CLICK TO RESUME (paused) ----
+  menu.onPlay = () => {
+    if (!inGame) {
+      if (entering) return;
+      entering = true;
+      void enterGameplay(true);
+    } else {
+      // Resume: re-lock the pointer; the lock event hides the menu.
+      game.requestPointerLock();
+    }
+  };
+
+  // ---- ESCAPE ↔ PAUSE: losing pointer lock while focused reopens the
+  // MAIN MENU as the pause menu (solo pauses internally; multiplayer
+  // keeps running behind it — the server never pauses a match). ----
+  document.addEventListener("pointerlockchange", () => {
+    if (!inGame) return;
+    const locked = document.pointerLockElement === game.domElement;
+    if (locked) {
+      menu.hide();
+    } else if (document.hasFocus()) {
+      menu.setPauseMode(true, inMultiplayerGame);
+      menu.show();
+    }
+    // Focus-loss unlock (Alt-Tab): nothing appears — clicking the game
+    // view re-locks directly (handler below).
+  });
+
+  // Clicking the world (any non-panel area — the menu root lets clicks
+  // through) resumes the game instantly, Krunker-style.
+  container.addEventListener("click", () => {
+    if (inGame && document.pointerLockElement !== game.domElement) {
+      game.requestPointerLock();
+    }
+  });
+
+  // ---- LEAVE GAME (pause menu, multiplayer only): clean room leave →
+  // remote avatars removed → back to the main menu (fresh app state). ----
+  menu.onLeaveGame = () => {
+    void (async () => {
+      inMultiplayerGame = false;
+      game.disableMultiplayer();
+      await multiplayer.leaveLobby(); // clean WebSocket leave, no brutal close
+      window.location.assign("/"); // fresh boot back to the main menu
+    })();
+  };
 
   // ---- MULTIPLAYER: the SERVER decides the launch. Every client (host
   // included) reacts to the room phase flipping to PLAYING — the host's
@@ -118,51 +163,19 @@ async function main(): Promise<void> {
     if (phase !== "PLAYING" || inGame) return;
     void (async () => {
       lobby.close();
-      // Animated space loading screen covers EVERYTHING while assets,
-      // shaders and remote avatars are prepared (no frozen main menu).
+      // Everything heavy is ALREADY warm (single boot loading phase) —
+      // this screen only covers remote-avatar preparation (fast).
       const loadingScreen = showMpLoadingScreen();
       try {
-        // Character asset preload + bots off + server-assigned spawn applied.
+        game.stopMenuPreview();
         await game.enableMultiplayer(multiplayer);
-        await enterGameplay();
+        inMultiplayerGame = true;
+        await enterGameplay(false);
       } finally {
         loadingScreen.dispose();
       }
-      inMultiplayerGame = true;
-      leaveBtn.classList.remove("hidden");
-      loadoutBtn.classList.remove("hidden");
-      loadoutHint.classList.remove("hidden");
     })();
   };
-
-  // ---- LOADOUT (Escape menu, multiplayer only): replaces the solo bots
-  // panel. Opens the same Loadout overlay as the Main Menu; the new
-  // selection is applied on the player's NEXT RESPAWN (never mid-life).
-  // Death itself stays fully automatic — no menu ever pops on respawn. ----
-  const { button: loadoutBtn, hint: loadoutHint } = createLoadoutButton(overlay);
-  let inGameLoadout: LoadoutMenu | null = null;
-  loadoutBtn.addEventListener("click", (e) => {
-    e.stopPropagation(); // never triggers the overlay's pointer-lock click
-    if (!inGameLoadout) {
-      const sounds = new MenuAudio();
-      void sounds.preload(); // hover/click ticks only — no menu music
-      inGameLoadout = new LoadoutMenu(sounds);
-    }
-    inGameLoadout.open();
-  });
-
-  // ---- LEAVE GAME (Escape menu, multiplayer only): clean room leave →
-  // remote avatars removed → back to the main menu (fresh app state). ----
-  const leaveBtn = createLeaveButton(overlay);
-  leaveBtn.addEventListener("click", (e) => {
-    e.stopPropagation(); // never triggers the overlay's pointer-lock click
-    void (async () => {
-      inMultiplayerGame = false;
-      game.disableMultiplayer();
-      await multiplayer.leaveLobby(); // clean WebSocket leave, no brutal close
-      window.location.assign("/"); // fresh boot back to the main menu
-    })();
-  });
 
   // ---- CONNECTION LOST: server/network dropped mid-game. Freeze the flow
   // and offer RETURN TO MENU (no silent "everything is fine" gameplay). ----
@@ -298,71 +311,6 @@ function showMpLoadingScreen(): { dispose: () => void } {
       setTimeout(() => root.remove(), 550); // matches the CSS transition
     },
   };
-}
-
-/** "LOADOUT" button + hint inside the Escape overlay (multiplayer only). */
-function createLoadoutButton(overlay: HTMLElement): {
-  button: HTMLButtonElement;
-  hint: HTMLElement;
-} {
-  const btn = document.createElement("button");
-  btn.id = "mp-loadout";
-  btn.type = "button";
-  btn.textContent = "LOADOUT";
-  btn.classList.add("hidden");
-  btn.style.cssText = [
-    "margin-top: 26px",
-    "padding: 12px 34px",
-    "cursor: pointer",
-    'font-family: "Luckiest Guy", cursive',
-    "font-size: 13px",
-    "font-weight: 400",
-    "letter-spacing: 2.5px",
-    "color: #f0fdf4",
-    "background: rgba(22, 163, 74, 0.35)",
-    "border: 1px solid rgba(187, 247, 208, 0.7)",
-    "border-radius: 12px",
-  ].join(";");
-  overlay.appendChild(btn);
-
-  const hint = document.createElement("div");
-  hint.id = "mp-loadout-hint";
-  hint.textContent = "Changes apply on your next respawn";
-  hint.classList.add("hidden");
-  hint.style.cssText = [
-    "margin-top: 8px",
-    'font-family: "Baloo 2", sans-serif',
-    "font-size: 13px",
-    "letter-spacing: 1.5px",
-    "color: #86bd94",
-  ].join(";");
-  overlay.appendChild(hint);
-
-  return { button: btn, hint };
-}
-
-/** "LEAVE GAME" button inside the Escape overlay (multiplayer only). */
-function createLeaveButton(overlay: HTMLElement): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.id = "mp-leave-game";
-  btn.type = "button";
-  btn.textContent = "LEAVE GAME";
-  btn.classList.add("hidden");
-  btn.style.cssText = [
-    "margin-top: 26px",
-    "padding: 12px 34px",
-    "cursor: pointer",
-    'font-family: "Luckiest Guy", cursive',
-    "font-size: 13px",
-    "font-weight: 400",
-    "letter-spacing: 2.5px",
-    "color: #dcfce7",
-    "background: rgba(22, 163, 74, 0.2)",
-    "border: 1px solid rgba(22, 163, 74, 0.55)",
-    "border-radius: 12px",
-  ].join(";");
-  overlay.appendChild(btn);
-  return btn;
 }
 
 /** Full-screen CONNECTION LOST screen with a RETURN TO MENU action. */

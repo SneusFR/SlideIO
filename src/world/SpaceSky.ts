@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { SpaceConfig as cfg } from "./SpaceConfig";
+import { getQualitySettings } from "../game/GraphicsQuality";
 
 /**
  * In-game deep-space backdrop: "futuristic purple deep space".
@@ -164,7 +165,11 @@ export class SpaceSky {
       uniforms: {
         uTime: this.starUniforms.uTime,
         uTwinkle: { value: cfg.starTwinkleIntensity },
-        uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+        // Must match the RENDERER's effective pixel ratio (quality-capped),
+        // otherwise star point sizes are wrong on the LOW preset.
+        uPixelRatio: {
+          value: Math.min(window.devicePixelRatio, getQualitySettings().pixelRatioCap),
+        },
       },
       vertexShader: /* glsl */ `
         attribute vec3 aColor;
