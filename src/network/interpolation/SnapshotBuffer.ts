@@ -70,6 +70,11 @@ export class SnapshotBuffer {
     return this.snapshots.length > 0 ? this.snapshots[this.snapshots.length - 1] : null;
   }
 
+  /** Oldest stored snapshot (diagnostics only — never used for sampling). */
+  get oldest(): PlayerSnapshot | null {
+    return this.snapshots.length > 0 ? this.snapshots[0] : null;
+  }
+
   /**
    * Store a new network state. STALE snapshots (sequence/timestamp not newer
    * than the latest stored one) are ignored — the player never moves back

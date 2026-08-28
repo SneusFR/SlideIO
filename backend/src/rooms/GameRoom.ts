@@ -1,5 +1,7 @@
 import { Client, Room, ServerError } from "colyseus";
 import { CombatManager, PlayerDiedEvent } from "../combat/CombatManager";
+import { ServerTransformTrace } from "../diagnostics/TransformTrace";
+import { eventLoopMonitor } from "../diagnostics/EventLoopMonitor";
 import { DamageType, HitZone, isDamageType, isHitZone } from "../combat/DamageTypes";
 import { MULTIPLAYER_SPAWN_POINTS, RespawnManager } from "../combat/RespawnManager";
 import { serverConfig } from "../config/serverConfig";
@@ -31,6 +33,12 @@ interface TransformMessage {
   vz?: unknown;
   state?: unknown;
   seq?: unknown;
+  /**
+   * DEV-ONLY sender-clock timestamp (client performance.now(), ms). Used
+   * exclusively for DELTAS between consecutive messages of the SAME sender
+   * (sender stall vs network stall) — NEVER compared to the server clock.
+   */
+  cts?: unknown;
 }
 
 /**
@@ -75,6 +83,13 @@ export class GameRoom extends Room<GameRoomState> {
   private respawns!: RespawnManager;
   /** Phase 5: server authority over every networked weapon. */
   private weapons!: WeaponManager;
+  /**
+   * DEV-ONLY snapshot pipeline trace (receive gaps / patch gaps / seq /
+   * coalescing). Null in production — every call site is `?.` guarded.
+   */
+  private trace: ServerTransformTrace | null = null;
+  /** DEV-ONLY: throttled NET_DIAG relay to clients (F1 PIPELINE section). */
+  private lastDiagBroadcastAt = 0;
 
   onCreate(): void {
     this.setState(new GameRoomState());
@@ -91,6 +106,12 @@ export class GameRoom extends Room<GameRoomState> {
     // term of the remote-player latency chain:
     //   client send (30 Hz) → server patch (30 Hz) → interpolation delay.
     this.setPatchRate(1000 / 30);
+
+    // ---- DEV-ONLY movement pipeline diagnostics (see TransformTrace) ----
+    if (serverConfig.netTraceEnabled) {
+      this.trace = new ServerTransformTrace(this.roomId);
+      eventLoopMonitor.start(); // idempotent process-wide stall detector
+    }
 
     // Phase 5 — GameRoom stays an orchestrator: receive message →
     // WeaponManager (validation + hit detection) → CombatManager →
@@ -176,9 +197,37 @@ export class GameRoom extends Room<GameRoomState> {
     this.combat.removePlayer(client.sessionId);
     this.weapons.removePlayer(client.sessionId);
     this.state.players.delete(client.sessionId);
+    this.trace?.removePlayer(client.sessionId);
     console.log(
       `[GameRoom ${this.roomId}] ${player?.name ?? client.sessionId} left`,
     );
+  }
+
+  /**
+   * DEV-ONLY instrumentation of the ACTUAL replication mechanism: transforms
+   * are relayed exclusively through Colyseus schema patches (there is NO
+   * explicit movement broadcast) — this override timestamps every patch
+   * broadcast, i.e. the exact moment mutated state leaves the server.
+   * Production (trace null): behavior is byte-identical to the base class.
+   */
+  override broadcastPatch(): boolean {
+    const hasChanges = super.broadcastPatch();
+    if (this.trace) {
+      if (hasChanges) this.trace.notePatchBroadcast();
+      // Throttled NET_DIAG relay: server-side RX/TX gap stats for the F1
+      // PIPELINE overlay (tiny payload, every ~2 s, dev only).
+      const now = performance.now();
+      if (now - this.lastDiagBroadcastAt >= 2000 && this.clients.length > 0) {
+        this.lastDiagBroadcastAt = now;
+        this.broadcast("NET_DIAG", {
+          players: this.trace.buildDiag(),
+          patchAvgMs: Math.round(this.trace.patchGap.avgMs),
+          patchMaxMs: Math.round(this.trace.patchGap.maxMs),
+          loopStallMs: Math.round(eventLoopMonitor.recentMaxStallMs(5000)),
+        });
+      }
+    }
+    return hasChanges;
   }
 
   onDispose(): void {
@@ -280,7 +329,15 @@ export class GameRoom extends Room<GameRoomState> {
     // back in time (clients also reject stale sequences on their side).
     const seq = toFinite(message?.seq);
     if (seq === null || seq < 0) return;
-    if (seq <= player.seq) return;
+    const applied = seq > player.seq;
+
+    // DEV-ONLY receive trace: gap since the previous transform of this
+    // player, seq contiguity (dup/backwards/gap) and the sender-clock
+    // spacing (cts deltas — never compared to the server clock). Counted
+    // BEFORE the seq guard so rejected duplicates remain visible.
+    this.trace?.noteReceive(client.sessionId, player.name, seq, toFinite(message?.cts), applied);
+
+    if (!applied) return;
 
     player.x = x;
     player.y = y;

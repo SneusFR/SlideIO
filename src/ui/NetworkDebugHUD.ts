@@ -1,5 +1,6 @@
 import type { MultiplayerNetworkDebug } from "../network/MultiplayerGameController";
 import type { RemotePlayerNetDebug } from "../network/RemotePlayerManager";
+import type { NetPipelineDebug, PipelinePlayerDebug } from "../network/diagnostics/NetTrace";
 
 /** HUD refresh interval while visible (s) — readable, never per frame. */
 const REFRESH_INTERVAL = 0.25;
@@ -100,6 +101,12 @@ export class NetworkDebugHUD {
       lines.push(this.renderPlayer(p));
     }
 
+    // DEV-only PIPELINE section: one gap column per pipeline stage — the
+    // stage whose MAX explodes (~35 ms avg vs 300+ ms max) is the culprit.
+    if (report.pipeline) {
+      lines.push(this.renderPipeline(report.pipeline, report.players));
+    }
+
     if (report.anomalies.length > 0) {
       lines.push(`<div class="ndh-section">ANOMALIES</div>`);
       // Newest last in the ring → show the last 8, newest at the bottom.
@@ -148,6 +155,62 @@ export class NetworkDebugHUD {
     }
     lines.push(row("Y raw/interp/vis", `${p.rawY.toFixed(2)} / ${p.interpY.toFixed(2)} / ${p.visualY.toFixed(2)}`));
     lines.push(row("Velocity", `${p.vx.toFixed(1)} ${p.vy.toFixed(1)} ${p.vz.toFixed(1)}`));
+    return lines.join("");
+  }
+
+  /**
+   * PIPELINE — per-stage gap columns (avg/max) for the snapshot pipeline:
+   *   SEND (local out) → SRV RX → SRV TX → CLI RX → BUFFER.
+   * "—" = no server NET_DIAG data yet. Values >150 ms are marked.
+   */
+  private renderPipeline(pipe: NetPipelineDebug, players: RemotePlayerNetDebug[]): string {
+    const gap = (avg: number, max: number): string => {
+      if (avg < 0) return "—";
+      const maxTxt = max > 150 ? `<span class='ndh-warn'>${max}</span>` : `${max}`;
+      return `${avg} / ${maxTxt}ms`;
+    };
+    const lines: string[] = [];
+    lines.push(`<div class="ndh-section">PIPELINE (avg / max gap)</div>`);
+    lines.push(row("SEND GAP (me)", gap(pipe.sendAvgMs, pipe.sendMaxMs)));
+    lines.push(row("SRV PATCH", gap(pipe.serverPatchAvgMs, pipe.serverPatchMaxMs)));
+    if (pipe.serverLoopStallMs > 50) {
+      lines.push(row("SRV LOOP STALL", `<span class='ndh-warn'>${pipe.serverLoopStallMs}ms</span>`));
+    }
+    lines.push(row("CLI PATCH RX", gap(pipe.patchArrivalAvgMs, pipe.patchArrivalMaxMs)));
+    for (const pp of pipe.players) {
+      const name = players.find((p) => p.id === pp.id)?.name ?? pp.id;
+      lines.push(this.renderPipelinePlayer(name, pp, gap));
+    }
+    return lines.join("");
+  }
+
+  private renderPipelinePlayer(
+    name: string,
+    pp: PipelinePlayerDebug,
+    gap: (avg: number, max: number) => string,
+  ): string {
+    const lines: string[] = [];
+    lines.push(`<div class="ndh-section">↳ ${escapeHtml(name.toUpperCase())}</div>`);
+    lines.push(row("SERVER RX GAP", gap(pp.serverRxAvgMs, pp.serverRxMaxMs)));
+    lines.push(row("SERVER TX GAP", gap(pp.serverTxAvgMs, pp.serverTxMaxMs)));
+    lines.push(row("CLIENT RX GAP", gap(pp.clientRxAvgMs, pp.clientRxMaxMs)));
+    const seq =
+      `gaps ${pp.seqGapTotal}` +
+      (pp.coalesced >= 0 ? ` (coalesced ${pp.coalesced})` : "") +
+      (pp.seqDup > 0 || pp.seqBack > 0 ? ` <span class='ndh-warn'>dup ${pp.seqDup} back ${pp.seqBack}</span>` : "");
+    lines.push(row("SEQ", seq));
+    const extrap =
+      pp.extrapEvents > 0
+        ? `${pp.extrapEvents}× longest ${pp.extrapLongestMs > 150 ? `<span class='ndh-warn'>${pp.extrapLongestMs}ms</span>` : `${pp.extrapLongestMs}ms`}`
+        : "none";
+    lines.push(row("EXTRAP", extrap));
+    if (pp.maxCorrectionM > 0.01) {
+      const c = pp.maxCorrectionM.toFixed(1);
+      lines.push(row("CORRECTION max", pp.maxCorrectionM > 2 ? `<span class='ndh-warn'>${c}m</span>` : `${c}m`));
+    }
+    if (pp.bursts > 0) {
+      lines.push(row("BURSTS", `<span class='ndh-warn'>${pp.bursts}</span>`));
+    }
     return lines.join("");
   }
 }

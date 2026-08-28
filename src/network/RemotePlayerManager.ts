@@ -13,6 +13,7 @@ import { NetworkMovementState, sanitizeNetworkMovementState } from "./NetworkMov
 import { RemoteWeaponController } from "./remote/RemoteWeaponController";
 import type { NetworkPlayerInfo } from "./MultiplayerClient";
 import { CorpseManager } from "../ragdoll/CorpseManager";
+import { netTrace } from "./diagnostics/NetTrace";
 import { buildSkeletonRagdollParts } from "../ragdoll/SkeletonRagdollFactory";
 // Shared Sprouty Smile character asset (model + clips + red rim glow) —
 // loaded ONCE and cloned per avatar. The SAME asset drives the solo bots
@@ -246,10 +247,28 @@ class RemotePlayer {
       this.rateHz = this.rateHz === 0 ? instRate : this.rateHz + (instRate - this.rateHz) * 0.1;
     }
 
+    // DEV pipeline trace: wall-clock arrival gap + burst detection (long
+    // silence then several snapshots within a few ms — TCP stall recovery
+    // signature). BURST_RECEIVE is reported once per completed burst.
+    const burst = netTrace.noteRemoteSnapshot(this.sessionId, this.lastArrivalGapMs);
+    if (burst) {
+      this.onAnomaly(
+        `BURST_RECEIVE ${this.name}: ≥3 snapshots within 25ms right after a ` +
+          `>100ms silence (buffer=${this.buffer.count}, seq=${seq})`,
+      );
+    }
+
     if (this.lastSeq >= 0 && seq > this.lastSeq + 1) {
       this.lastSeqGap = seq - this.lastSeq - 1;
       this.seqGapTotal += this.lastSeqGap;
-      this.onAnomaly(`${this.name}: seq gap +${this.lastSeqGap} (→${seq})`);
+      netTrace.noteSeqGap(this.sessionId, this.lastSeqGap);
+      // NOTE: Colyseus/WebSocket runs over TCP (ordered+reliable) — an
+      // application seq gap is NOT packet loss. It means the value was
+      // OVERWRITTEN in the schema slot before the 30 Hz patch serialized
+      // it (send 30 Hz → 1 float slot → patch 30 Hz coalescing), or the
+      // sender skipped seqs. The server-side "coalesced" counter proves
+      // which (see NET_DIAG / server [NET TRACE] summaries).
+      this.onAnomaly(`SEQ_GAP ${this.name}: +${this.lastSeqGap} (→${seq}) [coalescing/skip — TCP, not loss]`);
     } else {
       this.lastSeqGap = 0;
     }
@@ -259,7 +278,10 @@ class RemotePlayer {
       this.lastSnapGapMs = snapGapMs;
       if (snapGapMs > this.maxSnapGapMs) this.maxSnapGapMs = snapGapMs;
       if (snapGapMs > ANOMALY_SNAP_GAP_MS) {
-        this.onAnomaly(`${this.name}: snapshot gap ${Math.round(snapGapMs)}ms`);
+        this.onAnomaly(
+          `ARRIVAL_GAP ${this.name}: server-ts gap ${Math.round(snapGapMs)}ms ` +
+            `(arrival gap ${Math.round(this.lastArrivalGapMs)}ms, buffer=${this.buffer.count}, seq=${seq})`,
+        );
       }
     }
   }
@@ -322,7 +344,22 @@ class RemotePlayer {
       this.extrapEpisodeActive = true;
       if (s.extrapolatedMs > this.extrapEpisodeMaxMs) this.extrapEpisodeMaxMs = s.extrapolatedMs;
     } else if (this.extrapEpisodeActive && !s.extrapolating) {
-      this.onAnomaly(`${this.name}: extrapolation ${Math.round(this.extrapEpisodeMaxMs)}ms`);
+      // Reason code: with ≤1 buffered snapshot the buffer is STARVED (no
+      // data arrived); with ≥2 the data exists but renderTime overran the
+      // newest snapshot (clock/adaptive-delay problem, not delivery).
+      const newest = this.buffer.newest;
+      const oldest = this.buffer.oldest;
+      const reason =
+        this.buffer.count <= 1 ? "EXTRAPOLATING_BUFFER_STARVED" : "EXTRAPOLATING_RENDER_TIME_AHEAD";
+      netTrace.noteExtrapolationEpisode(this.sessionId, this.extrapEpisodeMaxMs);
+      this.onAnomaly(
+        `${reason} ${this.name}: ${Math.round(this.extrapEpisodeMaxMs)}ms ` +
+          `(buffer=${this.buffer.count}, ` +
+          `newest-renderTime=${newest ? Math.round(newest.timestamp - renderTime) : "?"}ms, ` +
+          `span=${newest && oldest ? Math.round(newest.timestamp - oldest.timestamp) : 0}ms, ` +
+          `seq=${newest?.sequence ?? -1}, state=${movementStateName(s.movementState)}, ` +
+          `vel=${s.velocityX.toFixed(1)}/${s.velocityY.toFixed(1)}/${s.velocityZ.toFixed(1)})`,
+      );
       this.extrapEpisodeActive = false;
       this.extrapEpisodeMaxMs = 0;
     }
@@ -358,7 +395,13 @@ class RemotePlayer {
             this.group.position.y - s.y,
             this.group.position.z - s.z,
           );
-          this.onAnomaly(`${this.name}: correction ${jump.toFixed(1)}m`);
+          netTrace.noteCorrection(this.sessionId, jump);
+          this.onAnomaly(
+            `LARGE_CORRECTION ${this.name}: ${jump.toFixed(1)}m ` +
+              `(buffer=${this.buffer.count}, seq=${this.buffer.newest?.sequence ?? -1}, ` +
+              `state=${movementStateName(s.movementState)}, ` +
+              `snapAge=${this.buffer.newest ? Math.round(renderTime - this.buffer.newest.timestamp) : "?"}ms)`,
+          );
         } else if (jump >= icfg.teleportThreshold) {
           // Too large to smooth — snap (mirrors the teleport rule).
           this.correctionOffset.set(0, 0, 0);
@@ -674,6 +717,7 @@ export class RemotePlayerManager {
         remote.dispose(this.scene);
         this.remotes.delete(id);
         this.pings.delete(id);
+        netTrace.removeRemote(id);
       }
     }
   }

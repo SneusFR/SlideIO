@@ -10,6 +10,7 @@ import { RemotePlayerManager, NetworkDebugReport } from "./RemotePlayerManager";
 import { RemoteCombatVFXController } from "./remote/RemoteCombatVFXController";
 import { preloadRemoteWeaponTemplates } from "./remote/RemoteWeaponController";
 import { NetworkStatsSource } from "./NetworkStatsSource";
+import { netTrace, NetPipelineDebug } from "./diagnostics/NetTrace";
 import type {
   HitConfirmedEvent,
   DamageTakenEvent,
@@ -25,7 +26,17 @@ import { NetworkMovementState } from "./NetworkMovementState";
 export interface MultiplayerNetworkDebug extends NetworkDebugReport {
   localRttMs: number | null;
   localRttJitterMs: number;
+  /** DEV-only snapshot pipeline stage stats (null in production builds). */
+  pipeline: NetPipelineDebug | null;
 }
+
+// ---- DEV-only send diagnostics (task: find the 200–500 ms gap stage) ----
+/** Send gap considered anomalous (ms) — ~2.5 ticks at 30 Hz. */
+const SEND_GAP_NOTICE_MS = 75;
+/** Send gap considered SEVERE (ms). */
+const SEND_GAP_WARN_MS = 150;
+/** Min interval between send-gap console warnings (ms). */
+const SEND_GAP_LOG_THROTTLE_MS = 500;
 
 /**
  * Bridges the running game and the multiplayer session:
@@ -87,6 +98,18 @@ export class MultiplayerGameController {
    * same kind of sequence/timestamp to INPUTS for server reconciliation.
    */
   private sendSequence = 0;
+
+  // ---- DEV-only send diagnostics (netTrace) ----
+  /** performance.now() of the last ACTUAL transform send. */
+  private lastSendAt = 0;
+  /** Throttle for send-gap console warnings. */
+  private lastSendGapLogAt = 0;
+  /**
+   * True when at least one tick was idle-SUPPRESSED since the last send:
+   * the next send gap is intentional (player stood still), not a stall —
+   * it must never pollute the send-gap statistics or raise anomalies.
+   */
+  private suppressedSinceLastSend = false;
 
   /**
    * Background keep-alive: the render loop (rAF) is throttled/stopped when
@@ -186,6 +209,7 @@ export class MultiplayerGameController {
       ...this.remotes.getNetworkDebugReport(),
       localRttMs: this.client.rttMs,
       localRttJitterMs: this.client.rttJitterMs,
+      pipeline: netTrace.buildPipelineDebug(),
     };
   }
 
@@ -208,6 +232,8 @@ export class MultiplayerGameController {
    */
   update(dt: number): void {
     this.lastFrameAt = performance.now();
+    // DEV-ONLY: throttled ~5 s [NET TRACE] console summaries.
+    netTrace.update();
     const players = this.client.getPlayers();
 
     // Remote avatars: snapshots are ingested PER PATCH (onStatePatched);
@@ -284,7 +310,13 @@ export class MultiplayerGameController {
       Math.abs(yaw - this.lastSent.yaw) > netCfg.rotationEpsilon ||
       Math.abs(pitch - this.lastSent.pitch) > netCfg.rotationEpsilon ||
       state !== this.lastSent.state;
-    if (!moved && this.timeSinceSend < netCfg.transformHeartbeat) return;
+    if (!moved && this.timeSinceSend < netCfg.transformHeartbeat) {
+      // Idle suppression is an INTENTIONAL skip (identical transform) —
+      // counted separately so a quiet player never looks like a stall.
+      netTrace.noteSuppressedTick();
+      this.suppressedSinceLastSend = true;
+      return;
+    }
 
     this.sendSequence++;
     this.client.sendTransform({
@@ -299,6 +331,7 @@ export class MultiplayerGameController {
       state,
       seq: this.sendSequence,
     });
+    this.noteSendDiagnostics(state, pos.x, pos.y, pos.z, vel.x, vel.y, vel.z);
     this.lastSent.x = pos.x;
     this.lastSent.y = pos.y;
     this.lastSent.z = pos.z;
@@ -336,6 +369,48 @@ export class MultiplayerGameController {
     this.lastSent.z = pos.z;
     this.lastSent.state = NetworkMovementState.IDLE;
     this.timeSinceSend = 0;
+    // Keepalive sends count as real sends: a hidden tab must not be
+    // misread as a sender stall in the trace.
+    this.noteSendDiagnostics(NetworkMovementState.IDLE, pos.x, pos.y, pos.z, 0, 0, 0);
+  }
+
+  /**
+   * DEV-ONLY send diagnostics: gap since the previous ACTUAL send, seq,
+   * position/velocity/state — raises a console anomaly for send gaps
+   * >75 ms (notice) / >150 ms (WARN) unless the gap was intentional idle
+   * suppression. Answers: "did the originating client stop sending?"
+   */
+  private noteSendDiagnostics(
+    state: NetworkMovementState,
+    x: number,
+    y: number,
+    z: number,
+    vx: number,
+    vy: number,
+    vz: number,
+  ): void {
+    if (!import.meta.env.DEV) return;
+    const now = performance.now();
+    const gap = this.lastSendAt > 0 ? now - this.lastSendAt : 0;
+    const intentional = this.suppressedSinceLastSend;
+    this.lastSendAt = now;
+    this.suppressedSinceLastSend = false;
+
+    // Idle-suppression gaps are by design — never fed into the stats.
+    if (intentional) return;
+    netTrace.noteLocalSend(gap);
+
+    if (gap > SEND_GAP_NOTICE_MS && now - this.lastSendGapLogAt >= SEND_GAP_LOG_THROTTLE_MS) {
+      this.lastSendGapLogAt = now;
+      const level = gap > SEND_GAP_WARN_MS ? "WARN" : "notice";
+      console.warn(
+        `[NET TRACE] LOCAL SEND GAP ${level}: ${Math.round(gap)}ms ` +
+          `(seq ${this.sendSequence}, state ${state}, ` +
+          `pos ${x.toFixed(1)}/${y.toFixed(1)}/${z.toFixed(1)}, ` +
+          `vel ${vx.toFixed(1)}/${vy.toFixed(1)}/${vz.toFixed(1)}) — ` +
+          `the SENDER paused (rAF stall / long frame), not the network`,
+      );
+    }
   }
 
   /** Tear down every remote avatar (leave game / connection lost). */
@@ -355,6 +430,7 @@ export class MultiplayerGameController {
     if (import.meta.env.DEV) {
       delete (window as unknown as Record<string, unknown>).mpDamage;
     }
+    netTrace.reset();
     this.remotes.dispose();
   }
 

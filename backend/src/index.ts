@@ -5,6 +5,7 @@ import { Server } from "colyseus";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { serverConfig } from "./config/serverConfig";
 import { GameRoom } from "./rooms/GameRoom";
+import { eventLoopMonitor } from "./diagnostics/EventLoopMonitor";
 
 /**
  * SlideIO multiplayer server — Phase 1 (lobby foundation).
@@ -30,6 +31,13 @@ const gameServer = new Server({
 
 // Private lobbies — created on demand, joined by roomId only.
 gameServer.define(serverConfig.roomName, GameRoom);
+
+// DEV-ONLY: event-loop stall detector (GC pauses / synchronous blocking /
+// expensive serialization delay BOTH message receipt and patch broadcast —
+// exactly the "snapshots stall then burst" signature under diagnosis).
+if (serverConfig.netTraceEnabled) {
+  eventLoopMonitor.start();
+}
 
 gameServer
   .listen(serverConfig.port)
