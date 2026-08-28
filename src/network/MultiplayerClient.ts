@@ -1,6 +1,6 @@
 import { Client, Room } from "colyseus.js";
 import { MultiplayerConfig } from "./MultiplayerConfig";
-import { netTrace, ServerDiag } from "./diagnostics/NetTrace";
+import { netTrace, ServerDiag, NET_TRACE_ENABLED } from "./diagnostics/NetTrace";
 import type {
   WeaponActionConfirmedEvent,
   HitConfirmedEvent,
@@ -283,10 +283,11 @@ export class MultiplayerClient {
       vz: round3(t.vz),
       state: t.state,
       seq: t.seq,
-      // DEV-ONLY pipeline trace: sender-clock timestamp. The server only
-      // uses DELTAS between consecutive cts of the SAME sender (sender
-      // stall vs network stall) — never cross-machine absolute latency.
-      ...(import.meta.env.DEV ? { cts: Math.round(performance.now()) } : {}),
+      // Pipeline trace (TEMPORARILY enabled in prod): sender-clock
+      // timestamp. The server only uses DELTAS between consecutive cts of
+      // the SAME sender (sender stall vs network stall) — never
+      // cross-machine absolute latency.
+      ...(NET_TRACE_ENABLED ? { cts: Math.round(performance.now()) } : {}),
     });
   }
 
@@ -422,7 +423,7 @@ export class MultiplayerClient {
     // bookkeeping, event-loop stalls) relayed every ~2 s — the two
     // server stages of the F1 PIPELINE section + [NET TRACE] summaries.
     room.onMessage("NET_DIAG", (message: ServerDiag) => {
-      if (import.meta.env.DEV && message && Array.isArray(message.players)) {
+      if (NET_TRACE_ENABLED && message && Array.isArray(message.players)) {
         netTrace.setServerDiag(message);
       }
     });

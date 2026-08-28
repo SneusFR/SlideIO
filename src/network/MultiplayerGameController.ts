@@ -10,7 +10,7 @@ import { RemotePlayerManager, NetworkDebugReport } from "./RemotePlayerManager";
 import { RemoteCombatVFXController } from "./remote/RemoteCombatVFXController";
 import { preloadRemoteWeaponTemplates } from "./remote/RemoteWeaponController";
 import { NetworkStatsSource } from "./NetworkStatsSource";
-import { netTrace, NetPipelineDebug } from "./diagnostics/NetTrace";
+import { netTrace, NetPipelineDebug, NET_TRACE_ENABLED } from "./diagnostics/NetTrace";
 import type {
   HitConfirmedEvent,
   DamageTakenEvent,
@@ -389,7 +389,7 @@ export class MultiplayerGameController {
     vy: number,
     vz: number,
   ): void {
-    if (!import.meta.env.DEV) return;
+    if (!NET_TRACE_ENABLED) return;
     const now = performance.now();
     const gap = this.lastSendAt > 0 ? now - this.lastSendAt : 0;
     const intentional = this.suppressedSinceLastSend;

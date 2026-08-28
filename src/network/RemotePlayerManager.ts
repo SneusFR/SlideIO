@@ -13,7 +13,7 @@ import { NetworkMovementState, sanitizeNetworkMovementState } from "./NetworkMov
 import { RemoteWeaponController } from "./remote/RemoteWeaponController";
 import type { NetworkPlayerInfo } from "./MultiplayerClient";
 import { CorpseManager } from "../ragdoll/CorpseManager";
-import { netTrace } from "./diagnostics/NetTrace";
+import { netTrace, NET_TRACE_ENABLED } from "./diagnostics/NetTrace";
 import { buildSkeletonRagdollParts } from "../ragdoll/SkeletonRagdollFactory";
 // Shared Sprouty Smile character asset (model + clips + red rim glow) —
 // loaded ONCE and cloned per avatar. The SAME asset drives the solo bots
@@ -876,11 +876,12 @@ export class RemotePlayerManager {
     };
   }
 
-  /** Ring-buffered anomaly sink + throttled DEV-ONLY console echo. */
+  /** Ring-buffered anomaly sink + throttled console echo (see NetTrace:
+   *  console echo TEMPORARILY enabled in prod for the live diagnosis). */
   private pushAnomaly(text: string): void {
     this.anomalies.push({ at: Date.now(), text });
     if (this.anomalies.length > ANOMALY_HISTORY_MAX) this.anomalies.shift();
-    if (import.meta.env.DEV) {
+    if (NET_TRACE_ENABLED) {
       const nowMs = performance.now();
       if (nowMs - this.lastAnomalyConsoleAt >= ANOMALY_CONSOLE_THROTTLE_MS) {
         this.lastAnomalyConsoleAt = nowMs;

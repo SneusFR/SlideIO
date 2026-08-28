@@ -57,10 +57,11 @@ export const serverConfig = {
   debugDamageEnabled: process.env.NODE_ENV !== "production",
 
   /**
-   * DEV-ONLY movement snapshot pipeline tracing (TransformTrace +
-   * EventLoopMonitor + NET_DIAG relay). Diagnosing the "200–500 ms snapshot
-   * gap then burst" issue — remove/disable once the pipeline stage is
-   * identified. Never enabled in production.
+   * Movement snapshot pipeline tracing (TransformTrace + EventLoopMonitor
+   * + NET_DIAG relay). Diagnosing the "200–500 ms snapshot gap then burst"
+   * issue. TEMPORARILY forced ON in production too — the bug only
+   * reproduces over the real Internet. Revert to
+   * `process.env.NODE_ENV !== "production"` once the stage is identified.
    */
-  netTraceEnabled: process.env.NODE_ENV !== "production",
+  netTraceEnabled: true,
 } as const;
