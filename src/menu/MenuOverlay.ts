@@ -14,6 +14,7 @@ import {
   saveQualityMode,
   QualityMode,
 } from "../game/GraphicsQuality";
+import { audio, type AudioBus } from "../audio/AudioManager";
 
 /**
  * MenuOverlay — the new Beanzo.io main menu: a pure DOM overlay rendered
@@ -174,6 +175,8 @@ export class MenuOverlay {
     qualityBtn.addEventListener("click", onQuality);
     this.cleanups.push(() => qualityBtn.removeEventListener("click", onQuality));
 
+    this.wireVolumeSliders(pop);
+
     // Click outside closes the popover.
     const onDocClick = (e: MouseEvent) => {
       if (!this.settingsOpen) return;
@@ -183,6 +186,50 @@ export class MenuOverlay {
     };
     document.addEventListener("click", onDocClick);
     this.cleanups.push(() => document.removeEventListener("click", onDocClick));
+  }
+
+  /**
+   * AUDIO sliders (Main / Weapon / Music / Ambiance): each range input
+   * carries a data-volume-bus attribute mapping straight onto an
+   * AudioManager bus. Values apply live and persist via setUserVolume.
+   */
+  private wireVolumeSliders(pop: HTMLElement): void {
+    // Buses that follow a slider's primary bus: weapon IMPACT sounds
+    // (hammer hits, explosions…) live on the "impacts" bus but belong to
+    // the WEAPON VOLUME slider from the player's point of view.
+    const linkedBuses: Partial<Record<AudioBus, AudioBus[]>> = {
+      weapons: ["impacts"],
+    };
+
+    const sliders = pop.querySelectorAll<HTMLInputElement>("input[data-volume-bus]");
+    sliders.forEach((slider) => {
+      const bus = slider.dataset.volumeBus as AudioBus;
+      const valueEl = document.getElementById(`${slider.id}-value`);
+
+      const render = (v: number) => {
+        slider.value = String(Math.round(v * 100));
+        if (valueEl) valueEl.textContent = `${Math.round(v * 100)}%`;
+      };
+      render(audio.getUserVolume(bus));
+
+      const onInput = () => {
+        const v = Number(slider.value) / 100;
+        audio.setUserVolume(bus, v);
+        for (const linked of linkedBuses[bus] ?? []) audio.setUserVolume(linked, v);
+        if (valueEl) valueEl.textContent = `${slider.value}%`;
+      };
+      // A soft click on release gives instant audible feedback of the
+      // new level (skipped for buses no UI sound plays through).
+      const onChange = () => {
+        if (bus === "master" || bus === "ui") this.sounds.click();
+      };
+      slider.addEventListener("input", onInput);
+      slider.addEventListener("change", onChange);
+      this.cleanups.push(() => {
+        slider.removeEventListener("input", onInput);
+        slider.removeEventListener("change", onChange);
+      });
+    });
   }
 
   private toggleSettings(force?: boolean): void {

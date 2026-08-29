@@ -15,9 +15,15 @@ export class KillstreakHUD {
     injectStyles();
     this.root = document.createElement("div");
     this.root.id = "killstreak-hud";
+    this.root.className = "hud-card";
     const header = document.createElement("div");
-    header.className = "ks-header";
-    header.textContent = "KILLSTREAKS";
+    header.className = "hud-card-header";
+    header.innerHTML = `
+      <svg class="hud-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 2a8 8 0 0 0-8 8c0 2.9 1.56 5.43 3.89 6.82L8 21h3v-2h2v2h3l.11-4.18A7.99 7.99 0 0 0 20 10a8 8 0 0 0-8-8Zm-3.5 11a2 2 0 1 1 0-4 2 2 0 0 1 0 4Zm7 0a2 2 0 1 1 0-4 2 2 0 0 1 0 4Z" fill="currentColor"/>
+      </svg>
+      <span>KILLSTREAKS</span>
+    `;
     this.root.appendChild(header);
 
     for (let i = 0; i < 3; i++) {
@@ -33,8 +39,14 @@ export class KillstreakHUD {
       this.root.appendChild(row);
     }
 
-    const parent = document.getElementById("hud") ?? document.body;
-    parent.appendChild(this.root);
+    // Mounted INSIDE the bottom-right column, above the ATTACKS card.
+    const col = document.getElementById("right-hud-col");
+    const attacks = document.getElementById("attacks-card");
+    if (col) {
+      col.insertBefore(this.root, attacks ?? null);
+    } else {
+      (document.getElementById("hud") ?? document.body).appendChild(this.root);
+    }
     this.render();
   }
 
@@ -115,25 +127,19 @@ function injectStyles(): void {
   stylesInjected = true;
   const style = document.createElement("style");
   style.textContent = `
+    /* Card chrome (position, background, header) comes from .hud-card /
+       .hud-card-header in style.css — only the violet accent + rows here. */
     #killstreak-hud {
-      position: absolute;
-      right: 30px;
-      bottom: 132px;
-      z-index: 10;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      font-family: "Segoe UI", system-ui, sans-serif;
-      pointer-events: none;
-      user-select: none;
-      text-align: right;
+      gap: 5px;
+      background: linear-gradient(165deg, rgba(18, 9, 32, 0.6), rgba(8, 4, 14, 0.55));
+      border-color: rgba(168, 85, 247, 0.28);
+      box-shadow:
+        0 0 14px rgba(124, 58, 237, 0.12),
+        inset 0 0 24px rgba(124, 58, 237, 0.06);
     }
-    #killstreak-hud .ks-header {
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 3px;
-      color: rgba(216, 180, 254, 0.55);
-      margin-bottom: 2px;
+    #killstreak-hud .hud-card-header {
+      color: rgba(216, 180, 254, 0.85);
+      border-bottom-color: rgba(168, 85, 247, 0.25);
     }
     #killstreak-hud .ks-row {
       display: grid;
@@ -142,7 +148,7 @@ function injectStyles(): void {
       align-items: baseline;
       column-gap: 8px;
       row-gap: 3px;
-      min-width: 178px;
+      min-width: 0;
       padding: 5px 9px 6px;
       border-radius: 6px;
       background: rgba(10, 6, 20, 0.55);

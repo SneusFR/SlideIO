@@ -164,7 +164,7 @@ export class MenuAudio {
     if (!this.musicWanted || this.musicHandle) return true;
     if (!audio.unlocked || !audio.has("menu_music")) return false;
     this.musicHandle = audio.loop("menu_music", {
-      bus: "ambience",
+      bus: "music",
       volume: 0.85,
       fadeIn: 1.6, // gentle fade-in when the menu appears
     });

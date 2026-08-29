@@ -15,30 +15,29 @@ export class SpearHUD {
   private visible = false;
 
   constructor() {
+    // Row inside the ATTACKS card (bottom-right column) — the card owns
+    // the chrome, this element only lays out label + readiness value.
     const style = document.createElement("style");
     style.textContent = `
       #spear-hud {
-        position: fixed;
-        right: 18px;
-        bottom: 92px;
         display: none;
-        flex-direction: column;
-        align-items: flex-end;
-        gap: 2px;
-        font-family: "Segoe UI", system-ui, sans-serif;
-        letter-spacing: 0.18em;
-        text-align: right;
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        font-family: "Baloo 2", "Segoe UI", sans-serif;
+        letter-spacing: 0.14em;
         user-select: none;
         pointer-events: none;
-        z-index: 10;
       }
       #spear-hud .spear-hud-label {
         font-size: 10px;
-        color: rgba(216, 180, 254, 0.55);
+        color: rgba(216, 180, 254, 0.65);
+        text-shadow: 0 0 6px rgba(168, 85, 247, 0.5);
       }
       #spear-hud .spear-hud-value {
-        font-size: 15px;
-        font-weight: 600;
+        font-size: 13px;
+        font-weight: 700;
         color: #d8b4fe;
         text-shadow: 0 0 12px rgba(168, 85, 247, 0.65);
         transition: color 0.15s ease;
@@ -59,7 +58,7 @@ export class SpearHUD {
     this.valueEl.className = "spear-hud-value";
     this.root.appendChild(label);
     this.root.appendChild(this.valueEl);
-    document.body.appendChild(this.root);
+    (document.getElementById("attack-rows") ?? document.body).appendChild(this.root);
   }
 
   /** Show/hide the whole chip (hidden when the lance is not equipped). */

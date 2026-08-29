@@ -122,11 +122,33 @@
             </button>
           </nav>
 
-          <!-- SETTINGS popover (graphics quality — the real system) -->
+          <!-- SETTINGS popover (graphics quality + audio volumes) -->
           <div id="menu-settings-pop" class="hidden">
             <div class="settings-title">SETTINGS</div>
             <button id="menu-quality-btn" type="button">GRAPHICS: AUTO</button>
             <div class="settings-hint">Applying a new preset reloads the game</div>
+            <div class="settings-sep"></div>
+            <div class="settings-title">AUDIO</div>
+            <div class="settings-slider-row">
+              <label for="menu-vol-master">MAIN VOLUME</label>
+              <input id="menu-vol-master" type="range" min="0" max="100" step="1" data-volume-bus="master" />
+              <span class="settings-slider-value" id="menu-vol-master-value">100%</span>
+            </div>
+            <div class="settings-slider-row">
+              <label for="menu-vol-weapons">WEAPON VOLUME</label>
+              <input id="menu-vol-weapons" type="range" min="0" max="100" step="1" data-volume-bus="weapons" />
+              <span class="settings-slider-value" id="menu-vol-weapons-value">100%</span>
+            </div>
+            <div class="settings-slider-row">
+              <label for="menu-vol-music">MUSIC VOLUME</label>
+              <input id="menu-vol-music" type="range" min="0" max="100" step="1" data-volume-bus="music" />
+              <span class="settings-slider-value" id="menu-vol-music-value">100%</span>
+            </div>
+            <div class="settings-slider-row">
+              <label for="menu-vol-ambience">AMBIANCE VOLUME</label>
+              <input id="menu-vol-ambience" type="range" min="0" max="100" step="1" data-volume-bus="ambience" />
+              <span class="settings-slider-value" id="menu-vol-ambience-value">100%</span>
+            </div>
           </div>
 
           <!-- Web advertisement placement (AdSlot renders here) -->
@@ -250,25 +272,77 @@
       <div id="crosshair"></div>
       <div id="debug"></div>
 
-      <div id="health-hud">
-        <div id="health-label">HEALTH</div>
-        <div id="health-bar"><div id="health-fill"></div></div>
-        <div id="health-value">100</div>
+      <!-- Game mode badge (top-center): FFA · unlimited time -->
+      <div id="mode-hud">
+        <span id="mode-name">FFA</span>
+        <span class="mode-sep"></span>
+        <svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" />
+          <path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+        </svg>
+        <span id="mode-time">∞</span>
       </div>
 
-      <div id="heat-hud">
-        <div id="heat-label">HEAT</div>
-        <div id="heat-bar"><div id="heat-fill"></div></div>
-        <div id="heat-value">0%</div>
+      <!-- Bottom-left: player status card (health + dash grouped) -->
+      <div id="status-card" class="hud-card">
+        <div id="health-hud" class="hud-row">
+          <svg class="hud-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.29 1.51 4.04 3 5.5l7 7Z"
+              fill="currentColor"
+            />
+          </svg>
+          <div id="health-bar"><div id="health-fill"></div></div>
+          <div id="health-value">100</div>
+        </div>
+        <div id="dash-hud" class="hud-row">
+          <svg class="hud-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" fill="currentColor" />
+          </svg>
+          <span class="hud-key">E</span>
+          <div id="dash-bar"><div id="dash-fill"></div></div>
+          <div id="dash-status">READY</div>
+        </div>
       </div>
+
       <div id="overheat-warning" class="hidden">
         <div id="overheat-title">WEAPON OVERHEATED</div>
         <div id="overheat-cooling">Cooling… <span id="overheat-time">0.0</span> s</div>
       </div>
-      <div id="dash-hud">
-        <div id="dash-label">DASH [E]</div>
-        <div id="dash-bar"><div id="dash-fill"></div></div>
-        <div id="dash-status">READY</div>
+
+      <!-- Bottom-right column: KILLSTREAKS card (injected on top by
+           KillstreakHUD) stacked above the ATTACKS card -->
+      <div id="right-hud-col">
+        <div id="attacks-card" class="hud-card">
+          <div class="hud-card-header">
+            <svg class="hud-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M14.5 17.5 3 6V3h3l11.5 11.5M13 19l6-6M16 16l4 4M19 21l2-2M9.5 17.5 3 21M5 16l3 3"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span>ATTACKS</span>
+          </div>
+          <div id="heat-hud" class="hud-row">
+            <svg class="hud-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5Z"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <div id="heat-bar"><div id="heat-fill"></div></div>
+            <div id="heat-value">0%</div>
+          </div>
+          <!-- Weapon rows (revolver / bass blaster / spear) mount here -->
+          <div id="attack-rows"></div>
+        </div>
       </div>
 
       <div id="medal-display" class="hidden">

@@ -18,6 +18,7 @@ export type AudioBus =
   | "weapons"
   | "impacts"
   | "ui"
+  | "music"
   | "ambience";
 
 export interface PlayOptions {
@@ -133,18 +134,23 @@ export class AudioManager {
   private lastPlay = new Map<string, number>();
   private voices: ActiveVoice[] = [];
   private busVolumes = new Map<AudioBus, number>();
+  /** Player-controlled multipliers (0..1, settings sliders, persisted). */
+  private userVolumes = new Map<AudioBus, number>();
   private stateListeners = new Set<() => void>();
 
   private static readonly MAX_VOICES = 28;
+  private static readonly VOLUME_STORAGE_KEY = "beanzo.audioVolumes";
 
   constructor() {
-    // Default mix — tweak here (or expose sliders later).
+    // Default mix — tweak here (the settings sliders multiply on top).
     this.busVolumes.set("master", 1.0);
     this.busVolumes.set("movement", 0.9);
     this.busVolumes.set("weapons", 0.95);
     this.busVolumes.set("impacts", 1.0);
     this.busVolumes.set("ui", 0.8);
+    this.busVolumes.set("music", 0.9);
     this.busVolumes.set("ambience", 0.5);
+    this.loadUserVolumes();
   }
 
   get unlocked(): boolean {
@@ -172,13 +178,21 @@ export class AudioManager {
         for (const l of this.stateListeners) l();
       };
       const master = this.ctx.createGain();
-      master.gain.value = this.busVolumes.get("master") ?? 1;
+      master.gain.value = this.effectiveVolume("master");
       master.connect(this.ctx.destination);
       this.buses.set("master", master);
 
-      for (const bus of ["movement", "weapons", "impacts", "ui", "ambience"] as AudioBus[]) {
+      const subBuses: AudioBus[] = [
+        "movement",
+        "weapons",
+        "impacts",
+        "ui",
+        "music",
+        "ambience",
+      ];
+      for (const bus of subBuses) {
         const g = this.ctx.createGain();
-        g.gain.value = this.busVolumes.get(bus) ?? 1;
+        g.gain.value = this.effectiveVolume(bus);
         g.connect(master);
         this.buses.set(bus, g);
       }
@@ -218,9 +232,60 @@ export class AudioManager {
 
   setBusVolume(bus: AudioBus, volume: number): void {
     this.busVolumes.set(bus, volume);
+    this.applyBusGain(bus);
+  }
+
+  // ------------------------------------------------------------------
+  // Player volume settings (Main / Weapons / Music / Ambience sliders)
+  // ------------------------------------------------------------------
+
+  /** Player multiplier for a bus (0..1 — settings slider, persisted). */
+  getUserVolume(bus: AudioBus): number {
+    return this.userVolumes.get(bus) ?? 1;
+  }
+
+  /** Set + persist a player volume multiplier and apply it live. */
+  setUserVolume(bus: AudioBus, volume: number): void {
+    const v = Math.min(1, Math.max(0, volume));
+    this.userVolumes.set(bus, v);
+    this.applyBusGain(bus);
+    this.saveUserVolumes();
+  }
+
+  /** Final gain of a bus node: designed mix × player slider. */
+  private effectiveVolume(bus: AudioBus): number {
+    return (this.busVolumes.get(bus) ?? 1) * this.getUserVolume(bus);
+  }
+
+  private applyBusGain(bus: AudioBus): void {
     const node = this.buses.get(bus);
     if (node && this.ctx) {
-      node.gain.setTargetAtTime(volume, this.ctx.currentTime, 0.05);
+      node.gain.setTargetAtTime(this.effectiveVolume(bus), this.ctx.currentTime, 0.05);
+    }
+  }
+
+  private loadUserVolumes(): void {
+    try {
+      const raw = localStorage.getItem(AudioManager.VOLUME_STORAGE_KEY);
+      if (!raw) return;
+      const data = JSON.parse(raw) as Record<string, number>;
+      for (const [bus, v] of Object.entries(data)) {
+        if (typeof v === "number" && isFinite(v)) {
+          this.userVolumes.set(bus as AudioBus, Math.min(1, Math.max(0, v)));
+        }
+      }
+    } catch {
+      /* storage unavailable / corrupt — defaults (1.0) apply */
+    }
+  }
+
+  private saveUserVolumes(): void {
+    try {
+      const data: Record<string, number> = {};
+      for (const [bus, v] of this.userVolumes) data[bus] = v;
+      localStorage.setItem(AudioManager.VOLUME_STORAGE_KEY, JSON.stringify(data));
+    } catch {
+      /* storage unavailable — the session keeps its live volumes */
     }
   }
 

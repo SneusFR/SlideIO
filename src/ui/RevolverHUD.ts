@@ -22,22 +22,16 @@ export class RevolverHUD {
   constructor() {
     this.root = document.createElement("div");
     this.root.id = "revolver-hud";
+    // Row inside the ATTACKS card (bottom-right column) — the card owns
+    // the chrome, this element only lays out label + ammo dots.
     this.root.style.cssText = [
-      "position:fixed",
-      "right:26px",
-      "bottom:150px",
       "display:none",
-      "flex-direction:column",
-      "align-items:flex-end",
-      "gap:6px",
-      "padding:8px 12px",
-      "background:rgba(10,6,20,0.55)",
-      "border:1px solid rgba(168,85,247,0.35)",
-      "border-radius:8px",
-      "font-family:'Segoe UI',system-ui,sans-serif",
+      "flex-direction:row",
+      "align-items:center",
+      "justify-content:space-between",
+      "gap:8px",
+      "font-family:'Baloo 2','Segoe UI',sans-serif",
       "pointer-events:none",
-      "z-index:40",
-      "backdrop-filter:blur(2px)",
     ].join(";");
 
     this.label = document.createElement("div");
@@ -57,7 +51,7 @@ export class RevolverHUD {
       this.dots.push(dot);
     }
     this.root.appendChild(row);
-    document.body.appendChild(this.root);
+    (document.getElementById("attack-rows") ?? document.body).appendChild(this.root);
   }
 
   setVisible(visible: boolean): void {

@@ -122,25 +122,152 @@ body {
   letter-spacing: 1px;
 }
 
-/* ---- Weapon heat HUD ---- */
-#heat-hud {
-  position: absolute;
-  bottom: 26px;
-  right: 30px;
+/* ==================================================================== */
+/* ---- Shared HUD card chrome (status / attacks / killstreaks) ------- */
+/* ==================================================================== */
+.hud-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(165deg, rgba(9, 24, 14, 0.6), rgba(4, 12, 7, 0.55));
+  border: 1px solid rgba(74, 222, 128, 0.26);
+  border-radius: 12px;
+  box-shadow:
+    0 0 14px rgba(22, 163, 74, 0.12),
+    inset 0 0 24px rgba(22, 163, 74, 0.06);
+  backdrop-filter: blur(3px);
+  font-family: "Baloo 2", "Segoe UI", sans-serif;
+  pointer-events: none;
+  user-select: none;
+}
+
+.hud-card-header {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: rgba(134, 239, 172, 0.8);
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(74, 222, 128, 0.18);
+}
+
+.hud-card-header .hud-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.hud-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hud-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.hud-key {
+  flex: none;
+  width: 15px;
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+  line-height: 15px;
+  color: rgba(186, 230, 253, 0.8);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  border-radius: 3px;
+}
+
+/* ---- Game mode badge (top-center): FFA · unlimited time ---- */
+#mode-hud {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 16px 5px;
+  background: linear-gradient(165deg, rgba(9, 24, 14, 0.6), rgba(4, 12, 7, 0.55));
+  border: 1px solid rgba(74, 222, 128, 0.26);
+  border-radius: 999px;
+  box-shadow: 0 0 14px rgba(22, 163, 74, 0.12);
+  backdrop-filter: blur(3px);
+  pointer-events: none;
+  user-select: none;
+  z-index: 5;
+}
+
+#mode-name {
+  font-family: "Luckiest Guy", cursive;
+  font-size: 13px;
+  letter-spacing: 3px;
+  color: #86efac;
+  text-shadow: 0 0 8px rgba(74, 222, 128, 0.55);
+  transform: translateY(1px);
+}
+
+.mode-sep {
+  width: 1px;
+  height: 13px;
+  background: rgba(74, 222, 128, 0.3);
+}
+
+.mode-icon {
+  width: 13px;
+  height: 13px;
+  color: rgba(187, 247, 208, 0.75);
+}
+
+#mode-time {
+  font-family: "Baloo 2", "Segoe UI", sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  color: #dcfce7;
+}
+
+/* ---- Bottom-right column: killstreak card stacked above attacks ---- */
+#right-hud-col {
+  position: absolute;
+  right: 22px;
+  bottom: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 236px;
+  z-index: 10;
+}
+
+/* Weapon-specific rows (revolver / bass blaster / spear) mount here.
+   display:contents → the rows join the card's flex column directly, so
+   hidden rows (display:none) leave no phantom gap behind. */
+#attack-rows {
+  display: contents;
+}
+
+/* ---- Weapon heat row (inside the ATTACKS card) ---- */
+#heat-hud {
   color: #b2ffc7;
-  font-family: "Consolas", "Courier New", monospace;
   font-size: 11px;
-  letter-spacing: 2px;
+  letter-spacing: 1px;
+}
+
+#heat-hud .hud-icon {
+  color: #4ade80;
 }
 
 #heat-bar {
-  width: 150px;
-  height: 9px;
+  flex: 1;
+  height: 8px;
   background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(74, 222, 128, 0.4);
+  border: 1px solid rgba(74, 222, 128, 0.35);
   border-radius: 4px;
   overflow: hidden;
 }
@@ -179,24 +306,21 @@ body {
   }
 }
 
-/* ---- Dash HUD ---- */
+/* ---- Dash row (inside the bottom-left status card) ---- */
 #dash-hud {
-  position: absolute;
-  bottom: 26px;
-  left: 30px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
   color: #7dd3fc;
-  font-family: "Consolas", "Courier New", monospace;
   font-size: 11px;
-  letter-spacing: 2px;
-  opacity: 0.75;
+  letter-spacing: 1px;
+  opacity: 0.85;
+}
+
+#dash-hud .hud-icon {
+  color: #38bdf8;
 }
 
 #dash-bar {
-  width: 110px;
-  height: 9px;
+  flex: 1;
+  height: 7px;
   background: rgba(255, 255, 255, 0.07);
   border: 1px solid rgba(56, 189, 248, 0.4);
   border-radius: 4px;
@@ -342,22 +466,30 @@ body {
   letter-spacing: 1px;
 }
 
-/* ---- Player health HUD ---- */
-#health-hud {
+/* ---- Bottom-left status card (health + dash grouped) ---- */
+#status-card {
   position: absolute;
-  bottom: 54px;
-  left: 30px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  bottom: 22px;
+  left: 22px;
+  width: 226px;
+  z-index: 10;
+}
+
+#health-hud {
   color: #86efac;
-  font-family: "Consolas", "Courier New", monospace;
   font-size: 11px;
-  letter-spacing: 2px;
+  letter-spacing: 1px;
+}
+
+#health-hud .hud-icon {
+  width: 16px;
+  height: 16px;
+  color: #4ade80;
+  filter: drop-shadow(0 0 4px rgba(74, 222, 128, 0.5));
 }
 
 #health-bar {
-  width: 170px;
+  flex: 1;
   height: 11px;
   background: rgba(255, 255, 255, 0.07);
   border: 1px solid rgba(74, 222, 128, 0.4);
@@ -572,12 +704,15 @@ body {
   }
 }
 
-/* ---- Combo HUD (bottom-right, above the HEAT bar — weapon stays visible) ---- */
+/* ---- Combo HUD (bottom-center, above the controls hint — the grouped
+   right column now owns the bottom-right corner) ---- */
 #combo-hud {
   position: absolute;
-  bottom: 62px;
-  right: 30px;
+  bottom: 40px;
+  left: 0;
+  right: 0;
   display: flex;
+  justify-content: center;
   align-items: center;
   gap: 10px;
   color: #a7f3c0;
@@ -815,6 +950,21 @@ body {
   display: none;
 }
 
+/* While PAUSED (Escape → pause menu) EVERY in-game HUD element is hidden,
+   including the dynamically-created ones appended to <body> (weapon chips,
+   soundtrack selector, hitmarker, debug overlays…). The pause menu is the
+   only visible UI. `!important` beats their inline display styles. */
+body.game-paused #hud,
+body.game-paused #bassblaster-hud,
+body.game-paused #music-selector-hud,
+body.game-paused #revolver-hud,
+body.game-paused #spear-hud,
+body.game-paused #hitmarker,
+body.game-paused #network-debug-hud,
+body.game-paused .mole-overlay {
+  display: none !important;
+}
+
 /* ---- Root layer: TRANSPARENT overlay above the live game renderer.
    The actual map preview (Game.startMenuPreview) is the background. ---- */
 #main-menu-root {
@@ -829,8 +979,9 @@ body {
   position: absolute;
   inset: 0;
   z-index: 2;
-  max-width: 1900px;
-  margin: 0 auto;
+  /* Full-bleed: panels anchor to the REAL screen corners on every
+     resolution. A centered max-width column would leave the vignette
+     edges visible as dark bands on 2K/4K screens. */
   pointer-events: none;
   opacity: 1;
   transition: opacity 0.6s ease;
@@ -1228,6 +1379,96 @@ body {
   font-size: 10.5px;
   color: #86bd94;
   letter-spacing: 0.4px;
+}
+
+.settings-sep {
+  height: 1px;
+  margin: 4px 0 2px;
+  background: rgba(74, 222, 128, 0.2);
+}
+
+/* ---- AUDIO volume sliders (Main / Weapon / Music / Ambiance) ---- */
+.settings-slider-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  row-gap: 6px;
+}
+
+.settings-slider-row label {
+  font-family: var(--mm-font-alt);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.8px;
+  color: #9fd3aa;
+}
+
+.settings-slider-value {
+  font-family: var(--mm-font-alt);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: #dcfce7;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-width: 38px;
+}
+
+.settings-slider-row input[type="range"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+}
+
+.settings-slider-row input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 4px;
+  background: rgba(6, 14, 8, 0.85);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}
+
+.settings-slider-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #86efac, #16a34a);
+  border: 1px solid rgba(240, 253, 244, 0.6);
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.55);
+  transition: transform 0.12s ease;
+}
+
+.settings-slider-row input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.settings-slider-row input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 4px;
+  background: rgba(6, 14, 8, 0.85);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}
+
+.settings-slider-row input[type="range"]::-moz-range-progress {
+  height: 6px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #16a34a, #86efac);
+}
+
+.settings-slider-row input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #86efac, #16a34a);
+  border: 1px solid rgba(240, 253, 244, 0.6);
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.55);
 }
 
 /* ---- AdSlot: neutral, clearly separated from the game UI ---- */
@@ -1975,6 +2216,30 @@ body {
   }
   .action-sub {
     display: none;
+  }
+}
+
+/* ---------------------------------------------------------------
+   Large screens: 2K / 4K upscale. Most menu sizes are fixed px values
+   tuned for 1080p — on QHD/UHD the widgets shrink into the corners of
+   a huge frame. `zoom` rescales the whole overlay uniformly while the
+   corner-anchored layout (and the full-bleed vignette) stays intact.
+   --------------------------------------------------------------- */
+@media (min-width: 2200px) {
+  #main-menu,
+  #lobby-browser,
+  #loadout-menu,
+  #mp-overlay {
+    zoom: 1.35;
+  }
+}
+
+@media (min-width: 3200px) {
+  #main-menu,
+  #lobby-browser,
+  #loadout-menu,
+  #mp-overlay {
+    zoom: 2;
   }
 }
 

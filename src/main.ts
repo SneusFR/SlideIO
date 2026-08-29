@@ -129,9 +129,13 @@ async function main(): Promise<void> {
     const locked = document.pointerLockElement === game.domElement;
     if (locked) {
       menu.hide();
+      // Back in the fight: reveal the gameplay HUD again.
+      document.body.classList.remove("game-paused");
     } else if (document.hasFocus()) {
       menu.setPauseMode(true, inMultiplayerGame);
       menu.show();
+      // Pause: EVERY in-game HUD element is hidden (CSS body.game-paused).
+      document.body.classList.add("game-paused");
     }
     // Focus-loss unlock (Alt-Tab): nothing appears — clicking the game
     // view re-locks directly (handler below).
