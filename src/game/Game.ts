@@ -41,6 +41,7 @@ import { PlayerCombatant } from "../combat/PlayerCombatant";
 import { HitZone } from "../combat/HitZone";
 import { HitFeedbackManager } from "../combat/HitFeedbackManager";
 import { HitmarkerHUD } from "../ui/HitmarkerHUD";
+import { DamageNumbersHUD } from "../ui/DamageNumbersHUD";
 import { SpawnManager } from "../combat/SpawnManager";
 import { NavGrid } from "../navigation/NavGrid";
 import { BotManager } from "../bots/BotManager";
@@ -155,6 +156,7 @@ export class Game {
   private multiplayerClient: MultiplayerClient | null = null;
   private playerCombatant: PlayerCombatant;
   private hitmarkerHud: HitmarkerHUD;
+  private damageNumbersHud: DamageNumbersHUD;
   private hitFeedback: HitFeedbackManager;
   private readonly combatants: Combatant[] = [];
   private playerDeathTimer = 0;
@@ -286,11 +288,13 @@ export class Game {
     // The HitmarkerHUD is kept as a field: in multiplayer the SERVER's
     // HIT_CONFIRMED events drive it directly (source of truth).
     this.hitmarkerHud = new HitmarkerHUD();
+    this.damageNumbersHud = new DamageNumbersHUD();
     this.hitFeedback = new HitFeedbackManager(
       this.hitmarkerHud,
       this.particles,
       this.playerCombatant,
     );
+    this.hitFeedback.damageNumbers = this.damageNumbersHud;
     this.rifle.feedback = this.hitFeedback;
 
     // ---- FFA match stats (source of truth) + live leaderboard HUD ----
@@ -1156,6 +1160,7 @@ export class Game {
       this.combo.update(dt);
       this.medals.update(dt);
       this.hitFeedback.update(dt);
+      this.damageNumbersHud.update(dt, this.fpsCamera.camera);
       this.gameAudio.setComboLayer(this.combo.active, this.combo.comboCount);
     }
 
@@ -1535,9 +1540,31 @@ export class Game {
     }
   }
 
+  /** Scratch pose for the damage-number anchor of a remote victim. */
+  private readonly netHitPose = { pos: new THREE.Vector3(), yaw: 0, pitch: 0 };
+
   /** SERVER hit confirmation → hitmarker + hit sound (lightly throttled). */
   private handleNetworkHitConfirmed(event: HitConfirmedEvent): void {
     const zone = event.hitZone === "HEAD" ? HitZone.HEAD : HitZone.BODY;
+
+    // Floating damage number on the victim's avatar — NOT throttled: the
+    // HUD merges rapid ticks per target into one growing number itself.
+    if (event.damageDealt > 0 && this.multiplayer) {
+      if (this.multiplayer.remotes.getPose(event.targetId, this.netHitPose)) {
+        this.netHitPose.pos.y += 1.5; // above the avatar's head
+        this.damageNumbersHud.addHit(
+          event.targetId,
+          event.damageDealt,
+          zone,
+          this.netHitPose.pos,
+        );
+      } else {
+        // Killing blow can arrive after the avatar was hidden — merge it
+        // into the still-visible number instead of losing the damage.
+        this.damageNumbersHud.addOrphanHit(event.targetId, event.damageDealt);
+      }
+    }
+
     // Continuous plasma confirms ~20 Hz — keep the feedback readable.
     if (!event.killed && this.elapsed - this.lastNetHitFeedback < 0.08) return;
     this.lastNetHitFeedback = this.elapsed;

@@ -33,4 +33,20 @@ export const HitFeedbackConfig = {
   headBurstCount: 9,
   headBurstSpeed: 4,
   headBurstLife: 0.35,
+
+  // ---- Floating damage numbers (goofy cartoon pop next to the enemy) ----
+  /** Total on-screen lifetime of one number (refreshed by merged ticks). */
+  damageNumberLifetime: 0.85,
+  /** Rapid ticks on the same target within this window MERGE into one number. */
+  damageNumberMergeWindow: 0.45,
+  /** Upward screen drift speed (px/s) — the classic float-up. */
+  damageNumberFloatSpeed: 46,
+  /** Distance (m) at which the number renders at scale 1. */
+  damageNumberRefDistance: 9,
+  /** NEVER smaller than this — far numbers must stay clearly readable. */
+  damageNumberMinScale: 0.72,
+  /** Cap for point-blank hits — never a screen-filling number. */
+  damageNumberMaxScale: 1.6,
+  /** Pooled DOM elements (oldest stolen beyond this — no unbounded DOM). */
+  damageNumberMaxCount: 24,
 } as const;

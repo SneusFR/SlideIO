@@ -4,6 +4,7 @@ import { HitZone } from "./HitZone";
 import { KillMethod } from "./KillMethod";
 import { HitFeedbackConfig as hfc } from "./HitFeedbackConfig";
 import { HitmarkerHUD } from "../ui/HitmarkerHUD";
+import { DamageNumbersHUD } from "../ui/DamageNumbersHUD";
 import { ParticleSystem } from "../effects/ParticleSystem";
 
 /** One confirmed damage application, reported by a weapon. */
@@ -40,6 +41,8 @@ export class HitFeedbackManager {
   onBodyHitSound: (() => void) | null = null;
   /** Headshot confirmation sound — clearly distinct, never just louder. */
   onHeadshotSound: (() => void) | null = null;
+  /** Floating damage numbers next to the victim (wired by Game, optional). */
+  damageNumbers: DamageNumbersHUD | null = null;
 
   /** Internal pause-safe clock (advanced by Game only while running). */
   private clock = 0;
@@ -68,6 +71,7 @@ export class HitFeedbackManager {
 
     this.pulse(hit);
     this.victimReaction(hit);
+    this.damageNumber(hit);
   }
 
   // ------------------------------------------------------------------
@@ -92,6 +96,28 @@ export class HitFeedbackManager {
     this.hud.show(hit.hitZone);
     if (hit.hitZone === HitZone.HEAD) this.onHeadshotSound?.();
     else this.onBodyHitSound?.();
+  }
+
+  // ------------------------------------------------------------------
+  // Floating damage number (goofy cartoon pop next to the victim)
+  // ------------------------------------------------------------------
+
+  /** Scratch vector for the number anchor (no per-hit allocation). */
+  private readonly numberAnchor = new THREE.Vector3();
+
+  private damageNumber(hit: HitEvent): void {
+    if (!this.damageNumbers) return;
+    // Anchor slightly above the victim's head so the number reads BESIDE
+    // the enemy, never on top of the model. Ticks merge inside the HUD.
+    hit.target.getEyePosition(this.numberAnchor);
+    this.numberAnchor.y += 0.45;
+    this.damageNumbers.addHit(
+      hit.target,
+      hit.damage,
+      hit.hitZone,
+      this.numberAnchor,
+      hit.target,
+    );
   }
 
   // ------------------------------------------------------------------

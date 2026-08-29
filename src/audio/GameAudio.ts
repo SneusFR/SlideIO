@@ -33,6 +33,7 @@ export const AUDIO_MANIFEST: Record<string, string> = {
   plasma_cooling_loop: `${A}/plasma/plasma_cooling_loop_01.mp3`,
   // Hit confirmation (local player damage feedback)
   hit_body: `${A}/hits/hit_body_01.mp3`,
+  hit_body_punch: `${A}/hits/hit_body_02.mp3`,
   hit_head: `${A}/hits/hit_head_01.mp3`,
   // Revolver (arcade ballistic revolver — CC0, see ATTRIBUTION.md)
   revolver_shot: `${A}/revolver/revolver_shot_01.mp3`,
@@ -378,13 +379,24 @@ export class GameAudio {
     }
   }
 
-  /** Short energetic body-hit confirmation tick (throttled by the feedback manager too). */
+  /**
+   * Body-hit confirmation: crisp tick + a punchy "thock" layer in the same
+   * family as the headshot ping (satisfying, never louder than it). Small
+   * pitch wobble so a plasma stream stays lively instead of metronomic.
+   */
   hitBody(): void {
     audio.play("hit_body", {
       bus: "impacts",
-      volume: 0.38,
+      volume: 0.34,
       rate: 1,
       rateVar: 0.05,
+      throttleMs: 70,
+    });
+    audio.play("hit_body_punch", {
+      bus: "impacts",
+      volume: 0.42,
+      rate: 1.04,
+      rateVar: 0.07,
       throttleMs: 70,
     });
   }

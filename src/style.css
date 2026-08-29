@@ -960,6 +960,7 @@ body.game-paused #music-selector-hud,
 body.game-paused #revolver-hud,
 body.game-paused #spear-hud,
 body.game-paused #hitmarker,
+body.game-paused #damage-numbers,
 body.game-paused #network-debug-hud,
 body.game-paused .mole-overlay {
   display: none !important;
@@ -2547,6 +2548,73 @@ body.game-paused .mole-overlay {
   100% {
     opacity: 0;
     transform: scale(0.5);
+  }
+}
+
+/* ==========================================================================
+   Floating damage numbers — goofy cartoon pops next to the enemies.
+   World → screen projection done in JS (DamageNumbersHUD); here only the
+   look + the pop-in bounce. The outer .dmg-num carries the JS transform
+   (position/scale/fade), the inner span carries the CSS pop animation —
+   the two never fight over the same transform.
+   ========================================================================== */
+#damage-numbers {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 21; /* below the hitmarker, above the world */
+  overflow: hidden;
+}
+
+.dmg-num {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: none;
+  will-change: transform, opacity;
+}
+
+.dmg-num-inner {
+  display: inline-block;
+  font-family: "Luckiest Guy", cursive;
+  font-size: 34px;
+  line-height: 1;
+  /* BODY hits: bright green core over a deep forest outline. */
+  color: #4ade80;
+  /* Thick cartoon outline + drop shadow → readable on ANY background. */
+  -webkit-text-stroke: 2px #14532d;
+  paint-order: stroke fill;
+  text-shadow:
+    0 3px 0 #14532d,
+    0 0 10px rgba(74, 222, 128, 0.8),
+    0 0 22px rgba(34, 197, 94, 0.45);
+}
+
+/* HEADSHOT: golden-yellow core, bigger, more glow — instantly distinct. */
+.dmg-num.dmg-head .dmg-num-inner {
+  font-size: 44px;
+  color: #fcd34d;
+  -webkit-text-stroke: 2.5px #92400e;
+  text-shadow:
+    0 3px 0 #92400e,
+    0 0 12px rgba(253, 224, 71, 0.95),
+    0 0 28px rgba(245, 158, 11, 0.7);
+}
+
+/* Pop-in: squash → overshoot → settle. Retriggered on every merged tick. */
+.dmg-num-inner.dmg-pop {
+  animation: dmg-pop 0.28s cubic-bezier(0.2, 2.2, 0.4, 1) both;
+}
+
+@keyframes dmg-pop {
+  0% {
+    transform: scale(0.2) rotate(-6deg);
+  }
+  55% {
+    transform: scale(1.35) rotate(3deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
   }
 }
 
