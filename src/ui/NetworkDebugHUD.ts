@@ -177,6 +177,19 @@ export class NetworkDebugHUD {
       lines.push(row("SRV LOOP STALL", `<span class='ndh-warn'>${pipe.serverLoopStallMs}ms</span>`));
     }
     lines.push(row("CLI PATCH RX", gap(pipe.patchArrivalAvgMs, pipe.patchArrivalMaxMs)));
+
+    // ---- Combat message rates (aggregated ~1 s windows) ----
+    const srvCombat =
+      pipe.serverCombatRxPerSec >= 0
+        ? `  srv in ${pipe.serverCombatRxPerSec} out ${pipe.serverCombatTxPerSec}`
+        : "";
+    lines.push(
+      row("COMBAT MSG/S", `up ${pipe.combatUpPerSec}  down ${pipe.combatDownPerSec}${srvCombat}`),
+    );
+
+    // ---- WebSocket outbound backlog (backpressure evidence) ----
+    lines.push(row("CLIENT WS BUFFER", formatWsBuffer(pipe.clientWsBufferedBytes, pipe.clientWsBufferedMaxBytes)));
+    lines.push(row("SERVER WS BUFFER", formatWsBuffer(pipe.serverWsBufferedMaxBytes, -1)));
     for (const pp of pipe.players) {
       const name = players.find((p) => p.id === pp.id)?.name ?? pp.id;
       lines.push(this.renderPipelinePlayer(name, pp, gap));
@@ -217,6 +230,21 @@ export class NetworkDebugHUD {
 
 function row(label: string, value: string): string {
   return `<div class="ndh-row"><span class="ndh-label">${label}</span><span class="ndh-value">${value}</span></div>`;
+}
+
+/**
+ * "current / peak" WebSocket backlog formatter. -1 = N/A (transport does
+ * not expose bufferedAmount). Anything ≥ 4 KB is highlighted: a growing
+ * outbound buffer is the direct signature of TCP backpressure.
+ */
+function formatWsBuffer(nowBytes: number, peakBytes: number): string {
+  if (nowBytes < 0 && peakBytes < 0) return "N/A";
+  const fmt = (b: number): string => {
+    if (b < 0) return "—";
+    const text = b >= 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} B`;
+    return b >= 4096 ? `<span class='ndh-warn'>${text}</span>` : text;
+  };
+  return peakBytes >= 0 ? `${fmt(nowBytes)} / peak ${fmt(peakBytes)}` : fmt(nowBytes);
 }
 
 function formatTime(atMs: number): string {

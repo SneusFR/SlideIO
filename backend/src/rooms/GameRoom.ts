@@ -90,6 +90,14 @@ export class GameRoom extends Room<GameRoomState> {
   private trace: ServerTransformTrace | null = null;
   /** DEV-ONLY: throttled NET_DIAG relay to clients (F1 PIPELINE section). */
   private lastDiagBroadcastAt = 0;
+  // ---- DEV-ONLY combat message rate counters (relayed via NET_DIAG,
+  // aggregated over the diag interval — NEVER logged per message) ----
+  /** WEAPON_ACTION messages received since the last NET_DIAG relay. */
+  private combatMsgReceived = 0;
+  /** Combat messages sent (confirms + hit/damage/impulse) since last relay. */
+  private combatMsgSent = 0;
+  /** performance.now() when the combat counters were last drained. */
+  private combatCountersSince = 0;
 
   onCreate(): void {
     this.setState(new GameRoomState());
@@ -120,13 +128,39 @@ export class GameRoom extends Room<GameRoomState> {
       getPlayer: (id) => this.state.players.get(id),
       players: () => this.state.players.values(),
       applyDamage: (req) => this.combat.applyDamage(req),
-      broadcastAction: (event) => this.broadcast("WEAPON_ACTION_CONFIRMED", event),
-      sendHitConfirmed: (attackerId, ev) =>
-        this.clientById(attackerId)?.send("HIT_CONFIRMED", ev),
-      sendDamageTaken: (victimId, ev) =>
-        this.clientById(victimId)?.send("DAMAGE_TAKEN", ev),
-      sendImpulse: (victimId, impulse) =>
-        this.clientById(victimId)?.send("APPLY_IMPULSE", impulse),
+      // The shooter's client DISCARDS its own confirmed actions (local
+      // prediction already rendered them) — never echo the broadcast back
+      // to the originating client: pure redundant traffic on its socket.
+      broadcastAction: (event) => {
+        const shooter = this.clientById(event.playerId);
+        this.broadcast(
+          "WEAPON_ACTION_CONFIRMED",
+          event,
+          shooter ? { except: shooter } : undefined,
+        );
+        this.combatMsgSent += Math.max(0, this.clients.length - (shooter ? 1 : 0));
+      },
+      sendHitConfirmed: (attackerId, ev) => {
+        const client = this.clientById(attackerId);
+        if (client) {
+          client.send("HIT_CONFIRMED", ev);
+          this.combatMsgSent++;
+        }
+      },
+      sendDamageTaken: (victimId, ev) => {
+        const client = this.clientById(victimId);
+        if (client) {
+          client.send("DAMAGE_TAKEN", ev);
+          this.combatMsgSent++;
+        }
+      },
+      sendImpulse: (victimId, impulse) => {
+        const client = this.clientById(victimId);
+        if (client) {
+          client.send("APPLY_IMPULSE", impulse);
+          this.combatMsgSent++;
+        }
+      },
       now: () => Date.now(),
     });
     // Fixed 20 Hz combat tick (plasma DPS, oblit beam, rush, projectiles) —
@@ -165,6 +199,7 @@ export class GameRoom extends Room<GameRoomState> {
     });
     this.onMessage("WEAPON_ACTION", (client, message) => {
       if (this.state.phase !== GameRoomPhase.PLAYING) return;
+      this.combatMsgReceived++; // DEV diag counter (aggregated, never logged)
       const player = this.state.players.get(client.sessionId);
       if (player) this.weapons.handleAction(player, (message ?? {}) as WeaponActionMessage);
     });
@@ -219,11 +254,25 @@ export class GameRoom extends Room<GameRoomState> {
       const now = performance.now();
       if (now - this.lastDiagBroadcastAt >= 2000 && this.clients.length > 0) {
         this.lastDiagBroadcastAt = now;
+        // Combat message rates: counters drained per relay window (~2 s).
+        const windowSec =
+          this.combatCountersSince > 0 ? (now - this.combatCountersSince) / 1000 : 2;
+        const combatRxPerSec = Math.round(this.combatMsgReceived / Math.max(0.25, windowSec));
+        const combatTxPerSec = Math.round(this.combatMsgSent / Math.max(0.25, windowSec));
+        this.combatMsgReceived = 0;
+        this.combatMsgSent = 0;
+        this.combatCountersSince = now;
         this.broadcast("NET_DIAG", {
           players: this.trace.buildDiag(),
           patchAvgMs: Math.round(this.trace.patchGap.avgMs),
           patchMaxMs: Math.round(this.trace.patchGap.maxMs),
           loopStallMs: Math.round(eventLoopMonitor.recentMaxStallMs(5000)),
+          combatRxPerSec,
+          combatTxPerSec,
+          // Worst per-client outbound WebSocket backlog (bytes). The `ws`
+          // socket behind each Colyseus client exposes bufferedAmount —
+          // read defensively (-1 = unavailable in this transport).
+          wsBufferedMax: this.maxClientWsBuffered(),
         });
       }
     }
@@ -442,6 +491,26 @@ export class GameRoom extends Room<GameRoomState> {
   /** Direct per-client message routing (HIT_CONFIRMED / DAMAGE_TAKEN…). */
   private clientById(sessionId: string): Client | undefined {
     return this.clients.find((c) => c.sessionId === sessionId);
+  }
+
+  /**
+   * DEV-ONLY: worst outbound WebSocket backlog across the connected
+   * clients (bytes). The @colyseus/ws-transport client wraps a `ws`
+   * WebSocket in `client.ref`, which exposes `bufferedAmount` — a growing
+   * value here proves the SERVER is producing faster than the client's
+   * TCP connection drains (backpressure). Defensive: any transport that
+   * doesn't expose it yields -1 ("N/A" in the F1 overlay).
+   */
+  private maxClientWsBuffered(): number {
+    let max = -1;
+    for (const client of this.clients) {
+      const ref = (client as unknown as { ref?: { bufferedAmount?: unknown } }).ref;
+      const buffered = ref?.bufferedAmount;
+      if (typeof buffered === "number" && Number.isFinite(buffered)) {
+        if (buffered > max) max = buffered;
+      }
+    }
+    return max;
   }
 }
 

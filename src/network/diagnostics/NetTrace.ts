@@ -36,6 +36,12 @@ export interface ServerDiag {
   patchAvgMs: number;
   patchMaxMs: number;
   loopStallMs: number;
+  /** Server-side combat msgs/s (WEAPON_ACTION in / confirms+feedback out).
+   *  Optional: older servers don't send them (-1 = unavailable). */
+  combatRxPerSec?: number;
+  combatTxPerSec?: number;
+  /** Worst per-client outbound ws bufferedAmount (bytes, -1 = N/A). */
+  wsBufferedMax?: number;
 }
 
 /** Per-remote pipeline row for the F1 PIPELINE overlay section. */
@@ -69,6 +75,21 @@ export interface NetPipelineDebug {
   serverLoopStallMs: number;
   patchArrivalAvgMs: number;
   patchArrivalMaxMs: number;
+  // ---- Combat message rates (aggregated ~1 s windows, never per-packet) --
+  /** LOCAL combat messages sent per second (WEAPON_ACTION out). */
+  combatUpPerSec: number;
+  /** Combat messages received per second (confirms + hit/damage/impulse). */
+  combatDownPerSec: number;
+  /** SERVER combat msgs/s relayed via NET_DIAG (-1 = no data yet). */
+  serverCombatRxPerSec: number;
+  serverCombatTxPerSec: number;
+  // ---- WebSocket outbound backlog (bytes; -1 = unavailable) ----
+  /** LOCAL socket bufferedAmount at report time. */
+  clientWsBufferedBytes: number;
+  /** Peak LOCAL bufferedAmount observed since the last report. */
+  clientWsBufferedMaxBytes: number;
+  /** Worst per-client backlog on the SERVER (NET_DIAG relay). */
+  serverWsBufferedMaxBytes: number;
   players: PipelinePlayerDebug[];
 }
 
@@ -118,6 +139,20 @@ class NetTrace {
   private readonly remotes = new Map<string, RemoteTrace>();
   private serverDiag: ServerDiag | null = null;
   private lastSummaryAt = 0;
+
+  // ---- Combat message counters (rolling ~1 s windows — cheap ints) ----
+  private combatUpCount = 0;
+  private combatDownCount = 0;
+  private combatWindowStartAt = 0;
+  /** Last completed window's rates (what the HUD displays). */
+  private combatUpPerSecValue = 0;
+  private combatDownPerSecValue = 0;
+
+  // ---- WebSocket backlog sampling (local socket) ----
+  /** Provider wired by MultiplayerClient (returns bufferedAmount or -1). */
+  private wsBufferedProvider: (() => number) | null = null;
+  /** Peak bufferedAmount observed since the last pipeline report. */
+  private wsBufferedPeak = -1;
 
   // ---- Stage 2: client send ----
 
@@ -200,6 +235,58 @@ class NetTrace {
     this.remote(id).seqGapTotal += missing;
   }
 
+  // ---- Combat message rate (aggregated windows, zero per-packet cost) ----
+
+  /** One combat message SENT by the local client (WEAPON_ACTION). */
+  noteCombatMessageSent(): void {
+    if (!this.enabled) return;
+    this.rollCombatWindow();
+    this.combatUpCount++;
+  }
+
+  /** One combat message RECEIVED (confirm / hit / damage / impulse). */
+  noteCombatMessageReceived(): void {
+    if (!this.enabled) return;
+    this.rollCombatWindow();
+    this.combatDownCount++;
+  }
+
+  /** Close the ~1 s aggregation window when it has elapsed. */
+  private rollCombatWindow(): void {
+    const now = performance.now();
+    if (this.combatWindowStartAt === 0) {
+      this.combatWindowStartAt = now;
+      return;
+    }
+    const elapsed = now - this.combatWindowStartAt;
+    if (elapsed < 1000) return;
+    const seconds = elapsed / 1000;
+    this.combatUpPerSecValue = Math.round(this.combatUpCount / seconds);
+    this.combatDownPerSecValue = Math.round(this.combatDownCount / seconds);
+    this.combatUpCount = 0;
+    this.combatDownCount = 0;
+    this.combatWindowStartAt = now;
+  }
+
+  // ---- WebSocket backlog (local socket bufferedAmount) ----
+
+  /** Wire the local bufferedAmount reader (MultiplayerClient owns the ws). */
+  setWsBufferedProvider(provider: (() => number) | null): void {
+    this.wsBufferedProvider = provider;
+    this.wsBufferedPeak = -1;
+  }
+
+  /**
+   * Cheap periodic sample (called from update(), a few times per second):
+   * tracks the PEAK backlog between two F1 refreshes so short spikes
+   * are never missed by the 250 ms HUD polling.
+   */
+  private sampleWsBuffered(): void {
+    if (!this.wsBufferedProvider) return;
+    const buffered = this.wsBufferedProvider();
+    if (buffered > this.wsBufferedPeak) this.wsBufferedPeak = buffered;
+  }
+
   // ---- Server relay + reporting ----
 
   setServerDiag(diag: ServerDiag): void {
@@ -231,6 +318,12 @@ class NetTrace {
         bursts: t.bursts,
       });
     }
+    // Fresh backlog sample + drain the peak observed since the last report.
+    this.sampleWsBuffered();
+    const wsNow = this.wsBufferedProvider ? this.wsBufferedProvider() : -1;
+    const wsPeak = this.wsBufferedPeak;
+    this.wsBufferedPeak = wsNow;
+    this.rollCombatWindow();
     return {
       sendAvgMs: Math.round(this.sendGap.avgMs),
       sendMaxMs: Math.round(this.sendGap.maxMs),
@@ -242,13 +335,23 @@ class NetTrace {
       serverLoopStallMs: this.serverDiag?.loopStallMs ?? -1,
       patchArrivalAvgMs: Math.round(this.patchArrival.avgMs),
       patchArrivalMaxMs: Math.round(this.patchArrival.maxMs),
+      combatUpPerSec: this.combatUpPerSecValue,
+      combatDownPerSec: this.combatDownPerSecValue,
+      serverCombatRxPerSec: this.serverDiag?.combatRxPerSec ?? -1,
+      serverCombatTxPerSec: this.serverDiag?.combatTxPerSec ?? -1,
+      clientWsBufferedBytes: wsNow,
+      clientWsBufferedMaxBytes: wsPeak,
+      serverWsBufferedMaxBytes: this.serverDiag?.wsBufferedMax ?? -1,
       players,
     };
   }
 
-  /** Per-frame heartbeat: prints the ~5 s console summary. */
+  /** Per-frame heartbeat: peak-samples the ws backlog + ~5 s summaries. */
   update(): void {
     if (!this.enabled) return;
+    // Track the PEAK outbound backlog between HUD refreshes (one property
+    // read per frame — negligible; short spikes must not be missed).
+    this.sampleWsBuffered();
     const now = performance.now();
     if (now - this.lastSummaryAt < SUMMARY_INTERVAL_MS) return;
     // Nothing to report before any traffic.
@@ -273,6 +376,13 @@ class NetTrace {
     this.patchBurstCount = 0;
     this.patchBursts = 0;
     this.lastSummaryAt = 0;
+    this.combatUpCount = 0;
+    this.combatDownCount = 0;
+    this.combatWindowStartAt = 0;
+    this.combatUpPerSecValue = 0;
+    this.combatDownPerSecValue = 0;
+    this.wsBufferedProvider = null;
+    this.wsBufferedPeak = -1;
   }
 
   // ------------------------------------------------------------------

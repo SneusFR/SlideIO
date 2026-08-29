@@ -335,6 +335,7 @@ export class MultiplayerClient {
   ): void {
     if (!this.room) return;
     this.weaponSeq++;
+    netTrace.noteCombatMessageSent(); // DEV diag (aggregated ~1 s counter)
     this.room.send("WEAPON_ACTION", {
       action,
       seq: this.weaponSeq,
@@ -404,6 +405,22 @@ export class MultiplayerClient {
     this.leavingIntentionally = false;
     this.lastPhase = "";
 
+    // DEV diag: expose the underlying WebSocket outbound backlog
+    // (bufferedAmount) to the F1 PIPELINE overlay. Read DEFENSIVELY —
+    // internal colyseus.js structure (connection.transport.ws) may change
+    // between versions; unavailable simply reads as -1 ("N/A").
+    if (NET_TRACE_ENABLED) {
+      netTrace.setWsBufferedProvider(() => {
+        const transport = (
+          this.room as unknown as {
+            connection?: { transport?: { ws?: { bufferedAmount?: unknown } } };
+          }
+        )?.connection?.transport;
+        const buffered = transport?.ws?.bufferedAmount;
+        return typeof buffered === "number" && Number.isFinite(buffered) ? buffered : -1;
+      });
+    }
+
     // Rooms are small: rebuild the full list on every state patch. Simple,
     // robust, and version-agnostic w.r.t. schema callbacks.
     room.onStateChange(() => {
@@ -458,6 +475,7 @@ export class MultiplayerClient {
 
     // ---- Phase 5: server weapon events ----
     room.onMessage("WEAPON_ACTION_CONFIRMED", (message: Partial<WeaponActionConfirmedEvent>) => {
+      netTrace.noteCombatMessageReceived();
       if (typeof message?.playerId !== "string" || typeof message?.action !== "string") return;
       this.onWeaponActionConfirmed?.({
         playerId: message.playerId,
@@ -479,6 +497,7 @@ export class MultiplayerClient {
       });
     });
     room.onMessage("HIT_CONFIRMED", (message: Partial<HitConfirmedEvent>) => {
+      netTrace.noteCombatMessageReceived();
       if (typeof message?.targetId !== "string") return;
       this.onHitConfirmed?.({
         targetId: message.targetId,
@@ -489,6 +508,7 @@ export class MultiplayerClient {
       });
     });
     room.onMessage("DAMAGE_TAKEN", (message: Partial<DamageTakenEvent>) => {
+      netTrace.noteCombatMessageReceived();
       this.onDamageTaken?.({
         attackerId: typeof message?.attackerId === "string" ? message.attackerId : null,
         amount: num(message?.amount),
@@ -498,6 +518,7 @@ export class MultiplayerClient {
       });
     });
     room.onMessage("APPLY_IMPULSE", (message: Partial<ApplyImpulseEvent>) => {
+      netTrace.noteCombatMessageReceived();
       this.onApplyImpulse?.({ x: num(message?.x), y: num(message?.y), z: num(message?.z) });
     });
 
