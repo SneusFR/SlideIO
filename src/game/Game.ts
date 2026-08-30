@@ -518,6 +518,8 @@ export class Game {
         // Killstreak progress: every LOCKED slot advances by one kill.
         this.killstreaks.onPlayerKill();
         this.killstreakHud.notifyKill();
+        // Kill-confirmed chime — the grisant payoff that begs for a chain.
+        this.gameAudio.killConfirm();
       }
       this.gameAudio.botKilled(bot);
       // Loot belongs to a REAL combat death only. Manual bot removal from
@@ -1557,11 +1559,13 @@ export class Game {
           event.damageDealt,
           zone,
           this.netHitPose.pos,
+          null,
+          event.killed,
         );
       } else {
         // Killing blow can arrive after the avatar was hidden — merge it
         // into the still-visible number instead of losing the damage.
-        this.damageNumbersHud.addOrphanHit(event.targetId, event.damageDealt);
+        this.damageNumbersHud.addOrphanHit(event.targetId, event.damageDealt, event.killed);
       }
     }
 
@@ -1575,6 +1579,7 @@ export class Game {
 
   /** SERVER-confirmed kill → the full solo kill feedback chain. */
   private handleNetworkKill(isHeadshot: boolean, damageType: string): void {
+    this.gameAudio.killConfirm();
     this.combatHud.notifyKill();
     const count = this.combo.registerKill();
     this.comboHud.notifyKill();

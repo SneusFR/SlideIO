@@ -124,3 +124,9 @@ sections correspondantes ci-dessus.
 | `hits/hit_body_01.mp3` | Hitmarker Sound Effect | 570335 | CC0 | https://freesound.org/s/570335/ |
 | `hits/hit_body_02.mp3` | HitSound1 | 760562 | CC0 | https://freesound.org/s/760562/ |
 | `hits/hit_head_01.mp3` | Headshot sound | 660769 | CC0 | https://freesound.org/s/660769/ |
+
+## Kills (confirmation de kill)
+
+| Fichier local | Titre original | Freesound ID | Licence | Source |
+|---|---|---|---|---|
+| `kills/kill_confirm_01.mp3` | Level Up | 442943 | CC0 | https://freesound.org/s/442943/ |

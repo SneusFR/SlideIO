@@ -54,6 +54,8 @@ export const AUDIO_MANIFEST: Record<string, string> = {
   respawn: `${A}/death/respawn_01.mp3`,
   // Bots
   bot_death: `${A}/bots/bot_death_01.mp3`,
+  // Kill confirmation (local player scored a kill — the dopamine hit)
+  kill_confirm: `${A}/kills/kill_confirm_01.mp3`,
   // Pickups
   health_pickup: `${A}/pickups/health_pickup_01.mp3`,
   coin_pickup: `${A}/pickups/coin_pickup_01.mp3`,
@@ -387,14 +389,14 @@ export class GameAudio {
   hitBody(): void {
     audio.play("hit_body", {
       bus: "impacts",
-      volume: 0.34,
+      volume: 0.6,
       rate: 1,
       rateVar: 0.05,
       throttleMs: 70,
     });
     audio.play("hit_body_punch", {
       bus: "impacts",
-      volume: 0.42,
+      volume: 0.75,
       rate: 1.04,
       rateVar: 0.07,
       throttleMs: 70,
@@ -409,6 +411,22 @@ export class GameAudio {
       rate: 1,
       rateVar: 0.03,
       throttleMs: 70,
+    });
+  }
+
+  /**
+   * LOCAL PLAYER scored a kill: bright rising "level-up" chime — the
+   * dopamine payoff that makes you want to chain the next one. Slight
+   * pitch-up variation keeps back-to-back kills feeling escalating,
+   * and it sits ABOVE the hit sounds in the mix (this is the reward).
+   */
+  killConfirm(): void {
+    audio.play("kill_confirm", {
+      bus: "ui",
+      volume: 0.85,
+      rate: 1.15,
+      rateVar: 0.06,
+      throttleMs: 90,
     });
   }
 

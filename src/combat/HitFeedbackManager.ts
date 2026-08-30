@@ -109,14 +109,28 @@ export class HitFeedbackManager {
     if (!this.damageNumbers) return;
     // Anchor slightly above the victim's head so the number reads BESIDE
     // the enemy, never on top of the model. Ticks merge inside the HUD.
-    hit.target.getEyePosition(this.numberAnchor);
-    this.numberAnchor.y += 0.45;
+    //
+    // CAREFUL on the killing tick: the target is ALREADY dead here and its
+    // body may have been teleported away (bots park at y=-1000) — its eye
+    // position would drag the number off-screen. Anchor the fatal tick at
+    // the IMPACT POINT instead, or merge blindly when even that is unknown.
+    if (hit.target.health.alive) {
+      hit.target.getEyePosition(this.numberAnchor);
+      this.numberAnchor.y += 0.45;
+    } else if (hit.position) {
+      this.numberAnchor.copy(hit.position);
+      this.numberAnchor.y += 0.6;
+    } else {
+      this.damageNumbers.addOrphanHit(hit.target, hit.damage, hit.isKill);
+      return;
+    }
     this.damageNumbers.addHit(
       hit.target,
       hit.damage,
       hit.hitZone,
       this.numberAnchor,
       hit.target,
+      hit.isKill,
     );
   }
 

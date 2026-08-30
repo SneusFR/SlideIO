@@ -2618,6 +2618,56 @@ body.game-paused .mole-overlay {
   }
 }
 
+/* KILL: the final number goes RED-hot and SLAMS in (bigger overshoot,
+   little wobble at the end) — clearly different from a regular tick, and
+   it lingers longer (damageNumberKillLifetime) so the payoff always reads
+   even after the corpse drops / the avatar disappears. */
+.dmg-num.dmg-kill .dmg-num-inner {
+  color: #f87171;
+  -webkit-text-stroke: 2.5px #7f1d1d;
+  text-shadow:
+    0 3px 0 #7f1d1d,
+    0 0 14px rgba(248, 113, 113, 0.95),
+    0 0 32px rgba(239, 68, 68, 0.7);
+}
+
+/* Headshot kill: golden core kept, red glow added — the jackpot look. */
+.dmg-num.dmg-kill.dmg-head .dmg-num-inner {
+  color: #fcd34d;
+  -webkit-text-stroke: 2.5px #7f1d1d;
+  text-shadow:
+    0 3px 0 #7f1d1d,
+    0 0 14px rgba(253, 224, 71, 0.95),
+    0 0 32px rgba(239, 68, 68, 0.8);
+}
+
+.dmg-num.dmg-kill .dmg-num-inner.dmg-pop {
+  animation: dmg-kill-slam 0.5s cubic-bezier(0.18, 1.6, 0.35, 1) both;
+}
+
+@keyframes dmg-kill-slam {
+  0% {
+    transform: scale(2.4) rotate(8deg);
+    filter: brightness(2);
+  }
+  35% {
+    transform: scale(0.85) rotate(-4deg);
+    filter: brightness(1.2);
+  }
+  60% {
+    transform: scale(1.18) rotate(2deg);
+    filter: brightness(1.4);
+  }
+  80% {
+    transform: scale(0.96) rotate(-1deg);
+    filter: brightness(1);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+    filter: brightness(1);
+  }
+}
+
 /* ==========================================================================
    F1 — Multiplayer Network Debug HUD (diagnostic overlay, multiplayer only)
    ========================================================================== */

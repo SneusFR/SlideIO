@@ -22,6 +22,8 @@ interface DamageEntry {
   rise: number;
   /** Goofy random tilt (deg). */
   tilt: number;
+  /** KILL number: distinct animation, longer lifetime, frozen anchor. */
+  kill: boolean;
   active: boolean;
 }
 
@@ -66,15 +68,18 @@ export class DamageNumbersHUD {
     zone: HitZone,
     anchor: THREE.Vector3,
     target: Combatant | null = null,
+    isKill = false,
   ): void {
     if (damage <= 0) return;
     const head = zone === HitZone.HEAD;
 
+    // The KILLING tick always merges into the running number regardless of
+    // zone: the final total must be shown, never split into a new pop.
     const existing = this.byKey.get(key);
     if (
       existing &&
       existing.active &&
-      existing.head === head &&
+      (existing.head === head || isKill) &&
       existing.sinceHit < hfc.damageNumberMergeWindow
     ) {
       existing.total += damage;
@@ -82,6 +87,11 @@ export class DamageNumbersHUD {
       existing.anchor.copy(anchor);
       // Keep a merged (still growing) number close to the enemy.
       existing.rise = Math.min(existing.rise, 12);
+      if (head && !existing.head) {
+        existing.head = true;
+        existing.el.classList.add("dmg-head");
+      }
+      if (isKill) this.markKill(existing);
       this.applyText(existing);
       this.retriggerPop(existing);
       return;
@@ -97,11 +107,26 @@ export class DamageNumbersHUD {
     entry.offsetX = (Math.random() < 0.5 ? -1 : 1) * (34 + Math.random() * 22);
     entry.rise = 0;
     entry.tilt = (Math.random() * 2 - 1) * 8;
+    entry.kill = false;
     entry.active = true;
     entry.el.classList.toggle("dmg-head", head);
+    entry.el.classList.remove("dmg-kill");
     this.byKey.set(key, entry);
+    if (isKill) this.markKill(entry);
     this.applyText(entry);
     this.retriggerPop(entry);
+  }
+
+  /**
+   * Promote a number to its KILL presentation: distinct slam animation,
+   * longer linger (the final damage must be readable AFTER the corpse
+   * drops) and a frozen anchor — never follow a respawning combatant.
+   */
+  private markKill(entry: DamageEntry): void {
+    entry.kill = true;
+    entry.target = null; // freeze where the enemy died
+    entry.rise = Math.min(entry.rise, 6);
+    entry.el.classList.add("dmg-kill");
   }
 
   /**
@@ -109,11 +134,12 @@ export class DamageNumbersHUD {
    * already-removed avatar): merge into the existing number if one is
    * still live for this key, otherwise silently drop.
    */
-  addOrphanHit(key: unknown, damage: number): void {
+  addOrphanHit(key: unknown, damage: number, isKill = false): void {
     const existing = this.byKey.get(key);
     if (!existing || !existing.active || damage <= 0) return;
     existing.total += damage;
     existing.sinceHit = 0;
+    if (isKill) this.markKill(existing);
     this.applyText(existing);
     this.retriggerPop(existing);
   }
@@ -127,7 +153,10 @@ export class DamageNumbersHUD {
     for (const entry of this.entries) {
       if (!entry.active) continue;
       entry.sinceHit += dt;
-      if (entry.sinceHit >= hfc.damageNumberLifetime) {
+      const lifetime = entry.kill
+        ? hfc.damageNumberKillLifetime
+        : hfc.damageNumberLifetime;
+      if (entry.sinceHit >= lifetime) {
         this.release(entry);
         continue;
       }
@@ -137,7 +166,8 @@ export class DamageNumbersHUD {
         entry.target.getEyePosition(entry.anchor);
         entry.anchor.y += 0.45;
       }
-      entry.rise += hfc.damageNumberFloatSpeed * dt;
+      // Kill numbers drift up slower — they LINGER over the death spot.
+      entry.rise += hfc.damageNumberFloatSpeed * (entry.kill ? 0.45 : 1) * dt;
 
       this.proj.copy(entry.anchor).project(camera);
       if (this.proj.z > 1) {
@@ -154,9 +184,11 @@ export class DamageNumbersHUD {
       );
 
       // Tail: shrink + fade over the last quarter of the lifetime.
-      const t = entry.sinceHit / hfc.damageNumberLifetime;
+      const t = entry.sinceHit / lifetime;
       const tail = t > 0.75 ? (t - 0.75) / 0.25 : 0;
       scale *= 1 - tail * 0.35;
+      // Kill numbers render noticeably bigger — the payoff must READ.
+      if (entry.kill) scale *= 1.25;
 
       const x = (this.proj.x * 0.5 + 0.5) * w + entry.offsetX;
       const y = (-this.proj.y * 0.5 + 0.5) * h - entry.rise;
@@ -209,6 +241,7 @@ export class DamageNumbersHUD {
       offsetX: 0,
       rise: 0,
       tilt: 0,
+      kill: false,
       active: false,
     };
   }
@@ -216,6 +249,8 @@ export class DamageNumbersHUD {
   private release(entry: DamageEntry): void {
     entry.active = false;
     entry.target = null;
+    entry.kill = false;
+    entry.el.classList.remove("dmg-kill");
     entry.el.style.display = "none";
     if (this.byKey.get(entry.key) === entry) this.byKey.delete(entry.key);
     entry.key = null;

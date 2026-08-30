@@ -37,6 +37,8 @@ export const HitFeedbackConfig = {
   // ---- Floating damage numbers (goofy cartoon pop next to the enemy) ----
   /** Total on-screen lifetime of one number (refreshed by merged ticks). */
   damageNumberLifetime: 0.85,
+  /** KILL numbers linger longer — the final damage must always be read. */
+  damageNumberKillLifetime: 1.35,
   /** Rapid ticks on the same target within this window MERGE into one number. */
   damageNumberMergeWindow: 0.45,
   /** Upward screen drift speed (px/s) — the classic float-up. */
