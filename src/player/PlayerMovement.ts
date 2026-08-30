@@ -7,6 +7,7 @@ import { PhaseDash, PhaseResult, PhaseAttemptDebug } from "./PhaseDash";
 import { MovementConfig as cfg } from "./MovementConfig";
 import { HammerConfig as hc } from "../weapons/HammerConfig";
 import { SpearConfig as sc } from "../weapons/SpearConfig";
+import { RagdollConfig as rc } from "../ragdoll/RagdollConfig";
 import { MoleStrikeConfig as mole } from "../killstreaks/mole/MoleStrikeConfig";
 
 /** Fired once per successful wall traversal — consumed by Game for VFX. */
@@ -42,6 +43,12 @@ export enum MoveState {
   SPEAR_RUSHING = "SPEAR_RUSHING",
   /** MOLE STRIKE: burrowed under the surface, free horizontal steering. */
   UNDERGROUND = "UNDERGROUND",
+  /**
+   * Knocked to the ground by a huge impact (§ ragdoll — same trigger as
+   * the bots' temporary ragdoll). The body slides along the floor with
+   * physics only; the player gets back up with Space / a movement key.
+   */
+  KNOCKED_DOWN = "KNOCKED_DOWN",
 }
 
 /** Why a spear rush ended — consumed once by the Game for feedback/cooldown. */
@@ -108,15 +115,19 @@ export class PlayerMovement {
   private readonly dashDir = new THREE.Vector3();
 
   /**
-   * LOCAL KNOCKDOWN (§ ragdoll): while > 0 the player has been physically
-   * knocked down by a huge impact — every INPUT is suppressed (no wishdir
-   * acceleration, no jump/slide/dash) while the physics keeps integrating
-   * the knockback velocity, gravity and world collisions normally. The
-   * FPS player has no visible body, so the readable result is "the impact
-   * carries you and you can't fight it for a moment" — never a spinning
-   * camera glued to a ragdoll head.
+   * LOCAL KNOCKDOWN (§ ragdoll — the FPS flavor of the bots' temporary
+   * ragdoll): while > 0 the player is FORCED to stay down — every input is
+   * suppressed while the physics keeps integrating the knockback velocity,
+   * gravity and world collisions normally (the body slides away on a low
+   * friction, exactly like a bot ragdoll tumbling on the floor). Once this
+   * timer expires the player stays down until they press Space or a
+   * movement key to GET UP (or the hard cap stands them up — bot parity
+   * with RagdollConfig.temporaryMaxDuration). The FPS camera stays
+   * readable: it drops to ground level, never spins like a ragdoll head.
    */
   private knockdownTimer = 0;
+  /** Total time spent in the current KNOCKED_DOWN state (hard-cap clock). */
+  private downedTimer = 0;
 
   private wallNormal = new THREE.Vector3();
   private touchingWall = false;
@@ -173,22 +184,51 @@ export class PlayerMovement {
     return this.dashCooldownTimer <= 0 && !this.isDashing;
   }
 
-  /** True while control is suppressed by a knockdown impact. */
+  /** True while the player is physically down on the ground (§ ragdoll). */
   get isKnockedDown(): boolean {
-    return this.knockdownTimer > 0;
+    return this.state === MoveState.KNOCKED_DOWN;
   }
 
   /**
-   * Knockdown: suppress player control for `duration` seconds. Movement
-   * physics (velocity, gravity, collisions) keeps running untouched — the
-   * impact's momentum carries the capsule naturally.
+   * True once the forced-down window expired: the player is still on the
+   * ground but pressing Space / a movement key stands them back up.
+   * Drives the "get up" UI hint — never gameplay by itself.
+   */
+  get canGetUp(): boolean {
+    return this.state === MoveState.KNOCKED_DOWN && this.knockdownTimer <= 0;
+  }
+
+  /**
+   * Knockdown (§ ragdoll — bot parity for the local player): the capsule
+   * drops to the ground (slide height → the camera falls to floor level)
+   * and control is fully suppressed for `duration` seconds while the
+   * impact's momentum carries the body sliding across the floor. After
+   * that window the player stays DOWN until they press Space or a
+   * movement key to get up (hard-capped like the bots' ragdoll).
    */
   applyKnockdown(duration: number): void {
+    // Burrowed (MOLE STRIKE): untouchable underground — a knockdown here
+    // would corrupt the killstreak's own committed lifecycle.
+    if (this.state === MoveState.UNDERGROUND) return;
+
     this.knockdownTimer = Math.max(this.knockdownTimer, duration);
+
     // Interrupt committed special moves cleanly.
     if (this.state === MoveState.DASHING) this.dashTimer = 0;
     if (this.state === MoveState.SLIDING) this.endSlide();
     if (this.state === MoveState.SPEAR_RUSHING) this.endSpearRush("TIMEOUT");
+    this.slamWindupTimer = 0; // a slam dive is dropped (Game resets the hammer)
+    this.slamImpactPending = false;
+    this.wallSide = 0;
+    this.phaseGraceTimer = 0; // being knocked down is never a phase mechanic
+    this.jumpBufferTimer = 0; // eat buffered inputs from before the hit
+    this.slideBufferTimer = 0;
+
+    if (this.state !== MoveState.KNOCKED_DOWN) {
+      this.downedTimer = 0; // hard-cap clock runs per down session (bot parity)
+      this.player.setCrouched(true); // body on the ground — camera drops with it
+    }
+    this.state = MoveState.KNOCKED_DOWN;
   }
 
   /** True during the short visual phase window right after a traversal. */
@@ -338,17 +378,10 @@ export class PlayerMovement {
     this.readBufferedInputs();
     this.computeWishDir();
 
-    // KNOCKDOWN: control fully suppressed — the physics owns the capsule.
-    if (this.knockdownTimer > 0) {
-      this.knockdownTimer = Math.max(0, this.knockdownTimer - dt);
-      this.jumpBufferTimer = 0;
-      this.slideBufferTimer = 0;
-      this.wishDir.set(0, 0, 0);
-    }
-
     // Dash triggers instantly from any state (except while already dashing).
     // While UNDERGROUND, E means "emerge" (handled by the Game) — never dash.
-    if (this.input.wasPressed("KeyE") && this.knockdownTimer <= 0) {
+    // While KNOCKED_DOWN, getting up is the only action — never dash.
+    if (this.input.wasPressed("KeyE") && this.state !== MoveState.KNOCKED_DOWN) {
       this.tryStartDash();
     }
 
@@ -377,6 +410,9 @@ export class PlayerMovement {
       case MoveState.UNDERGROUND:
         this.updateUnderground(dt);
         break;
+      case MoveState.KNOCKED_DOWN:
+        this.updateKnockedDown(dt);
+        break;
     }
 
     this.clampVelocity();
@@ -389,6 +425,7 @@ export class PlayerMovement {
     this.velocity.set(0, 0, 0);
     this.state = MoveState.GROUNDED;
     this.knockdownTimer = 0;
+    this.downedTimer = 0;
     this.wallSide = 0;
     this.coyoteTimer = 0;
     this.jumpBufferTimer = 0;
@@ -603,6 +640,79 @@ export class PlayerMovement {
     this.velocity.y = -3;
   }
 
+  /**
+   * KNOCKED DOWN (§ ragdoll — the local player's flavor of the bots'
+   * temporary ragdoll): the body is on the ground (slide-height capsule,
+   * camera at floor level) and pure physics carries it — knockback
+   * momentum, gravity, world collisions, and a low ragdoll-like friction
+   * so a hammer sweep really sends the player sliding away.
+   *
+   * Recovery mirrors the bots exactly, with player agency added:
+   *   - forced-down window (knockdownTimer) → no input, period;
+   *   - then Space or any movement key stands the player back up;
+   *   - hard cap (RagdollConfig.temporaryMaxDuration) → auto get-up,
+   *     the body never stays down forever (bot parity).
+   */
+  private updateKnockedDown(dt: number): void {
+    this.downedTimer += dt;
+    this.knockdownTimer = Math.max(0, this.knockdownTimer - dt);
+
+    if (this.knockdownTimer > 0) {
+      // Forced down: every input is eaten — the physics owns the body.
+      this.jumpBufferTimer = 0;
+      this.slideBufferTimer = 0;
+      this.wishDir.set(0, 0, 0);
+    } else {
+      // GET UP on player intent: Space (buffered) or any movement key.
+      const wantsUp = this.jumpBufferTimer > 0 || this.wishDir.lengthSq() > 0.0001;
+      // Hard cap: the player gets back up even without input (bot parity).
+      if (wantsUp || this.downedTimer >= rc.temporaryMaxDuration) {
+        this.getUp(this.jumpBufferTimer > 0);
+        return;
+      }
+    }
+
+    // Body sliding on the floor: ragdoll-like low friction while grounded,
+    // normal gravity in the air (a knockback can launch the body off a ledge).
+    if (this.grounded) {
+      this.applyFriction(dt, rc.playerDownedFriction);
+      this.velocity.y = -2;
+    } else {
+      this.applyGravity(dt, cfg.gravity);
+    }
+  }
+
+  /**
+   * Stand back up from a knockdown. Space performs a small recovery hop
+   * (kip-up feel); a movement key simply stands up and control resumes.
+   * Momentum is partially kept — same retention rule as the bot ragdoll.
+   */
+  private getUp(jump: boolean): void {
+    if (this.state !== MoveState.KNOCKED_DOWN) return;
+
+    // Blocked by a ceiling: stay down until there is room (retry next frame).
+    if (!this.player.canStandUp()) return;
+
+    this.player.setCrouched(false);
+    this.knockdownTimer = 0;
+    this.downedTimer = 0;
+
+    // Keep a share of the sliding momentum — never a hard velocity reset.
+    this.velocity.x *= rc.recoveryMomentumRetention;
+    this.velocity.z *= rc.recoveryMomentumRetention;
+
+    if (jump && (this.grounded || this.coyoteTimer > 0)) {
+      // Kip-up: Space stands up INTO a jump — reactive, never sluggish.
+      this.velocity.y = cfg.jumpForce;
+      this.consumeJump();
+      this.sfx?.jump();
+      return;
+    }
+
+    this.jumpBufferTimer = 0;
+    this.state = this.grounded ? MoveState.GROUNDED : MoveState.AIRBORNE;
+  }
+
   private updateWallSliding(dt: number): void {
     this.wallSlideTimer -= dt;
 
@@ -669,6 +779,8 @@ export class PlayerMovement {
     if (this.state === MoveState.SPEAR_RUSHING) return;
     // Burrowed: E requests the emergence instead — never a dash.
     if (this.state === MoveState.UNDERGROUND) return;
+    // Knocked down: the body is on the floor — no dash until recovery.
+    if (this.state === MoveState.KNOCKED_DOWN) return;
 
     // Dashing out of a slide: stand back up first (skip if blocked by a ceiling).
     if (this.state === MoveState.SLIDING) {
@@ -995,6 +1107,13 @@ export class PlayerMovement {
       case MoveState.UNDERGROUND:
         // Owned by MoleStrike (startUnderground/stopUnderground). Nothing
         // here may transition it — no wall slides, no landing chains.
+        if (this.grounded) this.wallSlideTimer = cfg.wallSlideDuration;
+        break;
+
+      case MoveState.KNOCKED_DOWN:
+        // Owned by updateKnockedDown/getUp. The tumbling body never grabs
+        // walls and never chains slides — landing only refreshes the
+        // wall-slide window for after the recovery.
         if (this.grounded) this.wallSlideTimer = cfg.wallSlideDuration;
         break;
     }

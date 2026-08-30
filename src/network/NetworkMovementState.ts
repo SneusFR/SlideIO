@@ -34,6 +34,7 @@ export function toNetworkMovementState(
 ): NetworkMovementState {
   switch (state) {
     case MoveState.SLIDING:
+    case MoveState.KNOCKED_DOWN: // body on the floor → closest remote visual
       return NetworkMovementState.SLIDING;
     case MoveState.DASHING:
     case MoveState.SPEAR_RUSHING: // fast forward charge → dash-like visuals

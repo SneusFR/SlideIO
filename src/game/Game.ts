@@ -277,11 +277,18 @@ export class Game {
     this.playerCombatant = new PlayerCombatant(this.player, this.movement, this.scene);
     this.combatants.push(this.playerCombatant);
     this.rifle.owner = this.playerCombatant;
-    // KNOCKDOWN feedback (local FPS flavor of the ragdoll): the control
-    // lock lives in PlayerMovement — here only a readable camera punch,
-    // never a head-cam spin (§ ragdoll / local player & camera).
-    this.playerCombatant.onKnockdown = (magnitude) =>
+    // KNOCKDOWN feedback (§ ragdoll — bot parity for the local player):
+    // the ground state + get-up input live in PlayerMovement — here a
+    // readable camera punch (never a head-cam spin) and a clean drop of
+    // any melee attack in progress (a knocked-down bot stops attacking
+    // too; without this an interrupted Ground Slam would leave the hammer
+    // stuck in SLAM_DIVE forever, waiting for a landing that never comes).
+    this.playerCombatant.onKnockdown = (magnitude) => {
       this.fpsCamera.addShake(Math.min(0.4 + magnitude * 0.015, 0.9));
+      this.hammer.reset();
+      this.spear.reset();
+      this.meleeHoldPending = false;
+    };
 
     // Hit-confirmation feedback (hitmarker + sound + victim reaction) —
     // LOCAL PLAYER only; weapons report every applied damage tick to it.
@@ -987,12 +994,16 @@ export class Game {
       this.playerCombatant.health.update(dt);
 
       if (playerAlive) {
-        // Melee is blocked for the whole MOLE STRIKE (burrow → eruption).
-        if (!this.moleStrike.blocksWeapons) this.handleMeleeInput(dt);
+        // Melee is blocked for the whole MOLE STRIKE (burrow → eruption)
+        // and while KNOCKED DOWN (§ ragdoll — a downed bot can't attack).
+        if (!this.moleStrike.blocksWeapons && !this.movement.isKnockedDown) {
+          this.handleMeleeInput(dt);
+        }
         this.movement.update(dt);
         // AFTER movement: E while burrowed emerges here instead of dashing
         // (the movement itself refuses to dash while UNDERGROUND).
-        this.handleKillstreakInput();
+        // No killstreak can be triggered from the ground (§ ragdoll).
+        if (!this.movement.isKnockedDown) this.handleKillstreakInput();
 
         // Ground Slam AoE: fires on the REAL ground contact of the dive
         // (reported by the movement state machine) — never on a timer.
@@ -1071,8 +1082,14 @@ export class Game {
       const obliEquipped = this.primaryWeapon === "OBLITERREUR";
       const revolverEquipped = this.primaryWeapon === "REVOLVER";
       const bassEquipped = this.primaryWeapon === "BASS_BLASTER";
+      // KNOCKED DOWN (§ ragdoll) blocks EVERY weapon — exactly like a
+      // ragdolled bot never fires. In-flight projectiles / explosions of
+      // course keep ticking; only NEW actions are gated.
       const meleeBlocked =
-        this.hammer.blocksFiring || this.spear.blocksFiring || this.moleStrike.blocksWeapons;
+        this.hammer.blocksFiring ||
+        this.spear.blocksFiring ||
+        this.moleStrike.blocksWeapons ||
+        this.movement.isKnockedDown;
       const wantFire =
         playerAlive &&
         this.input.pointerLocked &&
@@ -1188,6 +1205,12 @@ export class Game {
     this.musicSelector.setVisible(this.primaryWeapon === "BASS_BLASTER");
     this.musicSelector.update(dt);
     this.combatHud.update(dt, this.playerCombatant.health, this.playerDeathTimer);
+    // Knockdown banner (§ ragdoll): down → "KNOCKED DOWN", recoverable →
+    // pulsing "PRESS SPACE TO GET UP" (a death always hides it).
+    this.combatHud.setKnockdown(
+      playerAlive && this.movement.isKnockedDown,
+      this.movement.canGetUp,
+    );
     this.comboHud.update(this.combo);
 
     // Multiplayer (Phase 2): remote avatars + fixed-rate transform send.

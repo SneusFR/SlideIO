@@ -60,14 +60,18 @@ export class PlayerCombatant implements Combatant {
     this.movement.velocity.add(impulse);
     if (impulse.y > 0.5) this.movement.grounded = false;
 
-    // KNOCKDOWN (§ ragdoll — local FPS flavor): huge impacts (Hammer,
-    // Ground Slam, Spear Rush from the server in multiplayer) suppress the
-    // player's control for a short physical tumble window. The camera
-    // stays readable (no head-cam spinning) — the Game adds a shake.
+    // KNOCKDOWN (§ ragdoll — full bot parity for the local player): the
+    // SAME impulse threshold that ragdolls a bot (Hammer sweep, Ground
+    // Slam, Spear Rush, Mole eruption — never plasma) knocks the player
+    // to the ground. The body slides away with the impact's momentum and
+    // the player gets back up with Space / a movement key once the forced
+    // window (scaled with the hit, same min duration as the bots) expires.
+    // The camera drops to floor level but stays readable (no head-cam
+    // spinning) — the Game adds a shake.
     const magnitude = impulse.length();
     if (magnitude >= rc.knockdownImpulseThreshold) {
       const t = Math.min(magnitude / (rc.knockdownImpulseThreshold * 2), 1);
-      this.movement.applyKnockdown(0.45 + 0.45 * t);
+      this.movement.applyKnockdown(rc.temporaryMinDuration * (0.75 + 0.75 * t));
       this.onKnockdown?.(magnitude);
     }
   }

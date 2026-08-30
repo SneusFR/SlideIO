@@ -30,6 +30,15 @@ export const RagdollConfig = {
   /** Fraction of the pelvis velocity kept by the capsule at recovery. */
   recoveryMomentumRetention: 0.5,
 
+  // ---- Local player knockdown (first-person — no visible body) ----
+  /**
+   * Ground friction while the LOCAL player is knocked down and sliding on
+   * the floor. Much lower than the run friction (8.5) so a hammer hit
+   * really sends the body sliding away, exactly like a bot ragdoll —
+   * but higher than the slide friction so it settles readably.
+   */
+  playerDownedFriction: 2.5,
+
   // ---- Death ragdoll / corpses ----
   /** Full-physics corpse lifetime before the fade starts. */
   corpseLifetime: 5.0,

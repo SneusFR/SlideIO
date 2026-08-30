@@ -576,6 +576,41 @@ body {
   }
 }
 
+/* ---- Knockdown hint (§ ragdoll — knocked to the ground, get back up) ---- */
+#knockdown-hint {
+  position: absolute;
+  left: 50%;
+  top: 58%;
+  transform: translateX(-50%);
+  color: #fecaca;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 4px;
+  font-family: "Consolas", "Courier New", monospace;
+  text-shadow: 0 0 14px rgba(248, 113, 113, 0.9);
+  white-space: nowrap;
+}
+
+#knockdown-hint.can-get-up {
+  color: #e9d5ff;
+  text-shadow: 0 0 14px rgba(192, 132, 252, 0.9);
+  animation: knockdown-pulse 0.9s ease-in-out infinite;
+}
+
+#knockdown-hint.hidden {
+  display: none;
+}
+
+@keyframes knockdown-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
 /* ---- Death screen ---- */
 #death-screen {
   position: absolute;

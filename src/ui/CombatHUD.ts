@@ -30,6 +30,7 @@ export class CombatHUD {
   private readonly killFeedback = document.getElementById("kill-feedback")!;
   private readonly deathScreen = document.getElementById("death-screen")!;
   private readonly deathTimerEl = document.getElementById("death-timer")!;
+  private readonly knockdownHint = document.getElementById("knockdown-hint")!;
 
   private readonly dirSlots: DirSlot[] = [];
 
@@ -58,6 +59,30 @@ export class CombatHUD {
         lastOpacity: -1,
         lastAngleDeg: 361,
       });
+    }
+  }
+
+  // DOM writes only on actual state changes (same discipline as the rest).
+  private lastKnockdownShown = false;
+  private lastCanGetUpShown = false;
+
+  /**
+   * Knockdown state banner (§ ragdoll): "KNOCKED DOWN" while forced to
+   * the ground, then a pulsing "PRESS SPACE TO GET UP" once the player
+   * can stand back up. Pure display — the input lives in PlayerMovement.
+   */
+  setKnockdown(down: boolean, canGetUp: boolean): void {
+    if (down !== this.lastKnockdownShown) {
+      this.lastKnockdownShown = down;
+      this.knockdownHint.classList.toggle("hidden", !down);
+    }
+    if (!down) canGetUp = false;
+    if (canGetUp !== this.lastCanGetUpShown) {
+      this.lastCanGetUpShown = canGetUp;
+      this.knockdownHint.classList.toggle("can-get-up", canGetUp);
+      this.knockdownHint.textContent = canGetUp
+        ? "PRESS SPACE TO GET UP"
+        : "KNOCKED DOWN";
     }
   }
 
