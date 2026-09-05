@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { PhysicsWorld, RAPIER } from "../physics/PhysicsWorld";
 import { Combatant } from "./Combatant";
 import { CombatConfig as cc } from "./CombatConfig";
+import { MAP_SPAWN_POINTS } from "../../shared/map/MapSpawns";
 
 export interface SpawnPoint {
   pos: THREE.Vector3;
@@ -9,7 +10,8 @@ export interface SpawnPoint {
 }
 
 /**
- * FFA spawn points spread across the whole map + simple scoring:
+ * FFA spawn points (the 8 validated Ancient Jungle City spawns, shared
+ * with the backend via shared/map/MapSpawns.ts) + simple scoring:
  * prefer spawns far from other combatants and out of immediate line of
  * sight, then pick semi-randomly among the best candidates.
  */
@@ -20,36 +22,11 @@ export class SpawnManager {
   private readonly tmpB = new THREE.Vector3();
 
   constructor(private physics: PhysicsWorld) {
-    const add = (x: number, z: number, yaw: number) => {
-      this.spawns.push({ pos: new THREE.Vector3(x, 1.2, z), yaw });
-    };
-
-    // Blue yard (south)
-    add(0, 41, 0);
-    add(-8, 40, 0);
-    add(8, 41, 0);
-    // Red yard (north)
-    add(0, -41, Math.PI);
-    add(-8, -41, Math.PI);
-    add(8, -40, Math.PI);
-    // West lane
-    add(-38, 24, 0);
-    add(-39.5, 8, 0);
-    add(-39.5, -24, Math.PI);
-    // East lane
-    add(39.5, 25, 0);
-    add(39.5, 8, Math.PI);
-    add(39, -25, Math.PI);
-    // Interiors
-    add(-18, 32, 0); // blue house
-    add(18, -32, Math.PI); // red house
-    add(-31, -2.5, -Math.PI / 2); // mid shop
-    add(17.5, 31, 0); // blue garage
-    add(-17.5, -31, Math.PI); // red garage
-    // Street / center
-    add(2, 14, 0);
-    add(-2, -14, Math.PI);
-    add(32, 5.5, Math.PI / 2); // near container
+    // Capsule-center positions verified against the map export — the
+    // small extra Y margin lets the ground snap settle the capsule.
+    for (const s of MAP_SPAWN_POINTS) {
+      this.spawns.push({ pos: new THREE.Vector3(s.x, s.y + 0.3, s.z), yaw: s.yaw });
+    }
   }
 
   /**

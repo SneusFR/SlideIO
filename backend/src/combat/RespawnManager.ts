@@ -1,20 +1,15 @@
 import { NetworkPlayer } from "../schemas/NetworkPlayer";
+import { MAP_SPAWN_POINTS } from "../../../shared/map/MapSpawns";
 
 /**
- * Spawn points mirrored from the frontend map (src/combat/SpawnManager.ts).
- * The SERVER assigns every spawn — clients only read it. Positions are
- * capsule-center coordinates on valid ground of the existing TDM map.
+ * Spawn points SHARED with the frontend (shared/map/MapSpawns.ts — the 8
+ * validated Ancient Jungle City spawns). The SERVER assigns every spawn —
+ * clients only read it. Positions are capsule-center coordinates with a
+ * small extra Y margin so the client-side ground snap settles cleanly.
  */
-export const MULTIPLAYER_SPAWN_POINTS: SpawnPoint[] = [
-  { x: 0, y: 1.2, z: 41, yaw: 0 }, // blue yard (south)
-  { x: 0, y: 1.2, z: -41, yaw: Math.PI }, // red yard (north)
-  { x: -38, y: 1.2, z: 24, yaw: 0 }, // west lane
-  { x: 39.5, y: 1.2, z: -25, yaw: Math.PI }, // east lane
-  { x: -8, y: 1.2, z: 40, yaw: 0 },
-  { x: 8, y: 1.2, z: -40, yaw: Math.PI },
-  { x: 39.5, y: 1.2, z: 25, yaw: 0 },
-  { x: -39.5, y: 1.2, z: -24, yaw: Math.PI },
-];
+export const MULTIPLAYER_SPAWN_POINTS: SpawnPoint[] = MAP_SPAWN_POINTS.map(
+  (s) => ({ x: s.x, y: s.y + 0.3, z: s.z, yaw: s.yaw }),
+);
 
 export interface SpawnPoint {
   x: number;

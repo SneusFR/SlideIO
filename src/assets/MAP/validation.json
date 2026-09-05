@@ -1,0 +1,177 @@
+{
+  "versions": {
+    "Blender": "4.3.0",
+    "three": "0.180.0",
+    "Rapier": "0.17.3"
+  },
+  "playerCapsule": {
+    "height": 1.8,
+    "width": 0.7
+  },
+  "physicsStepHz": 120,
+  "spawnChecks": [
+    {
+      "id": "spawn_01",
+      "clear": true
+    },
+    {
+      "id": "spawn_02",
+      "clear": true
+    },
+    {
+      "id": "spawn_03",
+      "clear": true
+    },
+    {
+      "id": "spawn_04",
+      "clear": true
+    },
+    {
+      "id": "spawn_05",
+      "clear": true
+    },
+    {
+      "id": "spawn_06",
+      "clear": true
+    },
+    {
+      "id": "spawn_07",
+      "clear": true
+    },
+    {
+      "id": "spawn_08",
+      "clear": true
+    }
+  ],
+  "walkingGraph": {
+    "connected": true,
+    "minimumDegree": 2
+  },
+  "traversalChecks": {
+    "passed": 68,
+    "total": 68,
+    "speeds": [
+      9.5,
+      13
+    ],
+    "directions": "both"
+  },
+  "jumpAndDash": {
+    "jump": [
+      {
+        "reverse": false,
+        "landed": true,
+        "peak": 1.4630559158325194,
+        "position": {
+          "x": 40,
+          "y": 3.9250998497009277,
+          "z": -29.633312225341797
+        },
+        "passed": true
+      },
+      {
+        "reverse": true,
+        "landed": true,
+        "peak": 1.4630559158325194,
+        "position": {
+          "x": 40,
+          "y": 3.925208568572998,
+          "z": -22.866687774658203
+        },
+        "passed": true
+      }
+    ],
+    "freeDash": {
+      "x": 5.25,
+      "y": 0,
+      "z": 0
+    },
+    "stoppedDash": {
+      "x": 13.524823188781738,
+      "y": 3.1876714601253298e-09,
+      "z": 0.00026258727302774787
+    },
+    "dashPassed": true
+  },
+  "sightlines": [
+    {
+      "name": "Canal Run long",
+      "a": [
+        -50.5,
+        1.65,
+        47
+      ],
+      "b": [
+        -50.5,
+        1.65,
+        0
+      ],
+      "length": 47,
+      "clear": true
+    },
+    {
+      "name": "Central medium",
+      "a": [
+        -10,
+        1.65,
+        0
+      ],
+      "b": [
+        10,
+        1.65,
+        0
+      ],
+      "length": 20,
+      "clear": true
+    },
+    {
+      "name": "Ruin Walk close",
+      "a": [
+        -43,
+        1.65,
+        26
+      ],
+      "b": [
+        -43,
+        1.65,
+        38
+      ],
+      "length": 12,
+      "clear": true
+    }
+  ],
+  "uncompressedGltf": {
+    "numErrors": 0,
+    "numWarnings": 0,
+    "numInfos": 0,
+    "numHints": 0,
+    "messages": [],
+    "truncated": false
+  },
+  "compressedWebGL": {
+    "qa": {
+      "ready": true,
+      "render": {
+        "frame": 1,
+        "calls": 92,
+        "triangles": 119600,
+        "points": 0,
+        "lines": 0
+      },
+      "geometries": 92,
+      "textureCount": 0,
+      "colliders": 123,
+      "spawns": 8
+    },
+    "errors": []
+  },
+  "limitations": [
+    "No live eight-player balance session.",
+    "No target-device FPS benchmark.",
+    "Movement tests use standing capsule; integrate actual game slide controller."
+  ],
+  "sha256": {
+    "ancient_jungle_city.glb": "2bac453fbb6428180def8f4980c2a18e2afcd36f528594ff7948e8c7c2efa69b",
+    "ancient_jungle_city.physics.json": "b090f623b0f410d3bc60252f0e465777deca5809a07bd528184d2fa60fc1ec4b"
+  }
+}

@@ -64,18 +64,24 @@ export class SpaceSky {
   // Layers
   // ------------------------------------------------------------------
 
-  /** Inverted sphere with a vertical gradient: horizon violet → black zenith. */
+  /**
+   * Inverted sphere with a 3-stop twilight gradient:
+   * golden horizon → rose-mauve band → deep-blue (still luminous) zenith.
+   */
   private buildDome(): void {
     const geo = new THREE.SphereGeometry(cfg.skyRadius, 32, 20);
     const pos = geo.getAttribute("position");
     const colors = new Float32Array(pos.count * 3);
     const horizon = new THREE.Color(cfg.horizonColor);
+    const mid = new THREE.Color(cfg.horizonMidColor);
     const zenith = new THREE.Color(cfg.zenithColor);
     const c = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
-      // 0 at/below horizon → 1 at zenith (fast falloff keeps blacks deep).
+      // 0 at/below horizon → 1 at zenith. The warm glow hugs the horizon
+      // (fast ramp to the mauve band), then eases into the blue zenith.
       const t = Math.pow(Math.max(pos.getY(i) / cfg.skyRadius, 0), 0.55);
-      c.lerpColors(horizon, zenith, t);
+      if (t < 0.35) c.lerpColors(horizon, mid, t / 0.35);
+      else c.lerpColors(mid, zenith, (t - 0.35) / 0.65);
       colors[i * 3] = c.r;
       colors[i * 3 + 1] = c.g;
       colors[i * 3 + 2] = c.b;
@@ -213,13 +219,13 @@ export class SpaceSky {
     return pts;
   }
 
-  /** A handful of soft additive violet clouds — most of the sky stays black. */
+  /** A handful of soft additive sunset clouds catching the last light. */
   private buildNebula(): void {
     const tex = makeGlowTexture(256, [
-      [0.0, "rgba(168, 85, 247, 0.50)"],
-      [0.35, "rgba(109, 40, 217, 0.26)"],
-      [0.7, "rgba(49, 20, 100, 0.09)"],
-      [1.0, "rgba(12, 6, 28, 0)"],
+      [0.0, "rgba(255, 176, 110, 0.42)"],
+      [0.35, "rgba(233, 118, 138, 0.24)"],
+      [0.7, "rgba(150, 84, 140, 0.09)"],
+      [1.0, "rgba(40, 24, 60, 0)"],
     ]);
     this.disposables.push(tex);
 

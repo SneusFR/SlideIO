@@ -1,0 +1,30 @@
+{
+  "renderTriangles": 119600,
+  "renderBatches": 92,
+  "materials": 4,
+  "textureCount": 0,
+  "glbBytes": 1293404,
+  "authoringObjects": 226,
+  "fixedColliders": 123,
+  "cuboidColliders": 111,
+  "convexRamps": 12,
+  "maxRampDegrees": 14.036243467926479,
+  "spawnCount": 8,
+  "seed": 72419,
+  "uncompressedGlbBytes": 9391752,
+  "compression": "EXT_meshopt_compression + KHR_mesh_quantization",
+  "decodedTriangles": 119600,
+  "decodedMeshes": 92,
+  "decodedBounds": {
+    "min": [
+      -94,
+      -3.098700931955783,
+      -99.99929770744617
+    ],
+    "max": [
+      93,
+      32.31870072214743,
+      81.2252574852782
+    ]
+  }
+}

@@ -37,6 +37,12 @@ interface RemotePlasma {
   active: boolean;
 }
 
+/** One remote poison spray (pure particle stream from the in-hand weapon). */
+interface RemotePoison {
+  active: boolean;
+  emitAccum: number;
+}
+
 interface RemoteProjectile {
   group: THREE.Group;
   vel: THREE.Vector3;
@@ -106,6 +112,7 @@ interface Burst {
  */
 export class RemoteCombatVFXController {
   private readonly plasma = new Map<string, RemotePlasma>();
+  private readonly poisons = new Map<string, RemotePoison>();
   private readonly projectiles = new Map<string, RemoteProjectile>();
   private readonly oblits = new Map<string, RemoteOblit>();
   private readonly burrows = new Map<string, RemoteBurrow>();
@@ -118,6 +125,8 @@ export class RemoteCombatVFXController {
   private noteGlyphMats: THREE.SpriteMaterial[] | null = null;
   private noteHaloMats: THREE.SpriteMaterial[] | null = null;
   private readonly noteWhite = new THREE.Color(0xffffff);
+  /** Remote poison spray droplet color (mirrors PoisonConfig.poisonColor). */
+  private readonly poisonGreen = new THREE.Color(0x39ff14);
 
   /** Static world meshes the remote plasma beam visually stops on. */
   private raycastTargets: THREE.Object3D[] = [];
@@ -278,6 +287,20 @@ export class RemoteCombatVFXController {
       case WeaponActionType.PLASMA_STOP:
         this.stopPlasma(ev.playerId, { x: ev.ox, y: ev.oy, z: ev.oz });
         return;
+      case WeaponActionType.POISON_START: {
+        let ps = this.poisons.get(ev.playerId);
+        if (!ps) {
+          ps = { active: false, emitAccum: 0 };
+          this.poisons.set(ev.playerId, ps);
+        }
+        ps.active = true;
+        return;
+      }
+      case WeaponActionType.POISON_STOP: {
+        const ps = this.poisons.get(ev.playerId);
+        if (ps) ps.active = false;
+        return;
+      }
       case WeaponActionType.REVOLVER_FIRE:
         this.revolverFire(ev);
         return;
@@ -341,6 +364,8 @@ export class RemoteCombatVFXController {
   /** A player died: no ghost beams / anchors / dirt trails from corpses. */
   onPlayerDied(playerId: string): void {
     this.stopPlasma(playerId, null);
+    const ps = this.poisons.get(playerId);
+    if (ps) ps.active = false;
     // The server clears its anchors on death without a broadcast — mirror.
     this.stopOblitBeam(playerId, true);
     this.clearOblitAnchors(playerId);
@@ -377,6 +402,9 @@ export class RemoteCombatVFXController {
     }
     for (const id of [...this.burrows.keys()]) {
       if (!validIds.has(id)) this.burrows.delete(id);
+    }
+    for (const id of [...this.poisons.keys()]) {
+      if (!validIds.has(id)) this.poisons.delete(id);
     }
   }
 
@@ -443,6 +471,39 @@ export class RemoteCombatVFXController {
         });
       }
       p.loop?.setPosition(this.originScratch.x, this.originScratch.y, this.originScratch.z);
+    }
+
+    // ---- Poison sprays: green droplet cone from the in-hand weapon ----
+    for (const [id, ps] of this.poisons) {
+      if (!ps.active || !this.particles) continue;
+      const pose = this.poseScratch;
+      if (!this.remotes.getPose(id, pose)) continue;
+      if (!this.remotes.getMuzzleWorldPosition(id, this.originScratch)) {
+        this.originScratch.copy(pose.pos);
+        this.originScratch.y += PLAYER_EYE_OFFSET;
+      }
+      aimDirection(pose.yaw, pose.pitch, this.dirScratch);
+      ps.emitAccum += 45 * dt; // lighter than the local stream (perf)
+      while (ps.emitAccum >= 1) {
+        ps.emitAccum -= 1;
+        this.particleVelScratch
+          .set(
+            (Math.random() - 0.5) * 0.2,
+            (Math.random() - 0.5) * 0.2,
+            (Math.random() - 0.5) * 0.2,
+          )
+          .add(this.dirScratch)
+          .normalize()
+          .multiplyScalar(14 + Math.random() * 6);
+        this.particles.spawn(
+          this.originScratch,
+          this.particleVelScratch,
+          0.4,
+          this.poisonGreen,
+          4,
+          1.5,
+        );
+      }
     }
 
     // ---- Thrown revolver projectiles (client-side visual sim) ----

@@ -26,5 +26,7 @@ export enum KillMethod {
   REVOLVER_EXPLOSION = "REVOLVER_EXPLOSION",
   /** Bass Blaster musical note projectile (SMG — no special medal). */
   BASS_BLASTER = "BASS_BLASTER",
+  /** Lance-Poison continuous toxic spray (no special medal). */
+  POISON = "POISON",
   ENVIRONMENT = "ENVIRONMENT",
 }

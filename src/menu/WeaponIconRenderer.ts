@@ -6,6 +6,7 @@ import rifleUrl from "../assets/voidrifle_opt.glb?url";
 import obliterreurUrl from "../assets/obliterreur_opt.glb?url";
 import revolverUrl from "../assets/revolver_opt.glb?url";
 import bassBlasterUrl from "../assets/bassblaster_opt.glb?url";
+import poisonUrl from "../assets/Lance_poison_jeu.glb?url";
 
 /**
  * Offscreen 3D icon factory for the Loadout menu.
@@ -24,6 +25,7 @@ const MODEL_URLS: Record<string, string> = {
   OBLITERREUR: obliterreurUrl,
   REVOLVER: revolverUrl,
   BASS_BLASTER: bassBlasterUrl,
+  POISON_SPRAYER: poisonUrl,
 };
 
 const ICON_SIZE = 384;

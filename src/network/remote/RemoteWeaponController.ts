@@ -8,6 +8,7 @@ import spearUrl from "../../assets/lance_opt.glb?url";
 import obliterreurUrl from "../../assets/obliterreur_opt.glb?url";
 import revolverUrl from "../../assets/revolver_opt.glb?url";
 import bassBlasterUrl from "../../assets/bassblaster_opt.glb?url";
+import poisonUrl from "../../assets/Lance_poison_jeu.glb?url";
 
 /** How a weapon GLB sits in a remote character's hand (menu-proven recipe). */
 interface RemoteWeaponAttachment {
@@ -78,6 +79,16 @@ export const REMOTE_WEAPON_CONFIG: Record<NetworkWeaponId, RemoteWeaponAttachmen
     size: 0.75,
     // Same hand + same forward convention as the plasma rifle.
     modelRotation: new THREE.Euler(0, Math.PI, 0),
+  },
+  [NetworkWeaponId.POISON_SPRAYER]: {
+    url: poisonUrl,
+    bone: "LeftHand",
+    position: new THREE.Vector3(-0.02, 0.14, 0.06),
+    rotation: new THREE.Euler(0.35, Math.PI / 2, 0.1),
+    size: 0.9,
+    // The sprayer muzzle faces -X in the asset → rotate it to face -Z
+    // like the rifle convention (barrel forward in the remote hand).
+    modelRotation: new THREE.Euler(0, -Math.PI / 2, 0),
   },
 };
 

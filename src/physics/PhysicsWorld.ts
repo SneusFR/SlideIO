@@ -84,6 +84,18 @@ export class PhysicsWorld {
     return collider;
   }
 
+  /**
+   * Static convex-hull collider (smooth stair ramps of the GLB map).
+   * `vertices` is a flat [x0,y0,z0, x1,y1,z1, …] array in world space.
+   * Returns null when Rapier cannot build a hull from the input.
+   */
+  addStaticConvexHull(vertices: Float32Array): RAPIER.Collider | null {
+    const desc = RAPIER.ColliderDesc.convexHull(vertices);
+    if (!desc) return null;
+    desc.setFriction(0).setRestitution(0);
+    return this.world.createCollider(desc);
+  }
+
   /** True if this collider was explicitly marked as a phase-dashable wall. */
   isPhaseable(collider: RAPIER.Collider): boolean {
     return this.phaseableHandles.has(collider.handle);

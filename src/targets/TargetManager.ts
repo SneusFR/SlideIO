@@ -3,14 +3,14 @@ import { TrainingTarget } from "./TrainingTarget";
 import { ParticleSystem } from "../effects/ParticleSystem";
 
 /**
- * Creates and updates the shooting-range targets.
+ * Creates and updates the floating training targets.
  * Exposes `hittables` (target root groups) for the weapon raycast.
  *
- * Layout (training annex behind the blue yard, z 47 .. 93, x -22 .. 22,
- * firing line ≈ z 52 — entered through the doorway in the south wall):
- *   Close  (~z 58..62) — horizontal + vertical
- *   Medium (~z 71..74) — fast strafe + circular
- *   Long   (~z 84..88) — erratic + slow horizontal
+ * Ancient Jungle City layout — the targets hover over open zones so solo
+ * warm-up shots are possible from several ranges:
+ *   Close  — Central Crossing plaza (ground 0 m)
+ *   Medium — Golden Lane (+1.5 m) and Lower Court (−1.5 m)
+ *   Long   — East Ridge (+3 m) and the Sun Gate stairs sightline
  */
 export class TargetManager {
   readonly group = new THREE.Group();
@@ -25,43 +25,43 @@ export class TargetManager {
   constructor(particles: ParticleSystem) {
     this.particles = particles;
 
-    // ---- Close range ----
+    // ---- Close range: Central Crossing plaza ----
     this.add(
-      new TrainingTarget("horizontal", new THREE.Vector3(0, 1.8, 58), {
+      new TrainingTarget("horizontal", new THREE.Vector3(0, 2.2, -10), {
         amplitude: 6,
         speed: 1.1,
       }),
     );
     this.add(
-      new TrainingTarget("vertical", new THREE.Vector3(-10, 3.2, 62), {
+      new TrainingTarget("vertical", new THREE.Vector3(-10, 3.2, 6), {
         amplitude: 1.9,
         speed: 1.6,
       }),
     );
 
-    // ---- Medium range ----
+    // ---- Medium range: Golden Lane (west, +1.5 m) + Lower Court (−1.5 m) ----
     this.add(
-      new TrainingTarget("strafe", new THREE.Vector3(6, 2.4, 71), {
-        amplitude: 8,
+      new TrainingTarget("strafe", new THREE.Vector3(-40, 4.0, -26), {
+        amplitude: 6,
         speed: 9,
       }),
     );
     this.add(
-      new TrainingTarget("circular", new THREE.Vector3(-11, 4.2, 74), {
+      new TrainingTarget("circular", new THREE.Vector3(0, 1.6, 42), {
         radius: 3,
         speed: 1.4,
       }),
     );
 
-    // ---- Long range ----
+    // ---- Long range: East Ridge (+3 m) + Sun Gate approach ----
     this.add(
-      new TrainingTarget("erratic", new THREE.Vector3(8, 3.5, 84), {
+      new TrainingTarget("erratic", new THREE.Vector3(40, 6.0, -26), {
         speed: 6,
-        zone: { x: 8, y: 2.2, z: 4 },
+        zone: { x: 6, y: 2.0, z: 6 },
       }),
     );
     this.add(
-      new TrainingTarget("horizontal", new THREE.Vector3(-9, 2.5, 88), {
+      new TrainingTarget("horizontal", new THREE.Vector3(0, 5.8, -40), {
         amplitude: 7,
         speed: 0.7,
       }),

@@ -16,6 +16,7 @@ export enum NetworkWeaponId {
   HAMMER = "HAMMER",
   SPEAR = "SPEAR",
   BASS_BLASTER = "BASS_BLASTER",
+  POISON_SPRAYER = "POISON_SPRAYER",
 }
 
 export function isNetworkWeaponId(raw: unknown): raw is NetworkWeaponId {
@@ -62,6 +63,9 @@ export enum WeaponActionType {
    *  offset seconds / note index) so remote clients replay the exact same
    *  spatialized music fragment riding on the note. */
   BASS_FIRE = "BASS_FIRE",
+  /** Lance-Poison continuous spray started / stopped (plasma-style). */
+  POISON_START = "POISON_START",
+  POISON_STOP = "POISON_STOP",
 }
 
 export function isWeaponActionType(raw: unknown): raw is WeaponActionType {
@@ -198,6 +202,17 @@ export const NetworkWeaponConfig = {
     projectileSpeed: 140,
     /** Max flight time before a note fizzles out (s) → ~224 m range. */
     projectileLifetime: 1.6,
+  },
+  /** Lance-Poison — short-range continuous sprayer (mirrors PoisonConfig). */
+  poison: {
+    damagePerSecond: 65,
+    /** Very short reach — the whole identity of the weapon. */
+    range: 9,
+    /** Poison never headshots (gas/liquid cone). */
+    supportsHeadshots: false,
+    /** Full tank spray time (capacity / drainPerSecond, s) — the server
+     *  force-stops a stream that outlives a full tank + margin. */
+    maxContinuousSeconds: 8.5,
   },
   /** MOLE STRIKE killstreak (mirrors frontend MoleStrikeConfig). */
   mole: {

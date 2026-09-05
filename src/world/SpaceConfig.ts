@@ -1,12 +1,14 @@
 /**
- * Centralized configuration for the in-game deep-space ambiance:
+ * Centralized configuration for the in-game sky ambiance:
  * skybox layers, moon(s), meteors, global lighting, fog and grading.
  *
- * Everything visual about the "futuristic purple deep space" mood lives
- * here — no magic numbers scattered in SpaceSky / TdmMap / Game.
+ * Mood: "bright twilight" — a luminous end-of-day sky (golden horizon,
+ * mauve band, deep-blue zenith) where the first stars, the moon and the
+ * planets are already out. Everything visual lives here — no magic
+ * numbers scattered in SpaceSky / JungleMap / Game.
  */
 export const SpaceConfig = {
-  /** Master switch for the whole space backdrop (stars/nebula/moon/meteors). */
+  /** Master switch for the whole sky backdrop (stars/nebula/moon/meteors). */
   spaceSkyEnabled: true,
 
   // ------------------------------------------------------------------
@@ -16,12 +18,14 @@ export const SpaceConfig = {
   skyRadius: 350,
   /** Rad/s — almost imperceptible drift of the star/nebula layers. */
   skyRotationSpeed: 0.0006,
-  /** Renderer clear color behind everything (deep space black). */
-  backgroundColor: 0x030209,
-  /** Dome gradient: color near the horizon (dark blue-violet). */
-  horizonColor: 0x141026,
-  /** Dome gradient: color at the zenith (near-black). */
-  zenithColor: 0x030209,
+  /** Renderer clear color behind everything (deep twilight blue). */
+  backgroundColor: 0x141833,
+  /** Dome gradient: color near the horizon (warm golden sunset glow). */
+  horizonColor: 0xffa95e,
+  /** Dome gradient: mid band between horizon and zenith (rose-mauve). */
+  horizonMidColor: 0xb56a93,
+  /** Dome gradient: color at the zenith (deep but still luminous blue). */
+  zenithColor: 0x223064,
 
   // ------------------------------------------------------------------
   // Stars
@@ -56,9 +60,10 @@ export const SpaceConfig = {
   /**
    * Direction of the moon on the sky (normalized at runtime).
    * The main DirectionalLight matches this direction so the light
-   * really "comes from the moon" (visible from the street looking NE-up).
+   * really "comes from" it. Kept LOW on the sky for the long warm
+   * shadows of a late-afternoon / dusk sun.
    */
-  moonPosition: { x: 0.42, y: 0.52, z: -0.68 },
+  moonPosition: { x: 0.45, y: 0.3, z: -0.66 },
   /** Violet rim halo around the moon (0 disables). */
   moonHaloOpacity: 0.5,
   /** Secondary distant astre: small dark silhouette planet. */
@@ -84,27 +89,28 @@ export const SpaceConfig = {
   // ------------------------------------------------------------------
   // Global lighting
   // ------------------------------------------------------------------
-  /** Hemisphere "space ambient": sky tint / ground tint / intensity. */
-  spaceAmbientColor: 0x8d84c9, // dark violet-blue sky bounce
-  spaceAmbientGroundColor: 0x3a3540, // neutral dark ground bounce
-  spaceAmbientIntensity: 0.62,
+  /** Hemisphere "dusk ambient": sky tint / ground tint / intensity. */
+  spaceAmbientColor: 0xffc9a0, // warm peach sky bounce (sunset glow)
+  spaceAmbientGroundColor: 0x59484f, // warm mauve-grey ground bounce
+  spaceAmbientIntensity: 0.85,
 
-  /** Main directional "moonlight": cool white, barely violet. */
-  moonLightColor: 0xdcd8ff,
-  moonLightIntensity: 1.5,
+  /** Main directional "low sun": warm gold, still bright. */
+  moonLightColor: 0xffd9a6,
+  moonLightIntensity: 1.9,
 
-  /** Subtle violet rim/fill light from the opposite low direction. */
-  rimLightColor: 0x7c3aed,
-  rimLightIntensity: 0.3,
+  /** Subtle cool blue rim/fill from the opposite low direction
+   *  (the already-dark eastern sky answering the sunset). */
+  rimLightColor: 0x6f86e8,
+  rimLightIntensity: 0.4,
 
   // ------------------------------------------------------------------
   // Fog / grading
   // ------------------------------------------------------------------
-  /** Very light dark blue/purple distance haze (never a ground fog). */
-  fogColor: 0x0b0817,
+  /** Light warm-mauve distance haze (never a ground fog). */
+  fogColor: 0x6d5480,
   fogNear: 120,
   fogFar: 330,
 
-  /** ACES filmic exposure — deep blacks, cool premium highlights. */
-  toneMappingExposure: 1.12,
+  /** ACES filmic exposure — luminous dusk, warm highlights. */
+  toneMappingExposure: 1.18,
 } as const;

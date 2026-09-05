@@ -4,7 +4,7 @@ import { InputManager } from "../input/InputManager";
 import { FPSCamera } from "../camera/FPSCamera";
 import { PlayerController } from "../player/PlayerController";
 import { PlayerMovement, MoveState } from "../player/PlayerMovement";
-import { TdmMap } from "../world/TdmMap";
+import { JungleMap } from "../world/JungleMap";
 import { SpaceSky } from "../world/SpaceSky";
 import { SpaceConfig as spaceCfg } from "../world/SpaceConfig";
 import { DebugHUD } from "../ui/DebugHUD";
@@ -30,6 +30,8 @@ import { loadRevolverTemplate } from "../weapons/revolver/RevolverModel";
 import { RevolverHUD } from "../ui/RevolverHUD";
 import { BassBlasterWeapon } from "../weapons/bassblaster/BassBlasterWeapon";
 import { BassBlasterHUD } from "../ui/BassBlasterHUD";
+import { PoisonWeapon } from "../weapons/poison/PoisonWeapon";
+import { PoisonHUD } from "../ui/PoisonHUD";
 import { MusicSelectorHUD } from "../ui/MusicSelectorHUD";
 import { KillstreakManager } from "../killstreaks/KillstreakManager";
 import { MoleStrike } from "../killstreaks/mole/MoleStrike";
@@ -123,6 +125,10 @@ export class Game {
   private bassBlasterHud: BassBlasterHUD;
   private musicSelector: MusicSelectorHUD;
 
+  // ---- LANCE-POISON (short-range toxic sprayer with the living tank) ----
+  private poison: PoisonWeapon;
+  private poisonHud: PoisonHUD;
+
   // ---- FFA combat ----
   private gameAudio: GameAudio;
 
@@ -168,6 +174,10 @@ export class Game {
   private netPlasmaWasFiring = false;
   /** ~10 Hz PLASMA_AIM refresh accumulator while firing. */
   private netPlasmaAimTimer = 0;
+  /** Poison edge detection: local isSpraying → POISON_START / POISON_STOP. */
+  private netPoisonWasSpraying = false;
+  /** ~10 Hz POISON_AIM refresh accumulator while spraying. */
+  private netPoisonAimTimer = 0;
   /** True once the local weapon callbacks have been network-wrapped. */
   private netCallbacksWrapped = false;
   /** Latest server-reported attacker position (directional damage HUD). */
@@ -206,7 +216,7 @@ export class Game {
   private readonly phaseNormal = new THREE.Vector3();
   private lastOverlayOpacity = -1;
 
-  private constructor(container: HTMLElement, physics: PhysicsWorld) {
+  private constructor(container: HTMLElement, physics: PhysicsWorld, map: JungleMap) {
     this.physics = physics;
 
     // Quality preset (auto-detected iGPU → LOW, override in the Escape
@@ -235,7 +245,8 @@ export class Game {
     this.scene.background = new THREE.Color(spaceCfg.backgroundColor);
     this.scene.fog = new THREE.Fog(spaceCfg.fogColor, spaceCfg.fogNear, spaceCfg.fogFar);
 
-    const map = new TdmMap(this.physics);
+    // Ancient Jungle City: GLB visuals + exact Rapier colliders were
+    // already loaded/created in Game.create (async) — just attach it.
     this.scene.add(map.group);
 
     // Purple deep-space backdrop: stars / nebula / moon / meteors.
@@ -391,6 +402,16 @@ export class Game {
     this.bassBlaster.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
     this.bassBlasterHud = new BassBlasterHUD();
     this.musicSelector = new MusicSelectorHUD();
+
+    // ---- LANCE-POISON (primary alternative — equipped from the Loadout
+    // menu): hold LMB → continuous short-range toxic spray. The voxel tank
+    // displays the REAL charge and its liquid reacts to the player's
+    // acceleration (morph-target inertia — see PoisonLiquidController).
+    this.poison = new PoisonWeapon(this.fpsCamera.camera, this.particles);
+    this.poison.owner = this.playerCombatant;
+    this.poison.feedback = this.hitFeedback;
+    this.poison.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
+    this.poisonHud = new PoisonHUD();
     // Arrows → weapon track cycle → UI mirrors the new active index.
     this.musicSelector.onCycle = (delta) => {
       this.bassBlaster.cycleTrack(delta);
@@ -428,6 +449,11 @@ export class Game {
     this.bassBlaster.onReloadEnd = () => this.gameAudio.bassBlasterReloadEnd();
     this.bassBlaster.onWorldImpact = (pos, note) =>
       this.gameAudio.bassBlasterNoteImpact(pos, note.pitch);
+    // Lance-Poison: reuse the existing energy/steam palette (pure observers).
+    this.poison.onSprayStart = () => this.gameAudio.obliterreurActivate();
+    this.poison.onSprayStop = () => this.gameAudio.obliterreurBeamEnd(true);
+    this.poison.onReloadStart = () => this.gameAudio.bassBlasterReloadStart();
+    this.poison.onReloadEnd = () => this.gameAudio.bassBlasterReloadEnd();
 
     this.playerCombatant.health.onDamaged = (amount, attacker) => {
       this.combatHud.notifyDamage(amount, this.damageAngleFrom(attacker));
@@ -469,6 +495,7 @@ export class Game {
       this.obliterreur.reset(); // vortex off + anchors cleared on death
       this.revolver.reset(); // fan fire dropped, fresh 6/6 for the respawn
       this.bassBlaster.reset(); // reload cancelled, notes cleared, fresh 30/30
+      this.poison.reset(); // spray stopped, tank refilled for the respawn
       this.meleeHoldPending = false;
       // Death mid-burrow: instant cleanup WITHOUT the AoE, then every
       // killstreak slot (progress / ready / spent) resets to LOCKED.
@@ -561,7 +588,11 @@ export class Game {
 
   static async create(container: HTMLElement): Promise<Game> {
     const physics = await PhysicsWorld.create();
-    return new Game(container, physics);
+    // Load the map BEFORE the Game constructor: the NavGrid and the spawn
+    // system are built from the physics world during construction, so every
+    // static collider must exist first.
+    const map = await JungleMap.create(physics);
+    return new Game(container, physics, map);
   }
 
   get domElement(): HTMLElement {
@@ -601,6 +632,7 @@ export class Game {
       this.obliterreur.ready,
       this.revolver.ready,
       this.bassBlaster.ready,
+      this.poison.ready,
     ]);
 
     // 2. Transient visuals that never exist at rest: a thrown-revolver
@@ -681,6 +713,7 @@ export class Game {
       this.obliterreur.reset();
       this.revolver.reset();
       this.bassBlaster.reset();
+      this.poison.reset(); // fresh full tank + liquid motion memory cleared
     }
     // MULTIPLAYER: the server must know the equipped primary (loadout ids
     // are IDENTICAL strings to NetworkWeaponId — no mapping table).
@@ -782,6 +815,7 @@ export class Game {
       // Equip is refused while dead — re-assert it after every respawn.
       this.sendNetworkEquip(true);
       this.netPlasmaWasFiring = false;
+      this.netPoisonWasSpraying = false;
     };
 
     // Server-confirmed kill by the local player → existing kill feedback
@@ -829,6 +863,7 @@ export class Game {
     this.multiplayerClient = null;
     this.lastSentEquip = "";
     this.netPlasmaWasFiring = false;
+    this.netPoisonWasSpraying = false;
     const botsMenuEl = document.getElementById("bots-menu");
     if (botsMenuEl) botsMenuEl.style.display = "";
     // Back to LOCAL mode: the MatchStatsManager drives the leaderboard again.
@@ -1082,6 +1117,7 @@ export class Game {
       const obliEquipped = this.primaryWeapon === "OBLITERREUR";
       const revolverEquipped = this.primaryWeapon === "REVOLVER";
       const bassEquipped = this.primaryWeapon === "BASS_BLASTER";
+      const poisonEquipped = this.primaryWeapon === "POISON_SPRAYER";
       // KNOCKED DOWN (§ ragdoll) blocks EVERY weapon — exactly like a
       // ragdolled bot never fires. In-flight projectiles / explosions of
       // course keep ticking; only NEW actions are gated.
@@ -1097,14 +1133,16 @@ export class Game {
         !meleeBlocked &&
         !obliEquipped &&
         !revolverEquipped &&
-        !bassEquipped;
+        !bassEquipped &&
+        !poisonEquipped;
       this.rifle.setViewmodelHidden(
         this.hammer.isBusy ||
           this.spear.isBusy ||
           this.moleStrike.active ||
           obliEquipped ||
           revolverEquipped ||
-          bassEquipped,
+          bassEquipped ||
+          poisonEquipped,
       );
       this.rifle.update(dt, wantFire, this.hittables, this.elapsed);
       // MULTIPLAYER: plasma has no callbacks — edge-detect isFiring here
@@ -1169,6 +1207,29 @@ export class Game {
         if (this.input.wasPressed("ArrowDown")) this.musicSelector.interact(1);
       }
 
+      // LANCE-POISON: hold LMB → continuous short-range toxic spray,
+      // R → tank refill (progressive — the liquid visibly rises). The
+      // living tank (fill + inertial surface + bubbles) is fed the REAL
+      // physics velocity every frame, even while not firing.
+      this.poison.setViewmodelHidden(
+        !poisonEquipped || this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
+      );
+      this.poison.update(dt, {
+        fireHeld:
+          poisonEquipped &&
+          this.input.pointerLocked &&
+          this.input.isMouseDown(0) &&
+          !meleeBlocked,
+        reloadPressed: poisonEquipped && this.input.wasPressed("KeyR"),
+        canAct: poisonEquipped && playerAlive && !meleeBlocked,
+        hittables: this.hittables,
+        velocity: this.movement.velocity,
+        time: this.elapsed,
+      });
+      // MULTIPLAYER: poison has no per-shot callback — edge-detect the
+      // continuous stream exactly like the plasma (START/STOP + ~10 Hz aim).
+      if (this.multiplayer) this.updateNetworkPoison(dt);
+
       this.botManager.updateWeapons(dt, this.hittables, this.elapsed);
       this.handlePhaseEffects();
       this.particles.update(dt);
@@ -1204,6 +1265,8 @@ export class Game {
     this.bassBlasterHud.update(this.bassBlaster);
     this.musicSelector.setVisible(this.primaryWeapon === "BASS_BLASTER");
     this.musicSelector.update(dt);
+    this.poisonHud.setVisible(this.primaryWeapon === "POISON_SPRAYER");
+    this.poisonHud.update(this.poison);
     this.combatHud.update(dt, this.playerCombatant.health, this.playerDeathTimer);
     // Knockdown banner (§ ragdoll): down → "KNOCKED DOWN", recoverable →
     // pulsing "PRESS SPACE TO GET UP" (a death always hides it).
@@ -1406,7 +1469,8 @@ export class Game {
     const manualRespawn =
       this.input.wasPressed("KeyR") &&
       this.primaryWeapon !== "REVOLVER" &&
-      this.primaryWeapon !== "BASS_BLASTER";
+      this.primaryWeapon !== "BASS_BLASTER" &&
+      this.primaryWeapon !== "POISON_SPRAYER";
     if (fellOut || manualRespawn) {
       // Suicide / kill plane → normal death + respawn flow.
       this.playerCombatant.health.kill(null);
@@ -1561,6 +1625,24 @@ export class Game {
       if (this.netPlasmaAimTimer >= 0.1) {
         this.netPlasmaAimTimer = 0;
         this.netSendAimedAction("PLASMA_AIM"); // silent server aim refresh
+      }
+    }
+  }
+
+  /** Poison mirrors the plasma flow: edge-detect + 10 Hz silent aim. */
+  private updateNetworkPoison(dt: number): void {
+    const spraying = this.poison.isSpraying;
+    if (spraying !== this.netPoisonWasSpraying) {
+      this.netPoisonWasSpraying = spraying;
+      this.netPoisonAimTimer = 0;
+      this.netSendAimedAction(
+        spraying ? WeaponActionType.POISON_START : WeaponActionType.POISON_STOP,
+      );
+    } else if (spraying) {
+      this.netPoisonAimTimer += dt;
+      if (this.netPoisonAimTimer >= 0.1) {
+        this.netPoisonAimTimer = 0;
+        this.netSendAimedAction("POISON_AIM"); // silent server aim refresh
       }
     }
   }

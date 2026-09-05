@@ -28,6 +28,8 @@ export const SERVER_ACTION_REVOLVER_EXPLODE = "REVOLVER_EXPLODE";
 export const SERVER_ACTION_OBLITERREUR_STOP = "OBLITERREUR_STOP";
 /** Client aim refresh for the continuous plasma beam (low rate). */
 export const ACTION_PLASMA_AIM = "PLASMA_AIM";
+/** Client aim refresh for the continuous poison spray (low rate). */
+export const ACTION_POISON_AIM = "POISON_AIM";
 
 /**
  * FALLBACK rewind when an action carries no (or an aberrant) viewTime —
@@ -94,6 +96,11 @@ class PlayerWeaponState {
   /** Shooter view delay (now − viewTime) refreshed by START/AIM — the
    *  continuous beam tick rewinds targets by this amount every tick. */
   plasmaViewDelayMs = LAG_COMP_FALLBACK_MS;
+  // Poison sprayer (continuous short-range stream — plasma-style state)
+  poisonActive = false;
+  poisonSince = 0;
+  poisonDir: Vec3 = { x: 0, y: 0, z: -1 };
+  poisonViewDelayMs = LAG_COMP_FALLBACK_MS;
   // Revolver
   revolverAmmo = W.revolver.capacity;
   lastRevolverShotAt = 0;
@@ -263,6 +270,7 @@ export class WeaponManager {
     // Switching away drops continuous actions cleanly. Anchors never
     // survive a weapon swap (mirrors the local obliterreur.reset()).
     this.stopPlasma(player, s);
+    this.stopPoison(player, s);
     this.cancelObliterreurBeam(player, s);
     s.oblitA = null;
     s.oblitB = null;
@@ -303,6 +311,23 @@ export class WeaponManager {
       case WeaponActionType.PLASMA_STOP:
         if (!s.plasmaActive) return;
         this.stopPlasma(player, s, seq);
+        return;
+      case WeaponActionType.POISON_START:
+        if (s.weapon !== NetworkWeaponId.POISON_SPRAYER || !origin || !dir) return;
+        s.poisonActive = true;
+        s.poisonSince = this.host.now();
+        s.poisonDir = dir;
+        s.poisonViewDelayMs = this.host.now() - this.resolveRewindTime(msg);
+        this.confirm(player, s.weapon, action, seq, origin, dir);
+        return;
+      case ACTION_POISON_AIM:
+        if (!s.poisonActive || !dir) return;
+        s.poisonDir = dir;
+        s.poisonViewDelayMs = this.host.now() - this.resolveRewindTime(msg);
+        return; // aim refresh is silent (remotes follow the transform)
+      case WeaponActionType.POISON_STOP:
+        if (!s.poisonActive) return;
+        this.stopPoison(player, s, seq);
         return;
       case WeaponActionType.REVOLVER_FIRE:
         this.handleRevolverFire(player, s, seq, origin, dir, this.resolveRewindTime(msg));
@@ -362,6 +387,7 @@ export class WeaponManager {
       const s = this.states.get(player.id);
       if (!s) continue;
       if (s.plasmaActive) this.tickPlasma(player, s, dt, now);
+      if (s.poisonActive) this.tickPoison(player, s, dt, now);
       if (s.rushActive) this.tickSpearRush(player, s, now);
       if (s.beamSamples && now < s.beamEndsAt) this.tickObliterreurBeam(player, s, dt);
       else if (s.beamSamples && now >= s.beamEndsAt) s.beamSamples = null;
@@ -392,6 +418,29 @@ export class WeaponManager {
     const base = W.plasma.damagePerSecond * dt;
     const amount = zone === HitZone.HEAD ? base * W.plasma.headshotMultiplier : base;
     this.dealDamage(player, hit.targetId, amount, DamageType.PLASMA, zone, NetworkWeaponId.PLASMA_RIFLE);
+  }
+
+  /** Poison stream: identical rewind/tick scheme as plasma, SHORT range. */
+  private tickPoison(player: NetworkPlayer, s: PlayerWeaponState, dt: number, now: number): void {
+    if (!player.isAlive || now - s.poisonSince > W.poison.maxContinuousSeconds * 1000) {
+      this.stopPoison(player, s);
+      return;
+    }
+    // Anchor the ray on the CURRENT transform (aim refreshed by POISON_AIM).
+    const origin = this.eyePos(player);
+    const rewindTime = now - Math.min(s.poisonViewDelayMs, LAG_COMP_MAX_REWIND_MS);
+    const hit = hitscan(origin, s.poisonDir, W.poison.range, this.rewindTargets(player.id, rewindTime), player.id);
+    if (!hit || hit.kind !== "player" || !hit.targetId) return;
+
+    // No headshot bonus: a poison cone has no precise impact point.
+    const amount = W.poison.damagePerSecond * dt;
+    this.dealDamage(player, hit.targetId, amount, DamageType.POISON, HitZone.BODY, NetworkWeaponId.POISON_SPRAYER);
+  }
+
+  private stopPoison(player: NetworkPlayer, s: PlayerWeaponState, seq = 0): void {
+    if (!s.poisonActive) return;
+    s.poisonActive = false;
+    this.confirm(player, NetworkWeaponId.POISON_SPRAYER, WeaponActionType.POISON_STOP, seq, this.eyePos(player), s.poisonDir);
   }
 
   private handleRevolverFire(
@@ -939,6 +988,7 @@ export class WeaponManager {
     if (!s) return;
     if (player) {
       this.stopPlasma(player, s);
+      this.stopPoison(player, s);
       this.cancelObliterreurBeam(player, s);
     }
     s.rushActive = false;
@@ -953,6 +1003,7 @@ export class WeaponManager {
     const s = this.states.get(playerId);
     if (!s) return;
     s.plasmaActive = false;
+    s.poisonActive = false;
     s.rushActive = false;
     s.rushHitIds.clear();
     s.beamSamples = null;

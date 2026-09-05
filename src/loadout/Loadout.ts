@@ -5,6 +5,7 @@ import { MoleStrikeConfig as mole } from "../killstreaks/mole/MoleStrikeConfig";
 import { ObliterreurConfig as oc } from "../weapons/obliterreur/ObliterreurConfig";
 import { RevolverConfig as rc } from "../weapons/revolver/RevolverConfig";
 import { BassBlasterConfig as bb } from "../weapons/bassblaster/BassBlasterConfig";
+import { PoisonConfig as pz } from "../weapons/poison/PoisonConfig";
 
 /**
  * Player loadout: the single source of truth for what is equipped.
@@ -13,7 +14,12 @@ import { BassBlasterConfig as bb } from "../weapons/bassblaster/BassBlasterConfi
  */
 
 export type MeleeWeaponId = "HAMMER" | "SPEAR";
-export type PrimaryWeaponId = "PLASMA_RIFLE" | "OBLITERREUR" | "REVOLVER" | "BASS_BLASTER";
+export type PrimaryWeaponId =
+  | "PLASMA_RIFLE"
+  | "OBLITERREUR"
+  | "REVOLVER"
+  | "BASS_BLASTER"
+  | "POISON_SPRAYER";
 export type KillstreakId = "NONE" | "MOLE_STRIKE" | "ORBITAL_SCAN" | "NOVA_STRIKE";
 
 /** Exactly three equippable killstreak slots (keys 1 / 2 / 3 in game). */
@@ -73,7 +79,8 @@ export function loadLoadout(): LoadoutSelection {
       primary:
         parsed.primary === "OBLITERREUR" ||
         parsed.primary === "REVOLVER" ||
-        parsed.primary === "BASS_BLASTER"
+        parsed.primary === "BASS_BLASTER" ||
+        parsed.primary === "POISON_SPRAYER"
           ? parsed.primary
           : "PLASMA_RIFLE",
       killstreaks,
@@ -335,6 +342,38 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
         stats: [
           { label: "FRAGMENT", value: `${Math.round(bb.fragmentDuration * 1000)} ms / note` },
           { label: "AUDIO", value: "SPATIALISÉ" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "POISON_SPRAYER",
+    name: "LANCE-POISON",
+    tagline: "Pulvérisateur toxique à courte portée",
+    summary:
+      "Un lance-flammes… au poison : maintenez le clic pour cracher un jet continu de poison vert lumineux qui fait fondre tout ce qui s'approche. Le réservoir voxel affiche votre charge en temps réel — le liquide bouge, penche et bouillonne avec vos déplacements.",
+    ratings: { power: 78, precision: 40, difficulty: 48 },
+    abilities: [
+      {
+        trigger: "CLIC GAUCHE — MAINTENIR",
+        name: "JET DE POISON",
+        description:
+          "Émission continue d'un cône de poison à très courte portée. Dégâts massifs au contact — l'arme de duel rapproché par excellence. Le jet vide progressivement le réservoir.",
+        stats: [
+          { label: "DÉGÂTS", value: `${pz.damagePerSecond} PV/s` },
+          { label: "PORTÉE", value: `${pz.range} m` },
+          { label: "AUTONOMIE", value: `${Math.round(pz.capacity / pz.drainPerSecond)}s` },
+          { label: "TÊTE", value: "PAS DE BONUS" },
+        ],
+      },
+      {
+        trigger: "TOUCHE R",
+        name: "REMPLISSAGE",
+        description:
+          "Remplit le réservoir : le niveau de poison remonte visiblement dans la cuve pendant toute la recharge. Automatique quand le réservoir est vide.",
+        stats: [
+          { label: "DURÉE", value: `${pz.reloadDuration}s` },
+          { label: "AUTO", value: "RÉSERVOIR VIDE" },
         ],
       },
     ],

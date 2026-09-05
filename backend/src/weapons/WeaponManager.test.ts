@@ -102,8 +102,8 @@ test("hitscan: head hit (sphere above capsule center)", () => {
   assert.strictEqual(hit!.zone, "HEAD");
 });
 
-test("hitscan: wall blocks the shot (garage south wall)", () => {
-  // Shooter inside the blue garage, target behind the z=35.7 wall.
+test("hitscan: wall blocks the shot (east terrace ruins)", () => {
+  // Shooter inside the east terrace ruins mass, target behind it (+z).
   const targets = [{ id: "B", x: 19, y: 0.9, z: 39 }];
   const hit = hitscan({ x: 19, y: 1.45, z: 33 }, { x: 0, y: 0, z: 1 }, 300, targets, "A");
   assert.ok(hit && hit.kind === "wall", "wall must be hit first");
@@ -192,11 +192,46 @@ test("plasma: kill produces PLAYER_DIED with real headshot flag", () => {
   assert.strictEqual(b.deaths, 1);
 });
 
+test("poison: short-range DPS tick, NO headshot bonus, out-of-range refused", () => {
+  const { wm, addPlayer } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  const b = addPlayer("B", 3, 0.9, 10); // 6 m — inside the 9 m range
+  const c = addPlayer("C", 3, 0.9, -20); // 36 m — far outside
+  wm.handleEquip(a, NetworkWeaponId.POISON_SPRAYER);
+  assert.strictEqual(a.weapon, NetworkWeaponId.POISON_SPRAYER);
+
+  // Spray at B's torso → flat DPS tick.
+  fire(wm, a, WeaponActionType.POISON_START, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 0.9, z: 10 }));
+  wm.tick(0.05);
+  const tick = W.poison.damagePerSecond * 0.05;
+  assert.ok(Math.abs(b.health - (200 - tick)) < 0.01, "body DPS tick");
+
+  // Aim at the HEAD → SAME flat damage (poison never headshots).
+  fire(wm, a, "POISON_AIM", eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 1.56, z: 10 }));
+  const before = b.health;
+  wm.tick(0.05);
+  assert.ok(Math.abs(before - b.health - tick) < 0.01, "head aim = flat damage");
+
+  // STOP → no more damage.
+  fire(wm, a, WeaponActionType.POISON_STOP, eyeOf(a), { x: 0, y: 0, z: -1 });
+  const after = b.health;
+  wm.tick(0.05);
+  assert.strictEqual(b.health, after, "no damage after POISON_STOP");
+
+  // Far target: even a perfect aim is beyond the 9 m poison range.
+  fire(wm, a, WeaponActionType.POISON_START, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 0.9, z: -20 }));
+  wm.tick(0.05);
+  assert.strictEqual(c.health, 200, "target beyond poison range untouched");
+});
+
+// NOTE: melee tests live on the open CENTER LANE of Ancient Jungle City
+// (x = 0, z 5..16 — no cover): the low "Crossing cover wall" occupies
+// x 0.45..7.55 at z ≈ 14 and would block capsule-center line of sight.
 test("hammer sweep: in-arc target damaged + knocked back, far target untouched", () => {
   const { wm, rec, addPlayer } = makeWorld();
-  const a = addPlayer("A", 3, 0.9, 16);
-  const near = addPlayer("B", 3, 0.9, 14); // 2 m in front
-  const far = addPlayer("C", 3, 0.9, 5); // 11 m — out of range
+  const a = addPlayer("A", 0, 0.9, 16);
+  const near = addPlayer("B", 0, 0.9, 14); // 2 m in front
+  const far = addPlayer("C", 0, 0.9, 5); // 11 m — out of range
   fire(wm, a, WeaponActionType.HAMMER_SWEEP, eyeOf(a), { x: 0, y: 0, z: -1 });
   assert.strictEqual(near.health, 200 - 200 * W.hammer.sweepDamageFraction);
   assert.strictEqual(far.health, 200, "out-of-range target untouched");
@@ -206,20 +241,20 @@ test("hammer sweep: in-arc target damaged + knocked back, far target untouched",
 
 test("hammer slam: AoE around impact, fraudulous far impact refused", () => {
   const { wm, addPlayer } = makeWorld();
-  const a = addPlayer("A", 3, 0.9, 16);
-  const b = addPlayer("B", 5, 0.9, 14);
+  const a = addPlayer("A", 0, 0.9, 16);
+  const b = addPlayer("B", 2, 0.9, 16);
   // Fraud: impact reported 50 m away → refused.
-  wm.handleAction(a, { action: WeaponActionType.HAMMER_SLAM_IMPACT, seq: ++seq, px: 3, py: 0, pz: -40 });
+  wm.handleAction(a, { action: WeaponActionType.HAMMER_SLAM_IMPACT, seq: ++seq, px: 0, py: 0, pz: -40 });
   assert.strictEqual(b.health, 200);
   // Legit impact at the attacker's feet.
-  wm.handleAction(a, { action: WeaponActionType.HAMMER_SLAM_IMPACT, seq: ++seq, px: 3, py: 0.9, pz: 16 });
+  wm.handleAction(a, { action: WeaponActionType.HAMMER_SLAM_IMPACT, seq: ++seq, px: 0, py: 0.9, pz: 16 });
   assert.strictEqual(b.health, 200 - 200 * W.hammer.slamDamageFraction);
 });
 
 test("spear rush: cooldown enforced + single hit per target", () => {
   const { wm, rec, addPlayer, advance } = makeWorld();
-  const a = addPlayer("A", 3, 0.9, 16);
-  const b = addPlayer("B", 3, 0.9, 14);
+  const a = addPlayer("A", 0, 0.9, 16);
+  const b = addPlayer("B", 0, 0.9, 14);
   fire(wm, a, WeaponActionType.SPEAR_RUSH_START, eyeOf(a), { x: 0, y: 0, z: -1 });
   wm.tick(0.05);
   wm.tick(0.05); // same rush → no double hit

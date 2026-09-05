@@ -12,14 +12,24 @@ import { PhysicsWorld, RAPIER } from "../physics/PhysicsWorld";
  */
 export class NavGrid {
   private static readonly CELL = 1.5;
-  private static readonly MIN_X = -41;
-  private static readonly MAX_X = 41;
-  private static readonly MIN_Z = -45;
-  private static readonly MAX_Z = 91;
+  // Ancient Jungle City playable area (perimeter walls at ±60).
+  private static readonly MIN_X = -58;
+  private static readonly MAX_X = 58;
+  private static readonly MIN_Z = -58;
+  private static readonly MAX_Z = 58;
+  /** Highest walkable floor (Sun Gate / East Ridge = +3 m). */
+  private static readonly MAX_FLOOR_Y = 3.6;
+  /** Lowest walkable floor (Lower Court = −1.5 m). */
+  private static readonly MIN_FLOOR_Y = -2.0;
+  /** Max ground-height difference between adjacent cells (ramps ≈ 0.38 m
+   *  per cell at 14°; autostep 0.25 m — anything bigger is a ledge). */
+  private static readonly MAX_STEP_Y = 0.8;
 
   private readonly nx: number;
   private readonly nz: number;
   private readonly walkable: Uint8Array;
+  /** Ground height (m) per walkable cell — floors span −1.5 … +3 m. */
+  private readonly groundY: Float32Array;
 
   // A* scratch buffers (persistent — no per-call allocation of big arrays)
   private readonly gScore: Float32Array;
@@ -32,6 +42,7 @@ export class NavGrid {
     this.nz = Math.floor((NavGrid.MAX_Z - NavGrid.MIN_Z) / NavGrid.CELL) + 1;
     const n = this.nx * this.nz;
     this.walkable = new Uint8Array(n);
+    this.groundY = new Float32Array(n);
     this.gScore = new Float32Array(n);
     this.cameFrom = new Int32Array(n);
     this.state = new Uint8Array(n);
@@ -42,27 +53,38 @@ export class NavGrid {
     const capsule = new RAPIER.Capsule(0.5, 0.3);
     const rot = { x: 0, y: 0, z: 0, w: 1 };
     const down = { x: 0, y: -1, z: 0 };
+    // Ray origin above the highest walkable floor; long enough to reach
+    // the Lower Court (−1.5 m).
+    const rayOriginY = NavGrid.MAX_FLOOR_Y + 3;
+    const rayLength = rayOriginY - NavGrid.MIN_FLOOR_Y + 0.5;
 
     for (let j = 0; j < this.nz; j++) {
       for (let i = 0; i < this.nx; i++) {
         const x = NavGrid.MIN_X + i * NavGrid.CELL;
         const z = NavGrid.MIN_Z + j * NavGrid.CELL;
 
-        // Must have ground below…
+        // Must have ground below (first surface from above)…
         const ground = this.physics.world.castRay(
-          new RAPIER.Ray({ x, y: 1.2, z }, down),
-          2.4,
+          new RAPIER.Ray({ x, y: rayOriginY, z }, down),
+          rayLength,
           true,
         );
         if (!ground) continue;
+        const gy = rayOriginY - ground.timeOfImpact;
+        // …at a real FLOOR height (tops of walls/covers are not walkable)…
+        if (gy > NavGrid.MAX_FLOOR_Y || gy < NavGrid.MIN_FLOOR_Y) continue;
 
-        // …and room for a (slightly slim) standing capsule.
+        // …and room for a (slightly slim) standing capsule above it.
         const blocked = this.physics.world.intersectionWithShape(
-          { x, y: 0.98, z },
+          { x, y: gy + 0.98, z },
           rot,
           capsule,
         );
-        if (!blocked) this.walkable[j * this.nx + i] = 1;
+        if (!blocked) {
+          const id = j * this.nx + i;
+          this.walkable[id] = 1;
+          this.groundY[id] = gy;
+        }
       }
     }
   }
@@ -106,9 +128,8 @@ export class NavGrid {
       if (!this.walkable[id]) continue;
       const x = this.cellX(i);
       const z = this.cellZ(j);
-      if (z > 42) continue; // keep roaming in the main arena, not the range
       if (Math.hypot(x - from.x, z - from.z) < minDist) continue;
-      out.set(x, 1, z);
+      out.set(x, this.groundY[id] + 1, z);
       return true;
     }
     return false;
@@ -123,7 +144,8 @@ export class NavGrid {
     const goal = this.nearestCell(to.x, to.z);
     if (start < 0 || goal < 0) return 0;
     if (start === goal) {
-      this.setPathPoint(outPath, 0, to.x, to.z);
+      if (!outPath[0]) outPath[0] = new THREE.Vector3();
+      outPath[0].set(to.x, this.groundY[goal] + 1, to.z);
       return 1;
     }
 
@@ -173,6 +195,14 @@ export class NavGrid {
           if (ni < 0 || nj < 0 || ni >= this.nx || nj >= this.nz) continue;
           const nid = this.idx(ni, nj);
           if (!this.walkable[nid] || this.state[nid] === 2) continue;
+          // Ledges: adjacent floors further apart than a ramp step are
+          // NOT connected (e.g. East Ridge +3 m over Central Crossing 0 m).
+          if (
+            Math.abs(this.groundY[nid] - this.groundY[current]) >
+            NavGrid.MAX_STEP_Y
+          ) {
+            continue;
+          }
           // Diagonals need both orthogonal neighbors free (no corner cutting).
           if (di !== 0 && dj !== 0) {
             if (!this.walkable[this.idx(ci + di, cj)]) continue;
@@ -204,7 +234,7 @@ export class NavGrid {
     // LOS smoothing: greedily jump to the furthest visible cell.
     let count = 0;
     let anchor = 0;
-    this.setPathPoint(outPath, count++, this.chainX(chain[0]), this.chainZ(chain[0]));
+    this.setPathPoint(outPath, count++, chain[0]);
     while (anchor < chain.length - 1) {
       let next = anchor + 1;
       // Try to jump ahead (test every 2nd cell, capped raycasts).
@@ -214,12 +244,12 @@ export class NavGrid {
           break;
         }
       }
-      this.setPathPoint(outPath, count++, this.chainX(chain[next]), this.chainZ(chain[next]));
+      this.setPathPoint(outPath, count++, chain[next]);
       anchor = next;
       if (count >= 64) break; // safety cap
     }
     // Snap final waypoint to the exact requested destination.
-    outPath[count - 1].set(to.x, 1, to.z);
+    outPath[count - 1].set(to.x, this.groundY[goal] + 1, to.z);
     return count;
   }
 
@@ -231,13 +261,19 @@ export class NavGrid {
     return this.cellZ(Math.floor(id / this.nx));
   }
 
-  private setPathPoint(path: THREE.Vector3[], index: number, x: number, z: number): void {
+  /** Waypoint at a cell: XZ center, Y = local ground + 1 (capsule-ish). */
+  private setPathPoint(path: THREE.Vector3[], index: number, cellId: number): void {
     if (!path[index]) path[index] = new THREE.Vector3();
-    path[index].set(x, 1, z);
+    path[index].set(this.chainX(cellId), this.groundY[cellId] + 1, this.chainZ(cellId));
   }
 
-  /** Capsule-ish LOS between two cells (3 rays: low, high, lateral). */
+  /** Capsule-ish LOS between two cells (4 rays: low, high, lateral). */
   private segmentClear(a: number, b: number): boolean {
+    // Never smooth across an elevation change: horizontal rays would skim
+    // the ramp surface and produce false negatives/positives. The A* path
+    // already walks ramps cell by cell.
+    if (Math.abs(this.groundY[a] - this.groundY[b]) > 0.3) return false;
+    const baseY = Math.max(this.groundY[a], this.groundY[b]);
     const ax = this.chainX(a);
     const az = this.chainZ(a);
     const bx = this.chainX(b);
@@ -254,10 +290,10 @@ export class NavGrid {
     const pz = dirx * 0.35;
 
     return (
-      this.rayClear(ax, 0.35, az, dirx, dirz, dist) &&
-      this.rayClear(ax, 1.35, az, dirx, dirz, dist) &&
-      this.rayClear(ax + px, 0.85, az + pz, dirx, dirz, dist) &&
-      this.rayClear(ax - px, 0.85, az - pz, dirx, dirz, dist)
+      this.rayClear(ax, baseY + 0.35, az, dirx, dirz, dist) &&
+      this.rayClear(ax, baseY + 1.35, az, dirx, dirz, dist) &&
+      this.rayClear(ax + px, baseY + 0.85, az + pz, dirx, dirz, dist) &&
+      this.rayClear(ax - px, baseY + 0.85, az - pz, dirx, dirz, dist)
     );
   }
 

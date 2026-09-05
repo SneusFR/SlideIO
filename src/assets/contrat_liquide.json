@@ -1,0 +1,41 @@
+{
+  "asset": "Lance_poison_jeu.glb",
+  "weaponNode": "PoisonWeapon",
+  "controlsNode": "PoisonControls",
+  "liquidNode": "PoisonLiquid",
+  "meniscusNode": "PoisonMeniscus",
+  "roles": {
+    "liquid": "liquid",
+    "meniscus": "meniscus",
+    "glass": "glass",
+    "bubble": "bubble"
+  },
+  "morphTargets": [
+    "Drain",
+    "TiltX",
+    "TiltZ",
+    "WaveSin",
+    "WaveCos"
+  ],
+  "defaultFill": 0.9,
+  "space": "PoisonWeapon local space after glTF import, in meters",
+  "axes": {
+    "up": "+Y",
+    "muzzle": "-X",
+    "lateral": "+/-Z"
+  },
+  "tank": {
+    "centerX": 0.03,
+    "centerZ": 0,
+    "halfX": 0.2502,
+    "halfZ": 0.062099999999999995,
+    "bottomY": 0.2784,
+    "topY": 0.5015999999999999,
+    "height": 0.22319999999999998
+  },
+  "fillFormula": "Drain = 1 - clamp(ammoRemaining/ammoCapacity, 0, 1)",
+  "waveConstraint": "abs(TiltX)+abs(TiltZ)+abs(WaveSin)+abs(WaveCos) <= 0.9*min(fill,1-fill)",
+  "animationClips": 0,
+  "blenderDriversExported": false,
+  "note": "The asset exposes shape controls. Player acceleration, ammo logic and bubble rising are implemented by the game."
+}
