@@ -386,19 +386,19 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
     name: "HEX SNIPER",
     tagline: "Sniper à tête de monstre",
     summary:
-      "Un fusil de précision habité : une créature vivante est engagée dans le canon. Sa langue-grappin frappe quasi instantanément le premier obstacle touché — un joueur est mordu par le tir puis ramené vers vous à toute vitesse, un mur bloque toujours la prise. Après chaque tir, la bête claque des mâchoires : impossible de retirer avant la fin de la morsure. (Attaques solo/local pour l'instant.)",
+      "Un fusil de précision habité : une créature vivante est engagée dans le canon. Sa langue-grappin frappe quasi instantanément le premier obstacle touché — un joueur accroché prend les dégâts, est ramené vers vous à toute vitesse et la bête le CROQUE instantanément à l'arrivée. Une langue qui revient à vide ne mord pas : vous pouvez retirer aussitôt. (Attaques solo/local pour l'instant.)",
     ratings: { power: 82, precision: 80, difficulty: 58 },
     abilities: [
       {
         trigger: "CLIC GAUCHE",
         name: "LANGUE-GRAPPIN",
         description:
-          "Tir de langue quasi instantané dans la direction visée — aucune portée maximale : premier obstacle ou limites de la carte. Un joueur touché prend les dégâts et est ramené physiquement vers vous (jamais à travers les murs). Après CHAQUE tir, la créature mord automatiquement devant elle — la morsure doit se terminer avant le tir suivant.",
+          "Tir de langue quasi instantané dans la direction visée — aucune portée maximale : premier obstacle ou limites de la carte. Un joueur touché prend les dégâts, est ramené physiquement vers vous (jamais à travers les murs) et subit une MORSURE instantanée à l'arrivée. Si la langue ne ramène rien, aucune morsure : le tir suivant part dès qu'elle est revenue.",
         stats: [
           { label: "DÉGÂTS", value: `${hx.tongueDamage} PV` },
           { label: "VITESSE", value: `${hx.projectileSpeed} m/s` },
           { label: "TRACTION", value: `${hx.pullSpeed} m/s` },
-          { label: "MORSURE AUTO", value: `${hx.biteDamage} PV` },
+          { label: "MORSURE À L'ARRIVÉE", value: `${hx.biteDamage} PV` },
         ],
       },
       {

@@ -1272,8 +1272,9 @@ export class Game {
       // continuous stream exactly like the plasma (START/STOP + ~10 Hz aim).
       if (this.multiplayer) this.updateNetworkPoison(dt);
 
-      // HEX SNIPER: LMB fires the tongue (near-instant sniper shot; the
-      // automatic bite follows and must finish before the next shot),
+      // HEX SNIPER: LMB fires the tongue (near-instant sniper shot; a
+      // reeled-in player is bitten INSTANTLY on arrival — a missed tongue
+      // never bites and re-arms the shot the moment it returns),
       // RMB HELD = classic sniper ADS ×4 (crosshair zoom — no bite on RMB).
       // Visual mixer/tether update runs once per render frame (inside).
       this.hexSniper.setViewmodelHidden(

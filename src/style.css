@@ -77,7 +77,11 @@ body {
   mix-blend-mode: screen;
 }
 
+/* Customizable via the SETTINGS popover (CrosshairSettings.ts writes the
+   two CSS variables + toggles .cross) — the hit feedback stays pure CSS. */
 #crosshair {
+  --ch-scale: 1;
+  --ch-color: #ffffff;
   position: absolute;
   left: 50%;
   top: 50%;
@@ -85,13 +89,55 @@ body {
   height: 4px;
   margin: -2px 0 0 -2px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--ch-color);
+  opacity: 0.9;
   box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+  transform: scale(var(--ch-scale));
   transition: background 0.06s linear, box-shadow 0.06s linear;
 }
 
 /* Subtle hit feedback while the beam is burning a target */
 #crosshair.hit {
+  background: #ecfdf5;
+  box-shadow:
+    0 0 6px rgba(134, 239, 172, 0.95),
+    0 0 12px rgba(74, 222, 128, 0.6);
+}
+
+/* CROSS shape: the element becomes an invisible anchor, the two bars are
+   pseudo-elements (parent transform: scale() sizes both shapes alike). */
+#crosshair.cross,
+#crosshair.cross.hit {
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+#crosshair.cross::before,
+#crosshair.cross::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background: var(--ch-color);
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.7);
+  transition: background 0.06s linear, box-shadow 0.06s linear;
+}
+
+#crosshair.cross::before {
+  width: 14px;
+  height: 2px;
+  margin: -1px 0 0 -7px;
+}
+
+#crosshair.cross::after {
+  width: 2px;
+  height: 14px;
+  margin: -7px 0 0 -1px;
+}
+
+#crosshair.cross.hit::before,
+#crosshair.cross.hit::after {
   background: #ecfdf5;
   box-shadow:
     0 0 6px rgba(134, 239, 172, 0.95),
@@ -1407,6 +1453,68 @@ body.game-paused .mole-overlay {
 }
 
 #menu-quality-btn:hover {
+  background: rgba(22, 163, 74, 0.32);
+}
+
+/* ---- CROSSHAIR settings (shape toggle + size slider + color picker) ---- */
+#menu-ch-shape-btn {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-family: var(--mm-font-alt);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: #f0fdf4;
+  background: rgba(22, 163, 74, 0.18);
+  border: 1px solid rgba(74, 222, 128, 0.5);
+  border-radius: 10px;
+  transition: background 0.15s ease;
+}
+
+#menu-ch-shape-btn:hover {
+  background: rgba(22, 163, 74, 0.32);
+}
+
+.settings-color-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  column-gap: 8px;
+}
+
+.settings-color-row label {
+  font-family: var(--mm-font-alt);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.8px;
+  color: #9fd3aa;
+}
+
+.settings-color-row input[type="color"] {
+  width: 34px;
+  height: 26px;
+  padding: 2px;
+  cursor: pointer;
+  background: rgba(22, 163, 74, 0.18);
+  border: 1px solid rgba(74, 222, 128, 0.5);
+  border-radius: 8px;
+}
+
+#menu-ch-color-reset {
+  padding: 5px 9px;
+  cursor: pointer;
+  font-family: var(--mm-font-alt);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  color: #dcfce7;
+  background: rgba(22, 163, 74, 0.18);
+  border: 1px solid rgba(74, 222, 128, 0.5);
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+
+#menu-ch-color-reset:hover {
   background: rgba(22, 163, 74, 0.32);
 }
 

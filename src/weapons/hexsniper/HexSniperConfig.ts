@@ -5,33 +5,40 @@
  * barrel. LMB projects the creature's TONGUE in the aim direction —
  * no maximum range, no expiry: it stops at the first collision (walls,
  * objects, players) or at the real map bounds. A grabbed PLAYER is
- * physically reeled toward the shooter (never teleported through walls);
- * any other contact triggers an empty return. RMB is a vigorous BITE:
- * two dedup'd contact windows (kit clip timing), never per-frame damage.
+ * physically reeled toward the shooter (never teleported through walls)
+ * and INSTANTLY bitten on arrival; any other contact triggers an empty
+ * return that re-arms the shot immediately (no bite on a miss).
+ * RMB (held) is the ×4 optical ADS.
  *
  * The gameplay state machine + clip timings live in the vendored kit
  * (HexSniperAttacks.js / HexSniperController.js) — this file only tunes it.
  */
 export const HexSniperConfig = {
   // ---- Tongue (LMB) ----
-  /** Tongue tip flight speed (m/s) — near-instant, like a real sniper shot
-   *  (120 m map crossed in 0.4 s worst case; no bullet time). The per-step
-   *  segment sweep prevents tunneling at any speed. */
-  projectileSpeed: 300,
+  /** Tongue tip flight speed (m/s) — effectively instant on a 120 m map
+   *  (crossed in 0.2 s worst case). The per-step segment sweep prevents
+   *  tunneling at any speed. */
+  projectileSpeed: 600,
   /** Empty-return speed of the tip toward the mouth (m/s) — snappy. */
-  returnSpeed: 220,
+  returnSpeed: 440,
   /** Reel-in speed of a grabbed player (m/s) — the fast pull is the point. */
-  pullSpeed: 30,
+  pullSpeed: 60,
   /** Flat damage applied to a player the instant the tongue grabs him. */
   tongueDamage: 50,
-  /** Swept radius of the flying tongue (m) — a raycast alone is too thin. */
-  tongueRadius: 0.08,
+  /** Swept radius of the flying tongue (m) — generous on purpose: the game
+   *  is fast, a thin ray would make the grapple nearly impossible to land. */
+  tongueRadius: 0.16,
   /** Arrival gap kept between the victim and the shooter (m). */
   pullStopDistance: 1.6,
   /** Pull step blocked below this moved/intended ratio → release + retract. */
   pullBlockedRatio: 0.35,
+  /** Post-retract recovery before the kit fires `ready` (s). Near-zero on
+   *  purpose: an EMPTY tongue must allow an immediate re-shot, and a pulled
+   *  player must be bitten instantly (the kit default of 10/30 s reads as
+   *  input lag at this game's pace). */
+  recoverDuration: 0.05,
 
-  // ---- Bite (automatic after every tongue shot) ----
+  // ---- Bite (automatic ONLY when a player was reeled in) ----
   /** Reach of the bite volume in front of the mouth (m). */
   biteRange: 1.1,
   /** Radius of the bite volume around its axis (m). */

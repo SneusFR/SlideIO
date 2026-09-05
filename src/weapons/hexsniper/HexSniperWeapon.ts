@@ -13,7 +13,7 @@ import { TrainingTarget } from "../../targets/TrainingTarget";
 
 /** Per-frame input snapshot handed by the Game (weapon owns no input code). */
 export interface HexSniperFrameInput {
-  /** LMB edge → fire the tongue (refused until the auto-bite finished). */
+  /** LMB edge → fire the tongue (refused while a tongue/arrival-bite runs). */
   firePressed: boolean;
   /** RMB held → classic sniper ADS (×4 zoom — the Game drives the camera). */
   zoomHeld: boolean;
@@ -35,10 +35,12 @@ const OWNER_ID = -1;
  * damage and is physically REELED IN through his own character controller —
  * never a teleport through walls; any other contact = empty return.
  *
- * After EVERY tongue shot the creature automatically BITES (clip `Bite`,
- * snaps + head shakes): flat damage, at most ONCE per target per bite (the
- * kit's two contact windows are dedup'd here) — never per-frame damage.
- * A new shot is only accepted once the bite fully finished.
+ * BITE: only when a player was actually REELED IN — the instant the victim
+ * arrives the creature snaps its jaws (clip `Bite`): flat damage, at most
+ * ONCE per target per bite (the kit's two contact windows are dedup'd
+ * here) — never per-frame damage. A MISSED tongue (wall / prop / map
+ * bounds / blocked pull) never bites: the shot re-arms the moment the
+ * tongue is back (near-zero recoverDuration).
  *
  * RMB (held): classic sniper aim-down-sights — ×4 optical zoom with the
  * existing crosshair (the Game drives FPSCamera.zoom). No bite on RMB.
@@ -70,7 +72,8 @@ export class HexSniperWeapon {
   private readonly group = new THREE.Group();
   private visuals: HexSniperController | null = null;
   private attacks: HexSniperAttacks | null = null;
-  /** True between the tongue shot and the end of the automatic bite. */
+  /** Armed on `player-arrived` (a player was reeled in): the next `ready`
+   *  triggers the INSTANT arrival bite. Never set on a missed tongue. */
   private bitePending = false;
   /** Targets already damaged by the CURRENT bite (dedup across windows). */
   private readonly biteDamaged = new Set<number | string>();
@@ -159,6 +162,9 @@ export class HexSniperWeapon {
         pullStopDistance: cfg.pullStopDistance,
         biteRange: cfg.biteRange,
         biteRadius: cfg.biteRadius,
+        // Near-zero: a missed tongue re-arms instantly and the arrival
+        // bite fires without the kit's default 10/30 s recovery lag.
+        recoverDuration: cfg.recoverDuration,
       });
     } catch (err) {
       console.error("HexSniper: failed to load the weapon GLB", err);
@@ -219,13 +225,17 @@ export class HexSniperWeapon {
         this.applyTongueWorldDamage();
         break;
       case "player-arrived":
+        // A player was actually reeled in → ARM the instant arrival bite.
+        // The kit retracts the last ~1.6 m and recovers in cfg.recoverDuration
+        // (near-zero), so the `ready` below fires the bite the same instant.
+        this.bitePending = true;
         this.onPlayerArrived?.();
         this.onCameraShake?.(cfg.arriveShake);
         break;
       case "ready":
-        // Tongue fully recovered (or bite ended). CHAIN: every tongue shot
-        // is followed by the automatic bite; a new shot only unlocks after
-        // the bite finished (isBusy stays true during the whole chain).
+        // Tongue fully recovered (or bite ended). Arrival bite only: a
+        // MISSED tongue never set bitePending, so the weapon is instantly
+        // ready to fire again (isBusy false right here).
         if (this.bitePending) {
           this.bitePending = false;
           this.biteDamaged.clear();
@@ -243,7 +253,7 @@ export class HexSniperWeapon {
         if (event.hit) this.applyBiteDamage(event.hit);
         break;
       case "cancel":
-        // Death / unequip / knockdown: the pending auto-bite dies with it.
+        // Death / unequip / knockdown: the pending arrival bite dies too.
         this.bitePending = false;
         this.biteDamaged.clear();
         break;
@@ -336,7 +346,7 @@ export class HexSniperWeapon {
     return this.camera.getWorldPosition(out);
   }
 
-  /** True while the attack CHAIN runs (tongue flight/pull + auto-bite). */
+  /** True while an attack runs (tongue flight/pull, or the arrival bite). */
   get isBusy(): boolean {
     return this.bitePending || (this.attacks !== null && this.attacks.state !== "Idle");
   }
@@ -360,10 +370,10 @@ export class HexSniperWeapon {
   /** VISUAL step + edge-triggered inputs — call once per render frame. */
   update(dt: number, input: HexSniperFrameInput): void {
     if (this.attacks && input.canAct && input.firePressed) {
-      // One attack chain at a time: tryTongue refuses while the tongue OR
-      // the automatic follow-up bite is still running (isBusy covers both
-      // via bitePending — the shot only re-arms after the bite finished).
-      if (!this.bitePending && this.attacks.tryTongue()) this.bitePending = true;
+      // One attack at a time: tryTongue refuses while the tongue or an
+      // arrival bite is still running. bitePending is NOT set here — it
+      // only arms on `player-arrived` (bite exclusively after a reel-in).
+      if (!this.bitePending) this.attacks.tryTongue();
     }
     this.visuals?.update(dt);
   }

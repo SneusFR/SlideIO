@@ -15,6 +15,13 @@ import {
   QualityMode,
 } from "../game/GraphicsQuality";
 import { audio, type AudioBus } from "../audio/AudioManager";
+import {
+  applyCrosshairSettings,
+  loadCrosshairSettings,
+  saveCrosshairSettings,
+  DEFAULT_CROSSHAIR,
+  type CrosshairSettings,
+} from "../ui/CrosshairSettings";
 
 /**
  * MenuOverlay — the new Beanzo.io main menu: a pure DOM overlay rendered
@@ -176,6 +183,7 @@ export class MenuOverlay {
     this.cleanups.push(() => qualityBtn.removeEventListener("click", onQuality));
 
     this.wireVolumeSliders(pop);
+    this.wireCrosshairSettings();
 
     // Click outside closes the popover.
     const onDocClick = (e: MouseEvent) => {
@@ -229,6 +237,70 @@ export class MenuOverlay {
         slider.removeEventListener("input", onInput);
         slider.removeEventListener("change", onChange);
       });
+    });
+  }
+
+  /**
+   * CROSSHAIR section: shape toggle (DOT ↔ CROSS), size slider (50–250%)
+   * and color picker (+ RESET to white). Applied LIVE on the #crosshair
+   * element (pure CSS variables — see CrosshairSettings.ts) and persisted
+   * to localStorage on every change.
+   */
+  private wireCrosshairSettings(): void {
+    const shapeBtn = document.getElementById("menu-ch-shape-btn") as HTMLButtonElement | null;
+    const sizeSlider = document.getElementById("menu-ch-size") as HTMLInputElement | null;
+    const sizeValue = document.getElementById("menu-ch-size-value");
+    const colorInput = document.getElementById("menu-ch-color") as HTMLInputElement | null;
+    const colorReset = document.getElementById("menu-ch-color-reset") as HTMLButtonElement | null;
+    if (!shapeBtn || !sizeSlider || !colorInput || !colorReset) return;
+
+    let settings: CrosshairSettings = loadCrosshairSettings();
+
+    const render = () => {
+      shapeBtn.textContent = `SHAPE: ${settings.shape}`;
+      sizeSlider.value = String(Math.round(settings.scale * 100));
+      if (sizeValue) sizeValue.textContent = `${Math.round(settings.scale * 100)}%`;
+      colorInput.value = settings.color;
+    };
+    const commit = () => {
+      applyCrosshairSettings(settings);
+      saveCrosshairSettings(settings);
+    };
+    render();
+    // Boot-time apply: the saved crosshair is live before the first match.
+    applyCrosshairSettings(settings);
+
+    const onShape = () => {
+      this.sounds.click();
+      settings = { ...settings, shape: settings.shape === "DOT" ? "CROSS" : "DOT" };
+      render();
+      commit();
+    };
+    const onSize = () => {
+      settings = { ...settings, scale: Number(sizeSlider.value) / 100 };
+      if (sizeValue) sizeValue.textContent = `${sizeSlider.value}%`;
+      commit();
+    };
+    const onColor = () => {
+      settings = { ...settings, color: colorInput.value };
+      commit();
+    };
+    const onReset = () => {
+      this.sounds.click();
+      settings = { ...settings, color: DEFAULT_CROSSHAIR.color };
+      render();
+      commit();
+    };
+
+    shapeBtn.addEventListener("click", onShape);
+    sizeSlider.addEventListener("input", onSize);
+    colorInput.addEventListener("input", onColor);
+    colorReset.addEventListener("click", onReset);
+    this.cleanups.push(() => {
+      shapeBtn.removeEventListener("click", onShape);
+      sizeSlider.removeEventListener("input", onSize);
+      colorInput.removeEventListener("input", onColor);
+      colorReset.removeEventListener("click", onReset);
     });
   }
 
