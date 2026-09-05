@@ -179,6 +179,9 @@ export class RemoteCombatVFXController {
     // Remote shooters may use any Bass Blaster track — decode the whole
     // (tiny) music library up front so the FIRST remote note already sings.
     for (const t of MUSIC_TRACKS) void audio.load(t.audioKey, t.url);
+    // Only hits[0] is ever read → let three-mesh-bvh BVH meshes (the map)
+    // return their nearest hit only instead of every triangle intersection.
+    this.raycaster.firstHitOnly = true;
   }
 
   /** World meshes remote plasma beams get visually blocked by (optional). */

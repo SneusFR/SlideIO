@@ -69,6 +69,10 @@ export function castBeam(
 ): void {
   raycaster.set(origin, direction);
   raycaster.far = range;
+  // three-mesh-bvh: BVH meshes (the map) return only their nearest hit —
+  // massively cheaper. Non-BVH meshes (bot models, player proxy) still
+  // report every hit, so the owner/corpse skipping below keeps working.
+  raycaster.firstHitOnly = true;
 
   out.hit = false;
   out.combatant = null;

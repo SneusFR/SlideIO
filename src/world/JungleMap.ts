@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
+import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from "three-mesh-bvh";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { SpaceConfig as space } from "./SpaceConfig";
 import { getQualitySettings } from "../game/GraphicsQuality";
@@ -26,6 +27,17 @@ import mapPhysicsData from "../assets/MAP/ancient_jungle_city.physics.json";
  * Lighting stays the game's own "night / space" rig (see SpaceConfig) so
  * the deep-space backdrop, fog and grading keep working unchanged.
  */
+
+// BVH-accelerated raycasting (three-mesh-bvh). The native Three.js
+// Raycaster tests EVERY triangle of a mesh — fine on the old primitive
+// map, catastrophic on this ≈120k-tri GLB where every plasma beam / bot
+// shot raycasts the whole map each frame. `acceleratedRaycast` uses the
+// BVH when a geometry has one (built below for every map mesh) and falls
+// back to the stock raycast otherwise (bot models, player proxy, targets
+// stay untouched).
+THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
+THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
+THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 interface MapColliderEntry {
   id: string;
@@ -53,6 +65,9 @@ export class JungleMap {
       mesh.frustumCulled = true; // 30 m sectors → cheap culling
       mesh.geometry.computeBoundingBox();
       mesh.geometry.computeBoundingSphere();
+      // BVH per map mesh: O(log n) beam/hitscan raycasts instead of
+      // brute-force triangle iteration (built once at load time).
+      mesh.geometry.computeBoundsTree();
     });
     this.group.add(mapScene);
 

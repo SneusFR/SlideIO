@@ -144,6 +144,8 @@ export class ObliterreurWeapon {
     // Camera-center raycast against STATIC geometry only — bots, players
     // and pickups are automatically excluded from anchoring.
     this.raycaster.setFromCamera(ObliterreurWeapon.SCREEN_CENTER, this.camera);
+    // Only hits[0] is read → BVH map meshes return their nearest hit only.
+    this.raycaster.firstHitOnly = true;
     const hits = this.raycaster.intersectObjects(staticHittables, true);
     const h = hits.length > 0 ? hits[0] : null;
     if (!h) return; // miss → nothing changes
