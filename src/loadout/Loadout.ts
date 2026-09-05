@@ -6,6 +6,7 @@ import { ObliterreurConfig as oc } from "../weapons/obliterreur/ObliterreurConfi
 import { RevolverConfig as rc } from "../weapons/revolver/RevolverConfig";
 import { BassBlasterConfig as bb } from "../weapons/bassblaster/BassBlasterConfig";
 import { PoisonConfig as pz } from "../weapons/poison/PoisonConfig";
+import { HexSniperConfig as hx } from "../weapons/hexsniper/HexSniperConfig";
 
 /**
  * Player loadout: the single source of truth for what is equipped.
@@ -19,7 +20,8 @@ export type PrimaryWeaponId =
   | "OBLITERREUR"
   | "REVOLVER"
   | "BASS_BLASTER"
-  | "POISON_SPRAYER";
+  | "POISON_SPRAYER"
+  | "HEX_SNIPER";
 export type KillstreakId = "NONE" | "MOLE_STRIKE" | "ORBITAL_SCAN" | "NOVA_STRIKE";
 
 /** Exactly three equippable killstreak slots (keys 1 / 2 / 3 in game). */
@@ -80,7 +82,8 @@ export function loadLoadout(): LoadoutSelection {
         parsed.primary === "OBLITERREUR" ||
         parsed.primary === "REVOLVER" ||
         parsed.primary === "BASS_BLASTER" ||
-        parsed.primary === "POISON_SPRAYER"
+        parsed.primary === "POISON_SPRAYER" ||
+        parsed.primary === "HEX_SNIPER"
           ? parsed.primary
           : "PLASMA_RIFLE",
       killstreaks,
@@ -374,6 +377,38 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
         stats: [
           { label: "DURÉE", value: `${pz.reloadDuration}s` },
           { label: "AUTO", value: "RÉSERVOIR VIDE" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "HEX_SNIPER",
+    name: "HEX SNIPER",
+    tagline: "Sniper à tête de monstre",
+    summary:
+      "Un fusil de précision habité : une créature vivante est engagée dans le canon. Sa langue-grappin frappe quasi instantanément le premier obstacle touché — un joueur est mordu par le tir puis ramené vers vous à toute vitesse, un mur bloque toujours la prise. Après chaque tir, la bête claque des mâchoires : impossible de retirer avant la fin de la morsure. (Attaques solo/local pour l'instant.)",
+    ratings: { power: 82, precision: 80, difficulty: 58 },
+    abilities: [
+      {
+        trigger: "CLIC GAUCHE",
+        name: "LANGUE-GRAPPIN",
+        description:
+          "Tir de langue quasi instantané dans la direction visée — aucune portée maximale : premier obstacle ou limites de la carte. Un joueur touché prend les dégâts et est ramené physiquement vers vous (jamais à travers les murs). Après CHAQUE tir, la créature mord automatiquement devant elle — la morsure doit se terminer avant le tir suivant.",
+        stats: [
+          { label: "DÉGÂTS", value: `${hx.tongueDamage} PV` },
+          { label: "VITESSE", value: `${hx.projectileSpeed} m/s` },
+          { label: "TRACTION", value: `${hx.pullSpeed} m/s` },
+          { label: "MORSURE AUTO", value: `${hx.biteDamage} PV` },
+        ],
+      },
+      {
+        trigger: "CLIC DROIT — MAINTENIR",
+        name: "VISÉE ×4",
+        description:
+          "Visée de sniper classique : zoom optique ×4 avec le crosshair, sensibilité adaptée pour un ajustement précis. Relâchez pour revenir à la vue normale.",
+        stats: [
+          { label: "ZOOM", value: `×${hx.zoomFactor}` },
+          { label: "PORTÉE", value: "ILLIMITÉE" },
         ],
       },
     ],

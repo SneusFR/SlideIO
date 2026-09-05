@@ -1,0 +1,68 @@
+{
+  "HexSniper.glb": {
+    "bytes": 1253996,
+    "triangles": 14630,
+    "materials": 5,
+    "textures": [],
+    "clips": [
+      "Tongue_Cast",
+      "Tongue_Hold",
+      "Tongue_Return",
+      "Bite",
+      "Idle",
+      "Fire"
+    ],
+    "errors": 0,
+    "warnings": 2,
+    "storedPrimitives": 7,
+    "skeletonBones": 8,
+    "sha256": "d786e8a8a359a2b4a9921fccfe563e44caae8c8cd09be1589c04d8be5b8ae666",
+    "runtimeWithoutShadowPasses": {
+      "Idle": {
+        "triangles": 14490,
+        "drawCalls": 6
+      },
+      "Tongue": {
+        "triangles": 14218,
+        "drawCalls": 6
+      },
+      "BiteBeforeTongueRecovery": {
+        "triangles": 14078,
+        "drawCalls": 5
+      }
+    }
+  },
+  "HexSniper_LOD1.glb": {
+    "bytes": 753916,
+    "triangles": 7380,
+    "materials": 5,
+    "textures": [],
+    "clips": [
+      "Tongue_Cast",
+      "Tongue_Hold",
+      "Tongue_Return",
+      "Bite",
+      "Idle",
+      "Fire"
+    ],
+    "errors": 0,
+    "warnings": 2,
+    "storedPrimitives": 7,
+    "skeletonBones": 8,
+    "sha256": "b60081a49dfc1324651311106a4088caecf1b12abffce786cb86b300868e815f",
+    "runtimeWithoutShadowPasses": {
+      "Idle": {
+        "triangles": 7240,
+        "drawCalls": 6
+      },
+      "Tongue": {
+        "triangles": 7114,
+        "drawCalls": 6
+      },
+      "BiteBeforeTongueRecovery": {
+        "triangles": 6974,
+        "drawCalls": 5
+      }
+    }
+  }
+}

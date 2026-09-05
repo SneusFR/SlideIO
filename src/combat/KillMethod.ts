@@ -28,5 +28,9 @@ export enum KillMethod {
   BASS_BLASTER = "BASS_BLASTER",
   /** Lance-Poison continuous toxic spray (no special medal). */
   POISON = "POISON",
+  /** HEX SNIPER tongue grab (LMB — flat hit damage on the grabbed player). */
+  HEX_SNIPER_TONGUE = "HEX_SNIPER_TONGUE",
+  /** HEX SNIPER monster-head bite (automatic after every tongue shot). */
+  HEX_SNIPER_BITE = "HEX_SNIPER_BITE",
   ENVIRONMENT = "ENVIRONMENT",
 }

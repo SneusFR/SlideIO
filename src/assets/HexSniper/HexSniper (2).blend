@@ -1,0 +1,68 @@
+import { Vector3, Box3, Ray, Sphere } from 'three';
+import { distanceToBoxExit } from './HexSniperAttacks.js';
+
+/** Small demonstrator physics adapter. Replace with your game's colliders. */
+export class DemoWorld {
+  constructor() {
+    this.bounds = new Box3(new Vector3(-5, -1, -3), new Vector3(3, 3, 3));
+    this.colliders = []; this.ray = new Ray(); this.expanded = new Box3();
+    this.sphere = new Sphere(); this.point = new Vector3(); this.delta = new Vector3();
+    this.end = new Vector3();
+  }
+  distanceToMapExit(point, direction, radius) { return distanceToBoxExit(point, direction, this.bounds, radius); }
+  _sweep(from, to, radius, ignoreId) {
+    const length = from.distanceTo(to);
+    this.delta.copy(to).sub(from);
+    this.ray.set(from, length > 1e-9 ? this.delta.multiplyScalar(1 / length) : new Vector3(-1, 0, 0));
+    let best = null;
+    for (const c of this.colliders) {
+      if (c.id === ignoreId || c.active === false) continue;
+      let contact;
+      if (c.kind === 'player') {
+        this.sphere.set(c.position, c.radius + radius);
+        contact = this.sphere.containsPoint(from) ? this.point.copy(from) : this.ray.intersectSphere(this.sphere, this.point);
+      } else {
+        this.expanded.copy(c.box).expandByScalar(radius);
+        contact = this.expanded.containsPoint(from) ? this.point.copy(from) : this.ray.intersectBox(this.expanded, this.point);
+      }
+      if (!contact) continue;
+      const distance = contact.distanceTo(from);
+      if (distance <= length + 1e-7 && (!best || distance < best.distance)) {
+        best = { id: c.id, kind: c.kind, playerId: c.kind === 'player' ? c.id : undefined, point: contact.clone(), distance };
+      }
+    }
+    return best;
+  }
+  sweepTongue(from, to, { radius, ownerId }) { return this._sweep(from, to, radius, ownerId); }
+  getPlayerPosition(id, out) {
+    const c = this.colliders.find(c => c.id === id && c.kind === 'player' && c.active !== false);
+    if (!c) return false; out.copy(c.position); return true;
+  }
+  movePlayerToward(id, target, { maxDistance, stopDistance }) {
+    const c = this.colliders.find(c => c.id === id && c.kind === 'player' && c.active !== false);
+    if (!c) return { valid: false };
+    const distance = c.position.distanceTo(target), travel = Math.min(maxDistance, Math.max(0, distance - stopDistance));
+    if (travel === 0) return { reached: true };
+    this.end.copy(target).sub(c.position).multiplyScalar(travel / distance).add(c.position);
+    const hit = this._sweep(c.position, this.end, c.radius, id);
+    if (hit) {
+      const allowed = Math.max(0, hit.distance - .005);
+      c.position.lerp(this.end, allowed / travel); return { blocked: true };
+    }
+    c.position.copy(this.end); return { reached: distance - travel <= stopDistance + 1e-6 };
+  }
+  queryBite({ origin, direction, range, radius, ownerId }) {
+    const results = [];
+    for (const c of this.colliders) {
+      if (c.active === false || c.id === ownerId) continue;
+      const center = c.kind === 'player' ? c.position : c.box.getCenter(new Vector3());
+      const size = c.kind === 'player' ? c.radius : c.box.getSize(new Vector3()).length() / 2;
+      const offset = center.clone().sub(origin), along = offset.dot(direction);
+      if (along < 0 || along > range + size || offset.addScaledVector(direction, -along).length() > radius + size) continue;
+      const blocker = this._sweep(origin, center, 0, ownerId);
+      if (blocker && blocker.id !== c.id) continue;
+      results.push({ id: c.id, kind: c.kind, playerId: c.kind === 'player' ? c.id : undefined });
+    }
+    return results;
+  }
+}

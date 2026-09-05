@@ -17,6 +17,7 @@ export enum NetworkWeaponId {
   SPEAR = "SPEAR",
   BASS_BLASTER = "BASS_BLASTER",
   POISON_SPRAYER = "POISON_SPRAYER",
+  HEX_SNIPER = "HEX_SNIPER",
 }
 
 export function isNetworkWeaponId(raw: unknown): raw is NetworkWeaponId {

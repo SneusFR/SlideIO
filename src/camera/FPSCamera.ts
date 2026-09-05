@@ -29,6 +29,14 @@ export class FPSCamera {
   yaw = cfg.spawnYaw;
   pitch = 0;
 
+  /**
+   * Optical zoom factor (sniper ADS — HEX SNIPER RMB). 1 = none.
+   * Applied as a TRUE optical zoom on the target FOV (tan-based, so ×4
+   * really magnifies 4×) and divides the mouse sensitivity to keep the
+   * scoped aim controllable. Purely visual — never touches physics.
+   */
+  zoom = 1;
+
   private roll = 0;
   private fov = cfg.baseFov;
   private eyeOffset = cfg.eyeOffsetStand;
@@ -46,8 +54,9 @@ export class FPSCamera {
   }
 
   handleMouse(dx: number, dy: number): void {
-    this.yaw -= dx * cfg.mouseSensitivity;
-    this.pitch -= dy * cfg.mouseSensitivity;
+    const sensitivity = cfg.mouseSensitivity / Math.max(this.zoom, 1);
+    this.yaw -= dx * sensitivity;
+    this.pitch -= dy * sensitivity;
     const limit = Math.PI / 2 - 0.001;
     this.pitch = THREE.MathUtils.clamp(this.pitch, -limit, limit);
   }
@@ -82,11 +91,20 @@ export class FPSCamera {
     );
     // Dash: brief extra FOV punch on top of the speed FOV.
     // Phase: short warp punch while traversing a phaseable wall.
-    const targetFov =
+    let targetFov =
       THREE.MathUtils.lerp(cfg.baseFov, cfg.maxSpeedFov, speedT) +
       feel.dashKick * cfg.dashFovBoost +
       feel.phaseKick * cfg.phaseFovPunch;
-    this.fov = THREE.MathUtils.damp(this.fov, targetFov, cfg.fovLerpSpeed, dt);
+    // Sniper ADS: true optical magnification (tan-based, not a naive
+    // division) — ×4 genuinely enlarges the image 4 times.
+    if (this.zoom > 1) {
+      targetFov = THREE.MathUtils.radToDeg(
+        2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(targetFov) / 2) / this.zoom),
+      );
+    }
+    // Snappier FOV settle while zooming in/out (a scope must feel instant).
+    const fovSpeed = this.zoom > 1 ? cfg.fovLerpSpeed * 3 : cfg.fovLerpSpeed;
+    this.fov = THREE.MathUtils.damp(this.fov, targetFov, fovSpeed, dt);
     if (Math.abs(this.camera.fov - this.fov) > 0.01) {
       this.camera.fov = this.fov;
       this.camera.updateProjectionMatrix();

@@ -16,7 +16,8 @@ export class TargetManager {
   readonly group = new THREE.Group();
   readonly hittables: THREE.Object3D[] = [];
 
-  private readonly targets: TrainingTarget[] = [];
+  /** All training targets (read by the HEX SNIPER world adapter too). */
+  readonly targets: TrainingTarget[] = [];
   private readonly particles: ParticleSystem;
 
   private readonly explosionViolet = new THREE.Color(0xc084fc);

@@ -32,6 +32,9 @@ import { BassBlasterWeapon } from "../weapons/bassblaster/BassBlasterWeapon";
 import { BassBlasterHUD } from "../ui/BassBlasterHUD";
 import { PoisonWeapon } from "../weapons/poison/PoisonWeapon";
 import { PoisonHUD } from "../ui/PoisonHUD";
+import { HexSniperWeapon } from "../weapons/hexsniper/HexSniperWeapon";
+import { HexSniperWorldAdapter } from "../weapons/hexsniper/HexSniperWorldAdapter";
+import { HexSniperConfig as hexCfg } from "../weapons/hexsniper/HexSniperConfig";
 import { MusicSelectorHUD } from "../ui/MusicSelectorHUD";
 import { KillstreakManager } from "../killstreaks/KillstreakManager";
 import { MoleStrike } from "../killstreaks/mole/MoleStrike";
@@ -128,6 +131,9 @@ export class Game {
   // ---- LANCE-POISON (short-range toxic sprayer with the living tank) ----
   private poison: PoisonWeapon;
   private poisonHud: PoisonHUD;
+
+  // ---- HEX SNIPER (monster-head sniper: tongue grapple + bite) ----
+  private hexSniper: HexSniperWeapon;
 
   // ---- FFA combat ----
   private gameAudio: GameAudio;
@@ -298,6 +304,7 @@ export class Game {
       this.fpsCamera.addShake(Math.min(0.4 + magnitude * 0.015, 0.9));
       this.hammer.reset();
       this.spear.reset();
+      this.hexSniper.reset(); // a downed shooter releases the tongue
       this.meleeHoldPending = false;
     };
 
@@ -412,6 +419,24 @@ export class Game {
     this.poison.feedback = this.hitFeedback;
     this.poison.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
     this.poisonHud = new PoisonHUD();
+
+    // ---- HEX SNIPER (primary alternative — equipped from the Loadout
+    // menu): LMB projects the creature's tongue (no max range — first
+    // collision or map bounds; a grabbed player is physically reeled in),
+    // RMB is a vigorous bite (two dedup'd contact windows, wall-occluded).
+    // The world adapter implements the kit's five callbacks on the REAL
+    // Rapier physics; bot/target rosters are read lazily (built later).
+    const hexAdapter = new HexSniperWorldAdapter(
+      this.physics,
+      this.player.collider,
+      this.player.body,
+      () => this.botManager.bots,
+      () => this.targets.targets,
+    );
+    this.hexSniper = new HexSniperWeapon(this.fpsCamera.camera, this.scene, hexAdapter);
+    this.hexSniper.owner = this.playerCombatant;
+    this.hexSniper.feedback = this.hitFeedback;
+    this.hexSniper.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
     // Arrows → weapon track cycle → UI mirrors the new active index.
     this.musicSelector.onCycle = (delta) => {
       this.bassBlaster.cycleTrack(delta);
@@ -454,6 +479,11 @@ export class Game {
     this.poison.onSprayStop = () => this.gameAudio.obliterreurBeamEnd(true);
     this.poison.onReloadStart = () => this.gameAudio.bassBlasterReloadStart();
     this.poison.onReloadEnd = () => this.gameAudio.bassBlasterReloadEnd();
+    // Hex Sniper: reuse the existing energy/impact palette (pure observers).
+    this.hexSniper.onTongueStart = () => this.gameAudio.revolverThrow(); // whip cast
+    this.hexSniper.onTongueGrab = () => this.gameAudio.phaseTraversal(); // energy latch
+    this.hexSniper.onPlayerArrived = () => this.gameAudio.slamImpact(1); // heavy arrival
+    this.hexSniper.onBiteStart = () => this.gameAudio.hammerSwing(); // jaw whoosh
 
     this.playerCombatant.health.onDamaged = (amount, attacker) => {
       this.combatHud.notifyDamage(amount, this.damageAngleFrom(attacker));
@@ -496,6 +526,7 @@ export class Game {
       this.revolver.reset(); // fan fire dropped, fresh 6/6 for the respawn
       this.bassBlaster.reset(); // reload cancelled, notes cleared, fresh 30/30
       this.poison.reset(); // spray stopped, tank refilled for the respawn
+      this.hexSniper.reset(); // tongue released mid-flight/pull, clean Idle
       this.meleeHoldPending = false;
       // Death mid-burrow: instant cleanup WITHOUT the AoE, then every
       // killstreak slot (progress / ready / spent) resets to LOCKED.
@@ -633,6 +664,7 @@ export class Game {
       this.revolver.ready,
       this.bassBlaster.ready,
       this.poison.ready,
+      this.hexSniper.ready,
     ]);
 
     // 2. Transient visuals that never exist at rest: a thrown-revolver
@@ -714,6 +746,7 @@ export class Game {
       this.revolver.reset();
       this.bassBlaster.reset();
       this.poison.reset(); // fresh full tank + liquid motion memory cleared
+      this.hexSniper.reset(); // unequip cancels any tongue/bite in progress
     }
     // MULTIPLAYER: the server must know the equipped primary (loadout ids
     // are IDENTICAL strings to NetworkWeaponId — no mapping table).
@@ -1064,6 +1097,12 @@ export class Game {
       this.moleStrike.update(dt);
 
       this.botManager.update(dt); // AI + bot movement (pre-step)
+      // HEX SNIPER simulation at the game's physics step, BEFORE the step:
+      // the tongue sweep sees the current world and the pull writes the
+      // victim's setNextKinematicTranslation, integrated by step() below.
+      // Runs even while the viewmodel is hidden — an active attack is never
+      // dropped just because it is off-screen.
+      this.hexSniper.fixedUpdate(dt);
       this.physics.step(dt);
       // Corpses: bodies were just integrated — sync visuals, lifetimes,
       // fades and the max-corpse cap (cheap when no corpse exists).
@@ -1118,6 +1157,7 @@ export class Game {
       const revolverEquipped = this.primaryWeapon === "REVOLVER";
       const bassEquipped = this.primaryWeapon === "BASS_BLASTER";
       const poisonEquipped = this.primaryWeapon === "POISON_SPRAYER";
+      const hexEquipped = this.primaryWeapon === "HEX_SNIPER";
       // KNOCKED DOWN (§ ragdoll) blocks EVERY weapon — exactly like a
       // ragdolled bot never fires. In-flight projectiles / explosions of
       // course keep ticking; only NEW actions are gated.
@@ -1134,7 +1174,8 @@ export class Game {
         !obliEquipped &&
         !revolverEquipped &&
         !bassEquipped &&
-        !poisonEquipped;
+        !poisonEquipped &&
+        !hexEquipped;
       this.rifle.setViewmodelHidden(
         this.hammer.isBusy ||
           this.spear.isBusy ||
@@ -1142,7 +1183,8 @@ export class Game {
           obliEquipped ||
           revolverEquipped ||
           bassEquipped ||
-          poisonEquipped,
+          poisonEquipped ||
+          hexEquipped,
       );
       this.rifle.update(dt, wantFire, this.hittables, this.elapsed);
       // MULTIPLAYER: plasma has no callbacks — edge-detect isFiring here
@@ -1229,6 +1271,21 @@ export class Game {
       // MULTIPLAYER: poison has no per-shot callback — edge-detect the
       // continuous stream exactly like the plasma (START/STOP + ~10 Hz aim).
       if (this.multiplayer) this.updateNetworkPoison(dt);
+
+      // HEX SNIPER: LMB fires the tongue (near-instant sniper shot; the
+      // automatic bite follows and must finish before the next shot),
+      // RMB HELD = classic sniper ADS ×4 (crosshair zoom — no bite on RMB).
+      // Visual mixer/tether update runs once per render frame (inside).
+      this.hexSniper.setViewmodelHidden(
+        !hexEquipped || this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
+      );
+      this.hexSniper.update(dt, {
+        firePressed:
+          hexEquipped && playerAlive && !meleeBlocked && this.input.wasMousePressed(0),
+        zoomHeld: this.input.isMouseDown(2),
+        canAct: hexEquipped && playerAlive && !meleeBlocked && this.input.pointerLocked,
+      });
+
 
       this.botManager.updateWeapons(dt, this.hittables, this.elapsed);
       this.handlePhaseEffects();
@@ -1697,6 +1754,23 @@ export class Game {
     this.player.getPosition(this.playerPos);
     this.fpsCamera.getRight(this.rightDir);
 
+    // HEX SNIPER ADS (RMB held): classic sniper ×4 optical zoom with the
+    // existing crosshair. Evaluated HERE (every frame, even in the Escape
+    // menu where mouse buttons are already cleared) so the zoom can never
+    // stay stuck on death / unequip / pause. Sensitivity follows inside
+    // FPSCamera.handleMouse.
+    this.fpsCamera.zoom =
+      this.primaryWeapon === "HEX_SNIPER" &&
+      this.playerCombatant.health.alive &&
+      this.input.pointerLocked &&
+      this.input.isMouseDown(2) &&
+      !this.hammer.blocksFiring &&
+      !this.spear.blocksFiring &&
+      !this.moleStrike.blocksWeapons &&
+      !this.movement.isKnockedDown
+        ? hexCfg.zoomFactor
+        : 1;
+
     this.fpsCamera.update(dt, this.playerPos, {
       speed: this.movement.horizontalSpeed,
       lateralSpeed: this.movement.velocity.dot(this.rightDir),
@@ -1730,6 +1804,8 @@ function networkKillMethod(damageType: string): KillMethod {
       return KillMethod.MOLE_STRIKE;
     case "BASS_BLASTER":
       return KillMethod.BASS_BLASTER;
+    case "HEX_SNIPER":
+      return KillMethod.HEX_SNIPER_BITE;
     default:
       return KillMethod.PLASMA;
   }

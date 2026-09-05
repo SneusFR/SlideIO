@@ -61,6 +61,8 @@ export class Bot implements Combatant {
   /** Fraction of intended horizontal movement that was blocked last frame. */
   blockedAmount = 0;
   respawnTimer = 0;
+  /** > 0 while the HEX SNIPER tongue reels this bot in (locomotion suspended). */
+  private pulledTimer = 0;
 
   /** True while the plasma beam is actually emitting (read by game audio). */
   isFiring = false;
@@ -181,6 +183,56 @@ export class Bot implements Combatant {
   getEyePosition(out: THREE.Vector3): THREE.Vector3 {
     const t = this.body.translation();
     return out.set(t.x, t.y + 0.55, t.z);
+  }
+
+  /** Rapier collider handle — lets shape-cast hits map back to this bot. */
+  get colliderHandle(): number {
+    return this.collider.handle;
+  }
+
+  /**
+   * HEX SNIPER pull: physically reel this bot toward `dest` by ONE step
+   * (`maxDistance` = displacement of a single physics step, never a range).
+   * Moves through the bot's OWN character controller — walls, floors and
+   * autostep all apply; NEVER a teleport. Locomotion is suspended for a
+   * short window so the AI doesn't fight the reel. Returns
+   * `{ reached }` at `stopDistance`, `{ blocked }` when an obstacle eats
+   * most of the step, `{ valid: false }` when the bot can't be pulled
+   * (dead / ragdolled), `{}` while the pull simply continues.
+   */
+  pullToward(
+    dest: THREE.Vector3,
+    maxDistance: number,
+    stopDistance: number,
+    dt: number,
+    blockedRatio: number,
+  ): { reached?: boolean; blocked?: boolean; valid?: boolean } {
+    if (!this.health.alive || this.ragdolled) return { valid: false };
+    const t = this.body.translation();
+    this.tmp.set(dest.x - t.x, dest.y - t.y, dest.z - t.z);
+    const dist = this.tmp.length();
+    if (dist <= stopDistance) return { reached: true };
+    const step = Math.min(maxDistance, dist - stopDistance);
+    if (step <= 1e-6) return { reached: true };
+    this.delta.copy(this.tmp).multiplyScalar(step / dist);
+    this.controller.computeColliderMovement(this.collider, {
+      x: this.delta.x,
+      y: this.delta.y,
+      z: this.delta.z,
+    });
+    const cm = this.controller.computedMovement();
+    this.body.setNextKinematicTranslation({
+      x: t.x + cm.x,
+      y: t.y + cm.y,
+      z: t.z + cm.z,
+    });
+    this.pulledTimer = 0.2; // refreshed every pulled step; expires on release
+    this.grounded = false;
+    // Momentum: the release keeps the reel-in velocity (never a hard reset).
+    if (dt > 1e-6) this.velocity.set(cm.x / dt, cm.y / dt, cm.z / dt);
+    const actual = Math.hypot(cm.x, cm.y, cm.z);
+    if (actual < step * blockedRatio) return { blocked: true };
+    return {};
   }
 
   /**
@@ -368,6 +420,7 @@ export class Bot implements Combatant {
     this.sliding = false;
     this.dashing = false;
     this.deathHandled = false;
+    this.pulledTimer = 0;
     this.pendingImpactAt = -Infinity;
     this.heat.heat = 0;
     this.heat.overheated = false;
@@ -417,6 +470,14 @@ export class Bot implements Combatant {
   }
 
   private updateMovement(dt: number, _ctx: BotContext): void {
+    // HEX SNIPER pull: the tongue owns the body — normal locomotion is
+    // suspended while being reeled (pullToward applies its own collider
+    // movement each step, so the AI never fights the pull).
+    if (this.pulledTimer > 0) {
+      this.pulledTimer -= dt;
+      return;
+    }
+
     const out = this.ai.out;
     const v = this.velocity;
 
