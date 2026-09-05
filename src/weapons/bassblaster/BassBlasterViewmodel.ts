@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { BassBlasterConfig as cfg } from "./BassBlasterConfig";
-import { loadBassBlasterTemplate, cloneBassBlaster } from "./BassBlasterModel";
+import { loadPulseCarbineGltf } from "./BassBlasterModel";
+import { PulseCarbineController } from "./PulseCarbineController";
 import {
   NOTE_SEQUENCE,
   NoteDef,
@@ -45,6 +46,9 @@ export class BassBlasterViewmodel {
   private readonly muzzleHalo: THREE.Sprite;
   private readonly muzzleHaloMat: THREE.SpriteMaterial;
   private readonly particles: ParticleSystem;
+
+  /** PulseCarbine animation controller (screen bars + piano keys). */
+  private controller: PulseCarbineController | null = null;
 
   // Visual recoil state, damped every frame.
   private kick = 0;
@@ -129,26 +133,83 @@ export class BassBlasterViewmodel {
       });
     }
 
-    // Shared template → per-viewmodel clone with per-instance materials.
-    this.ready = loadBassBlasterTemplate()
-      .then((template) => {
-      const model = cloneBassBlaster(template);
-      model.scale.setScalar(cfg.viewmodelLength);
-      model.traverse((obj) => {
-        if (!(obj instanceof THREE.Mesh)) return;
-        obj.renderOrder = 100; // viewmodel layer
-        obj.frustumCulled = false;
-        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-        obj.material = mats.length === 1 ? mats[0].clone() : mats.map((m) => m.clone());
-        const cloned = Array.isArray(obj.material) ? obj.material : [obj.material];
-        for (const m of cloned) {
-          m.depthTest = false; // never clip into walls
-          m.transparent = true; // draw AFTER world transparents
+    // Shared GLTF → per-viewmodel PulseCarbineController. The controller
+    // SkeletonUtils-clones the scene (geometry/materials/textures stay
+    // shared with the cached asset) and owns the ONLY AnimationMixer
+    // driving the screen bars + piano keys (Idle/Fire*/MusicLoop clips).
+    this.ready = loadPulseCarbineGltf()
+      .then((gltf) => {
+        const controller = new PulseCarbineController(gltf);
+        controller.setMusic(false); // normal behavior: animate on shots only
+
+        // The asset is authored in METERS with the muzzle facing -X →
+        // wrap it in a pivot rotated to the viewmodel convention
+        // (muzzle facing -Z), normalize its length and center it.
+        const pivot = new THREE.Group();
+        pivot.rotation.y = -Math.PI / 2;
+        pivot.add(controller.object);
+        const box = new THREE.Box3().setFromObject(pivot);
+        const size = box.getSize(new THREE.Vector3());
+        pivot.scale.setScalar(cfg.viewmodelLength / Math.max(size.z, 1e-6));
+        box.setFromObject(pivot);
+        const center = box.getCenter(new THREE.Vector3());
+        pivot.position.sub(center);
+
+        // Snap the muzzle anchor (flash + projectile origin) onto the
+        // asset's Muzzle socket. pivot is still detached from the group,
+        // so its "world" position IS the group-local position.
+        pivot.updateMatrixWorld(true);
+        if (controller.muzzle) {
+          controller.muzzle.getWorldPosition(this.muzzle.position);
+          this.muzzle.position.z -= 0.02; // flash barely ahead of the bore
+          this.muzzleLight.position.copy(this.basePosition).add(this.muzzle.position);
         }
-      });
-      this.group.add(model);
+
+        // DEPTH-CLEAR PROXY — the PulseCarbine is 7 interpenetrating
+        // meshes (shell / metal spine / rubber / screen glass / LED bars /
+        // piano keys). The project's classic viewmodel recipe
+        // (depthTest = false on every material) breaks such a model: with
+        // no depth testing the draw ORDER decides visibility and the inner
+        // black parts paint OVER the red shell. Instead we keep REAL depth
+        // testing between the weapon's own parts and clear the depth
+        // buffer right before the weapon draws (renderOrder 99 < 100):
+        // the weapon then wins against all previously-drawn world depth —
+        // same "never clip into walls" guarantee, correct self-occlusion.
+        const depthClear = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.001, 0.001),
+          new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }),
+        );
+        depthClear.material.transparent = true; // same render pass as the weapon
+        depthClear.renderOrder = 99;
+        depthClear.frustumCulled = false;
+        depthClear.onBeforeRender = (renderer) => renderer.clearDepth();
+        this.group.add(depthClear); // follows group.visible (weapon swaps)
+
+        pivot.traverse((obj) => {
+          if (!(obj instanceof THREE.Mesh)) return;
+          obj.renderOrder = 100; // viewmodel layer (after the depth clear)
+          obj.frustumCulled = false; // skinned bars/keys + camera-space model
+          obj.castShadow = false;
+          obj.receiveShadow = false;
+          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+          obj.material = mats.length === 1 ? mats[0].clone() : mats.map((m) => m.clone());
+          const cloned = Array.isArray(obj.material) ? obj.material : [obj.material];
+          for (const m of cloned) {
+            m.depthTest = true; // real self-occlusion between weapon parts
+            m.depthWrite = true;
+            m.transparent = true; // draw AFTER world transparents
+          }
+        });
+        this.group.add(pivot);
+        this.controller = controller;
       })
       .catch(() => undefined); // failed load must never hang the warm-up
+  }
+
+  /** Release this instance's animation state (shared GPU assets stay cached). */
+  dispose(): void {
+    this.controller?.dispose();
+    this.controller = null;
   }
 
   setHidden(hidden: boolean): void {
@@ -157,6 +218,9 @@ export class BassBlasterViewmodel {
 
   /** Visual-only recoil + per-note colored muzzle flash. */
   triggerShot(note: NoteDef): void {
+    // One ACCEPTED shot → one PulseCarbine fire animation (the controller
+    // alternates Fire / Fire_AltA / Fire_AltB and returns to Idle itself).
+    this.controller?.onFire();
     this.kick += cfg.visualRecoil;
     this.wrist += 0.06;
     this.beat = 1;
@@ -196,6 +260,9 @@ export class BassBlasterViewmodel {
   }
 
   update(dt: number, time: number): void {
+    // Advance the PulseCarbine screen/piano mixer — exactly once per frame.
+    this.controller?.update(dt);
+
     // Recoil recovery (fast damp — SMG rattle, not a hand cannon).
     this.kick = THREE.MathUtils.damp(this.kick, 0, 18, dt);
     this.wrist = THREE.MathUtils.damp(this.wrist, 0, 16, dt);

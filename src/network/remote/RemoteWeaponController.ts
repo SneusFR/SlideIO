@@ -7,7 +7,9 @@ import rifleUrl from "../../assets/voidrifle_opt.glb?url";
 import spearUrl from "../../assets/lance_opt.glb?url";
 import obliterreurUrl from "../../assets/obliterreur_opt.glb?url";
 import revolverUrl from "../../assets/revolver_opt.glb?url";
-import bassBlasterUrl from "../../assets/bassblaster_opt.glb?url";
+// Bass Blaster = PulseCarbine LOD1 (light version for weapons seen at
+// a distance — see src/assets/PulseCarbine/README_FR.md).
+import bassBlasterUrl from "../../assets/PulseCarbine/PulseCarbine_LOD1.glb?url";
 import poisonUrl from "../../assets/Lance_poison_jeu.glb?url";
 
 /** How a weapon GLB sits in a remote character's hand (menu-proven recipe). */
@@ -77,8 +79,9 @@ export const REMOTE_WEAPON_CONFIG: Record<NetworkWeaponId, RemoteWeaponAttachmen
     position: new THREE.Vector3(-0.02, 0.14, 0.06),
     rotation: new THREE.Euler(0.35, Math.PI / 2, 0.1),
     size: 0.75,
-    // Same hand + same forward convention as the plasma rifle.
-    modelRotation: new THREE.Euler(0, Math.PI, 0),
+    // The PulseCarbine muzzle faces -X in the asset → rotate it to face
+    // -Z like the rifle convention (barrel forward in the remote hand).
+    modelRotation: new THREE.Euler(0, -Math.PI / 2, 0),
   },
   [NetworkWeaponId.POISON_SPRAYER]: {
     url: poisonUrl,

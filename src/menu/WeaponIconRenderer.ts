@@ -5,7 +5,8 @@ import spearUrl from "../assets/lance_opt.glb?url";
 import rifleUrl from "../assets/voidrifle_opt.glb?url";
 import obliterreurUrl from "../assets/obliterreur_opt.glb?url";
 import revolverUrl from "../assets/revolver_opt.glb?url";
-import bassBlasterUrl from "../assets/bassblaster_opt.glb?url";
+// Bass Blaster = PulseCarbine LOD1 (light version — plenty for a 384px icon).
+import bassBlasterUrl from "../assets/PulseCarbine/PulseCarbine_LOD1.glb?url";
 import poisonUrl from "../assets/Lance_poison_jeu.glb?url";
 
 /**

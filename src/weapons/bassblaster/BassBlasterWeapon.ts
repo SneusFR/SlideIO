@@ -135,6 +135,17 @@ export class BassBlasterWeapon {
     this.viewmodel.setHidden(hidden);
   }
 
+  /**
+   * Full teardown (this weapon instance is removed for good): stops the
+   * PulseCarbine animation mixer of the viewmodel. Shared GPU resources
+   * (geometry / materials / textures of the cached GLB) stay alive for
+   * any other instance.
+   */
+  dispose(): void {
+    this.projectiles.clear();
+    this.viewmodel.dispose();
+  }
+
   /** Track selector arrows (wired to ↑/↓ by the Game). */
   cycleTrack(delta: number): MusicTrackDef {
     return this.music.selectByOffset(delta);
