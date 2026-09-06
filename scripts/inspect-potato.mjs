@@ -27,7 +27,7 @@ function load(file) {
   );
 }
 
-const base = "src/assets/NewAssets/";
+const base = "src/assets/potato/";
 
 const tp = await load(base + "Potato_TP_Character.glb");
 console.log("=== Potato_TP_Character ===");

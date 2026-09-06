@@ -112,6 +112,11 @@ export class Game {
   /** Acid + animations + terminals (ONE instance per loaded Yard map). */
   private yardEffects: YardEffects | null = null;
   private interactHud: InteractHUD | null = null;
+  /**
+   * True while a Yard interactable is in range THIS frame: F then belongs
+   * to the terminal (interaction) — the weapon inspect (also F) yields.
+   */
+  private interactNearby = false;
   private readonly feetPos = new THREE.Vector3();
 
   // ---- Hammer melee ----
@@ -1242,15 +1247,21 @@ export class Game {
       this.yardEffects.update(dt, feet);
 
       // Terminal prompt + F to interact (blocked while dead / paused).
+      // While an interactable is in range, F is the INTERACT key — the
+      // weapon inspect (same key) is suppressed via interactNearby.
       if (feet) {
         const item = this.yardEffects.nearby(feet, this.player.collider);
         this.interactHud?.setPrompt(item ? item.label : null);
+        this.interactNearby = item !== null;
         if (item && this.input.wasPressed("KeyF")) {
           this.yardEffects.interact(feet, this.player.collider);
         }
       } else {
         this.interactHud?.setPrompt(null);
+        this.interactNearby = false;
       }
+    } else {
+      this.interactNearby = false;
     }
 
     // Sync bot visuals to their post-step physics positions, then refresh
@@ -1415,10 +1426,12 @@ export class Game {
         firePressed:
           hexEquipped && playerAlive && !meleeBlocked && this.input.wasMousePressed(0),
         zoomHeld: this.input.isMouseDown(2),
-        // T = affectionate inspection (audited: unused by every other
-        // binding — movement WASD/Space/Shift/E, melee A, interact F,
-        // reload/respawn R, killstreaks 1/2/3, arrows, F1). Visual only.
-        inspectPressed: hexEquipped && this.input.wasPressed("KeyT"),
+        // F = affectionate inspection (classic FPS inspect key). F is
+        // shared with the Yard terminal interaction: when an interactable
+        // is in range (interactNearby), the terminal wins and the inspect
+        // is suppressed — otherwise F is free for the weapon. Visual only.
+        inspectPressed:
+          hexEquipped && !this.interactNearby && this.input.wasPressed("KeyF"),
         canAct: hexEquipped && playerAlive && !meleeBlocked && this.input.pointerLocked,
         grounded: this.movement.grounded,
         speed: this.movement.horizontalSpeed,

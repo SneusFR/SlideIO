@@ -19,7 +19,7 @@ export interface HexSniperFrameInput {
   firePressed: boolean;
   /** RMB held → classic sniper ADS (×4 zoom — the Game drives the camera). */
   zoomHeld: boolean;
-  /** T edge → affectionate inspection (visual only, heavily gated). */
+  /** F edge → affectionate inspection (visual only, heavily gated). */
   inspectPressed: boolean;
   /** False while dead / melee busy / mole strike → inputs ignored. */
   canAct: boolean;
@@ -400,7 +400,7 @@ export class HexSniperWeapon {
       this.cancelInspection();
     }
 
-    // ---- Inspection start (T edge) — visual only, heavily gated:
+    // ---- Inspection start (F edge) — visual only, heavily gated:
     // weapon active+loaded, player can act, grounded and stationary, no
     // ADS, no attack / tongue return / bitePending, visual controller at
     // rest. No gameplay events, ever.

@@ -139,6 +139,17 @@ export class RemotePlayerAnimationController {
    * never does; recalibrated on the Potato rig's rest bases).
    */
   private readonly spineTwistSigns: number[] = [];
+  /**
+   * Procedural offsets applied to each spine bone LAST frame (X = pitch +
+   * lean, Y = counter-twist). Reverted right before the next mixer update:
+   * the mixer only rewrites bones the ACTIVE clips have tracks for, and
+   * several pack clips skip parts of the chain (TP_Hold/TP_Aim animate
+   * only Spine_1; Run_Goofy skips Spine_1 and Neck) — an un-reverted
+   * additive offset on such a bone survives into the next frame's "+="
+   * and ACCUMULATES (visible as a continuous torso/head roll).
+   */
+  private readonly appliedSpineX: number[] = [];
+  private readonly appliedSpineY: number[] = [];
   private smoothedPitch = 0;
   private smoothedLean = 0;
   private smoothedRaise = 0;
@@ -219,6 +230,8 @@ export class RemotePlayerAnimationController {
         // sign from the REST-pose world matrix (Y column, index 5) so the
         // counter-twist always happens around the world vertical axis.
         this.spineTwistSigns.push(bone.matrixWorld.elements[5] >= 0 ? 1 : -1);
+        this.appliedSpineX.push(0);
+        this.appliedSpineY.push(0);
       }
     });
   }
@@ -317,6 +330,20 @@ export class RemotePlayerAnimationController {
       }
     }
 
+    // UNDO last frame's procedural spine offsets BEFORE the mixer runs:
+    // clips that don't carry a track for a given spine bone leave it
+    // untouched, so the leftover "+=" from the previous frame would stack
+    // forever (the continuous-roll bug). Reverting first makes the offsets
+    // truly per-frame for tracked AND untracked bones alike (tracked bones
+    // simply get overwritten by the mixer right after — harmless).
+    for (let i = 0; i < this.spineBones.length; i++) {
+      const bone = this.spineBones[i];
+      bone.rotation.x -= this.appliedSpineX[i];
+      bone.rotation.y -= this.appliedSpineY[i];
+      this.appliedSpineX[i] = 0;
+      this.appliedSpineY[i] = 0;
+    }
+
     this.mixer.update(dt);
 
     // ---- Procedural adjustments AFTER the mixer (it would otherwise
@@ -349,15 +376,15 @@ export class RemotePlayerAnimationController {
     this.smoothedPitch += (clamped - this.smoothedPitch) * pk;
 
     const n = this.spineBones.length;
-    // AIRBORNE + SLIDING + DASHING: procedural pitch/lean/counter-twist
-    // are DISABLED — these clips animate the spine chain themselves;
-    // layering additive Euler offsets on top made the head/torso roll on
-    // the old rig and the same conflict exists on the Potato clips (Jump,
-    // Dash and Slide all carry Spine/Chest/Neck/Head tracks). The offsets
-    // below are applied to the MIXER OUTPUT of this frame (never
-    // accumulated onto the previous frame's rotations).
+    // SLIDING + DASHING: procedural pitch/lean/counter-twist are DISABLED —
+    // the body is pitched near-horizontal by these clips, so layering the
+    // aim pitch on top breaks the pose. AIRBORNE keeps the procedural
+    // pitch: the head must HOLD the aim direction through a jump instead
+    // of snapping back to the raw Jump-clip pose (this also re-enables the
+    // fallLean hint, which only exists while airborne). Safe since the
+    // per-frame offsets are reverted before every mixer update — they can
+    // never accumulate on top of the clip (see appliedSpineX/Y).
     const proceduralSpineOff =
-      state === NetworkMovementState.AIRBORNE ||
       state === NetworkMovementState.SLIDING ||
       state === NetworkMovementState.DASHING;
     if (n > 0 && !proceduralSpineOff) {
@@ -368,10 +395,14 @@ export class RemotePlayerAnimationController {
       const perBoneTwist = -this.smoothedLegYaw / n;
       for (let i = 0; i < n; i++) {
         const bone = this.spineBones[i];
-        bone.rotation.x += perBonePitch + perBoneLean;
-        if (perBoneTwist !== 0) {
-          bone.rotation.y += perBoneTwist * this.spineTwistSigns[i];
-        }
+        const offX = perBonePitch + perBoneLean;
+        const offY = perBoneTwist !== 0 ? perBoneTwist * this.spineTwistSigns[i] : 0;
+        bone.rotation.x += offX;
+        bone.rotation.y += offY;
+        // Remember the exact offsets so next frame reverts them BEFORE the
+        // mixer — bones without a track in the active clips never stack.
+        this.appliedSpineX[i] = offX;
+        this.appliedSpineY[i] = offY;
       }
     }
   }
