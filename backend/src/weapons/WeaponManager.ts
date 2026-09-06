@@ -12,6 +12,7 @@ import {
 import { DamageType, HitZone } from "../combat/DamageTypes";
 import { DamageResult } from "../combat/DamageResult";
 import { NetworkPlayer } from "../schemas/NetworkPlayer";
+import { MAP_COLLIDER_BOXES, type ColliderBox } from "../../../shared/map/MapColliders";
 import {
   Vec3,
   HitTarget,
@@ -167,7 +168,15 @@ export class WeaponManager {
   private readonly projectiles: RevolverProjectile[] = [];
   private readonly bassProjectiles: BassNoteProjectile[] = [];
 
-  constructor(private readonly host: WeaponManagerHost) {}
+  /**
+   * @param mapBoxes the room's map collision world (shared MapRegistry) —
+   *        every wall occlusion / placement raycast uses THIS list, so a
+   *        Yard room never occludes shots against Jungle walls.
+   */
+  constructor(
+    private readonly host: WeaponManagerHost,
+    private readonly mapBoxes: ColliderBox[] = MAP_COLLIDER_BOXES,
+  ) {}
 
   private stateOf(id: string): PlayerWeaponState {
     let s = this.states.get(id);
@@ -411,7 +420,7 @@ export class WeaponManager {
     // Rewind by the shooter's DECLARED view delay (refreshed on START/AIM,
     // already hard-clamped) so the beam hits what the shooter sees.
     const rewindTime = now - Math.min(s.plasmaViewDelayMs, LAG_COMP_MAX_REWIND_MS);
-    const hit = hitscan(origin, s.plasmaDir, W.plasma.range, this.rewindTargets(player.id, rewindTime), player.id);
+    const hit = hitscan(origin, s.plasmaDir, W.plasma.range, this.rewindTargets(player.id, rewindTime), player.id, this.mapBoxes);
     if (!hit || hit.kind !== "player" || !hit.targetId) return;
 
     const zone = hit.zone === NetworkHitZone.HEAD ? HitZone.HEAD : HitZone.BODY;
@@ -429,7 +438,7 @@ export class WeaponManager {
     // Anchor the ray on the CURRENT transform (aim refreshed by POISON_AIM).
     const origin = this.eyePos(player);
     const rewindTime = now - Math.min(s.poisonViewDelayMs, LAG_COMP_MAX_REWIND_MS);
-    const hit = hitscan(origin, s.poisonDir, W.poison.range, this.rewindTargets(player.id, rewindTime), player.id);
+    const hit = hitscan(origin, s.poisonDir, W.poison.range, this.rewindTargets(player.id, rewindTime), player.id, this.mapBoxes);
     if (!hit || hit.kind !== "player" || !hit.targetId) return;
 
     // No headshot bonus: a poison cone has no precise impact point.
@@ -461,7 +470,7 @@ export class WeaponManager {
     s.lastRevolverShotAt = now;
     s.revolverAmmo--;
 
-    const hit = hitscan(origin, dir, W.revolver.range, this.rewindTargets(player.id, rewindTime), player.id);
+    const hit = hitscan(origin, dir, W.revolver.range, this.rewindTargets(player.id, rewindTime), player.id, this.mapBoxes);
     const hitPoint = hit ? hit.point : pointAt(origin, dir, W.revolver.range);
     this.confirm(player, s.weapon, WeaponActionType.REVOLVER_FIRE, seq, origin, dir, hitPoint);
 
@@ -509,9 +518,9 @@ export class WeaponManager {
       let impact: Vec3 = p.pos;
 
       if (!exploded && dir) {
-        const wallT = raycastMap(p.pos, dir, stepLen);
+        const wallT = raycastMap(p.pos, dir, stepLen, this.mapBoxes);
         // Player contact: capsule proximity along the step.
-        const hit = hitscan(p.pos, dir, stepLen, this.rewindTargets(p.ownerId), p.ownerId);
+        const hit = hitscan(p.pos, dir, stepLen, this.rewindTargets(p.ownerId), p.ownerId, this.mapBoxes);
         const t =
           hit && (wallT === null || hit.distance <= wallT)
             ? hit.distance
@@ -553,7 +562,7 @@ export class WeaponManager {
       if (!target.isAlive || target.id === ownerId) continue; // owner immune
       const center = { x: target.x, y: target.y, z: target.z };
       if (distance(center, at) > W.revolver.explosionRadius) continue;
-      if (!hasLineOfSight(at, center)) continue;
+      if (!hasLineOfSight(at, center, this.mapBoxes)) continue;
       const amount = target.maxHealth * W.revolver.explosionDamageFraction;
       this.dealDamage(owner, target.id, amount, DamageType.REVOLVER_EXPLOSION, HitZone.BODY, NetworkWeaponId.REVOLVER);
     }
@@ -617,8 +626,8 @@ export class WeaponManager {
       // Rewind targets by the shooter's captured view delay so the note
       // hits what the shooter aimed at when it was fired.
       const rewindTime = now - p.viewDelayMs;
-      const wallT = raycastMap(p.pos, dir, stepLen);
-      const hit = hitscan(p.pos, dir, stepLen, this.rewindTargets(p.ownerId, rewindTime), p.ownerId);
+      const wallT = raycastMap(p.pos, dir, stepLen, this.mapBoxes);
+      const hit = hitscan(p.pos, dir, stepLen, this.rewindTargets(p.ownerId, rewindTime), p.ownerId, this.mapBoxes);
 
       if (
         hit &&
@@ -687,7 +696,7 @@ export class WeaponManager {
         if (dot < cosHalfArc) continue; // outside the frontal arc
       }
       const eye = this.eyePos(player);
-      if (!hasLineOfSight(eye, { x: target.x, y: target.y, z: target.z })) continue;
+      if (!hasLineOfSight(eye, { x: target.x, y: target.y, z: target.z }, this.mapBoxes)) continue;
 
       const amount =
         t.maxHealth *
@@ -814,7 +823,7 @@ export class WeaponManager {
     if (s.weapon !== NetworkWeaponId.OBLITERREUR || !origin || !dir) return;
 
     // Server raycast along the aim ray (authoritative surface check).
-    const t = raycastMap(origin, dir, W.obliterreur.placementRange);
+    const t = raycastMap(origin, dir, W.obliterreur.placementRange, this.mapBoxes);
     const serverHit = t !== null ? pointAt(origin, dir, t) : null;
 
     // The CLIENT's exact anchor point (px/py/pz) is used whenever it is
@@ -834,7 +843,7 @@ export class WeaponManager {
           z: reported.z - origin.z,
         });
         if (toReported) {
-          const t2 = raycastMap(origin, toReported, W.obliterreur.placementRange);
+          const t2 = raycastMap(origin, toReported, W.obliterreur.placementRange, this.mapBoxes);
           const d = distance(origin, reported);
           if (t2 !== null && Math.abs(t2 - d) <= W.obliterreur.anchorTolerance) {
             anchor = reported;

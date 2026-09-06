@@ -22,6 +22,12 @@ import {
   DEFAULT_CROSSHAIR,
   type CrosshairSettings,
 } from "../ui/CrosshairSettings";
+import {
+  loadMapSelection,
+  saveMapSelection,
+  mapDisplayName,
+  nextMapId,
+} from "../world/MapSelection";
 
 /**
  * MenuOverlay — the new Beanzo.io main menu: a pure DOM overlay rendered
@@ -89,6 +95,7 @@ export class MenuOverlay {
 
     // ---- Server panel static labels ----
     this.setText("menu-region-value", MultiplayerConfig.serverRegion);
+    this.setText("menu-map-value", mapDisplayName(loadMapSelection()));
     this.renderLobbyState();
 
     // ---- Ad slot (right column, under the nav) ----
@@ -143,6 +150,17 @@ export class MenuOverlay {
           case "change-lobby":
             this.onChangeLobby?.();
             break;
+          case "change-map": {
+            // The map is loaded ONCE during the boot phase (same pattern
+            // as the graphics preset): persist the next id, then reload.
+            // Blocked while in a lobby — the room's map is fixed.
+            if (this.client.isConnected) break;
+            const next = nextMapId(loadMapSelection());
+            saveMapSelection(next);
+            this.setText("menu-map-value", `${mapDisplayName(next)} — RELOADING…`);
+            setTimeout(() => window.location.reload(), 350);
+            break;
+          }
           case "leave":
             this.onLeaveGame?.();
             break;
@@ -438,6 +456,12 @@ export class MenuOverlay {
       '[data-menu="change-lobby"]',
     );
     if (change) change.style.display = paused ? "none" : "";
+
+    // The map can't be changed mid-game either (it would reload the page).
+    const changeMap = this.root.querySelector<HTMLButtonElement>(
+      '[data-menu="change-map"]',
+    );
+    if (changeMap) changeMap.style.display = paused ? "none" : "";
 
     // LEAVE GAME: multiplayer pause only.
     const leave = this.root.querySelector<HTMLButtonElement>('[data-menu="leave"]');

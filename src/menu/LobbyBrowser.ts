@@ -1,6 +1,8 @@
 import type { MenuAudio } from "./MenuAudio";
 import type { AvailableLobby, MultiplayerClient } from "../network/MultiplayerClient";
 import { MultiplayerConfig } from "../network/MultiplayerConfig";
+import { isMapId } from "../../shared/map/MapRegistry";
+import { mapDisplayName } from "../world/MapSelection";
 
 /**
  * Compact LOBBY BROWSER modal (opened by the server panel's CHANGE
@@ -120,7 +122,7 @@ export class LobbyBrowser {
         <div class="lbw-row">
           <span class="lbw-row-region">${escapeHtml(regionShort())}</span>
           <span class="lbw-row-id">${escapeHtml(l.roomId)}</span>
-          <span class="lbw-row-mode">FFA</span>
+          <span class="lbw-row-mode">${escapeHtml(mapLabel(l.map))}</span>
           <span class="lbw-row-players">${l.clients}/${l.maxClients}</span>
           <button class="lbw-btn lbw-btn-join" type="button" data-room="${escapeHtml(l.roomId)}"
             ${l.clients >= l.maxClients ? "disabled" : ""}>
@@ -157,6 +159,11 @@ export class LobbyBrowser {
     document.removeEventListener("keydown", this.onKeyDown);
     this.root.remove();
   }
+}
+
+/** Map tag for list rows ("YARD" → "YARD 01", unknown → "FFA"). */
+function mapLabel(raw: string): string {
+  return isMapId(raw) ? mapDisplayName(raw) : "FFA";
 }
 
 /** Short region tag for list rows ("EUROPE" → "EU"). */

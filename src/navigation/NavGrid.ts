@@ -10,21 +10,48 @@ import { PhysicsWorld, RAPIER } from "../physics/PhysicsWorld";
  * IMPORTANT: build BEFORE creating character capsules (player/bots), so
  * only static geometry blocks cells.
  */
+export interface NavGridBounds {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  /** Highest walkable floor (tops of walls/covers are not walkable). */
+  maxFloorY: number;
+  /** Lowest walkable floor. */
+  minFloorY: number;
+}
+
+/** Ancient Jungle City playable area (perimeter walls at ±60,
+ *  Sun Gate / East Ridge +3 m, Lower Court −1.5 m). */
+export const JUNGLE_NAV_BOUNDS: NavGridBounds = {
+  minX: -58,
+  maxX: 58,
+  minZ: -58,
+  maxZ: 58,
+  maxFloorY: 3.6,
+  minFloorY: -2.0,
+};
+
+/** YARD 01 main arena (retaining walls at ±56, upper slabs +4.8 m).
+ *  The west acid wing (x < −57) is deliberately EXCLUDED: bots never
+ *  roam the parkour route or the pool. */
+export const YARD_NAV_BOUNDS: NavGridBounds = {
+  minX: -54,
+  maxX: 54,
+  minZ: -58,
+  maxZ: 106,
+  maxFloorY: 5.4,
+  minFloorY: -0.5,
+};
+
 export class NavGrid {
   private static readonly CELL = 1.5;
-  // Ancient Jungle City playable area (perimeter walls at ±60).
-  private static readonly MIN_X = -58;
-  private static readonly MAX_X = 58;
-  private static readonly MIN_Z = -58;
-  private static readonly MAX_Z = 58;
-  /** Highest walkable floor (Sun Gate / East Ridge = +3 m). */
-  private static readonly MAX_FLOOR_Y = 3.6;
-  /** Lowest walkable floor (Lower Court = −1.5 m). */
-  private static readonly MIN_FLOOR_Y = -2.0;
-  /** Max ground-height difference between adjacent cells (ramps ≈ 0.38 m
-   *  per cell at 14°; autostep 0.25 m — anything bigger is a ledge). */
+  /** Max ground-height difference between adjacent cells (Jungle ramps
+   *  ≈ 0.38 m/cell at 14°, Yard ramps ≈ 0.56 m/cell at 20.6°; autostep
+   *  0.25 m — anything bigger is a ledge). */
   private static readonly MAX_STEP_Y = 0.8;
 
+  private readonly bounds: NavGridBounds;
   private readonly nx: number;
   private readonly nz: number;
   private readonly walkable: Uint8Array;
@@ -37,9 +64,13 @@ export class NavGrid {
   private readonly state: Uint8Array; // 0 untouched, 1 open, 2 closed
   private readonly open: number[] = [];
 
-  constructor(private physics: PhysicsWorld) {
-    this.nx = Math.floor((NavGrid.MAX_X - NavGrid.MIN_X) / NavGrid.CELL) + 1;
-    this.nz = Math.floor((NavGrid.MAX_Z - NavGrid.MIN_Z) / NavGrid.CELL) + 1;
+  constructor(
+    private physics: PhysicsWorld,
+    bounds: NavGridBounds = JUNGLE_NAV_BOUNDS,
+  ) {
+    this.bounds = bounds;
+    this.nx = Math.floor((bounds.maxX - bounds.minX) / NavGrid.CELL) + 1;
+    this.nz = Math.floor((bounds.maxZ - bounds.minZ) / NavGrid.CELL) + 1;
     const n = this.nx * this.nz;
     this.walkable = new Uint8Array(n);
     this.groundY = new Float32Array(n);
@@ -54,14 +85,14 @@ export class NavGrid {
     const rot = { x: 0, y: 0, z: 0, w: 1 };
     const down = { x: 0, y: -1, z: 0 };
     // Ray origin above the highest walkable floor; long enough to reach
-    // the Lower Court (−1.5 m).
-    const rayOriginY = NavGrid.MAX_FLOOR_Y + 3;
-    const rayLength = rayOriginY - NavGrid.MIN_FLOOR_Y + 0.5;
+    // the lowest one.
+    const rayOriginY = this.bounds.maxFloorY + 3;
+    const rayLength = rayOriginY - this.bounds.minFloorY + 0.5;
 
     for (let j = 0; j < this.nz; j++) {
       for (let i = 0; i < this.nx; i++) {
-        const x = NavGrid.MIN_X + i * NavGrid.CELL;
-        const z = NavGrid.MIN_Z + j * NavGrid.CELL;
+        const x = this.bounds.minX + i * NavGrid.CELL;
+        const z = this.bounds.minZ + j * NavGrid.CELL;
 
         // Must have ground below (first surface from above)…
         const ground = this.physics.world.castRay(
@@ -72,7 +103,7 @@ export class NavGrid {
         if (!ground) continue;
         const gy = rayOriginY - ground.timeOfImpact;
         // …at a real FLOOR height (tops of walls/covers are not walkable)…
-        if (gy > NavGrid.MAX_FLOOR_Y || gy < NavGrid.MIN_FLOOR_Y) continue;
+        if (gy > this.bounds.maxFloorY || gy < this.bounds.minFloorY) continue;
 
         // …and room for a (slightly slim) standing capsule above it.
         const blocked = this.physics.world.intersectionWithShape(
@@ -94,17 +125,17 @@ export class NavGrid {
   }
 
   private cellX(i: number): number {
-    return NavGrid.MIN_X + i * NavGrid.CELL;
+    return this.bounds.minX + i * NavGrid.CELL;
   }
 
   private cellZ(j: number): number {
-    return NavGrid.MIN_Z + j * NavGrid.CELL;
+    return this.bounds.minZ + j * NavGrid.CELL;
   }
 
   /** Nearest walkable cell index for a world position, or -1. */
   private nearestCell(x: number, z: number): number {
-    const ci = Math.round((x - NavGrid.MIN_X) / NavGrid.CELL);
-    const cj = Math.round((z - NavGrid.MIN_Z) / NavGrid.CELL);
+    const ci = Math.round((x - this.bounds.minX) / NavGrid.CELL);
+    const cj = Math.round((z - this.bounds.minZ) / NavGrid.CELL);
     for (let r = 0; r <= 4; r++) {
       for (let dj = -r; dj <= r; dj++) {
         for (let di = -r; di <= r; di++) {

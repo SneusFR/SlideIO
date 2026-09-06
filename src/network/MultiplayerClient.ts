@@ -103,6 +103,8 @@ export interface AvailableLobby {
   roomId: string;
   clients: number;
   maxClients: number;
+  /** MapId the room plays on (from the room metadata; JUNGLE fallback). */
+  map: string;
 }
 
 /**
@@ -177,6 +179,11 @@ export class MultiplayerClient {
     return (this.room?.state as RoomStateLike | undefined)?.phase ?? null;
   }
 
+  /** MapId of the joined room ("JUNGLE" | "YARD") or null if not connected. */
+  get roomMapId(): string | null {
+    return (this.room?.state as RoomStateLike | undefined)?.mapId ?? null;
+  }
+
   /** Smoothed local RTT (ms) or null before the first PONG. */
   get rttMs(): number | null {
     return Number.isNaN(this.rttSmoothed) ? null : this.rttSmoothed;
@@ -187,13 +194,20 @@ export class MultiplayerClient {
     return this.rttJitter;
   }
 
-  /** Create a new private lobby and join it as HOST. */
-  async createLobby(displayName: string): Promise<void> {
+  /**
+   * Create a new private lobby and join it as HOST.
+   * `mapId` fixes the room's map at creation (server-validated — an
+   * unknown id falls back to the default map).
+   */
+  async createLobby(displayName: string, mapId?: string): Promise<void> {
     const client = this.ensureClient();
     try {
-      const room = await client.create(MultiplayerConfig.roomName, { name: displayName });
+      const room = await client.create(MultiplayerConfig.roomName, {
+        name: displayName,
+        ...(mapId ? { map: mapId } : {}),
+      });
       this.bindRoom(room);
-      logDev(`Created + joined room ${room.roomId}`);
+      logDev(`Created + joined room ${room.roomId} (map ${mapId ?? "default"})`);
     } catch (err) {
       throw toMultiplayerError(err);
     }
@@ -213,6 +227,10 @@ export class MultiplayerClient {
         roomId: r.roomId,
         clients: r.clients,
         maxClients: r.maxClients,
+        map:
+          typeof (r.metadata as { map?: unknown } | undefined)?.map === "string"
+            ? ((r.metadata as { map: string }).map)
+            : "JUNGLE",
       }));
     } catch {
       return [];
@@ -601,6 +619,7 @@ export class MultiplayerClient {
 /** Shape of the reflected room state / NetworkPlayer schema on the client. */
 interface RoomStateLike {
   phase?: string;
+  mapId?: string;
   players?: {
     forEach(cb: (p: NetworkPlayerLike, key: string) => void): void;
   };

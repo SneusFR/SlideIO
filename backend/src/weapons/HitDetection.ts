@@ -1,4 +1,4 @@
-import { MAP_COLLIDER_BOXES } from "../../../shared/map/MapColliders";
+import { MAP_COLLIDER_BOXES, type ColliderBox } from "../../../shared/map/MapColliders";
 import {
   NetworkHitZone,
   PLAYER_CAPSULE_HALF_HEIGHT,
@@ -72,10 +72,19 @@ function rayVsAabb(
   return tMin;
 }
 
-/** Nearest map-geometry hit distance along the ray, or null. */
-export function raycastMap(o: Vec3, d: Vec3, maxDist: number): number | null {
+/**
+ * Nearest map-geometry hit distance along the ray, or null.
+ * `boxes` selects the map's collision world (defaults to Jungle City —
+ * per-room maps pass their own list from the shared MapRegistry).
+ */
+export function raycastMap(
+  o: Vec3,
+  d: Vec3,
+  maxDist: number,
+  boxes: ColliderBox[] = MAP_COLLIDER_BOXES,
+): number | null {
   let best: number | null = null;
-  for (const b of MAP_COLLIDER_BOXES) {
+  for (const b of boxes) {
     const t = rayVsAabb(o, d, b[0], b[1], b[2], b[3] / 2, b[4] / 2, b[5] / 2, maxDist);
     if (t !== null && t >= 0 && (best === null || t < best)) best = t;
   }
@@ -148,8 +157,9 @@ export function hitscan(
   maxRange: number,
   targets: Iterable<HitTarget>,
   excludeId: string | null,
+  boxes: ColliderBox[] = MAP_COLLIDER_BOXES,
 ): HitscanResult | null {
-  const wallT = raycastMap(origin, dir, maxRange);
+  const wallT = raycastMap(origin, dir, maxRange, boxes);
 
   let bestT: number | null = null;
   let bestId: string | null = null;
@@ -211,14 +221,18 @@ export function hitscan(
 }
 
 /** True when no map geometry blocks the segment a → b. */
-export function hasLineOfSight(a: Vec3, b: Vec3): boolean {
+export function hasLineOfSight(
+  a: Vec3,
+  b: Vec3,
+  boxes: ColliderBox[] = MAP_COLLIDER_BOXES,
+): boolean {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const dz = b.z - a.z;
   const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
   if (len < 1e-6) return true;
   const dir = { x: dx / len, y: dy / len, z: dz / len };
-  const t = raycastMap(a, dir, len);
+  const t = raycastMap(a, dir, len, boxes);
   return t === null || t >= len - 1e-3;
 }
 

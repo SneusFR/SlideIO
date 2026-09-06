@@ -23,8 +23,14 @@ export class TargetManager {
   private readonly explosionViolet = new THREE.Color(0xc084fc);
   private readonly explosionWhite = new THREE.Color(0xffffff);
 
-  constructor(particles: ParticleSystem) {
+  /**
+   * @param createTargets false = no training targets at all (YARD map —
+   *        the manager still exists so weapon adapters / update calls
+   *        keep working against empty lists).
+   */
+  constructor(particles: ParticleSystem, createTargets = true) {
     this.particles = particles;
+    if (!createTargets) return;
 
     // ---- Close range: Central Crossing plaza ----
     this.add(

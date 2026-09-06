@@ -10,6 +10,8 @@ import {
   MultiplayerConfig,
   saveDisplayName,
 } from "./MultiplayerConfig";
+import { loadMapSelection, saveMapSelection, mapDisplayName } from "../world/MapSelection";
+import { isMapId } from "../../shared/map/MapRegistry";
 
 type Screen = "menu" | "join" | "lobby" | "busy" | "error";
 
@@ -146,9 +148,12 @@ export class LobbyController {
   private showLobby(): void {
     this.setScreen("lobby");
     const roomId = this.client.roomId ?? "—";
+    const roomMap = this.client.roomMapId;
+    const mapLabel = roomMap && isMapId(roomMap) ? mapDisplayName(roomMap) : "";
     this.panel.innerHTML = `
       <div class="mp-title">PRIVATE LOBBY</div>
       <div class="mp-room-row">Room: <span class="mp-room-id">${escapeHtml(roomId)}</span></div>
+      ${mapLabel ? `<div class="mp-room-row">Map: <span class="mp-room-id">${escapeHtml(mapLabel)}</span></div>` : ""}
       <div class="mp-sub">PLAYERS</div>
       <div class="mp-sep"></div>
       <div id="mp-players"></div>
@@ -190,7 +195,9 @@ export class LobbyController {
     const name = this.readName();
     this.showBusy("CREATING LOBBY");
     try {
-      await this.client.createLobby(name);
+      // The lobby plays the map THIS client already has loaded (persisted
+      // selection — the assets are warm, the match can start instantly).
+      await this.client.createLobby(name, loadMapSelection());
       this.showLobby();
     } catch (err) {
       this.showError(errorTitle(err));
@@ -211,6 +218,21 @@ export class LobbyController {
     this.showBusy("JOINING LOBBY");
     try {
       await this.client.joinLobby(roomId, name);
+
+      // MAP CHECK: the room's map is fixed at creation. If it differs from
+      // the map THIS page has loaded, persist the room's map and reload to
+      // /join/{roomId} — the boot phase loads the right map, then the
+      // invite flow auto-rejoins (same reload pattern as the graphics
+      // preset; assets are only ever loaded once per page life).
+      const roomMap = this.client.roomMapId;
+      if (roomMap && isMapId(roomMap) && roomMap !== loadMapSelection()) {
+        saveMapSelection(roomMap);
+        this.showBusy(`LOADING ${mapDisplayName(roomMap)}`);
+        await this.client.leaveLobby();
+        window.location.assign(`${MultiplayerConfig.joinPathPrefix}${roomId}`);
+        return;
+      }
+
       this.showLobby();
     } catch (err) {
       const kind = err instanceof MultiplayerError ? err.kind : "unknown";

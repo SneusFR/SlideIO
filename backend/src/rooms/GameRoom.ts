@@ -3,18 +3,31 @@ import { CombatManager, PlayerDiedEvent } from "../combat/CombatManager";
 import { ServerTransformTrace } from "../diagnostics/TransformTrace";
 import { eventLoopMonitor } from "../diagnostics/EventLoopMonitor";
 import { DamageType, HitZone, isDamageType, isHitZone } from "../combat/DamageTypes";
-import { MULTIPLAYER_SPAWN_POINTS, RespawnManager } from "../combat/RespawnManager";
+import { RespawnManager } from "../combat/RespawnManager";
 import { serverConfig } from "../config/serverConfig";
 import { GameRoomPhase, GameRoomState } from "../schemas/GameRoomState";
 import { NetworkPlayer } from "../schemas/NetworkPlayer";
 import { WeaponManager } from "../weapons/WeaponManager";
 import {
+  PLAYER_FEET_OFFSET,
   WeaponActionMessage,
   WeaponEquipMessage,
 } from "../../../shared/combat/NetworkWeapons";
+import {
+  DEFAULT_MAP_ID,
+  getMapDefinition,
+  isMapId,
+  type MapDefinition,
+} from "../../../shared/map/MapRegistry";
 
 interface JoinOptions {
   name?: unknown;
+}
+
+/** Room creation options (the CREATOR picks the map — fixed afterwards). */
+interface CreateOptions {
+  name?: unknown;
+  map?: unknown;
 }
 
 /**
@@ -77,6 +90,11 @@ const MAX_MOVEMENT_STATE = 5; // 5 = BURROWED (MOLE STRIKE)
 export class GameRoom extends Room<GameRoomState> {
   maxClients = serverConfig.maxClientsPerRoom;
 
+  /** The room's map (shared registry entry — colliders / spawns / hazards). */
+  private map!: MapDefinition;
+  /** Per-player hazard damage throttle (server ms of the next allowed tick). */
+  private readonly hazardNextTickAt = new Map<string, number>();
+
   /** Phase 4: server authority over HP / death / stats (combat module). */
   private combat!: CombatManager;
   /** Phase 4: server-driven respawn timers + spawn selection. */
@@ -99,15 +117,29 @@ export class GameRoom extends Room<GameRoomState> {
   /** performance.now() when the combat counters were last drained. */
   private combatCountersSince = 0;
 
-  onCreate(): void {
+  onCreate(options?: CreateOptions): void {
     this.setState(new GameRoomState());
     // Private lobby: never listed in public matchmaking. Join happens
     // exclusively via roomId (invite link / manual code).
     this.setPrivate(true);
 
+    // MAP: validated against the shared registry — an unknown / missing id
+    // falls back to the default map so old clients keep working unchanged.
+    const mapId = isMapId(options?.map) ? options.map : DEFAULT_MAP_ID;
+    this.map = getMapDefinition(mapId);
+    this.state.mapId = this.map.id;
+    // Lobby browser rows read the map from the room metadata (available
+    // through getAvailableRooms without joining).
+    void this.setMetadata({ map: this.map.id });
+
     this.combat = new CombatManager(this.state);
     this.combat.onPlayerDied = (event) => this.onPlayerDied(event);
-    this.respawns = new RespawnManager(this.clock);
+    // Respawns use THIS map's validated spawn points (capsule centers +
+    // the same small Y margin the frontend applies).
+    this.respawns = new RespawnManager(
+      this.clock,
+      this.map.spawnPoints.map((s) => ({ x: s.x, y: s.y + 0.3, z: s.z, yaw: s.yaw })),
+    );
 
     // State patches at 30 Hz (Colyseus default: 20 Hz). Transforms are
     // relayed through the synced state, so the patch rate is a direct
@@ -162,12 +194,15 @@ export class GameRoom extends Room<GameRoomState> {
         }
       },
       now: () => Date.now(),
-    });
+    }, this.map.colliderBoxes);
     // Fixed 20 Hz combat tick (plasma DPS, oblit beam, rush, projectiles) —
     // damage uses the REAL deltaTime, never a per-frame loop.
     this.setSimulationInterval((deltaMs) => {
       if (this.state.phase === GameRoomPhase.PLAYING) {
         this.weapons.tick(deltaMs / 1000);
+        // Map hazards (YARD acid pool): authoritative, independent of any
+        // client rendering or graphics settings — pure transform checks.
+        if (this.map.hazards.length > 0) this.tickHazards();
       }
     }, 50);
 
@@ -231,6 +266,7 @@ export class GameRoom extends Room<GameRoomState> {
     this.respawns.cancel(client.sessionId);
     this.combat.removePlayer(client.sessionId);
     this.weapons.removePlayer(client.sessionId);
+    this.hazardNextTickAt.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
     this.trace?.removePlayer(client.sessionId);
     console.log(
@@ -317,9 +353,15 @@ export class GameRoom extends Room<GameRoomState> {
 
   /** Server-side spawn assignment: distinct points whenever possible. */
   private assignSpawnPoints(): void {
+    // THIS map's spawn points (capsule centers + the frontend's Y margin).
     // Shuffled copy → different games use different pads; index-per-player
     // guarantees distinct spawns while players ≤ spawn points.
-    const shuffled = [...MULTIPLAYER_SPAWN_POINTS];
+    const shuffled = this.map.spawnPoints.map((s) => ({
+      x: s.x,
+      y: s.y + 0.3,
+      z: s.z,
+      yaw: s.yaw,
+    }));
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
@@ -403,6 +445,44 @@ export class GameRoom extends Room<GameRoomState> {
     player.ts = Date.now();
     // Phase 5: feed the lag-compensation history (ServerPlayerHistory).
     this.weapons.recordTransform(player);
+  }
+
+  // ------------------------------------------------------------------
+  // Map hazards — server-authoritative environment damage (YARD acid)
+  // ------------------------------------------------------------------
+
+  /**
+   * Acid check on the fixed simulation tick: a player whose FEET are
+   * inside a hazard volume takes lethal environment damage (throttled per
+   * player so the pipeline fires once, not 20×/s while dying). The client
+   * shows its own local splash/feedback — the DEATH decision lives here.
+   */
+  private tickHazards(): void {
+    const now = Date.now();
+    this.state.players.forEach((player) => {
+      if (!player.isAlive) return;
+      if (now < (this.hazardNextTickAt.get(player.id) ?? 0)) return;
+      const feetY = player.y - PLAYER_FEET_OFFSET;
+      for (const hazard of this.map.hazards) {
+        if (
+          player.x >= hazard.min[0] && player.x <= hazard.max[0] &&
+          feetY >= hazard.min[1] && feetY <= hazard.max[1] &&
+          player.z >= hazard.min[2] && player.z <= hazard.max[2]
+        ) {
+          this.hazardNextTickAt.set(player.id, now + 800);
+          // Lethal: the acid pool is a death pit, not a DoT — one tick
+          // kills (spawn protection is still honored by applyDamage).
+          this.combat.applyDamage({
+            attackerId: null,
+            targetId: player.id,
+            amount: player.maxHealth,
+            damageType: DamageType.ENVIRONMENT,
+            hitZone: HitZone.BODY,
+          });
+          break;
+        }
+      }
+    });
   }
 
   // ------------------------------------------------------------------

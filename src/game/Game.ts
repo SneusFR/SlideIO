@@ -5,8 +5,17 @@ import { FPSCamera } from "../camera/FPSCamera";
 import { PlayerController } from "../player/PlayerController";
 import { PlayerMovement, MoveState } from "../player/PlayerMovement";
 import { JungleMap } from "../world/JungleMap";
+import { YardMap } from "../world/YardMap";
+import { YardEffects } from "../world/YardEffects";
+import { YardSky } from "../world/YardSky";
+import { YardConfig as yardCfg } from "../world/YardConfig";
 import { SpaceSky } from "../world/SpaceSky";
 import { SpaceConfig as spaceCfg } from "../world/SpaceConfig";
+import { loadMapSelection } from "../world/MapSelection";
+import { MapId } from "../../shared/map/MapRegistry";
+import { YARD_SPAWN_POINTS } from "../../shared/map/YardSpawns";
+import { JUNGLE_NAV_BOUNDS, YARD_NAV_BOUNDS } from "../navigation/NavGrid";
+import { InteractHUD } from "../ui/InteractHUD";
 import { DebugHUD } from "../ui/DebugHUD";
 import { WeaponHUD } from "../ui/WeaponHUD";
 import { DashHUD } from "../ui/DashHUD";
@@ -93,7 +102,16 @@ export class Game {
   private particles: ParticleSystem;
   private rifle: PlasmaRifle;
   private targets: TargetManager;
-  private spaceSky: SpaceSky | null = null;
+  /** The active map's sky backdrop (SpaceSky on Jungle, YardSky on Yard). */
+  private spaceSky: SpaceSky | YardSky | null = null;
+
+  // ---- YARD map extras (null on the Jungle map) ----
+  /** Which map this Game instance runs (fixed for the whole session). */
+  readonly mapId: MapId;
+  /** Acid + animations + terminals (ONE instance per loaded Yard map). */
+  private yardEffects: YardEffects | null = null;
+  private interactHud: InteractHUD | null = null;
+  private readonly feetPos = new THREE.Vector3();
 
   // ---- Hammer melee ----
   private shockwave: Shockwave;
@@ -222,8 +240,14 @@ export class Game {
   private readonly phaseNormal = new THREE.Vector3();
   private lastOverlayOpacity = -1;
 
-  private constructor(container: HTMLElement, physics: PhysicsWorld, map: JungleMap) {
+  private constructor(
+    container: HTMLElement,
+    physics: PhysicsWorld,
+    map: JungleMap | YardMap,
+    mapId: MapId,
+  ) {
     this.physics = physics;
+    this.mapId = mapId;
 
     // Quality preset (auto-detected iGPU → LOW, override in the Escape
     // menu): resolution cap, MSAA, shadow budget — see GraphicsQuality.
@@ -246,22 +270,31 @@ export class Game {
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    // Deep-space night: near-black clear color + a very light violet-blue
-    // distance haze that only melts far map geometry (never a ground fog).
-    this.scene.background = new THREE.Color(spaceCfg.backgroundColor);
-    this.scene.fog = new THREE.Fog(spaceCfg.fogColor, spaceCfg.fogNear, spaceCfg.fogFar);
-
-    // Ancient Jungle City: GLB visuals + exact Rapier colliders were
-    // already loaded/created in Game.create (async) — just attach it.
-    this.scene.add(map.group);
-
-    // Purple deep-space backdrop: stars / nebula / moon / meteors.
-    // Added straight to the scene (NOT map.group) so it is never part of
-    // the beam-raycast hittables and never touches physics or the NavGrid.
-    if (spaceCfg.spaceSkyEnabled) {
-      this.spaceSky = new SpaceSky();
+    // Per-map atmosphere: each map owns its clear color, distance haze,
+    // exposure and sky backdrop (added straight to the scene — NOT
+    // map.group — so it is never part of the beam-raycast hittables and
+    // never touches physics or the NavGrid).
+    if (mapId === MapId.YARD) {
+      // YARD: contaminated industrial dusk (see YardConfig).
+      this.scene.background = new THREE.Color(yardCfg.backgroundColor);
+      this.scene.fog = new THREE.Fog(yardCfg.fogColor, yardCfg.fogNear, yardCfg.fogFar);
+      this.renderer.toneMappingExposure = yardCfg.toneMappingExposure;
+      this.spaceSky = new YardSky();
       this.scene.add(this.spaceSky.group);
+    } else {
+      // JUNGLE: deep-space night — near-black clear color + a very light
+      // violet-blue distance haze (never a ground fog).
+      this.scene.background = new THREE.Color(spaceCfg.backgroundColor);
+      this.scene.fog = new THREE.Fog(spaceCfg.fogColor, spaceCfg.fogNear, spaceCfg.fogFar);
+      if (spaceCfg.spaceSkyEnabled) {
+        this.spaceSky = new SpaceSky();
+        this.scene.add(this.spaceSky.group);
+      }
     }
+
+    // Map visuals + exact Rapier colliders were already loaded/created in
+    // Game.create (async) — just attach the group.
+    this.scene.add(map.group);
 
     // Navigation must be built from STATIC geometry only — before any
     // character capsule (player or bot) exists in the physics world.
@@ -269,14 +302,22 @@ export class Game {
     // a step, so without this the NavGrid would see an EMPTY world and no
     // cell would be walkable (bots frozen in place).
     this.physics.refreshQueries();
-    this.nav = new NavGrid(this.physics);
-    this.spawner = new SpawnManager(this.physics);
+    const isYard = mapId === MapId.YARD;
+    this.nav = new NavGrid(this.physics, isYard ? YARD_NAV_BOUNDS : JUNGLE_NAV_BOUNDS);
+    this.spawner = new SpawnManager(this.physics, isYard ? YARD_SPAWN_POINTS : undefined);
 
     this.input = new InputManager(this.renderer.domElement);
     this.fpsCamera = new FPSCamera(window.innerWidth / window.innerHeight);
     // Camera must be in the scene graph so the weapon view model renders.
     this.scene.add(this.fpsCamera.camera);
     this.player = new PlayerController(this.physics);
+    // The default body position (MovementConfig.spawnPosition) belongs to
+    // the Jungle map — on Yard, snap to one of ITS validated spawns now,
+    // BEFORE the menu preview / camera flight read the player pose.
+    if (isYard) {
+      const s = YARD_SPAWN_POINTS[0];
+      this.player.setPosition(s.x, s.y + 0.3, s.z);
+    }
     this.movement = new PlayerMovement(this.player, this.input, this.fpsCamera);
     this.hud = new DebugHUD();
     this.weaponHud = new WeaponHUD();
@@ -286,8 +327,32 @@ export class Game {
 
     // ---- Weapon / targets / effects ----
     this.particles = new ParticleSystem(this.scene);
-    this.targets = new TargetManager(this.particles);
+    // YARD has NO training targets (per the map design) — the manager
+    // still exists so weapon adapters keep working against empty lists.
+    this.targets = new TargetManager(this.particles, !isYard);
     this.scene.add(this.targets.group);
+
+    // ---- YARD: animations + acid + terminals (ONE instance per map) ----
+    if (isYard && map instanceof YardMap) {
+      this.yardEffects = new YardEffects(map, this.physics);
+      this.interactHud = new InteractHUD();
+      // Acid pool (solo/local): falling in kills through the normal death
+      // flow (respawn timer + feedback). In MULTIPLAYER the server's
+      // authoritative acid tick decides — the local hook only provides
+      // instant feedback via the same server-driven death events, so we
+      // skip the local kill there (see onHazard guard below).
+      this.yardEffects.onHazard = () => {
+        if (this.multiplayer) return; // server-authoritative in MP
+        this.playerCombatant.health.kill(null);
+      };
+      // Terminals: clear extension point — no major mechanic invented.
+      // Today: a satisfying local confirmation (sound + log). Multiplayer
+      // rules must be validated by the server before granting any effect.
+      this.yardEffects.onInteract = (item) => {
+        this.gameAudio.medalPop(1.2); // "terminal activated" ping
+        console.log(`[YARD] Terminal activé: ${item.id} (${item.label})`);
+      };
+    }
     this.rifle = new PlasmaRifle(this.scene, this.fpsCamera.camera, this.particles);
 
     // ---- Player as an FFA combatant ----
@@ -619,11 +684,16 @@ export class Game {
 
   static async create(container: HTMLElement): Promise<Game> {
     const physics = await PhysicsWorld.create();
-    // Load the map BEFORE the Game constructor: the NavGrid and the spawn
-    // system are built from the physics world during construction, so every
-    // static collider must exist first.
-    const map = await JungleMap.create(physics);
-    return new Game(container, physics, map);
+    // Load the SELECTED map BEFORE the Game constructor: the NavGrid and
+    // the spawn system are built from the physics world during
+    // construction, so every static collider must exist first. The map id
+    // is persisted (menu MAP row / lobby join) and loaded exactly once per
+    // page life — switching maps reloads the page (same pattern as the
+    // graphics-quality preset).
+    const mapId = loadMapSelection();
+    const map =
+      mapId === MapId.YARD ? await YardMap.create(physics) : await JungleMap.create(physics);
+    return new Game(container, physics, map, mapId);
   }
 
   get domElement(): HTMLElement {
@@ -974,8 +1044,11 @@ export class Game {
     );
     p.camera.lookAt(this.menuLookAt);
 
-    // The animated deep-space backdrop keeps living behind the map.
+    // The animated backdrop keeps living behind the map — and on YARD the
+    // acid/fans/cameras loop breathes in the menu preview too (no player
+    // feet → no hazard/interaction checks).
     this.spaceSky?.update(dt, p.elapsed, p.camera);
+    this.yardEffects?.update(dt, null);
 
     this.renderer.render(this.scene, p.camera);
   }
@@ -1121,6 +1194,31 @@ export class Game {
     // Space backdrop: follows the camera, twinkles, spawns rare meteors.
     // Runs even in the Escape menu (purely decorative, gameplay untouched).
     this.spaceSky?.update(dt, this.elapsed, this.fpsCamera.camera);
+
+    // YARD: single mixer (bubbles/fans/cameras/terminal) + acid shader
+    // clock. Decorative motion keeps living in the Escape menu (like the
+    // sky); the hazard check only receives the feet WHILE RUNNING so the
+    // acid can never kill a paused solo player. Feet = capsule center − 0.9.
+    if (this.yardEffects) {
+      let feet: THREE.Vector3 | null = null;
+      if (running && playerAlive) {
+        this.player.getPosition(this.feetPos);
+        this.feetPos.y -= cfg.standHalfHeight + cfg.capsuleRadius;
+        feet = this.feetPos;
+      }
+      this.yardEffects.update(dt, feet);
+
+      // Terminal prompt + F to interact (blocked while dead / paused).
+      if (feet) {
+        const item = this.yardEffects.nearby(feet, this.player.collider);
+        this.interactHud?.setPrompt(item ? item.label : null);
+        if (item && this.input.wasPressed("KeyF")) {
+          this.yardEffects.interact(feet, this.player.collider);
+        }
+      } else {
+        this.interactHud?.setPrompt(null);
+      }
+    }
 
     // Sync bot visuals to their post-step physics positions, then refresh
     // world matrices so every beam raycast this frame is exact.

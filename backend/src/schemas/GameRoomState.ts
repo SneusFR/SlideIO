@@ -16,4 +16,7 @@ export class GameRoomState extends Schema {
 
   /** LOBBY until the host starts the game, then PLAYING (never back). */
   @type("string") phase: string = GameRoomPhase.LOBBY;
+
+  /** MapId the room plays on (fixed at creation — see shared MapRegistry). */
+  @type("string") mapId: string = "JUNGLE";
 }

@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { PhysicsWorld, RAPIER } from "../physics/PhysicsWorld";
 import { Combatant } from "./Combatant";
 import { CombatConfig as cc } from "./CombatConfig";
-import { MAP_SPAWN_POINTS } from "../../shared/map/MapSpawns";
+import { MAP_SPAWN_POINTS, type MapSpawnPoint } from "../../shared/map/MapSpawns";
 
 export interface SpawnPoint {
   pos: THREE.Vector3;
@@ -10,8 +10,8 @@ export interface SpawnPoint {
 }
 
 /**
- * FFA spawn points (the 8 validated Ancient Jungle City spawns, shared
- * with the backend via shared/map/MapSpawns.ts) + simple scoring:
+ * FFA spawn points (the 8 validated spawns of the CURRENT map, shared
+ * with the backend via shared/map/*Spawns.ts) + simple scoring:
  * prefer spawns far from other combatants and out of immediate line of
  * sight, then pick semi-randomly among the best candidates.
  */
@@ -21,10 +21,13 @@ export class SpawnManager {
   private readonly tmpA = new THREE.Vector3();
   private readonly tmpB = new THREE.Vector3();
 
-  constructor(private physics: PhysicsWorld) {
+  constructor(
+    private physics: PhysicsWorld,
+    spawnPoints: MapSpawnPoint[] = MAP_SPAWN_POINTS,
+  ) {
     // Capsule-center positions verified against the map export — the
     // small extra Y margin lets the ground snap settle the capsule.
-    for (const s of MAP_SPAWN_POINTS) {
+    for (const s of spawnPoints) {
       this.spawns.push({ pos: new THREE.Vector3(s.x, s.y + 0.3, s.z), yaw: s.yaw });
     }
   }
