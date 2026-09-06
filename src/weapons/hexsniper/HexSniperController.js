@@ -20,6 +20,15 @@ export class HexSniperController {
       this.actions[name].setLoop(loop ? LoopRepeat : LoopOnce, loop ? Infinity : 1);
       this.actions[name].clampWhenFinished = true;
     }
+    // Inspect_Affection (integration pack): played on THIS mixer — the
+    // controller stays the SINGLE owner of the weapon skeleton's mixer.
+    // Optional so legacy GLBs without the clip keep working.
+    const inspect = gltf.animations.find(c => c.name === 'Inspect_Affection');
+    if (inspect) {
+      this.actions.Inspect_Affection = this.mixer.clipAction(inspect);
+      this.actions.Inspect_Affection.setLoop(LoopOnce, 1);
+      this.actions.Inspect_Affection.clampWhenFinished = true;
+    }
     const fire = gltf.animations.find(c => c.name === 'Fire');
     if (!additiveClips.has(fire)) additiveClips.set(fire, AnimationUtils.makeClipAdditive(fire.clone(), 0));
     this.actions.Fire = this.mixer.clipAction(additiveClips.get(fire)).setLoop(LoopOnce, 1);
@@ -53,6 +62,7 @@ export class HexSniperController {
       else if (action === this.actions.Bite && this.state === 'Bite') this.reset();
       else if (action === this.actions.Tongue_Return && this.state === 'Tongue_Return') this.reset();
       else if (action === this.actions.Fire && this.state === 'Fire') this.state = 'Idle';
+      else if (action === this.actions.Inspect_Affection && this.state === 'Inspect') this.reset();
     };
     this.mixer.addEventListener('finished', this._finished);
     this.mixer.update(0); this.object.updateMatrixWorld(true);
@@ -91,6 +101,28 @@ export class HexSniperController {
   reset() {
     if (this.disposed) return;
     this.tether.visible = false; this.idleTongue.visible = true; this._transition('Idle', .09);
+  }
+  /**
+   * Affectionate inspection (clip Inspect_Affection, 5.3 s, one-shot).
+   * Pure visuals on the creature: animates the visual Tongue_Idle, NEVER
+   * the Tongue_Tether attack mesh — no gameplay events. Only from Idle.
+   * Returns true when the clip actually started (caller starts the FP
+   * arms clip the same frame — same clock, same 0→5.3 s progression).
+   */
+  beginInspect() {
+    if (this.disposed || this.state !== 'Idle' || !this.actions.Inspect_Affection) return false;
+    this.idleTongue.visible = true; this.tether.visible = false;
+    // _transition fades EVERY other scheduled action out (Idle included) —
+    // Idle can never deform the inspection through an accidental blend.
+    this._transition('Inspect_Affection', .08);
+    this.state = 'Inspect';
+    return true;
+  }
+  /** Cancel a running inspection: straight back to Idle (combat pose). */
+  cancelInspect() {
+    if (this.disposed || this.state !== 'Inspect') return;
+    this._transition('Idle', .05);
+    this.state = 'Idle';
   }
   /** Legacy cosmetic reaction; gameplay uses HexSniperAttacks.tryTongue(). */
   onFire() {

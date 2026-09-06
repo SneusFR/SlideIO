@@ -1,6 +1,10 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { NetworkWeaponId, isNetworkWeaponId } from "../../../shared/combat/NetworkWeapons";
+import { createWeaponMount } from "../../weapons/profiles/WeaponProfile";
+import { HexSniperProfile } from "../../weapons/profiles/HexSniperProfile";
+import { loadHexSniperGltf } from "../../weapons/hexsniper/HexSniperModel";
 // Real weapon GLBs (same optimized assets as the local viewmodels/menu).
 import hammerUrl from "../../assets/voidhammer_opt.glb?url";
 import rifleUrl from "../../assets/voidrifle_opt.glb?url";
@@ -11,14 +15,21 @@ import revolverUrl from "../../assets/revolver_opt.glb?url";
 // a distance — see src/assets/PulseCarbine/README_FR.md).
 import bassBlasterUrl from "../../assets/PulseCarbine/PulseCarbine_LOD1.glb?url";
 import poisonUrl from "../../assets/Lance_poison_jeu.glb?url";
-// Hex Sniper = LOD1 (light variant for weapons seen at a distance —
-// same clips/bones/sockets as the detailed GLB, kit contract).
-import hexSniperUrl from "../../assets/HexSniper/HexSniper_LOD1.glb?url";
 
-/** How a weapon GLB sits in a remote character's hand (menu-proven recipe). */
+/**
+ * How a legacy weapon GLB sits in a remote POTATO character's hand.
+ * `bone` names are REAL Potato sockets: Weapon_R (child of Hand_R) and
+ * Weapon_L (child of Hand_L) — the old Meshy RightHand/LeftHand names are
+ * gone. Offsets/rotations were re-derived for the Potato grip axes (the
+ * name mapping alone does not preserve the old local rotation bases).
+ *
+ * The HEX SNIPER is NOT in this table: it uses the authored TP mount from
+ * WeaponProfile_HexSniper.json (whole animated scene, profile matrix, no
+ * normalization) — see attachHexSniper below.
+ */
 interface RemoteWeaponAttachment {
   url: string;
-  bone: "RightHand" | "LeftHand";
+  bone: "Weapon_R" | "Weapon_L";
   position: THREE.Vector3;
   rotation: THREE.Euler;
   /** Target world length of the longest dimension (meters). */
@@ -35,19 +46,19 @@ interface RemoteWeaponAttachment {
  * offsets are the exact values proven in the Main Menu character
  * (MenuConfig); the other three reuse the matching hand's grip.
  */
-export const REMOTE_WEAPON_CONFIG: Record<NetworkWeaponId, RemoteWeaponAttachment> = {
+export const REMOTE_WEAPON_CONFIG: Partial<Record<NetworkWeaponId, RemoteWeaponAttachment>> = {
   [NetworkWeaponId.HAMMER]: {
     url: hammerUrl,
-    bone: "RightHand",
-    position: new THREE.Vector3(0.02, 0.16, 0.05),
+    bone: "Weapon_R",
+    position: new THREE.Vector3(0, 0.1, 0),
     rotation: new THREE.Euler(0.15, 0, -0.2),
     size: 1.05,
   },
   [NetworkWeaponId.PLASMA_RIFLE]: {
     url: rifleUrl,
-    bone: "LeftHand",
-    position: new THREE.Vector3(-0.02, 0.14, 0.06),
-    rotation: new THREE.Euler(0.35, Math.PI / 2, 0.1),
+    bone: "Weapon_L",
+    position: new THREE.Vector3(0, 0.02, -0.08),
+    rotation: new THREE.Euler(0.05, 0, 0),
     size: 0.95,
     // The rifle barrel runs along the model X axis — without this flip the
     // muzzle points BACKWARDS in the remote hand (reported in playtests).
@@ -55,32 +66,32 @@ export const REMOTE_WEAPON_CONFIG: Record<NetworkWeaponId, RemoteWeaponAttachmen
   },
   [NetworkWeaponId.SPEAR]: {
     url: spearUrl,
-    bone: "RightHand",
-    position: new THREE.Vector3(0.02, 0.16, 0.05),
+    bone: "Weapon_R",
+    position: new THREE.Vector3(0, 0.1, 0),
     rotation: new THREE.Euler(0.15, 0, -0.2),
     size: 1.7,
   },
   [NetworkWeaponId.REVOLVER]: {
     url: revolverUrl,
-    bone: "RightHand",
-    position: new THREE.Vector3(0.02, 0.14, 0.04),
-    rotation: new THREE.Euler(0.15, 0, -0.2),
+    bone: "Weapon_R",
+    position: new THREE.Vector3(0, 0.02, -0.04),
+    rotation: new THREE.Euler(0.05, 0, 0),
     size: 0.35,
   },
   [NetworkWeaponId.OBLITERREUR]: {
     url: obliterreurUrl,
-    bone: "LeftHand",
-    position: new THREE.Vector3(-0.02, 0.14, 0.06),
-    rotation: new THREE.Euler(0.35, Math.PI / 2, 0.1),
+    bone: "Weapon_L",
+    position: new THREE.Vector3(0, 0.02, -0.06),
+    rotation: new THREE.Euler(0.05, 0, 0),
     size: 1.0,
     // Same hand + same forward convention as the plasma rifle.
     modelRotation: new THREE.Euler(0, Math.PI, 0),
   },
   [NetworkWeaponId.BASS_BLASTER]: {
     url: bassBlasterUrl,
-    bone: "LeftHand",
-    position: new THREE.Vector3(-0.02, 0.14, 0.06),
-    rotation: new THREE.Euler(0.35, Math.PI / 2, 0.1),
+    bone: "Weapon_L",
+    position: new THREE.Vector3(0, 0.02, -0.06),
+    rotation: new THREE.Euler(0.05, 0, 0),
     size: 0.75,
     // The PulseCarbine muzzle faces -X in the asset → rotate it to face
     // -Z like the rifle convention (barrel forward in the remote hand).
@@ -88,24 +99,41 @@ export const REMOTE_WEAPON_CONFIG: Record<NetworkWeaponId, RemoteWeaponAttachmen
   },
   [NetworkWeaponId.POISON_SPRAYER]: {
     url: poisonUrl,
-    bone: "LeftHand",
-    position: new THREE.Vector3(-0.02, 0.14, 0.06),
-    rotation: new THREE.Euler(0.35, Math.PI / 2, 0.1),
+    bone: "Weapon_L",
+    position: new THREE.Vector3(0, 0.02, -0.06),
+    rotation: new THREE.Euler(0.05, 0, 0),
     size: 0.9,
     // The sprayer muzzle faces -X in the asset → rotate it to face -Z
     // like the rifle convention (barrel forward in the remote hand).
     modelRotation: new THREE.Euler(0, -Math.PI / 2, 0),
   },
-  [NetworkWeaponId.HEX_SNIPER]: {
-    url: hexSniperUrl,
-    bone: "LeftHand",
-    position: new THREE.Vector3(-0.02, 0.14, 0.06),
-    rotation: new THREE.Euler(0.35, Math.PI / 2, 0.1),
-    size: 1.1,
-    // The kit model looks toward -X → rotate it to face -Z like the rifle.
-    modelRotation: new THREE.Euler(0, -Math.PI / 2, 0),
-  },
 };
+
+// ---------------------------------------------------------------------
+// HEX SNIPER — dedicated remote path (whole animated scene + TP mount)
+// ---------------------------------------------------------------------
+
+/**
+ * The remote HexSniper NEVER goes through the legacy normalization above:
+ * that path flattens the scene into a static clone (clone(true) breaks
+ * SkinnedMesh bindings) and its bounding-box normalization would destroy
+ * the authored mount. Instead the WHOLE animated scene (the pack's
+ * canonical HexSniper_Weapon.glb — scene AND animations preserved) is
+ * skeleton-cloned per instance and mounted under Weapon_R through the
+ * authored TP matrix (WeaponProfile_HexSniper.json, applied once — the
+ * weapon inherits the character's scale, no ancestor-scale cancelling).
+ */
+function loadRemoteHexSniper(): Promise<{
+  scene: THREE.Group;
+  animations: THREE.AnimationClip[];
+}> {
+  // Shared cache with the local viewmodel path (HexSniperModel) — one
+  // fetch/parse for the whole game, whatever loads first.
+  return loadHexSniperGltf().then((gltf) => ({
+    scene: gltf.scene as THREE.Group,
+    animations: gltf.animations,
+  }));
+}
 
 // ---- Shared, cached weapon templates (load once → clone per player) ----
 // Templates are pre-normalized (centered on origin, longest axis = size)
@@ -117,6 +145,11 @@ export function loadRemoteWeaponTemplate(id: NetworkWeaponId): Promise<THREE.Gro
   let cached = templateCache.get(id);
   if (cached) return cached;
   const att = REMOTE_WEAPON_CONFIG[id];
+  if (!att) {
+    // HEX_SNIPER: no static template — its dedicated animated path
+    // (attachHexSniper) owns the loading. Never normalized here.
+    return Promise.reject(new Error(`No static remote template for ${id}`));
+  }
   cached = new GLTFLoader().loadAsync(att.url).then((gltf) => {
     const scene = gltf.scene;
     // Normalize ONCE: uniform target size, centered on the origin.
@@ -150,9 +183,11 @@ export function loadRemoteWeaponTemplate(id: NetworkWeaponId): Promise<THREE.Gro
  * parse a multi-MB GLB on the main thread — a visible one-time stutter.
  */
 export function preloadRemoteWeaponTemplates(): Promise<void> {
-  return Promise.all(
-    Object.values(NetworkWeaponId).map((id) => loadRemoteWeaponTemplate(id)),
-  ).then(() => undefined);
+  const jobs: Promise<unknown>[] = Object.values(NetworkWeaponId)
+    .filter((id) => REMOTE_WEAPON_CONFIG[id] !== undefined)
+    .map((id) => loadRemoteWeaponTemplate(id));
+  jobs.push(loadRemoteHexSniper()); // animated path (shared GLB cache)
+  return Promise.all(jobs).then(() => undefined);
 }
 
 /** Swing animation duration (procedural grip rotation, seconds). */
@@ -185,6 +220,18 @@ export class RemoteWeaponController {
   private loadToken = 0;
   private disposed = false;
 
+  // ---- HEX SNIPER dedicated state (animated scene + authored TP mount) ----
+  private hexWeapon: THREE.Object3D | null = null;
+  private hexMount: THREE.Group | null = null;
+  private hexMixer: THREE.AnimationMixer | null = null;
+  private hexMuzzle: THREE.Object3D | null = null;
+  /**
+   * Armed-presentation hook: fired with true when the HexSniper attaches
+   * (TP two-hand poses on) and false when any other weapon replaces it.
+   * Wired by RemotePlayer to RemotePlayerAnimationController.setArmed.
+   */
+  onArmedChanged: ((armed: boolean) => void) | null = null;
+
   // Procedural swing state
   private swingTimer = -1;
   private swingKind: "sweep" | "slam" = "sweep";
@@ -212,8 +259,10 @@ export class RemoteWeaponController {
     this.refreshDisplayed();
   }
 
-  /** Per-frame: override expiry + swing animation. */
+  /** Per-frame: override expiry + swing animation + HexSniper idle. */
   update(dt: number): void {
+    // HexSniper creature idle (visual mixer — never a re-simulation).
+    this.hexMixer?.update(dt);
     if (this.overrideId) {
       this.overrideTimer -= dt;
       if (this.overrideTimer <= 0) {
@@ -254,6 +303,12 @@ export class RemoteWeaponController {
    * Requires up-to-date world matrices (the game updates them per frame).
    */
   getMuzzleWorldPosition(out: THREE.Vector3): boolean {
+    // HexSniper: the REAL TongueOrigin/Muzzle socket (matrices are fresh —
+    // the game updates world matrices before remote VFX read anchors).
+    if (this.hexMuzzle) {
+      this.hexMuzzle.getWorldPosition(out);
+      return true;
+    }
     if (!this.grip) return false;
     this.grip.getWorldPosition(out);
     return true;
@@ -271,6 +326,15 @@ export class RemoteWeaponController {
     const target = this.overrideId ?? this.equipped;
     if (this.displayed === target) return;
     const token = ++this.loadToken;
+    if (target === NetworkWeaponId.HEX_SNIPER) {
+      // Dedicated animated path: whole scene + clips, authored TP mount.
+      void loadRemoteHexSniper().then(({ scene, animations }) => {
+        if (this.disposed || token !== this.loadToken) return;
+        this.detach();
+        this.attachHexSniper(scene, animations);
+      });
+      return;
+    }
     void loadRemoteWeaponTemplate(target).then((template) => {
       // Stale async result (player switched again / controller disposed).
       if (this.disposed || token !== this.loadToken) return;
@@ -279,9 +343,65 @@ export class RemoteWeaponController {
     });
   }
 
-  /** Menu-proven attachment recipe (MenuCharacter.attachWeapon). */
+  /**
+   * HEX SNIPER remote attach: SkeletonUtils clone of the WHOLE weapon
+   * scene (skinned creature intact) under the character's Weapon_R socket
+   * through the authored TP mount matrix — the weapon inherits the
+   * character scale (never cancelled). Its own mixer idles the creature;
+   * the character's TP armed poses come from the animation controller
+   * (setArmed on the avatar side).
+   */
+  private attachHexSniper(
+    templateScene: THREE.Group,
+    animations: THREE.AnimationClip[],
+  ): void {
+    const socket = this.characterModel.getObjectByName("Weapon_R");
+    if (!socket) {
+      if (import.meta.env.DEV) {
+        console.warn(`[RemoteWeapon] Weapon_R socket not found — cannot attach HEX_SNIPER`);
+      }
+      return;
+    }
+    const weapon = skeletonClone(templateScene);
+    weapon.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.raycast = () => {}; // visual only — hitboxes own the raycasts
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        mesh.frustumCulled = false; // moves with the animated bone
+      }
+    });
+    // The remote instance never fires the tether: hide the attack mesh,
+    // keep the visual idle tongue. Remote tongue VFX read the REAL
+    // Muzzle/TongueOrigin sockets through getMuzzleWorldPosition below.
+    const tether = weapon.getObjectByName("Tongue_Tether");
+    if (tether) tether.visible = false;
+
+    const mount = createWeaponMount("HexSniperMount", HexSniperProfile.tpMount);
+    socket.add(mount);
+    mount.add(weapon);
+
+    // Creature idle loop on ITS OWN skeleton (one mixer per instance).
+    const idleClip = animations.find((c) => c.name === "Idle");
+    if (idleClip) {
+      this.hexMixer = new THREE.AnimationMixer(weapon);
+      const idle = this.hexMixer.clipAction(idleClip);
+      idle.setLoop(THREE.LoopRepeat, Infinity);
+      idle.play();
+    }
+    this.hexWeapon = weapon;
+    this.hexMount = mount;
+    this.hexMuzzle =
+      weapon.getObjectByName("TongueOrigin") ?? weapon.getObjectByName("Muzzle") ?? null;
+    this.displayed = NetworkWeaponId.HEX_SNIPER;
+    this.onArmedChanged?.(true);
+  }
+
+  /** Menu-proven attachment recipe (legacy static weapons). */
   private attach(id: NetworkWeaponId, template: THREE.Group): void {
     const att = REMOTE_WEAPON_CONFIG[id];
+    if (!att) return;
     const bone = this.characterModel.getObjectByName(att.bone);
     if (!bone) {
       if (import.meta.env.DEV) {
@@ -318,6 +438,23 @@ export class RemoteWeaponController {
   }
 
   private detach(): void {
+    // HexSniper animated path cleanup (per-instance mixer + mount).
+    if (this.hexWeapon) {
+      this.hexMixer?.stopAllAction();
+      if (this.hexMixer && this.hexWeapon) this.hexMixer.uncacheRoot(this.hexWeapon);
+      this.hexMixer = null;
+      this.hexWeapon.traverse((o) => {
+        const sm = o as THREE.SkinnedMesh;
+        if (sm.isSkinnedMesh) sm.skeleton.dispose();
+      });
+      this.hexWeapon.removeFromParent();
+      this.hexWeapon = null;
+      this.hexMount?.removeFromParent();
+      this.hexMount = null;
+      this.hexMuzzle = null;
+      this.displayed = null;
+      this.onArmedChanged?.(false);
+    }
     if (!this.grip) return;
     this.grip.removeFromParent();
     this.grip = null;

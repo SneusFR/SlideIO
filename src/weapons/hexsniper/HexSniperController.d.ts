@@ -43,6 +43,16 @@ export class HexSniperController {
   bite(): void;
   /** Hard reset to Idle (cancel path). */
   reset(): void;
+  /**
+   * Affectionate inspection (clip Inspect_Affection, 5.3 s, one-shot,
+   * integration pack). Visuals only — animates the visual Tongue_Idle,
+   * never the Tongue_Tether attack mesh, no gameplay events. Only from
+   * Idle; returns true when started (the caller starts the FP arms
+   * inspect clip the SAME frame — same clock, same progression).
+   */
+  beginInspect(): boolean;
+  /** Cancel a running inspection: straight back to Idle (combat pose). */
+  cancelInspect(): void;
   /** Legacy cosmetic reaction; gameplay uses HexSniperAttacks.tryTongue(). */
   onFire(): void;
   /** Advance the mixer + tether — call exactly once per RENDER frame. */

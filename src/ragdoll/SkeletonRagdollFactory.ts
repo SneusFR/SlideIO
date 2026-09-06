@@ -3,19 +3,21 @@ import { RagdollPartDef, RagdollShape } from "./RagdollController";
 import { RagdollConfig as rc } from "./RagdollConfig";
 
 /**
- * Builds ragdoll part definitions from the REAL Meshy character skeleton
- * (inspected in the GLB exports — scripts/inspect-glb.mjs):
+ * Builds ragdoll part definitions from the REAL Potato character skeleton
+ * (inspected in the pack — scripts/inspect-potato.mjs):
  *
- *   Hips → Spine → Spine01 → Spine02 → neck → Head → headfront/head_end
- *   Spine02 → Left/RightShoulder → Left/RightArm → ForeArm → Hand
- *   Hips → Left/RightUpLeg → Left/RightLeg → Foot → ToeBase
+ *   Root → Hips → Spine → Spine_1 → Chest → Neck → Head → Plant_Root/Tip
+ *   Chest → Shoulder_L/R → UpperArm_L/R → LowerArm_L/R → Hand_L/R
+ *   Hips → UpperLeg_L/R → LowerLeg_L/R → Foot_L/R
  *
  * 11 rigid bodies (quality/performance compromise):
- *   pelvis (Hips), chest (Spine02), head (Head),
+ *   pelvis (Hips), chest (Chest), head (Head),
  *   upper+lower arms ×2, upper+lower legs ×2.
  *
- * Intermediate bones (Spine, Spine01, neck, shoulders, hands, feet) keep
- * their pose-local transforms and simply follow their driven ancestors.
+ * Intermediate bones (Spine, Spine_1, Neck, shoulders, hands, feet, the
+ * plant and the cosmetic sockets Head_Socket/Face_Socket/Back_Socket)
+ * keep their pose-local transforms and simply follow their driven
+ * ancestors — sockets stay anchored to their parent in ragdoll too.
  *
  * NOTHING is assumed about bone local axes: every capsule is oriented
  * from the WORLD positions of its two end joints (shoulder→elbow,
@@ -35,22 +37,22 @@ function findBones(root: THREE.Object3D): Map<string, THREE.Object3D> {
 
 const REQUIRED_BONES = [
   "Hips",
-  "Spine01",
-  "Spine02",
-  "neck",
+  "Spine_1",
+  "Chest",
+  "Neck",
   "Head",
-  "LeftArm",
-  "LeftForeArm",
-  "LeftHand",
-  "RightArm",
-  "RightForeArm",
-  "RightHand",
-  "LeftUpLeg",
-  "LeftLeg",
-  "LeftFoot",
-  "RightUpLeg",
-  "RightLeg",
-  "RightFoot",
+  "UpperArm_L",
+  "LowerArm_L",
+  "Hand_L",
+  "UpperArm_R",
+  "LowerArm_R",
+  "Hand_R",
+  "UpperLeg_L",
+  "LowerLeg_L",
+  "Foot_L",
+  "UpperLeg_R",
+  "LowerLeg_R",
+  "Foot_R",
 ];
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -106,24 +108,27 @@ export function buildSkeletonRagdollParts(root: THREE.Object3D): RagdollPartDef[
 
   // ---- Key world positions from the LIVE pose ----
   const hips = worldPos(b("Hips"));
-  const spine01 = worldPos(b("Spine01"));
-  const neck = worldPos(b("neck"));
+  const spine01 = worldPos(b("Spine_1"));
+  const neck = worldPos(b("Neck"));
   const head = worldPos(b("Head"));
-  const headEnd = bones.has("head_end") ? worldPos(b("head_end")) : null;
+  // No head-tip helper bone exists on the Potato rig (and the plant leaf
+  // must NEVER stand in for one — it would stretch the head body up the
+  // sprout): the head radius derives from the shoulder width instead.
+  const headEnd: THREE.Vector3 | null = null;
 
-  const lShoulder = worldPos(b("LeftArm"));
-  const lElbow = worldPos(b("LeftForeArm"));
-  const lWrist = worldPos(b("LeftHand"));
-  const rShoulder = worldPos(b("RightArm"));
-  const rElbow = worldPos(b("RightForeArm"));
-  const rWrist = worldPos(b("RightHand"));
+  const lShoulder = worldPos(b("UpperArm_L"));
+  const lElbow = worldPos(b("LowerArm_L"));
+  const lWrist = worldPos(b("Hand_L"));
+  const rShoulder = worldPos(b("UpperArm_R"));
+  const rElbow = worldPos(b("LowerArm_R"));
+  const rWrist = worldPos(b("Hand_R"));
 
-  const lHip = worldPos(b("LeftUpLeg"));
-  const lKnee = worldPos(b("LeftLeg"));
-  const lAnkle = worldPos(b("LeftFoot"));
-  const rHip = worldPos(b("RightUpLeg"));
-  const rKnee = worldPos(b("RightLeg"));
-  const rAnkle = worldPos(b("RightFoot"));
+  const lHip = worldPos(b("UpperLeg_L"));
+  const lKnee = worldPos(b("LowerLeg_L"));
+  const lAnkle = worldPos(b("Foot_L"));
+  const rHip = worldPos(b("UpperLeg_R"));
+  const rKnee = worldPos(b("LowerLeg_R"));
+  const rAnkle = worldPos(b("Foot_R"));
 
   // ---- Proportions derived from the real skeleton (never hardcoded) ----
   const hipWidth = lHip.distanceTo(rHip);
@@ -153,12 +158,12 @@ export function buildSkeletonRagdollParts(root: THREE.Object3D): RagdollPartDef[
     ccd: true,
   });
 
-  // ---- Chest (Spine02 drives the whole upper torso) ----
+  // ---- Chest (the Chest bone drives the whole upper torso) ----
   const chestCenter = spine01.clone().add(neck).multiplyScalar(0.5);
   const chestUp = neck.clone().sub(spine01);
   parts.push({
     name: "chest",
-    node: b("Spine02"),
+    node: b("Chest"),
     shape: {
       type: "capsule",
       halfHeight: Math.max(chestUp.length() / 2 - shoulderWidth * 0.2, 0.03),
@@ -193,18 +198,18 @@ export function buildSkeletonRagdollParts(root: THREE.Object3D): RagdollPartDef[
 
   // ---- Arms (shoulder→elbow, elbow→wrist) ----
   parts.push(
-    limbPart("upperArmL", b("LeftArm"), lShoulder, lElbow, armRadius, m.upperArm, "chest", lShoulder),
-    limbPart("lowerArmL", b("LeftForeArm"), lElbow, lWrist, armRadius * 0.85, m.lowerArm, "upperArmL", lElbow),
-    limbPart("upperArmR", b("RightArm"), rShoulder, rElbow, armRadius, m.upperArm, "chest", rShoulder),
-    limbPart("lowerArmR", b("RightForeArm"), rElbow, rWrist, armRadius * 0.85, m.lowerArm, "upperArmR", rElbow),
+    limbPart("upperArmL", b("UpperArm_L"), lShoulder, lElbow, armRadius, m.upperArm, "chest", lShoulder),
+    limbPart("lowerArmL", b("LowerArm_L"), lElbow, lWrist, armRadius * 0.85, m.lowerArm, "upperArmL", lElbow),
+    limbPart("upperArmR", b("UpperArm_R"), rShoulder, rElbow, armRadius, m.upperArm, "chest", rShoulder),
+    limbPart("lowerArmR", b("LowerArm_R"), rElbow, rWrist, armRadius * 0.85, m.lowerArm, "upperArmR", rElbow),
   );
 
   // ---- Legs (hip→knee, knee→ankle) ----
   parts.push(
-    limbPart("upperLegL", b("LeftUpLeg"), lHip, lKnee, legRadius, m.upperLeg, "pelvis", lHip),
-    limbPart("lowerLegL", b("LeftLeg"), lKnee, lAnkle, legRadius * 0.8, m.lowerLeg, "upperLegL", lKnee),
-    limbPart("upperLegR", b("RightUpLeg"), rHip, rKnee, legRadius, m.upperLeg, "pelvis", rHip),
-    limbPart("lowerLegR", b("RightLeg"), rKnee, rAnkle, legRadius * 0.8, m.lowerLeg, "upperLegR", rKnee),
+    limbPart("upperLegL", b("UpperLeg_L"), lHip, lKnee, legRadius, m.upperLeg, "pelvis", lHip),
+    limbPart("lowerLegL", b("LowerLeg_L"), lKnee, lAnkle, legRadius * 0.8, m.lowerLeg, "upperLegL", lKnee),
+    limbPart("upperLegR", b("UpperLeg_R"), rHip, rKnee, legRadius, m.upperLeg, "pelvis", rHip),
+    limbPart("lowerLegR", b("LowerLeg_R"), rKnee, rAnkle, legRadius * 0.8, m.lowerLeg, "upperLegR", rKnee),
   );
 
   return parts;

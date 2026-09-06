@@ -15,10 +15,10 @@ import type { NetworkPlayerInfo } from "./MultiplayerClient";
 import { CorpseManager } from "../ragdoll/CorpseManager";
 import { netTrace, NET_TRACE_ENABLED } from "./diagnostics/NetTrace";
 import { buildSkeletonRagdollParts } from "../ragdoll/SkeletonRagdollFactory";
-// Shared Sprouty Smile character asset (model + clips + red rim glow) —
-// loaded ONCE and cloned per avatar. The SAME asset drives the solo bots
+// Shared POTATO character asset (model + clips + red rim glow) — loaded
+// ONCE and cloned per avatar. The SAME asset drives the solo bots
 // (BotModel), so every humanoid enemy shares the exact model + animations.
-import { loadCharacterAsset, CharacterAsset, FEET_OFFSET, MODEL_TOP } from "../characters/SproutyCharacter";
+import { loadCharacterAsset, CharacterAsset, FEET_OFFSET, MODEL_TOP } from "../characters/PotatoCharacter";
 
 /** Nametag height above the capsule center (meters). */
 const NAMETAG_HEIGHT = MODEL_TOP + 0.42;
@@ -219,6 +219,12 @@ class RemotePlayer {
 
     this.anim = new RemotePlayerAnimationController(model, -FEET_OFFSET, asset.clips);
     this.weapons = new RemoteWeaponController(model);
+    // HexSniper equipped → the avatar swaps to the TP two-hand pose set
+    // (hold/run/masked jump-dash-slide). Derived from the EXISTING synced
+    // weapon id — no new protocol field needed for the base hold. ADS is
+    // not transmitted yet (documented limitation): remote avatars keep
+    // Hold/Run; anim.setAiming is the ready hook for a future field.
+    this.weapons.onArmedChanged = (armed) => this.anim.setArmed(armed);
     this.group.add(this.createNametag(name));
     this.createHealthBar();
 

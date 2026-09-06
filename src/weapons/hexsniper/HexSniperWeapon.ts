@@ -5,6 +5,8 @@ import { HexSniperController } from "./HexSniperController";
 import { HexSniperAttacks } from "./HexSniperAttacks";
 import type { HexSniperEvent } from "./HexSniperAttacks";
 import { HexSniperWorldAdapter } from "./HexSniperWorldAdapter";
+import { ViewmodelSystem } from "../viewmodel/ViewmodelSystem";
+import { HexSniperProfile } from "../profiles/HexSniperProfile";
 import { Combatant } from "../../combat/Combatant";
 import { KillMethod } from "../../combat/KillMethod";
 import { HitZone } from "../../combat/HitZone";
@@ -17,8 +19,14 @@ export interface HexSniperFrameInput {
   firePressed: boolean;
   /** RMB held → classic sniper ADS (×4 zoom — the Game drives the camera). */
   zoomHeld: boolean;
+  /** T edge → affectionate inspection (visual only, heavily gated). */
+  inspectPressed: boolean;
   /** False while dead / melee busy / mole strike → inputs ignored. */
   canAct: boolean;
+  /** Real physics ground contact (inspection requires standing still). */
+  grounded: boolean;
+  /** Horizontal speed (m/s) — drives the FP run pose + inspection gate. */
+  speed: number;
 }
 
 /** The local player's Combatant id (PlayerCombatant.id) — the tongue owner. */
@@ -68,8 +76,6 @@ export class HexSniperWeapon {
   /** The five physics callbacks on the REAL Rapier world. */
   readonly adapter: HexSniperWorldAdapter;
 
-  /** Camera-attached weapon container (kit model faces -X → yaw to -Z). */
-  private readonly group = new THREE.Group();
   private visuals: HexSniperController | null = null;
   private attacks: HexSniperAttacks | null = null;
   /** Armed on `player-arrived` (a player was reeled in): the next `ready`
@@ -77,6 +83,10 @@ export class HexSniperWeapon {
   private bitePending = false;
   /** Targets already damaged by the CURRENT bite (dedup across windows). */
   private readonly biteDamaged = new Set<number | string>();
+  /** True while the viewmodel should render (equipped, no melee busy…). */
+  private viewmodelVisible = false;
+  /** True while the affectionate inspection runs (FP arms + creature). */
+  private inspectionActive = false;
 
   // Scratch (no per-frame allocations)
   private readonly impulse = new THREE.Vector3();
@@ -87,39 +97,15 @@ export class HexSniperWeapon {
     /** WORLD scene — the stretched tongue tether lives here, not on the camera. */
     effectsParent: THREE.Scene,
     adapter: HexSniperWorldAdapter,
+    /** Common FP presentation system (arms + weapon mount + FP scene). */
+    private readonly viewmodel: ViewmodelSystem,
   ) {
     this.adapter = adapter;
-    this.group.position.set(
-      cfg.viewmodelOffset.x,
-      cfg.viewmodelOffset.y,
-      cfg.viewmodelOffset.z,
-    );
-    // Kit model looks toward -X with +Y up; the FPS camera looks toward -Z.
-    this.group.rotation.y = -Math.PI / 2;
-    this.group.scale.setScalar(cfg.viewmodelScale);
-    this.group.visible = false;
-    camera.add(this.group);
-
-    // DEPTH-CLEAR PROXY (Bass Blaster pattern) — the HexSniper is many
-    // interpenetrating meshes (monster head + mouth interior + scope +
-    // receiver panels). The classic viewmodel recipe (depthTest OFF) breaks
-    // such a model: with no depth testing the draw ORDER decides visibility,
-    // so the mouth interior paints OVER the closed head and body panels
-    // vanish behind each other. Instead we keep REAL depth testing between
-    // the weapon's own parts and clear the depth buffer right before the
-    // weapon draws (renderOrder 99 < 100): the weapon then wins against all
-    // previously-drawn world depth — same "never clip into walls" guarantee,
-    // correct self-occlusion.
-    const depthClear = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.001, 0.001),
-      new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }),
-    );
-    depthClear.material.transparent = true; // same render pass as the weapon
-    depthClear.renderOrder = 99;
-    depthClear.frustumCulled = false;
-    depthClear.onBeforeRender = (renderer) => renderer.clearDepth();
-    this.group.add(depthClear); // follows group.visible (weapon swaps)
-
+    // MIGRATED PATH: the whole weapon scene mounts under the common FP
+    // arms' Weapon_R socket (profile matrix, applied once). The legacy
+    // camera-space container, its -90° yaw, its viewmodelScale and its
+    // per-object clearDepth proxy are GONE — the ViewmodelSystem's single
+    // depth clear + real depthTest/depthWrite own the FP depth story.
     this.ready = this.load(effectsParent);
   }
 
@@ -133,8 +119,15 @@ export class HexSniperWeapon {
         tongueWidthScale: cfg.tongueWidthScale,
       });
       this.prepareViewmodelMaterials(this.visuals.object);
-      this.group.add(this.visuals.object);
-      this.group.updateWorldMatrix(true, true);
+      // The controller's clone IS the rendered instance: the viewmodel
+      // system attaches it (whole scene, transforms preserved — the
+      // HexSniper root keeps its authored 0.19 scale) under the common FP
+      // arms' Weapon_R socket through the profile mount matrix. No second
+      // clone, no second mixer on the same bones. The Tongue_Tether was
+      // already reparented into the WORLD scene by the controller — it
+      // stays occluded by walls, never rendered in the FP pass.
+      await this.viewmodel.equip(HexSniperProfile, this.visuals.object);
+      this.viewmodel.setVisible(this.viewmodelVisible);
       this.attacks = new HexSniperAttacks({
         world: this.adapter,
         pose: {
@@ -172,14 +165,16 @@ export class HexSniperWeapon {
   }
 
   /**
-   * Viewmodel materials: REAL depth testing between the weapon's own parts
-   * (the depth-clear proxy in the constructor already guarantees "never clip
-   * into walls" — see Bass Blaster), drawn in the transparent pass AFTER
-   * world transparents. The TETHER is excluded: it lives in the WORLD scene
-   * and must depth-test against the world — and since the controller SHARES
-   * the GLB's 5 materials between meshes (tether included), the viewmodel
+   * Viewmodel materials for the MIGRATED FP path: opaque hand/weapon
+   * surfaces keep REAL depth testing AND depth writing so they occlude
+   * each other correctly inside the dedicated FP pass (which starts with
+   * the system's single depth clear). The legacy `transparent = true`
+   * pass-ordering workaround and the renderOrder bump are gone. The
+   * TETHER is excluded automatically: the controller already reparented
+   * it into the WORLD scene before this runs — and since the controller
+   * SHARES the GLB materials between meshes (tether included), viewmodel
    * meshes get CLONES before mutation (each unique material cloned once,
-   * then reused between meshes).
+   * then reused between meshes; the world tether keeps the originals).
    */
   private prepareViewmodelMaterials(root: THREE.Object3D): void {
     const cloned = new Map<THREE.Material, THREE.Material>();
@@ -189,7 +184,6 @@ export class HexSniperWeapon {
         copy = mat.clone();
         copy.depthTest = true; // real self-occlusion between weapon parts
         copy.depthWrite = true;
-        copy.transparent = true; // draw AFTER world transparents
         cloned.set(mat, copy);
       }
       return copy;
@@ -197,10 +191,10 @@ export class HexSniperWeapon {
     root.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
       if (!mesh.isMesh) return;
-      mesh.renderOrder = 100;
-      mesh.frustumCulled = false;
+      mesh.frustumCulled = false; // camera-locked: always on screen
       mesh.castShadow = false;
       mesh.receiveShadow = false;
+      mesh.raycast = () => {}; // FP visual only — never a gameplay target
       mesh.material = Array.isArray(mesh.material)
         ? mesh.material.map(viewmodelClone)
         : viewmodelClone(mesh.material);
@@ -351,8 +345,18 @@ export class HexSniperWeapon {
     return this.bitePending || (this.attacks !== null && this.attacks.state !== "Idle");
   }
 
+  /** True while the affectionate inspection plays (arms + creature). */
+  get isInspecting(): boolean {
+    return this.inspectionActive;
+  }
+
   setViewmodelHidden(hidden: boolean): void {
-    this.group.visible = !hidden;
+    if (this.viewmodelVisible === !hidden) return;
+    this.viewmodelVisible = !hidden;
+    this.viewmodel.setVisible(this.viewmodelVisible);
+    // Hiding the viewmodel (melee busy / weapon swap / mole strike)
+    // interrupts a purely visual inspection — never an active attack.
+    if (hidden) this.cancelInspection();
   }
 
   /**
@@ -369,12 +373,72 @@ export class HexSniperWeapon {
 
   /** VISUAL step + edge-triggered inputs — call once per render frame. */
   update(dt: number, input: HexSniperFrameInput): void {
-    if (this.attacks && input.canAct && input.firePressed) {
-      // One attack at a time: tryTongue refuses while the tongue or an
-      // arrival bite is still running. bitePending is NOT set here — it
-      // only arms on `player-arrived` (bite exclusively after a reel-in).
-      if (!this.bitePending) this.attacks.tryTongue();
+    // ---- Fire (LMB edge). INTERRUPTION ORDER when inspecting is
+    // critical: cancel the inspection on BOTH mixers, restore the combat
+    // pose, evaluate the mixers/world matrices, and only THEN let
+    // tryTongue read TongueOrigin — the shot must never leave from the
+    // flipped inspection pose. The cancel never blocks the new attack's
+    // own animation and gameplay is never delayed by a visual transition.
+    if (this.attacks && input.canAct && input.firePressed && !this.bitePending) {
+      if (this.inspectionActive) {
+        this.cancelInspection();
+        this.visuals?.update(0); // settle the weapon skeleton to combat pose
+        this.visuals?.object.updateWorldMatrix(true, true);
+      }
+      this.attacks.tryTongue();
     }
+
+    // ---- ADS / movement interrupt a running inspection immediately.
+    if (
+      this.inspectionActive &&
+      (input.zoomHeld ||
+        !input.canAct ||
+        !input.grounded ||
+        input.speed > 0.5 ||
+        this.isBusy)
+    ) {
+      this.cancelInspection();
+    }
+
+    // ---- Inspection start (T edge) — visual only, heavily gated:
+    // weapon active+loaded, player can act, grounded and stationary, no
+    // ADS, no attack / tongue return / bitePending, visual controller at
+    // rest. No gameplay events, ever.
+    if (
+      input.inspectPressed &&
+      input.canAct &&
+      this.viewmodelVisible &&
+      !input.zoomHeld &&
+      input.grounded &&
+      input.speed <= 0.5 &&
+      !this.isBusy &&
+      !this.inspectionActive &&
+      this.visuals &&
+      this.visuals.state === "Idle"
+    ) {
+      // BOTH clips start the same frame, same clock (5.3 s each): the
+      // creature's Inspect_Affection on the weapon mixer, the arms'
+      // FP_Inspect_HexSniper on the viewmodel mixer. The weapon mixer is
+      // only advanced ONCE per frame (visuals.update below).
+      if (this.visuals.beginInspect()) {
+        const started = this.viewmodel.startInspect((cancelled) => {
+          this.inspectionActive = false;
+          if (cancelled) this.visuals?.cancelInspect();
+        });
+        if (started) this.inspectionActive = true;
+        else this.visuals.cancelInspect();
+      }
+    }
+
+    // FP presentation: straight pose through the WHOLE attack cycle
+    // (Extending/Pulling/Retracting/Recovering/Biting AND bitePending) —
+    // not just the Fire clip — plus ADS. Run/hold otherwise.
+    this.viewmodel.update(dt, {
+      straight: (input.zoomHeld && input.canAct) || this.isBusy,
+      running: input.grounded && input.speed > 1.5,
+      speed: input.speed,
+    });
+
     this.visuals?.update(dt);
   }
 
@@ -382,13 +446,23 @@ export class HexSniperWeapon {
   reset(): void {
     this.bitePending = false;
     this.biteDamaged.clear();
+    this.cancelInspection();
     this.attacks?.cancel("unequipped");
+  }
+
+  /** Cancel the affectionate inspection on BOTH mixers (never an attack). */
+  private cancelInspection(): void {
+    if (!this.inspectionActive) return;
+    this.inspectionActive = false;
+    this.viewmodel.cancelInspect();
+    this.visuals?.cancelInspect();
   }
 
   /** Free per-instance resources (mixer, skeleton clone, tether buffer). */
   dispose(): void {
+    this.cancelInspection();
+    this.viewmodel.unequip();
     this.attacks?.dispose();
     this.visuals?.dispose();
-    this.group.removeFromParent();
   }
 }

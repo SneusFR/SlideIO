@@ -44,6 +44,7 @@ import { PoisonHUD } from "../ui/PoisonHUD";
 import { HexSniperWeapon } from "../weapons/hexsniper/HexSniperWeapon";
 import { HexSniperWorldAdapter } from "../weapons/hexsniper/HexSniperWorldAdapter";
 import { HexSniperConfig as hexCfg } from "../weapons/hexsniper/HexSniperConfig";
+import { ViewmodelSystem } from "../weapons/viewmodel/ViewmodelSystem";
 import { MusicSelectorHUD } from "../ui/MusicSelectorHUD";
 import { KillstreakManager } from "../killstreaks/KillstreakManager";
 import { MoleStrike } from "../killstreaks/mole/MoleStrike";
@@ -152,6 +153,11 @@ export class Game {
 
   // ---- HEX SNIPER (monster-head sniper: tongue grapple + bite) ----
   private hexSniper: HexSniperWeapon;
+
+  // ---- Common FP viewmodel system (shared arms rig + dedicated FP pass;
+  // HexSniper is the first migrated weapon — legacy viewmodels keep their
+  // own camera-attached adapters until their pose libraries exist) ----
+  private viewmodelSystem: ViewmodelSystem;
 
   // ---- FFA combat ----
   private gameAudio: GameAudio;
@@ -498,7 +504,15 @@ export class Game {
       () => this.botManager.bots,
       () => this.targets.targets,
     );
-    this.hexSniper = new HexSniperWeapon(this.fpsCamera.camera, this.scene, hexAdapter);
+    // Common FP viewmodel system: shared Potato arms + dedicated FP scene
+    // rendered AFTER the world with ONE depth clear (see frame()).
+    this.viewmodelSystem = new ViewmodelSystem(window.innerWidth / window.innerHeight);
+    this.hexSniper = new HexSniperWeapon(
+      this.fpsCamera.camera,
+      this.scene,
+      hexAdapter,
+      this.viewmodelSystem,
+    );
     this.hexSniper.owner = this.playerCombatant;
     this.hexSniper.feedback = this.hitFeedback;
     this.hexSniper.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
@@ -679,6 +693,9 @@ export class Game {
     window.addEventListener("resize", () => {
       this.renderer.setSize(window.innerWidth, window.innerHeight);
       this.fpsCamera.setAspect(window.innerWidth / window.innerHeight);
+      // The FP camera keeps its own projection (reference vertical FOV) —
+      // its aspect must follow every resize too (16:9, 4:3, 21:9…).
+      this.viewmodelSystem.setAspect(window.innerWidth / window.innerHeight);
     });
   }
 
@@ -725,7 +742,10 @@ export class Game {
     if (this.gpuWarmedUp) return;
     this.gpuWarmedUp = true;
 
-    // 1. Every async weapon asset must be parsed and attached first.
+    // 1. Every async weapon asset must be parsed and attached first
+    // (viewmodelSystem.ready = the shared FP arms rig; hexSniper.ready
+    // resolves after its GLB is mounted on those arms). Errors are caught
+    // per-weapon inside each loader — a failed asset never blocks warm-up.
     await Promise.all([
       this.rifle.ready,
       this.hammerViewmodel.ready,
@@ -734,6 +754,9 @@ export class Game {
       this.revolver.ready,
       this.bassBlaster.ready,
       this.poison.ready,
+      this.viewmodelSystem.ready.catch((err) =>
+        console.error("ViewmodelSystem: FP arms failed to load", err),
+      ),
       this.hexSniper.ready,
     ]);
 
@@ -775,6 +798,16 @@ export class Game {
       if (this.halfRateShadows) this.renderer.shadowMap.needsUpdate = true;
       this.renderer.render(this.scene, this.fpsCamera.camera);
     }
+
+    // FP scene warm-up: force the arms + mounted weapon visible for a few
+    // frames so their shaders compile and textures upload NOW — the first
+    // HexSniper equip must never freeze mid-fight. FP lights are permanent
+    // (never toggled), so the FP light count is already the runtime one.
+    const fpWasVisible = this.viewmodelSystem.visible;
+    this.viewmodelSystem.setVisible(true);
+    this.viewmodelSystem.syncCamera(this.fpsCamera.camera);
+    for (let i = 0; i < 2; i++) this.viewmodelSystem.render(this.renderer);
+    this.viewmodelSystem.setVisible(fpWasVisible);
 
     // Light-count parity: the remote-VFX warm-up (multiplayer) owns 2
     // TEMPORARY point lights. End it now and render again so the REAL
@@ -1382,7 +1415,13 @@ export class Game {
         firePressed:
           hexEquipped && playerAlive && !meleeBlocked && this.input.wasMousePressed(0),
         zoomHeld: this.input.isMouseDown(2),
+        // T = affectionate inspection (audited: unused by every other
+        // binding — movement WASD/Space/Shift/E, melee A, interact F,
+        // reload/respawn R, killstreaks 1/2/3, arrows, F1). Visual only.
+        inspectPressed: hexEquipped && this.input.wasPressed("KeyT"),
         canAct: hexEquipped && playerAlive && !meleeBlocked && this.input.pointerLocked,
+        grounded: this.movement.grounded,
+        speed: this.movement.horizontalSpeed,
       });
 
 
@@ -1445,6 +1484,13 @@ export class Game {
       if (this.shadowFrameParity) this.renderer.shadowMap.needsUpdate = true;
     }
     this.renderer.render(this.scene, this.fpsCamera.camera);
+    // FP pass (migrated viewmodel weapons — HexSniper): follows the FINAL
+    // game-camera pose, ONE depth clear, arms + weapon drawn together over
+    // the world color. Legacy camera-attached viewmodels already rendered
+    // inside the world pass above (no double draw — each weapon renders on
+    // exactly one path).
+    this.viewmodelSystem.syncCamera(this.fpsCamera.camera);
+    this.viewmodelSystem.render(this.renderer);
     this.input.endFrame();
   }
 

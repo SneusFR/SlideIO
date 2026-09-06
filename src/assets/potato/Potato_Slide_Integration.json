@@ -1,0 +1,80 @@
+{
+  "clip": "Slide",
+  "view": "TP character locomotion",
+  "authoringFps": 30,
+  "durationSeconds": 1.1,
+  "rootMotion": false,
+  "entryFrames": [
+    1,
+    9
+  ],
+  "holdLoopFrames": [
+    9,
+    22
+  ],
+  "exitFrames": [
+    22,
+    34
+  ],
+  "entryTimesSeconds": [
+    0,
+    0.26666666666666666
+  ],
+  "holdLoopTimesSeconds": [
+    0.26666666666666666,
+    0.7
+  ],
+  "exitTimesSeconds": [
+    0.7,
+    1.1
+  ],
+  "holdPoseTimeSeconds": 0.26666666666666666,
+  "runtime": "Enter once; hold or repeat only the low section while SLIDING; exit only when the actual state ends and standing clearance permits. Jump and dash may interrupt immediately.",
+  "physics": "Gameplay owns horizontal travel, heading, capsule height and collisions. Do not reuse the old Meshy 17%/42% timing offsets.",
+  "weaponPresentation": "This is a full-body TP locomotion clip. Keep the separate FP weapon presentation. A TP armed layer needs its own grip and aim check over this lower-body motion.",
+  "sourceMetadata": {
+    "action": "Slide",
+    "fps": 30,
+    "key_sampling_hz": 120,
+    "frame_range": [
+      1,
+      34
+    ],
+    "duration_seconds": 1.1,
+    "entryEndFrame": 9,
+    "holdFrame": 9,
+    "holdStartFrame": 9,
+    "holdEndFrame": 22,
+    "exitStartFrame": 22,
+    "frameEnd": 34,
+    "segments": {
+      "entry": {
+        "frames": [
+          1,
+          9
+        ],
+        "seconds": 0.26666666666666666
+      },
+      "hold_loop": {
+        "frames": [
+          9,
+          22
+        ],
+        "seconds": 0.43333333333333335,
+        "endpoint_pose_equal": true
+      },
+      "exit": {
+        "frames": [
+          22,
+          34
+        ],
+        "seconds": 0.4
+      }
+    },
+    "root_motion": "none; game owns translation",
+    "source_sha256": "7539ef97ae61eb3eb1a1f6388578db09a4d3855009b4999f4d648d8338a67dd2",
+    "hip_lowering_m": 0.065,
+    "body_backward_lean_deg": 35,
+    "asymmetry": "Right foot forward on heel, left knee bent and sole supported."
+  }
+}

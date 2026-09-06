@@ -8,8 +8,9 @@ import revolverUrl from "../assets/revolver_opt.glb?url";
 // Bass Blaster = PulseCarbine LOD1 (light version — plenty for a 384px icon).
 import bassBlasterUrl from "../assets/PulseCarbine/PulseCarbine_LOD1.glb?url";
 import poisonUrl from "../assets/Lance_poison_jeu.glb?url";
-// Hex Sniper = LOD1 (light version — plenty for a 384px icon).
-import hexSniperUrl from "../assets/HexSniper/HexSniper_LOD1.glb?url";
+// Hex Sniper = the integration pack's canonical weapon GLB (no LOD exists
+// for the new pack yet — a 384px icon renders it once, then disposes).
+import hexSniperUrl from "../assets/potato/HexSniper_Weapon.glb?url";
 
 /**
  * Offscreen 3D icon factory for the Loadout menu.

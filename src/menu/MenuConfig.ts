@@ -13,34 +13,10 @@ export const playerProfile = {
   currency: 1_245_870,
 };
 
-/**
- * Weapon → hand-bone attachments. The GLB weapons are normalized
- * (centered, uniformly scaled) before these offsets apply, so tweaking
- * is intuitive: position in meters relative to the hand bone, rotation
- * in radians, scale = world length of the weapon's longest axis.
- */
-export interface WeaponAttachment {
-  /** Skeleton bone name the weapon parents to. */
-  bone: string;
-  position: THREE.Vector3;
-  rotation: THREE.Euler;
-  /** Target world length (longest dimension, meters). */
-  size: number;
-}
-
-export const hammerAttachment: WeaponAttachment = {
-  bone: "RightHand",
-  position: new THREE.Vector3(0.02, 0.16, 0.05),
-  rotation: new THREE.Euler(0.15, 0, -0.2),
-  size: 1.05,
-};
-
-export const plasmaAttachment: WeaponAttachment = {
-  bone: "LeftHand",
-  position: new THREE.Vector3(-0.02, 0.14, 0.06),
-  rotation: new THREE.Euler(0.35, Math.PI / 2, 0.1),
-  size: 0.95,
-};
+// NOTE: the legacy menu weapon attachments (Meshy RightHand/LeftHand bone
+// recipes) were removed with the Potato character migration — remote/bot
+// weapon grips now live in RemoteWeaponController.REMOTE_WEAPON_CONFIG
+// (Potato Weapon_R/Weapon_L sockets) and in the weapon profiles.
 
 export const MenuSceneConfig = {
   /** Normalized character height (meters). */

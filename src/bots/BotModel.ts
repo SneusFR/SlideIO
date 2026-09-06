@@ -16,7 +16,8 @@ import {
   loadCharacterAsset,
   FEET_OFFSET,
   MODEL_TOP,
-} from "../characters/SproutyCharacter";
+  POTATO_BONES,
+} from "../characters/PotatoCharacter";
 
 /** Per-frame pose data fed by the Bot (drives the animation state). */
 export interface BotPose {
@@ -38,6 +39,13 @@ export interface BotPose {
 
 /** Vertical extent reserved for the HEAD hit zone at the capsule top (m). */
 const HEAD_ZONE_HEIGHT = 0.35;
+/**
+ * World-up offset from the Potato Head JOINT to the head volume's visual
+ * center (m). Measured on the normalized rig: the Head bone sits at the
+ * jaw line (~67% of the body height) and the cranium extends above it —
+ * excluding the plant sprout, which is never part of the headshot zone.
+ */
+const HEAD_BONE_CENTER_OFFSET = 0.14;
 /** Enemy UI heights above the capsule center (model is MODEL_TOP tall). */
 const HEALTHBAR_HEIGHT = MODEL_TOP + 0.24;
 
@@ -74,7 +82,7 @@ function getLabelMaterial(): THREE.MeshBasicMaterial {
 }
 
 /**
- * Bot avatar: the SAME Sprouty Smile skinned character as the human
+ * Bot avatar: the SAME Potato skinned character as the human
  * players (multiplayer remote avatars), driven by the SAME animation
  * controller (idle / run / jump / slide clips), holding a real Plasma
  * Rifle GLB and wearing the same red rim glow.
@@ -106,7 +114,6 @@ export class BotModel {
   private readonly bodyHitbox: THREE.Mesh;
   private readonly headHitbox: THREE.Mesh;
   private headBone: THREE.Object3D | null = null;
-  private headEndBone: THREE.Object3D | null = null;
 
   // ---- Enemy UI ----
   private readonly healthBar: THREE.Group;
@@ -120,7 +127,6 @@ export class BotModel {
 
   // scratch
   private readonly tmpA = new THREE.Vector3();
-  private readonly tmpB = new THREE.Vector3();
 
   constructor(_index: number) {
     // ---- Hitboxes (synchronous — gameplay never waits for the GLB) ----
@@ -176,7 +182,7 @@ export class BotModel {
     this.nameLabel.raycast = NO_RAYCAST;
     this.group.add(this.healthBar);
 
-    // ---- Async: shared Sprouty character (cached — one load, N clones) ----
+    // ---- Async: shared Potato character (cached — one load, N clones) ----
     void loadCharacterAsset().then((asset) => {
       if (this.disposed) return;
 
@@ -209,9 +215,11 @@ export class BotModel {
         }
       });
 
-      // Head hitbox follows the REAL head from now on.
-      this.headBone = model.getObjectByName("Head") ?? null;
-      this.headEndBone = model.getObjectByName("head_end") ?? null;
+      // Head hitbox follows the REAL Head bone from now on. The Potato
+      // rig has no head-tip helper (and the plant leaf must NEVER count
+      // as head — leaf shots are not headshots): the local offset is an
+      // explicit constant above the Head bone (recalibrated on the rig).
+      this.headBone = model.getObjectByName(POTATO_BONES.head) ?? null;
 
       // Same animations as the human players. slideRaise: 0 — the bot
       // capsule never shrinks, the crouch comes from the clip alone.
@@ -223,11 +231,18 @@ export class BotModel {
     });
   }
 
-  /** Real Plasma Rifle GLB in the left hand (menu-proven attachment). */
+  /**
+   * Real Plasma Rifle GLB in the left hand. Bots KEEP their Plasma Rifle
+   * gameplay — the Potato swap never equips them with the sniper. The
+   * grip rides the Potato Weapon_L socket (child of Hand_L) with the
+   * ancestor-scale compensation this legacy path requires; the pack ships
+   * no Plasma poses, so the HexSniper TP matrices are never applied here.
+   */
   private attachRifle(model: THREE.Object3D): void {
     void loadRemoteWeaponTemplate(NetworkWeaponId.PLASMA_RIFLE).then((template) => {
       if (this.disposed || this.model !== model) return;
       const att = REMOTE_WEAPON_CONFIG[NetworkWeaponId.PLASMA_RIFLE];
+      if (!att) return;
       const bone = model.getObjectByName(att.bone);
       if (!bone) return;
 
@@ -314,11 +329,13 @@ export class BotModel {
   ): void {
     this.group.rotation.y = pose.yaw;
 
-    // ---- Animation state (same mapping as the network movement states) --
+    // ---- Animation state (same mapping as the network movement states).
+    // DASHING is tested BEFORE the airborne check: an air-dash must show
+    // the real Dash clip — a plain !grounded test would mask it.
     let state = NetworkMovementState.IDLE;
     if (pose.sliding) state = NetworkMovementState.SLIDING;
-    else if (!pose.grounded) state = NetworkMovementState.AIRBORNE;
     else if (pose.dashing) state = NetworkMovementState.DASHING;
+    else if (!pose.grounded) state = NetworkMovementState.AIRBORNE;
     else if (pose.speed > 0.75) state = NetworkMovementState.RUNNING;
 
     // Direction-aware legs: signed angle between the aim yaw and the
@@ -330,13 +347,13 @@ export class BotModel {
     }
     this.anim?.update(dt, state, pose.speed, pose.velocityY, pose.pitch, moveLocalYaw);
 
-    // ---- HEAD hitbox follows the real head bone (animated headshots) ----
+    // ---- HEAD hitbox follows the real Head bone (animated headshots).
+    // Explicit LOCAL offset above the bone (the Potato head volume sits
+    // above its Head joint; no helper bone exists and the plant leaf is
+    // deliberately NOT part of the head zone — leaf shots are body misses).
     if (this.headBone) {
       this.headBone.getWorldPosition(this.tmpA);
-      if (this.headEndBone) {
-        this.headEndBone.getWorldPosition(this.tmpB);
-        this.tmpA.add(this.tmpB).multiplyScalar(0.5);
-      }
+      this.tmpA.y += HEAD_BONE_CENTER_OFFSET;
       this.headHitbox.position.copy(this.group.worldToLocal(this.tmpA));
     }
 
