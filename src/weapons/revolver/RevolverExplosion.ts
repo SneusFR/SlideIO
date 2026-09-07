@@ -6,6 +6,7 @@ import { HitZone } from "../../combat/HitZone";
 import { HitFeedbackManager } from "../../combat/HitFeedbackManager";
 import { ParticleSystem } from "../../effects/ParticleSystem";
 import { Shockwave } from "../../effects/Shockwave";
+import { fxLights } from "../../effects/FXLightPool";
 
 /**
  * Thrown-revolver AoE explosion: short violet/black energy burst.
@@ -20,16 +21,17 @@ export class RevolverExplosion {
   /** Audio hook (wired by the Game). */
   onExplode: ((pos: THREE.Vector3) => void) | null = null;
 
-  private readonly scene: THREE.Scene;
   private readonly combatants: Combatant[];
   private readonly particles: ParticleSystem;
   private readonly shockwave: Shockwave;
 
-  // Small PERSISTENT pool of flash lights. The lights live in the scene
-  // FOREVER (intensity 0 while unused): adding/removing a light at runtime
-  // changes the scene light count and forces three.js to recompile every
-  // lit material — a visible one-time freeze on the first explosion.
-  private readonly flashes: { light: THREE.PointLight; t: number }[] = [];
+  // Flash-light STATE only — the physical lights come from the shared
+  // FXLightPool (immediate-mode request re-issued every decaying frame).
+  private readonly flashes: {
+    position: THREE.Vector3;
+    intensity: number;
+    t: number;
+  }[] = [];
 
   private readonly violet = new THREE.Color(0xa855f7);
   private readonly darkViolet = new THREE.Color(0x4c1d95);
@@ -38,26 +40,18 @@ export class RevolverExplosion {
   private readonly targetPos = new THREE.Vector3();
 
   constructor(
-    scene: THREE.Scene,
+    _scene: THREE.Scene,
     combatants: Combatant[],
     particles: ParticleSystem,
     shockwave: Shockwave,
   ) {
-    this.scene = scene;
     this.combatants = combatants;
     this.particles = particles;
     this.shockwave = shockwave;
 
-    // Pre-create the pooled flash lights (constant scene light count).
+    // Pre-allocate the flash STATE slots (lights come from FXLightPool).
     for (let i = 0; i < 2; i++) {
-      const light = new THREE.PointLight(
-        0xa855f7,
-        0,
-        cfg.revolverExplosionRadius * 2.2,
-        2,
-      );
-      this.scene.add(light);
-      this.flashes.push({ light, t: 0 });
+      this.flashes.push({ position: new THREE.Vector3(), intensity: 0, t: 0 });
     }
   }
 
@@ -69,13 +63,13 @@ export class RevolverExplosion {
     this.particles.burst(center, 14, 14, 0.22, this.flashWhite, 0); // flash sparks
     this.particles.ring(center, this.upNormal, 26, 0.6, 8, 0.4, this.violet);
 
-    // Reuse the most-finished pooled flash light (never added/removed).
+    // Reuse the most-finished flash slot (pooled physical lights).
     let flash = this.flashes[0];
     for (const f of this.flashes) {
       if (f.t < flash.t) flash = f;
     }
-    flash.light.position.copy(center);
-    flash.light.intensity = 14;
+    flash.position.copy(center);
+    flash.intensity = 14;
     flash.t = 0.22;
 
     this.onExplode?.(center);
@@ -115,8 +109,17 @@ export class RevolverExplosion {
     for (const f of this.flashes) {
       if (f.t <= 0) continue;
       f.t -= dt;
-      f.light.intensity = Math.max(0, f.light.intensity - dt * 70);
-      if (f.t <= 0) f.light.intensity = 0; // pooled light stays in scene
+      f.intensity = Math.max(0, f.intensity - dt * 70);
+      if (f.t <= 0) f.intensity = 0;
+      if (f.intensity > 0) {
+        fxLights.request(
+          this.violet,
+          f.intensity,
+          cfg.revolverExplosionRadius * 2.2,
+          2,
+          f.position,
+        );
+      }
     }
   }
 }

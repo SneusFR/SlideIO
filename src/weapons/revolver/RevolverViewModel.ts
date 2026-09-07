@@ -3,6 +3,7 @@ import { RevolverConfig as cfg } from "./RevolverConfig";
 import { loadRevolverTemplate, cloneRevolver } from "./RevolverModel";
 import { RevolverMaterializeVFX } from "./RevolverMaterializeVFX";
 import { ParticleSystem } from "../../effects/ParticleSystem";
+import { fxLights } from "../../effects/FXLightPool";
 
 /**
  * First-person revolver viewmodel. PURELY visual: recoil kick, wrist
@@ -25,7 +26,9 @@ export class RevolverViewmodel {
     cfg.revolverViewmodelOffset.z,
   );
   private readonly muzzle = new THREE.Object3D();
-  private readonly muzzleLight: THREE.PointLight;
+  /** Pooled muzzle-flash light state (physical light: FXLightPool). */
+  private muzzleLightIntensity = 0;
+  private readonly muzzleLightColor = new THREE.Color(0xffd9a0);
   private readonly particles: ParticleSystem;
 
   private materializeVfx: RevolverMaterializeVFX | null = null;
@@ -49,13 +52,8 @@ export class RevolverViewmodel {
     this.muzzle.position.set(0, 0.03, -(cfg.revolverViewmodelLength * 0.5 + 0.03));
     this.group.add(this.muzzle);
 
-    // Warm ballistic muzzle flash light. Attached to the CAMERA (never
-    // the hidden/shown viewmodel group): toggling a light's effective
-    // visibility changes the scene light count and forces three.js to
-    // recompile every lit material — a one-time freeze on weapon swaps.
-    this.muzzleLight = new THREE.PointLight(0xffd9a0, 0, 3.5, 2);
-    this.muzzleLight.position.copy(this.basePosition).add(this.muzzle.position);
-    camera.add(this.muzzleLight);
+    // Warm ballistic muzzle flash: pooled light (see FXLightPool) —
+    // requested at the muzzle world position every flashing frame.
 
     // Shared template → per-viewmodel clone with per-instance materials.
     this.ready = loadRevolverTemplate()
@@ -93,7 +91,7 @@ export class RevolverViewmodel {
     this.kick += fanFire ? cfg.revolverFanFireVisualRecoil : cfg.revolverVisualRecoil;
     this.wrist += fanFire ? 0.14 : 0.22;
     this.flashTimer = 0.05;
-    this.muzzleLight.intensity = 7;
+    this.muzzleLightIntensity = 7;
     // Short hot flash + a couple of violet sparks (sci-fi accent).
     this.muzzle.getWorldPosition(this.muzzleWorld);
     this.particles.burst(this.muzzleWorld, 6, 2.5, 0.1, this.flashColor, 0);
@@ -128,12 +126,22 @@ export class RevolverViewmodel {
     this.group.rotation.x = this.wrist; // wrist snaps up on fire
     this.group.rotation.z = Math.sin(time * 1.3) * 0.006;
 
-    // Muzzle flash decay.
+    // Muzzle flash decay (pooled light — request re-issued while lit).
     if (this.flashTimer > 0) {
       this.flashTimer -= dt;
-      if (this.flashTimer <= 0) this.muzzleLight.intensity = 0;
-    } else if (this.muzzleLight.intensity > 0) {
-      this.muzzleLight.intensity = Math.max(0, this.muzzleLight.intensity - dt * 90);
+      if (this.flashTimer <= 0) this.muzzleLightIntensity = 0;
+    } else if (this.muzzleLightIntensity > 0) {
+      this.muzzleLightIntensity = Math.max(0, this.muzzleLightIntensity - dt * 90);
+    }
+    if (this.muzzleLightIntensity > 0 && this.group.visible) {
+      this.muzzle.getWorldPosition(this.muzzleWorld);
+      fxLights.request(
+        this.muzzleLightColor,
+        this.muzzleLightIntensity,
+        3.5,
+        2,
+        this.muzzleWorld,
+      );
     }
 
     this.materializeVfx?.update(dt);

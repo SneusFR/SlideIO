@@ -9,6 +9,7 @@ import {
   getNoteHaloTexture,
 } from "./BassBlasterNotes";
 import { ParticleSystem } from "../../effects/ParticleSystem";
+import { fxLights } from "../../effects/FXLightPool";
 
 /** One orbiting note of the reload swirl (camera-space, pre-allocated). */
 interface ReloadNote {
@@ -42,7 +43,9 @@ export class BassBlasterViewmodel {
     cfg.viewmodelOffset.z,
   );
   private readonly muzzle = new THREE.Object3D();
-  private readonly muzzleLight: THREE.PointLight;
+  /** Pooled muzzle-flash light state (physical light: FXLightPool). */
+  private muzzleLightIntensity = 0;
+  private readonly muzzleLightColor = new THREE.Color(0xffffff);
   private readonly muzzleHalo: THREE.Sprite;
   private readonly muzzleHaloMat: THREE.SpriteMaterial;
   private readonly particles: ParticleSystem;
@@ -59,7 +62,9 @@ export class BassBlasterViewmodel {
 
   // ---- Reload swirl state ----
   private readonly reloadNotes: ReloadNote[] = [];
-  private readonly reloadLight: THREE.PointLight;
+  /** Pooled reload-glow light state (physical light: FXLightPool). */
+  private reloadLightIntensity = 0;
+  private readonly reloadLightColor = new THREE.Color(0xc084fc);
   private reloadT = -1; // -1 = inactive, else 0..1 progress
   private reloadDuration = 1;
   private reloadSparkAccum = 0;
@@ -77,13 +82,8 @@ export class BassBlasterViewmodel {
     this.muzzle.position.set(0, 0.02, -(cfg.viewmodelLength * 0.5 + 0.04));
     this.group.add(this.muzzle);
 
-    // Per-note colored muzzle flash light. Attached to the CAMERA (never
-    // the hidden/shown viewmodel group): toggling a light's effective
-    // visibility changes the scene light count and forces three.js to
-    // recompile every lit material — a one-time freeze on weapon swaps.
-    this.muzzleLight = new THREE.PointLight(0xffffff, 0, 3.5, 2);
-    this.muzzleLight.position.copy(this.basePosition).add(this.muzzle.position);
-    camera.add(this.muzzleLight);
+    // Per-note colored muzzle flash: pooled light (see FXLightPool) —
+    // requested at the muzzle world position every flashing frame.
 
     // Additive halo flash at the muzzle (tinted per note on every shot).
     this.muzzleHaloMat = new THREE.SpriteMaterial({
@@ -100,11 +100,8 @@ export class BassBlasterViewmodel {
     this.muzzleHalo.renderOrder = 105;
     this.muzzle.add(this.muzzleHalo);
 
-    // Reload glow (violet musical energy inside the weapon) — also
-    // camera-attached for the same constant-light-count reason.
-    this.reloadLight = new THREE.PointLight(0xc084fc, 0, 1.8, 2);
-    this.reloadLight.position.copy(this.basePosition);
-    camera.add(this.reloadLight);
+    // Reload glow (violet musical energy inside the weapon) — also a
+    // pooled light, requested at the weapon's world position while lit.
 
     // Pre-build the reload swirl notes (hidden until a reload starts).
     for (let i = 0; i < cfg.reloadNoteCount; i++) {
@@ -162,7 +159,6 @@ export class BassBlasterViewmodel {
         if (controller.muzzle) {
           controller.muzzle.getWorldPosition(this.muzzle.position);
           this.muzzle.position.z -= 0.02; // flash barely ahead of the bore
-          this.muzzleLight.position.copy(this.basePosition).add(this.muzzle.position);
         }
 
         // DEPTH-CLEAR PROXY — the PulseCarbine is 7 interpenetrating
@@ -225,8 +221,8 @@ export class BassBlasterViewmodel {
     this.wrist += 0.06;
     this.beat = 1;
     this.flashTimer = 0.05;
-    this.muzzleLight.color.copy(note.color);
-    this.muzzleLight.intensity = cfg.muzzleFlashIntensity;
+    this.muzzleLightColor.copy(note.color);
+    this.muzzleLightIntensity = cfg.muzzleFlashIntensity;
     this.muzzleHaloMat.color.copy(note.bright);
     this.muzzleHaloMat.opacity = 0.95;
     // Colored spark spray at the muzzle.
@@ -248,7 +244,7 @@ export class BassBlasterViewmodel {
   /** Instant, silent completion (death / loadout swap). */
   cancelReload(): void {
     this.reloadT = -1;
-    this.reloadLight.intensity = 0;
+    this.reloadLightIntensity = 0;
     for (const n of this.reloadNotes) {
       n.sprite.visible = false;
       n.material.opacity = 0;
@@ -278,12 +274,22 @@ export class BassBlasterViewmodel {
     const squeeze = 1 + this.beat * 0.05;
     this.group.scale.set(squeeze, 1 / squeeze, 1);
 
-    // Muzzle flash decay (light + halo).
+    // Muzzle flash decay (pooled light + halo).
     if (this.flashTimer > 0) {
       this.flashTimer -= dt;
-      if (this.flashTimer <= 0) this.muzzleLight.intensity = 0;
-    } else if (this.muzzleLight.intensity > 0) {
-      this.muzzleLight.intensity = Math.max(0, this.muzzleLight.intensity - dt * 90);
+      if (this.flashTimer <= 0) this.muzzleLightIntensity = 0;
+    } else if (this.muzzleLightIntensity > 0) {
+      this.muzzleLightIntensity = Math.max(0, this.muzzleLightIntensity - dt * 90);
+    }
+    if (this.muzzleLightIntensity > 0 && this.group.visible) {
+      this.muzzle.getWorldPosition(this.muzzleWorld);
+      fxLights.request(
+        this.muzzleLightColor,
+        this.muzzleLightIntensity,
+        3.5,
+        2,
+        this.muzzleWorld,
+      );
     }
     if (this.muzzleHaloMat.opacity > 0) {
       this.muzzleHaloMat.opacity = Math.max(0, this.muzzleHaloMat.opacity - dt * 9);
@@ -299,8 +305,9 @@ export class BassBlasterViewmodel {
 
   private updateReloadSwirl(dt: number): void {
     if (this.reloadT < 0) {
-      if (this.reloadLight.intensity > 0) {
-        this.reloadLight.intensity = Math.max(0, this.reloadLight.intensity - dt * 10);
+      if (this.reloadLightIntensity > 0) {
+        this.reloadLightIntensity = Math.max(0, this.reloadLightIntensity - dt * 10);
+        this.requestReloadLight();
       }
       return;
     }
@@ -311,15 +318,17 @@ export class BassBlasterViewmodel {
     if (t >= 1) {
       // Final snap: notes absorbed → small flash + sparkle shower.
       this.cancelReload();
-      this.reloadLight.intensity = 2.2;
+      this.reloadLightIntensity = 2.2;
+      this.requestReloadLight();
       this.group.getWorldPosition(this.groupWorld);
       this.sparkColor.set(0xd8b4fe);
       this.particles.burst(this.groupWorld, 10, 1.6, 0.25, this.sparkColor, 0);
       return;
     }
 
-    // Energy glow swells with the swirl.
-    this.reloadLight.intensity = 1.4 * Math.sin(Math.PI * Math.min(t * 1.05, 1));
+    // Energy glow swells with the swirl (pooled light).
+    this.reloadLightIntensity = 1.4 * Math.sin(Math.PI * Math.min(t * 1.05, 1));
+    this.requestReloadLight();
 
     for (const n of this.reloadNotes) {
       // Staggered per-note progress (later notes start slightly delayed).
@@ -349,5 +358,18 @@ export class BassBlasterViewmodel {
       this.group.getWorldPosition(this.groupWorld);
       this.particles.burst(this.groupWorld, 1, 0.8, 0.18, n.note.color, 0);
     }
+  }
+
+  /** Immediate-mode pooled reload glow at the weapon's world position. */
+  private requestReloadLight(): void {
+    if (this.reloadLightIntensity <= 0 || !this.group.visible) return;
+    this.group.getWorldPosition(this.groupWorld);
+    fxLights.request(
+      this.reloadLightColor,
+      this.reloadLightIntensity,
+      1.8,
+      2,
+      this.groupWorld,
+    );
   }
 }

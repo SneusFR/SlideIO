@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { WeaponConfig as cfg } from "../weapons/WeaponConfig";
+import { getQualitySettings } from "../game/GraphicsQuality";
 
 export type TargetBehaviorType =
   | "horizontal"
@@ -91,7 +92,9 @@ export class TrainingTarget {
         roughness: 0.45,
       }),
     );
-    body.castShadow = true;
+    // Moving drone: never a caster on the LOW preset's STATIC shadow bake
+    // (its shadow would be frozen at the spawn position).
+    body.castShadow = !getQualitySettings().staticShadows;
 
     // Glowing orange ring facing the firing line (+Z)
     this.ringMat = new THREE.MeshStandardMaterial({

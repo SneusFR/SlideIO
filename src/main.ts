@@ -61,6 +61,8 @@ async function main(): Promise<void> {
   // (weapons/killstreaks) surface rather than a fake duplicate screen.
   menu.onCustomize = () => loadoutMenu.open();
   menu.onChangeLobby = () => browser.open();
+  // FPS LIMIT (settings popover): pure loop pacing — applies live.
+  menu.onFpsCapChange = (maxFps) => game.setFpsCap(maxFps);
 
   browser.onCreate = () => lobby.open();
   browser.onJoinByCode = () => lobby.open();

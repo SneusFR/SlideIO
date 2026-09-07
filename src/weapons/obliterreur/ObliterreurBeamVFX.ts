@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { ObliterreurConfig as oc } from "./ObliterreurConfig";
+import { fxLights } from "../../effects/FXLightPool";
 
 /**
  * The huge curved black-vortex beam of the OBLITERREUR.
@@ -194,7 +195,11 @@ interface Shell {
 
 export class ObliterreurBeamVFX {
   private readonly shells: Shell[];
-  private readonly lights: THREE.PointLight[] = [];
+  // Endpoint void lights: POOLED (see FXLightPool) — world positions +
+  // current intensity, re-requested every active frame.
+  private readonly lightColor = new THREE.Color(0x7c3aed);
+  private readonly lightPositions = [new THREE.Vector3(), new THREE.Vector3()];
+  private lightIntensity = 0;
 
   private phase: Phase = "idle";
   private phaseTimer = 0;
@@ -256,16 +261,6 @@ export class ObliterreurBeamVFX {
       ),
     ];
 
-    for (let i = 0; i < 2; i++) {
-      const light = new THREE.PointLight(
-        0x7c3aed,
-        0,
-        oc.obliterreurEndpointLightDistance,
-        2,
-      );
-      this.lights.push(light);
-      scene.add(light);
-    }
   }
 
   /** True while any beam mesh is alive (appearing, active or imploding). */
@@ -291,10 +286,10 @@ export class ObliterreurBeamVFX {
       shell.mat.uniforms.uLen.value = length;
     }
 
-    // Endpoint void lights.
-    this.lights[0].position.copy(curve.v0);
-    this.lights[1].position.copy(curve.v3);
-    for (const l of this.lights) l.intensity = oc.obliterreurEndpointLightIntensity;
+    // Endpoint void lights (pooled — positions stored, requested in update).
+    this.lightPositions[0].copy(curve.v0);
+    this.lightPositions[1].copy(curve.v3);
+    this.lightIntensity = oc.obliterreurEndpointLightIntensity;
 
     this.phase = "appear";
     this.phaseTimer = 0;
@@ -329,22 +324,30 @@ export class ObliterreurBeamVFX {
     } else if (this.phase === "implode") {
       const k = Math.min(1, this.phaseTimer / this.implodeDuration);
       this.appear = (1 - k) * (1 - k); // ease-in collapse
-      const fade = 1 - k;
-      for (const l of this.lights) {
-        l.intensity = oc.obliterreurEndpointLightIntensity * fade;
-      }
+      this.lightIntensity = oc.obliterreurEndpointLightIntensity * (1 - k);
       if (k >= 1) {
         this.phase = "idle";
         this.appear = 0;
-        for (const l of this.lights) l.intensity = 0;
+        this.lightIntensity = 0;
         this.disposeMeshes();
       }
     } else {
       this.appear = 1;
       // Subtle unstable flicker on the endpoint lights.
       const flicker = 0.85 + 0.15 * Math.sin(time * 23) * Math.sin(time * 7.7);
-      for (const l of this.lights) {
-        l.intensity = oc.obliterreurEndpointLightIntensity * flicker;
+      this.lightIntensity = oc.obliterreurEndpointLightIntensity * flicker;
+    }
+
+    // Pooled endpoint lights — one immediate-mode request per endpoint.
+    if (this.lightIntensity > 0) {
+      for (const pos of this.lightPositions) {
+        fxLights.request(
+          this.lightColor,
+          this.lightIntensity,
+          oc.obliterreurEndpointLightDistance,
+          2,
+          pos,
+        );
       }
     }
 
@@ -365,19 +368,16 @@ export class ObliterreurBeamVFX {
   }
 
   /**
-   * Full teardown: meshes, endpoint lights and shader materials removed
-   * from the scene/GPU. Used by REMOTE beam replicas when their owner
-   * leaves the room (the local weapon lives for the whole session).
+   * Full teardown: meshes and shader materials removed from the
+   * scene/GPU (the endpoint lights are pooled — nothing to remove).
+   * Used by REMOTE beam replicas when their owner leaves the room
+   * (the local weapon lives for the whole session).
    */
   dispose(): void {
     this.phase = "idle";
     this.appear = 0;
+    this.lightIntensity = 0;
     this.disposeMeshes();
-    for (const light of this.lights) {
-      light.intensity = 0;
-      this.scene.remove(light);
-      light.dispose();
-    }
     for (const shell of this.shells) shell.mat.dispose();
   }
 }

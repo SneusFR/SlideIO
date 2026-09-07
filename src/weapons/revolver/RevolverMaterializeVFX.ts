@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { ParticleSystem } from "../../effects/ParticleSystem";
+import { fxLights } from "../../effects/FXLightPool";
 
 /**
  * Holographic materialization of a fresh revolver in the hand:
@@ -22,7 +23,9 @@ export class RevolverMaterializeVFX {
   private readonly wires: THREE.Mesh[] = [];
   private readonly scanPlane: THREE.Mesh;
   private readonly scanMat: THREE.MeshBasicMaterial;
-  private readonly glow: THREE.PointLight;
+  /** Pooled glow-light state (physical light: FXLightPool). */
+  private glowIntensity = 0;
+  private readonly glowColor = new THREE.Color(0xa855f7);
   private readonly bounds = new THREE.Box3();
   private minY = -0.1;
   private maxY = 0.1;
@@ -33,7 +36,7 @@ export class RevolverMaterializeVFX {
   private readonly worldPos = new THREE.Vector3();
   private sparkAccum = 0;
 
-  constructor(root: THREE.Object3D, particles: ParticleSystem, lightParent?: THREE.Object3D) {
+  constructor(root: THREE.Object3D, particles: ParticleSystem, _lightParent?: THREE.Object3D) {
     this.root = root;
     this.particles = particles;
 
@@ -82,18 +85,8 @@ export class RevolverMaterializeVFX {
     this.scanPlane.visible = false;
     root.add(this.scanPlane);
 
-    // The glow light attaches to a PERMANENTLY visible parent (the camera)
-    // when provided: a light inside the hidden/shown viewmodel group would
-    // change the scene light count on weapon swaps, forcing three.js to
-    // recompile every lit material (a visible one-time freeze).
-    this.glow = new THREE.PointLight(0xa855f7, 0, 1.6, 2);
-    if (lightParent) {
-      root.getWorldPosition(this.worldPos);
-      lightParent.add(this.glow);
-      this.glow.position.copy(lightParent.worldToLocal(this.worldPos.clone()));
-    } else {
-      root.add(this.glow);
-    }
+    // Purple energy glow: pooled light (see FXLightPool) — requested at
+    // the weapon's world position every glowing frame.
   }
 
   /** Begin the hologram: the mesh starts fully immaterial. */
@@ -120,14 +113,15 @@ export class RevolverMaterializeVFX {
     this.wireMat.opacity = 0;
     this.scanPlane.visible = false;
     this.scanMat.opacity = 0;
-    this.glow.intensity = 0;
+    this.glowIntensity = 0;
   }
 
   update(dt: number): void {
     if (!this.active) {
       // Post-flash glow decay only.
-      if (this.glow.intensity > 0) {
-        this.glow.intensity = Math.max(0, this.glow.intensity - dt * 14);
+      if (this.glowIntensity > 0) {
+        this.glowIntensity = Math.max(0, this.glowIntensity - dt * 14);
+        this.requestGlow();
       }
       return;
     }
@@ -147,7 +141,8 @@ export class RevolverMaterializeVFX {
     this.scanMat.opacity = 0.85 * Math.sin(Math.PI * p);
 
     // Purple energy glow + assembling sparks.
-    this.glow.intensity = 1.2 * Math.sin(Math.PI * p);
+    this.glowIntensity = 1.2 * Math.sin(Math.PI * p);
+    this.requestGlow();
     this.sparkAccum += 42 * dt;
     while (this.sparkAccum >= 1) {
       this.sparkAccum -= 1;
@@ -158,7 +153,15 @@ export class RevolverMaterializeVFX {
     if (p >= 1) {
       // Final flash: the metal snaps solid.
       this.finish();
-      this.glow.intensity = 2.4;
+      this.glowIntensity = 2.4;
+      this.requestGlow();
     }
+  }
+
+  /** Immediate-mode pooled light at the weapon's world position. */
+  private requestGlow(): void {
+    if (this.glowIntensity <= 0) return;
+    this.root.getWorldPosition(this.worldPos);
+    fxLights.request(this.glowColor, this.glowIntensity, 1.6, 2, this.worldPos);
   }
 }

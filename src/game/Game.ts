@@ -25,6 +25,7 @@ import { MovementConfig as cfg } from "../player/MovementConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import { ParticleSystem } from "../effects/ParticleSystem";
 import { Shockwave } from "../effects/Shockwave";
+import { fxLights } from "../effects/FXLightPool";
 import { PlasmaRifle } from "../weapons/PlasmaRifle";
 import { HammerWeapon } from "../weapons/HammerWeapon";
 import { HammerViewmodel } from "../weapons/HammerViewmodel";
@@ -235,9 +236,24 @@ export class Game {
   private elapsed = 0;
   /** True once the one-time GPU warm-up pass has run. */
   private gpuWarmedUp = false;
-  /** LOW preset: shadow pass rendered every other frame (30 Hz shadows). */
-  private readonly halfRateShadows: boolean;
-  private shadowFrameParity = false;
+  /**
+   * Optional frame-rate cap: target milliseconds between rendered frames
+   * (0 = uncapped). The deadline advances by one interval per accepted
+   * tick, rather than imposing a minimum gap since the last render.
+   * Actual cadence still depends on the browser and available CPU/GPU
+   * budget; a cap cannot guarantee evenly presented images.
+   * Duplicate rAF chains are a lifecycle bug, NOT a reason to impose a cap.
+   */
+  private frameIntervalMs: number;
+  /** Next render deadline (performance.now() ms). 0 = not started. */
+  private nextFrameAt = 0;
+  /**
+   * LOW preset: STATIC shadows — the map's shadow map is baked once (map
+   * and lights never move; characters don't cast on LOW) instead of being
+   * re-rendered per frame. Kills both the fixed per-frame caster pass and
+   * the short/long frame cadence of the old half-rate refresh.
+   */
+  private readonly staticShadows: boolean;
   private readonly playerPos = new THREE.Vector3();
   private readonly rightDir = new THREE.Vector3();
   private readonly attackerPos = new THREE.Vector3();
@@ -271,16 +287,25 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    // LOW: the shadow pass is manually re-rendered every OTHER frame in
-    // frame() — shadows update at 30 Hz while gameplay stays at 60.
-    this.halfRateShadows = quality.halfRateShadows;
-    if (this.halfRateShadows) this.renderer.shadowMap.autoUpdate = false;
+    // LOW: the shadow map is BAKED (autoUpdate off) — the map and its
+    // single shadow light are fully static, so one render at load time
+    // (see warmUpRendering) serves every frame afterwards.
+    this.staticShadows = quality.staticShadows;
+    if (this.staticShadows) this.renderer.shadowMap.autoUpdate = false;
+    // LOW: cap rendered frames (see frameIntervalMs doc). HIGH: uncapped (0).
+    this.frameIntervalMs = Number.isFinite(quality.maxFps)
+      ? 1000 / quality.maxFps
+      : 0;
     // Light "color grading": filmic curve → deep blacks, cool highlights.
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = spaceCfg.toneMappingExposure;
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
+    // Shared FX light pool: created BEFORE any weapon/VFX so the scene
+    // light count is final from the first shader compile (adding a light
+    // later would force three.js to recompile every lit material).
+    fxLights.init(this.scene);
     // Per-map atmosphere: each map owns its clear color, distance haze,
     // exposure and sky backdrop (added straight to the scene — NOT
     // map.group — so it is never part of the beam-raycast hittables and
@@ -800,7 +825,6 @@ export class Game {
     });
     this.scene.updateMatrixWorld(true);
     for (let i = 0; i < 2; i++) {
-      if (this.halfRateShadows) this.renderer.shadowMap.needsUpdate = true;
       this.renderer.render(this.scene, this.fpsCamera.camera);
     }
 
@@ -814,18 +838,27 @@ export class Game {
     for (let i = 0; i < 2; i++) this.viewmodelSystem.render(this.renderer);
     this.viewmodelSystem.setVisible(fpWasVisible);
 
-    // Light-count parity: the remote-VFX warm-up (multiplayer) owns 2
-    // TEMPORARY point lights. End it now and render again so the REAL
-    // runtime light count is also compiled (both variants cached).
+    // End the remote-VFX warm-up (multiplayer) and render again so the
+    // scene is compiled in its REAL runtime state (all FX lights are
+    // pooled now — the light count never changes — but the warm-up owns
+    // transient meshes/materials that must be gone before the bake below).
     this.multiplayer?.vfx.finishWarmUp();
     for (let i = 0; i < 2; i++) {
-      if (this.halfRateShadows) this.renderer.shadowMap.needsUpdate = true;
       this.renderer.render(this.scene, this.fpsCamera.camera);
     }
 
     for (const s of saved) {
       s.obj.visible = s.visible;
       s.obj.frustumCulled = s.culled;
+    }
+
+    // STATIC shadows (LOW): bake the shadow map ONCE, now that every
+    // transient warm-up object is back to its real visibility — only the
+    // static map casters render into it. Characters don't cast shadows on
+    // this preset (see PotatoCharacter), so the bake never goes stale.
+    if (this.staticShadows) {
+      this.renderer.shadowMap.needsUpdate = true;
+      this.renderer.render(this.scene, this.fpsCamera.camera);
     }
 
     // 4. Cleanup: transient warm objects removed, pools back at rest.
@@ -1014,8 +1047,13 @@ export class Game {
   }
 
   start(): void {
+    this.releaseMenuPreview();
     this.lastTime = performance.now();
-    this.renderer.setAnimationLoop(() => this.frame());
+    this.nextFrameAt = 0;
+    this.hud.resetFrameStats();
+    // Replace the callback of the running preview/transition chain. Never
+    // stop/restart it from inside its callback (see beginMenuPlayTransition).
+    this.renderer.setAnimationLoop((timestamp) => this.frame(timestamp));
   }
 
   // ------------------------------------------------------------------
@@ -1053,7 +1091,7 @@ export class Game {
 
     // Shadows: render one fresh pass for the preview even on the LOW
     // preset (autoUpdate=false) — the scene is static afterwards.
-    if (this.halfRateShadows) this.renderer.shadowMap.needsUpdate = true;
+    if (this.staticShadows) this.renderer.shadowMap.needsUpdate = true;
 
     this.lastTime = performance.now();
     this.renderer.setAnimationLoop(() => this.menuPreviewFrame());
@@ -1065,6 +1103,8 @@ export class Game {
     const p = this.menuPreview;
     if (!p) return;
     const now = performance.now();
+    // Same optional frame-rate cap as gameplay; keep the menu GPU budget low.
+    if (this.frameCapSkip(now)) return;
     const dt = Math.min((now - this.lastTime) / 1000, 1 / 20);
     this.lastTime = now;
     p.elapsed += dt;
@@ -1115,7 +1155,12 @@ export class Game {
 
     return new Promise((resolve) => {
       this.renderer.setAnimationLoop(() => {
-        const t = Math.min((performance.now() - t0) / durationMs, 1);
+        if (this.menuPreview !== p) return;
+        // Same frame-rate cap as gameplay (LOW) — time-based easing, so
+        // skipped ticks never change the flight duration.
+        const nowMs = performance.now();
+        if (this.frameCapSkip(nowMs)) return;
+        const t = Math.min((nowMs - t0) / durationMs, 1);
         // Smooth ease-in-out (accelerate → glide in).
         const e = t * t * (3 - 2 * t);
         p.camera.position.lerpVectors(startPos, targetPos, e);
@@ -1124,19 +1169,46 @@ export class Game {
         p.camera.updateProjectionMatrix();
         this.renderer.render(this.scene, p.camera);
         if (t >= 1) {
-          this.stopMenuPreview();
+          // Three r185 queues the next rAF AFTER this callback returns,
+          // even if setAnimationLoop(null) was called inside it. Stopping
+          // here then restarting after await would leave TWO rAF chains.
+          // Only release preview resources; start() replaces this callback
+          // on the SAME running chain. The guard above makes it idle if
+          // the caller delays the handoff.
+          this.releaseMenuPreview();
           resolve();
         }
       });
     });
   }
 
-  /** Stop the preview loop immediately and free its listeners. */
+  /**
+   * Live frame-rate cap change (Escape-menu FPS LIMIT button). Unlike the
+   * graphics preset (MSAA is fixed at context creation → reload), the cap
+   * is pure loop pacing — it applies instantly to the menu preview, the
+   * play transition and gameplay. Infinity/0 = uncapped.
+   */
+  setFpsCap(maxFps: number): void {
+    this.frameIntervalMs =
+      Number.isFinite(maxFps) && maxFps > 0 ? 1000 / maxFps : 0;
+    this.nextFrameAt = 0; // re-anchor the deadline on the next tick
+  }
+
+  /**
+   * External stop (multiplayer preparation). Do NOT call from a renderer
+   * callback: Three queues another rAF after that callback returns.
+   */
   stopMenuPreview(): void {
+    if (!this.menuPreview) return;
+    this.renderer.setAnimationLoop(null);
+    this.releaseMenuPreview();
+  }
+
+  /** Release preview resources WITHOUT stopping the shared animation chain. */
+  private releaseMenuPreview(): void {
     const p = this.menuPreview;
     if (!p) return;
     this.menuPreview = null;
-    this.renderer.setAnimationLoop(null);
     window.removeEventListener("resize", p.onResize);
   }
 
@@ -1148,10 +1220,51 @@ export class Game {
     for (const bot of this.botManager.bots) this.hittables.push(bot.model.group);
   }
 
-  private frame(): void {
+  /**
+   * Frame-cap deadline gate (see frameIntervalMs). Returns true when this
+   * rAF tick must be SKIPPED (deadline not reached yet). On a rendered
+   * frame the deadline advances by exactly one interval — anti-spiral: if
+   * the frame was slow (or the tab hidden) and we're already more than one
+   * interval late, re-anchor to now instead of accumulating a debt that
+   * would force a burst of back-to-back frames.
+   */
+  private frameCapSkip(now: number): boolean {
+    if (this.frameIntervalMs <= 0) return false; // uncapped (HIGH)
+    if (this.nextFrameAt === 0) {
+      this.nextFrameAt = now + this.frameIntervalMs; // first frame anchors
+      return false;
+    }
+    // 2 ms early-acceptance tolerance: on a HEALTHY 60 Hz rAF loop, vsync
+    // jitter makes ticks land ±fractions of a ms around the deadline — a
+    // strict compare would reject a 0.1 ms-early tick and halve the rate
+    // to 30 (beat). 2 ms accepts jittery on-time ticks but still rejects
+    // the genuinely-early ticks of a >60 Hz loop (8–12 ms ahead).
+    if (now < this.nextFrameAt - 2) return true; // too early — skip tick
+    this.nextFrameAt += this.frameIntervalMs;
+    if (this.nextFrameAt < now) this.nextFrameAt = now + this.frameIntervalMs;
+    return false;
+  }
+
+  private frame(timestamp: number): void {
     const now = performance.now();
+    // Count ALL callbacks (including capped ticks), but never simulate or
+    // render twice for one rAF timestamp. The HUD exposes duplicates rather
+    // than allowing them to masquerade as extra FPS.
+    if (!this.hud.sampleAnimationFrame(timestamp)) return;
+
+    // FRAME-RATE CAP (LOW preset — see frameIntervalMs): skip rAF ticks
+    // ahead of the render deadline. Nothing is lost on a skipped tick:
+    // lastTime is NOT advanced (the next processed frame's dt covers the
+    // skipped time), mouse deltas keep accumulating in the InputManager,
+    // and edge inputs (wasPressed…) stay pending until input.endFrame() —
+    // which only runs on processed frames.
+    if (this.frameCapSkip(now)) return;
+
+    // RAW frame delta (for the FPS/frame-time stats ONLY — feeding the
+    // clamped dt to the counter capped it at 30 FPS and hid every drop).
+    const rawDt = (now - this.lastTime) / 1000;
     // Clamp dt so a background tab doesn't teleport the player.
-    const dt = Math.min((now - this.lastTime) / 1000, 1 / 30);
+    const dt = Math.min(rawDt, 1 / 30);
     this.lastTime = now;
     this.elapsed += dt;
 
@@ -1462,7 +1575,7 @@ export class Game {
       running,
     });
 
-    this.hud.update(dt, this.movement);
+    this.hud.update(rawDt, this.movement, this.scene);
     this.weaponHud.update(dt, this.rifle.heat, this.rifle.hittingTarget);
     this.dashHud.update(dt, this.movement);
     this.spearHud.setVisible(this.meleeWeapon === "SPEAR");
@@ -1490,13 +1603,19 @@ export class Game {
     this.netDebugHud?.update(dt); // F1 overlay (throttled; free when hidden)
     this.netAttackerAge += dt; // network damage-direction memory decays
 
-    // LOW preset: refresh the shadow map every other frame only (the
-    // whole caster re-render is the single most expensive fixed pass).
-    if (this.halfRateShadows) {
-      this.shadowFrameParity = !this.shadowFrameParity;
-      if (this.shadowFrameParity) this.renderer.shadowMap.needsUpdate = true;
-    }
+    // FX light pool: assign this frame's light requests (weapon flashes,
+    // impacts, explosions…) to the 2 physical pooled lights — MUST run
+    // after every VFX update and before the render.
+    fxLights.commit();
+
+    // LOW preset: the shadow map is STATIC (baked once at load — see
+    // warmUpRendering). No per-frame refresh: the caster re-render was the
+    // single most expensive fixed pass AND its every-other-frame cadence
+    // created the short/long frame judder that felt like 30 FPS.
     this.renderer.render(this.scene, this.fpsCamera.camera);
+    // Debug HUD GPU stats: renderer.info is reset by every render() call,
+    // so the WORLD pass numbers must be captured right here.
+    this.hud.sampleRenderInfo(this.renderer);
     // FP pass (migrated viewmodel weapons — HexSniper): follows the FINAL
     // game-camera pose, ONE depth clear, arms + weapon drawn together over
     // the world color. Legacy camera-attached viewmodels already rendered

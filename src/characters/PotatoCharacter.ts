@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader, GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MovementConfig as moveCfg } from "../player/MovementConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
+import { getQualitySettings } from "../game/GraphicsQuality";
 import type { RemoteCharacterClips } from "../network/remote/RemotePlayerAnimationController";
 // POTATO character pack (src/assets/potato) — the common third-person model
 // for remote players AND bots. One GLB carries mesh + skeleton + the four
@@ -121,10 +122,14 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
     model.position.y -= box.min.y;
     model.rotation.y = MODEL_YAW_OFFSET;
 
+    // LOW preset bakes a STATIC shadow map once at load (see Game /
+    // GraphicsQuality): moving characters must NOT cast shadows there or
+    // their silhouette would be frozen into the bake. HIGH keeps them.
+    const characterShadows = !getQualitySettings().staticShadows;
     model.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
       if (mesh.isMesh) {
-        mesh.castShadow = true;
+        mesh.castShadow = characterShadows;
         mesh.receiveShadow = false;
         // PERF: frustum culling STAYS ON. Skinned bounds move with the
         // animation, so the bind-pose bounding sphere is inflated once

@@ -27,8 +27,21 @@ export interface QualitySettings {
   antialias: boolean;
   /** Directional moonlight shadow map resolution (square). */
   shadowMapSize: number;
-  /** Render the shadow pass every OTHER frame (30 Hz shadows at 60 FPS). */
-  halfRateShadows: boolean;
+  /**
+   * STATIC shadows: the map's shadow map is baked ONCE (map + lights never
+   * move) and characters stop casting shadows. Kills the biggest fixed GPU
+   * cost per frame (a full caster re-render of the whole map) AND the
+   * short/long frame cadence the old every-other-frame refresh created.
+   */
+  staticShadows: boolean;
+  /**
+   * Frame-rate cap (rendered frames per second; Infinity = uncapped).
+   * LOW defaults to 60 to reduce load; HIGH stays uncapped for high-refresh
+   * displays. This limits work, not the browser's presentation cadence.
+   * The previous ~2x callback count was reproduced as a duplicate animation
+   * chain at the menu/game handoff, not evidence of a driver/vsync issue.
+   */
+  maxFps: number;
   /** Max simultaneous violet force-field point lights (biggest walls win). */
   maxFieldLights: number;
   /** Multiplier on the force-field rising-particle density. */
@@ -36,13 +49,24 @@ export interface QualitySettings {
 }
 
 const STORAGE_KEY = "beanzo.graphicsQuality";
+const FPS_CAP_KEY = "beanzo.fpsCap";
+
+/**
+ * Player override for the frame-rate cap (Escape-menu FPS LIMIT button),
+ * independent of the graphics preset:
+ *   - "AUTO": follow the preset (LOW → 60, HIGH → uncapped).
+ *   - "60":   force the 60 FPS cap to reduce CPU/GPU load.
+ *   - "OFF":  force uncapped (120/240 Hz displays on the LOW preset).
+ */
+export type FpsCapMode = "AUTO" | "60" | "OFF";
 
 const PRESETS: Record<QualityLevel, Omit<QualitySettings, "level">> = {
   HIGH: {
     pixelRatioCap: 2,
     antialias: true,
     shadowMapSize: 2048,
-    halfRateShadows: false,
+    staticShadows: false,
+    maxFps: Infinity,
     maxFieldLights: Infinity,
     fieldParticleScale: 1,
   },
@@ -50,7 +74,8 @@ const PRESETS: Record<QualityLevel, Omit<QualitySettings, "level">> = {
     pixelRatioCap: 1,
     antialias: false,
     shadowMapSize: 1024,
-    halfRateShadows: true,
+    staticShadows: true,
+    maxFps: 60,
     maxFieldLights: 4,
     fieldParticleScale: 0.5,
   },
@@ -103,6 +128,39 @@ export function detectQualityLevel(): QualityLevel {
   }
 }
 
+/** Persisted FPS-cap override (AUTO when never touched / invalid). */
+export function loadFpsCapMode(): FpsCapMode {
+  try {
+    const raw = localStorage.getItem(FPS_CAP_KEY);
+    if (raw === "AUTO" || raw === "60" || raw === "OFF") return raw;
+  } catch {
+    /* storage unavailable — AUTO */
+  }
+  return "AUTO";
+}
+
+export function saveFpsCapMode(mode: FpsCapMode): void {
+  try {
+    localStorage.setItem(FPS_CAP_KEY, mode);
+  } catch {
+    /* storage unavailable — the session keeps its current cap */
+  }
+}
+
+/** Effective maxFps for a cap mode, given the preset's own default. */
+export function resolveMaxFps(presetMaxFps: number, mode: FpsCapMode): number {
+  if (mode === "60") return 60;
+  if (mode === "OFF") return Infinity;
+  return presetMaxFps;
+}
+
+/** The preset's own maxFps default (what the AUTO cap mode resolves to). */
+export function presetMaxFps(): number {
+  const mode = loadQualityMode();
+  const level: QualityLevel = mode === "AUTO" ? detectQualityLevel() : mode;
+  return PRESETS[level].maxFps;
+}
+
 let cached: QualitySettings | null = null;
 
 /** Settings in effect for this session (resolved once, then cached). */
@@ -111,5 +169,7 @@ export function getQualitySettings(): QualitySettings {
   const mode = loadQualityMode();
   const level: QualityLevel = mode === "AUTO" ? detectQualityLevel() : mode;
   cached = { level, ...PRESETS[level] };
+  // Player FPS-cap override (FPS LIMIT button) beats the preset default.
+  cached.maxFps = resolveMaxFps(cached.maxFps, loadFpsCapMode());
   return cached;
 }

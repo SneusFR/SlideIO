@@ -260,9 +260,10 @@ export class RemoteCombatVFXController {
 
   /**
    * Immediately end the warm-up (the Game renders its own warm frames):
-   * the warm-up obliterreur owns 2 temporary point lights — removing them
-   * BEFORE gameplay lets the Game compile the real runtime light count too
-   * (light-count changes recompile every lit material).
+   * the transient warm-up meshes/materials are removed BEFORE gameplay so
+   * the Game's follow-up renders (and the LOW-preset shadow bake) see the
+   * real runtime scene. FX lights are pooled (FXLightPool) — the scene
+   * light count never changes, warm-up or not.
    */
   finishWarmUp(): void {
     if (!this.warmupBeam) return;

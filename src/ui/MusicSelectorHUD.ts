@@ -50,7 +50,7 @@ export class MusicSelectorHUD {
       "border:1px solid rgba(168,85,247,0.32)",
       "border-radius:8px",
       "box-shadow:0 0 14px rgba(124,58,237,0.14), inset 0 0 24px rgba(124,58,237,0.07)",
-      "backdrop-filter:blur(2px)",
+      // No backdrop-filter in-game (per-frame compositor blur — iGPU killer).
       "font-family:'Rajdhani','Segoe UI',sans-serif",
       "color:#e9d5ff",
       "pointer-events:none",

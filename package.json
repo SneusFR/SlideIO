@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test:animation-loop": "node scripts/test-animation-loop.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },

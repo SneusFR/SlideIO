@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { PoisonConfig as cfg } from "./PoisonConfig";
 import { loadPoisonAsset } from "./PoisonModel";
 import { PoisonLiquidController } from "./PoisonLiquidController";
+import { fxLights } from "../../effects/FXLightPool";
 
 /**
  * First-person Lance-Poison viewmodel. PURELY visual: spray kick/jitter,
@@ -28,8 +29,9 @@ export class PoisonViewmodel {
     cfg.viewmodelOffset.z,
   );
   private readonly muzzle = new THREE.Object3D();
-  private readonly sprayLight: THREE.PointLight;
-  private readonly tankLight: THREE.PointLight;
+  /** Pooled light state (physical lights: FXLightPool). */
+  private readonly lightColor = new THREE.Color(cfg.poisonColor);
+  private readonly tankLightWorld = new THREE.Vector3();
   /** Liquid/meniscus/bubble emissive materials (glow follows the charge). */
   private readonly glowMats: { mat: THREE.MeshStandardMaterial; base: number }[] = [];
 
@@ -45,17 +47,8 @@ export class PoisonViewmodel {
     this.muzzle.position.set(0, 0.03, -(cfg.viewmodelLength * 0.62));
     this.group.add(this.muzzle);
 
-    // Lights attach to the CAMERA (never the hidden/shown viewmodel group):
-    // toggling a light's effective visibility changes the scene light count
-    // and forces three.js to recompile every lit material — a known freeze.
-    this.sprayLight = new THREE.PointLight(cfg.poisonColor, 0, 5, 2);
-    this.sprayLight.position.copy(this.basePosition).add(this.muzzle.position);
-    camera.add(this.sprayLight);
-
-    this.tankLight = new THREE.PointLight(cfg.poisonColor, 0, 2.2, 2);
-    this.tankLight.position.copy(this.basePosition);
-    this.tankLight.position.y += 0.12;
-    camera.add(this.tankLight);
+    // Green glow lights are POOLED (see FXLightPool): requested at the
+    // muzzle / tank world positions every frame the weapon is visible.
 
     this.ready = this.loadModel();
   }
@@ -171,12 +164,28 @@ export class PoisonViewmodel {
       this.group.position.y += (Math.random() - 0.5) * cfg.sprayJitter;
     }
 
-    // Green glow: tank pulse follows the charge; spray light while firing.
+    // Green glow (pooled lights): tank pulse follows the charge; spray
+    // light while firing — both requested at their WORLD positions.
     const visible = this.group.visible;
     const pulse = 0.85 + 0.15 * Math.sin(time * 5.2);
-    this.tankLight.intensity = visible ? cfg.tankLightIntensity * fill * pulse : 0;
-    this.sprayLight.intensity =
-      visible && spraying ? cfg.sprayLightIntensity * (0.85 + Math.random() * 0.3) : 0;
+    if (visible) {
+      const tankIntensity = cfg.tankLightIntensity * fill * pulse;
+      if (tankIntensity > 0) {
+        this.group.getWorldPosition(this.tankLightWorld);
+        this.tankLightWorld.y += 0.12;
+        fxLights.request(this.lightColor, tankIntensity, 2.2, 2, this.tankLightWorld);
+      }
+      if (spraying) {
+        this.muzzle.getWorldPosition(this.muzzleWorldScratch);
+        fxLights.request(
+          this.lightColor,
+          cfg.sprayLightIntensity * (0.85 + Math.random() * 0.3),
+          5,
+          2,
+          this.muzzleWorldScratch,
+        );
+      }
+    }
     for (const g of this.glowMats) {
       g.mat.emissiveIntensity = g.base * (0.35 + 0.65 * Math.max(fill, 0.15)) * pulse;
     }

@@ -8,9 +8,9 @@ const REFRESH_INTERVAL = 0.25;
 const FPS_SMOOTHING = 0.1;
 
 /**
- * F1 — MULTIPLAYER NETWORK DEBUG HUD.
+ * ² — MULTIPLAYER NETWORK DEBUG HUD.
  *
- * A compact diagnostic overlay for real Internet play sessions: press F1
+ * A compact diagnostic overlay for real Internet play sessions: press ²
  * the moment a bug happens and read concrete values (ping, jitter,
  * snapshot gaps, seq loss/coalescing, buffer, extrapolation, corrections,
  * interpolation delay, renderTime vs serverTime) + a short timestamped
@@ -26,8 +26,10 @@ export class NetworkDebugHUD {
   private refreshTimer = 0;
   private fps = 60;
   private readonly onKeyDown = (e: KeyboardEvent): void => {
-    if (e.code !== "F1") return;
-    e.preventDefault(); // F1 opens the browser help otherwise
+    // "²" on French AZERTY keyboards — physical key left of "1"
+    // (code "Backquote"); also match e.key for non-standard layouts.
+    if (e.code !== "Backquote" && e.key !== "²") return;
+    e.preventDefault();
     this.toggle();
   };
 
@@ -77,7 +79,7 @@ export class NetworkDebugHUD {
     const anyExtrap = report.players.some((p) => p.extrapolating);
 
     const lines: string[] = [];
-    lines.push(`<div class="ndh-title">NETWORK DEBUG (F1)</div>`);
+    lines.push(`<div class="ndh-title">NETWORK DEBUG (²)</div>`);
     lines.push(`<div class="ndh-section">GLOBAL</div>`);
     lines.push(row("FPS", this.fps.toFixed(0)));
     lines.push(row("RTT (local)", `${rtt}  jitter ${report.localRttJitterMs.toFixed(0)}ms`));

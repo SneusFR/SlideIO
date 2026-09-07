@@ -27,8 +27,10 @@ body {
   align-items: center;
   justify-content: center;
   gap: 18px;
-  background: rgba(6, 18, 10, 0.72);
-  backdrop-filter: blur(3px);
+  /* No backdrop-filter: full-screen backdrop blur over the WebGL canvas is
+     re-composited EVERY frame (the game keeps rendering behind — it never
+     pauses in multiplayer) and is brutally expensive on integrated GPUs. */
+  background: rgba(6, 18, 10, 0.8);
   cursor: pointer;
   z-index: 20;
   transition: opacity 0.15s ease;
@@ -182,7 +184,9 @@ body {
   box-shadow:
     0 0 14px rgba(22, 163, 74, 0.12),
     inset 0 0 24px rgba(22, 163, 74, 0.06);
-  backdrop-filter: blur(3px);
+  /* No backdrop-filter on ALWAYS-VISIBLE in-game HUD: blurring over the
+     WebGL canvas forces a per-frame compositor blur — a large fixed cost
+     on integrated GPUs. The gradient background keeps the readability. */
   font-family: "Baloo 2", "Segoe UI", sans-serif;
   pointer-events: none;
   user-select: none;
@@ -243,7 +247,7 @@ body {
   border: 1px solid rgba(74, 222, 128, 0.26);
   border-radius: 999px;
   box-shadow: 0 0 14px rgba(22, 163, 74, 0.12);
-  backdrop-filter: blur(3px);
+  /* No backdrop-filter in-game (per-frame compositor blur — iGPU killer). */
   pointer-events: none;
   user-select: none;
   z-index: 5;
@@ -1438,7 +1442,8 @@ body.game-paused .mole-overlay {
   color: #bbf7d0;
 }
 
-#menu-quality-btn {
+#menu-quality-btn,
+#menu-fps-btn {
   padding: 10px 12px;
   cursor: pointer;
   font-family: var(--mm-font-alt);
@@ -1452,7 +1457,8 @@ body.game-paused .mole-overlay {
   transition: background 0.15s ease;
 }
 
-#menu-quality-btn:hover {
+#menu-quality-btn:hover,
+#menu-fps-btn:hover {
   background: rgba(22, 163, 74, 0.32);
 }
 
@@ -2402,7 +2408,7 @@ body.game-paused .mole-overlay {
   box-shadow:
     0 0 14px rgba(22, 163, 74, 0.14),
     inset 0 0 24px rgba(22, 163, 74, 0.07);
-  backdrop-filter: blur(2px);
+  /* No backdrop-filter in-game (per-frame compositor blur — iGPU killer). */
   font-family: "Baloo 2", "Segoe UI", sans-serif;
   color: #dcfce7;
   pointer-events: none;

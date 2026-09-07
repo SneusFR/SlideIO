@@ -13,6 +13,11 @@ import {
   loadQualityMode,
   saveQualityMode,
   QualityMode,
+  loadFpsCapMode,
+  saveFpsCapMode,
+  resolveMaxFps,
+  presetMaxFps,
+  FpsCapMode,
 } from "../game/GraphicsQuality";
 import { audio, type AudioBus } from "../audio/AudioManager";
 import {
@@ -59,6 +64,8 @@ export class MenuOverlay {
   onChangeLobby: (() => void) | null = null;
   /** LEAVE GAME (pause menu, multiplayer only). */
   onLeaveGame: (() => void) | null = null;
+  /** FPS LIMIT changed: effective maxFps (Infinity = uncapped) — live. */
+  onFpsCapChange: ((maxFps: number) => void) | null = null;
 
   /** Current display name (persisted guest identity). */
   playerName: string;
@@ -199,6 +206,30 @@ export class MenuOverlay {
     };
     qualityBtn.addEventListener("click", onQuality);
     this.cleanups.push(() => qualityBtn.removeEventListener("click", onQuality));
+
+    // FPS LIMIT: pure loop pacing — applies LIVE (no reload), persisted.
+    // AUTO follows the preset (LOW → 60, HIGH → uncapped); 60 forces the
+    // cap (fixes unstable-rAF laptops); OFF uncaps 120/240 Hz displays.
+    const fpsBtn = document.getElementById("menu-fps-btn") as HTMLButtonElement;
+    const fpsLabel = (mode: FpsCapMode): string => {
+      if (mode === "AUTO") {
+        const auto = resolveMaxFps(presetMaxFps(), "AUTO");
+        return `FPS LIMIT: AUTO (${Number.isFinite(auto) ? auto : "OFF"})`;
+      }
+      return `FPS LIMIT: ${mode}`;
+    };
+    fpsBtn.textContent = fpsLabel(loadFpsCapMode());
+
+    const onFpsCap = () => {
+      this.sounds.click();
+      const order: FpsCapMode[] = ["AUTO", "60", "OFF"];
+      const next = order[(order.indexOf(loadFpsCapMode()) + 1) % order.length];
+      saveFpsCapMode(next);
+      fpsBtn.textContent = fpsLabel(next);
+      this.onFpsCapChange?.(resolveMaxFps(presetMaxFps(), next));
+    };
+    fpsBtn.addEventListener("click", onFpsCap);
+    this.cleanups.push(() => fpsBtn.removeEventListener("click", onFpsCap));
 
     this.wireVolumeSliders(pop);
     this.wireCrosshairSettings();

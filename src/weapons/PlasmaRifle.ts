@@ -11,6 +11,7 @@ import { KillMethod } from "../combat/KillMethod";
 import { HitZone } from "../combat/HitZone";
 import { HitFeedbackManager } from "../combat/HitFeedbackManager";
 import { castBeam, BeamCastResult } from "./BeamCombat";
+import { fxLights } from "../effects/FXLightPool";
 
 /**
  * First-person Plasma Rifle.
@@ -59,7 +60,6 @@ export class PlasmaRifle {
     cfg.viewmodelOffset.z,
   );
   private muzzle!: THREE.Object3D;
-  private muzzleLight!: THREE.PointLight;
   private muzzleRing!: THREE.Mesh;
   private accentMat!: THREE.MeshStandardMaterial;
   /** Emissive materials from the GLB — tinted/boosted with heat. */
@@ -153,20 +153,12 @@ export class PlasmaRifle {
     this.muzzleRing.position.set(0, 0.012, -0.55);
     this.viewmodel.add(this.muzzleRing);
 
-    // Muzzle anchor (beam start / particle emitter) + firing light
+    // Muzzle anchor (beam start / particle emitter). The firing light is
+    // borrowed from the shared FX light pool every active frame — no
+    // per-weapon permanent PointLight (see FXLightPool).
     this.muzzle = new THREE.Object3D();
     this.muzzle.position.set(0, 0.012, -0.58);
     this.viewmodel.add(this.muzzle);
-
-    // The light attaches to the CAMERA (never the hidden/shown viewmodel):
-    // toggling a light's effective visibility changes the scene light
-    // count and forces three.js to recompile every lit material — that
-    // was the freeze on the first melee swing (rifle viewmodel hidden).
-    this.muzzleLight = new THREE.PointLight(0xa855f7, 0, 4, 2);
-    this.muzzleLight.position
-      .copy(this.basePosition)
-      .add(this.muzzle.position);
-    this.camera.add(this.muzzleLight);
 
     this.loadModel();
   }
@@ -277,7 +269,6 @@ export class PlasmaRifle {
     } else {
       this.beam.setActive(false);
       this.impact.setActive(false);
-      this.muzzleLight.intensity = 0;
     }
 
     if (this.heat.consumeOverheatEvent()) {
@@ -347,7 +338,14 @@ export class PlasmaRifle {
       this.impact.setActive(false);
     }
 
-    this.muzzleLight.intensity = 2.2 + Math.sin(time * 47) * 0.8;
+    // Pooled muzzle light (immediate-mode — re-requested every firing frame).
+    fxLights.request(
+      this.coolViolet,
+      2.2 + Math.sin(time * 47) * 0.8,
+      4,
+      2,
+      this.muzzleWorld,
+    );
     this.emitFiringParticles(dt);
   }
 
