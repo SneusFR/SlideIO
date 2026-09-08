@@ -10,6 +10,23 @@
  * physical "KeyQ" code, and NEVER on the "KeyA" code — this guarantees the
  * melee attack and strafe-left can never fire from the same key press.
  */
+/**
+ * Pointer-lock spike filter (long-standing Chromium/Windows bug):
+ * movementX/Y occasionally report a huge ABSOLUTE-coordinate jump packed
+ * into a SINGLE mousemove event (often right after (re)locking, sometimes
+ * sporadically mid-game) — thousands of px in one event whips the camera
+ * a full 360°. Real motion is spread across many events (mousemove is
+ * coalesced to roughly once per frame), so:
+ *   - an event above SPIKE_HARD px is physically impossible → dropped;
+ *   - an event above SPIKE_MIN px that is ALSO SPIKE_RATIO× larger than
+ *     the previous ACCEPTED event is an isolated spike → dropped (a real
+ *     flick ramps up — consecutive events have comparable magnitudes,
+ *     so fast legitimate motion always passes the ratio check).
+ */
+const SPIKE_MIN = 350;
+const SPIKE_RATIO = 8;
+const SPIKE_HARD = 2000;
+
 export class InputManager {
   private keysDown = new Set<string>();
   private keysPressed = new Set<string>(); // edge-triggered, cleared each frame
@@ -18,6 +35,8 @@ export class InputManager {
   private meleePressed = false; // edge-triggered virtual action, cleared each frame
   /** Physical code currently holding the melee action down (null = released). */
   private meleeHeldCode: string | null = null;
+  /** |dx|+|dy| of the last ACCEPTED mousemove event (spike detector). */
+  private lastMoveMag = 0;
 
   mouseDX = 0;
   mouseDY = 0;
@@ -61,12 +80,22 @@ export class InputManager {
 
     document.addEventListener("mousemove", (e) => {
       if (!this.pointerLocked) return;
+      // Spike filter — see the constants above. lastMoveMag is NOT updated
+      // on a rejected event, so consecutive spikes are all filtered.
+      const mag = Math.abs(e.movementX) + Math.abs(e.movementY);
+      if (mag > SPIKE_HARD) return;
+      if (mag > SPIKE_MIN && mag > this.lastMoveMag * SPIKE_RATIO) return;
+      this.lastMoveMag = mag;
       this.mouseDX += e.movementX;
       this.mouseDY += e.movementY;
     });
 
     document.addEventListener("pointerlockchange", () => {
       this.pointerLocked = document.pointerLockElement === this.lockTarget;
+      // Spikes are most frequent right after (re)acquiring the lock: with
+      // the detector reset, the very first event is compared against 0 —
+      // anything above SPIKE_MIN gets dropped (a real first move never is).
+      this.lastMoveMag = 0;
       if (!this.pointerLocked) {
         this.keysDown.clear();
         this.keysPressed.clear();

@@ -18,7 +18,7 @@ import { buildSkeletonRagdollParts } from "../ragdoll/SkeletonRagdollFactory";
 // Shared POTATO character asset (model + clips + red rim glow) — loaded
 // ONCE and cloned per avatar. The SAME asset drives the solo bots
 // (BotModel), so every humanoid enemy shares the exact model + animations.
-import { loadCharacterAsset, CharacterAsset, FEET_OFFSET, MODEL_TOP } from "../characters/PotatoCharacter";
+import { loadCharacterAsset, stripEnemyOutline, CharacterAsset, FEET_OFFSET, MODEL_TOP } from "../characters/PotatoCharacter";
 
 /** Nametag height above the capsule center (meters). */
 const NAMETAG_HEIGHT = MODEL_TOP + 0.42;
@@ -627,9 +627,10 @@ export class RemotePlayerManager {
 
     const corpseModel = skeletonClone(remote.model);
     // The corpse keeps the FULL living look: same Sprouty Smile skin, same
-    // +25% scale (baked into the cloned model) and the same red rim glow —
-    // the CorpseManager clones every material per corpse, so the fade-out
-    // owns its own rim copy and never tints the living avatars.
+    // +25% scale (baked into the cloned model) — but NOT the red enemy
+    // contour (a dead body is no longer a threat, and the shared outline
+    // material must never enter the CorpseManager's fade pool).
+    stripEnemyOutline(corpseModel);
 
     // Corpse root at the avatar's exact world transform (group = capsule
     // center; the model keeps its own feet offset inside).

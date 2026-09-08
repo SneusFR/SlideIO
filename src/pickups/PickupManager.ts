@@ -41,6 +41,21 @@ export class PickupManager {
   }
 
   /**
+   * GPU warm-up support (see Game.warmUpRendering): clones of every loot
+   * template for ONE forced render while the menu still covers the canvas.
+   * Without this, the FIRST kill's medkit/coin/halo compiled their shaders
+   * and uploaded their textures mid-fight — a visible freeze. Waits for
+   * the async template loads; failed assets are simply skipped.
+   */
+  async createWarmUpVisuals(): Promise<THREE.Object3D[]> {
+    await this.assets.ready;
+    const visuals: THREE.Object3D[] = [];
+    if (this.assets.medkitTemplate) visuals.push(this.assets.medkitTemplate.clone());
+    if (this.assets.coinTemplate) visuals.push(this.assets.coinTemplate.clone());
+    return visuals;
+  }
+
+  /**
    * Drop the loot for a REAL combat death at `deathPos`:
    * 1 medkit + 2..10 coins scattered within ~1 m, snapped to the ground.
    */

@@ -98,7 +98,7 @@ export const CombatConfig = {
 
   // ---- Enemy visual readability ----
   enemyOutlineEnabled: true,
-  enemyOutlineThickness: 0.025, // meters of red hull around the silhouette
+  enemyOutlineThickness: 0.018, // meters — thin, crisp contour line width
   enemyOutlineColor: 0xff2d2d,
   enemyHealthBarVisible: true,
   enemyNameVisible: true,

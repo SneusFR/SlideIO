@@ -71,31 +71,81 @@ export interface CharacterAsset {
 let cachedCharacter: Promise<CharacterAsset> | null = null;
 
 /**
- * Shared "enemy readability" rim material (one instance for every enemy
- * avatar): back faces of a duplicated skinned mesh, displaced along the
- * vertex normals, render as a light red glow hugging the animated
- * silhouette. Depth test stays ON → walls occlude it (no X-ray).
+ * Shared "enemy readability" outline material (ONE instance for every
+ * enemy avatar): a thin, crisp red contour hugging the animated
+ * silhouette — stencil-masked inverted hull.
+ *
+ * How it stays CLEAN (the old per-part rim showed red lines INSIDE the
+ * silhouette — nose/tongue/arm hulls bleeding over the face/torso):
+ *  1. Every enemy body material writes stencil ref 1 where it renders
+ *     (markEnemyOutlineOccluder) — pure GL state, no shader change.
+ *  2. The hull (back faces inflated along the bind-pose normals) renders
+ *     AFTER all bodies (renderOrder 1) and only where stencil != 1, so
+ *     the red survives ONLY on the outer silhouette ring.
+ * Opaque (no transparency double-blend), depth test ON → walls occlude
+ * it (no X-ray). Cost: native stencil buffer — no post-processing.
  */
-let enemyRimMat: THREE.MeshBasicMaterial | null = null;
-export function getEnemyRimMaterial(): THREE.MeshBasicMaterial {
-  if (!enemyRimMat) {
-    enemyRimMat = new THREE.MeshBasicMaterial({
+let enemyOutlineMat: THREE.MeshBasicMaterial | null = null;
+export function getEnemyOutlineMaterial(): THREE.MeshBasicMaterial {
+  if (!enemyOutlineMat) {
+    enemyOutlineMat = new THREE.MeshBasicMaterial({
       color: cc.enemyOutlineColor,
       side: THREE.BackSide,
       toneMapped: false,
-      transparent: true,
-      opacity: 0.85,
     });
+    // Stencil TEST only (writeMask 0): draw strictly OUTSIDE the body
+    // silhouette. stencilWrite=true is what enables the stencil unit in
+    // three.js — the zeroed write mask keeps the buffer untouched.
+    enemyOutlineMat.stencilWrite = true;
+    enemyOutlineMat.stencilWriteMask = 0;
+    enemyOutlineMat.stencilRef = 1;
+    enemyOutlineMat.stencilFunc = THREE.NotEqualStencilFunc;
     // Inflate along the (bind-pose) normals BEFORE skinning: the offset
     // vertex then follows the bones exactly like the body vertex does.
-    enemyRimMat.onBeforeCompile = (shader) => {
+    enemyOutlineMat.onBeforeCompile = (shader) => {
       shader.vertexShader = shader.vertexShader.replace(
         "#include <begin_vertex>",
         `#include <begin_vertex>\n\ttransformed += normal * ${cc.enemyOutlineThickness.toFixed(4)};`,
       );
     };
   }
-  return enemyRimMat;
+  return enemyOutlineMat;
+}
+
+/**
+ * Mark every mesh material under `root` as an outline OCCLUDER: it writes
+ * stencil ref 1 where it renders (and passes depth), masking the enemy
+ * outline out of the silhouette interior. Applied to the enemy body AND
+ * to the held weapon templates (so the contour never bleeds over a gun
+ * crossing the body edge). Pure GL state — no recompile. Idempotent and
+ * safe on shared materials: only enemies render the stencil-tested hull.
+ */
+export function markEnemyOutlineOccluder(root: THREE.Object3D): void {
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const mat of mats) {
+      if (!mat) continue;
+      mat.stencilWrite = true;
+      mat.stencilRef = 1;
+      mat.stencilFunc = THREE.AlwaysStencilFunc;
+      mat.stencilZPass = THREE.ReplaceStencilOp;
+    }
+  });
+}
+
+/**
+ * Remove every outline hull mesh under `root` (corpse clones: a dead body
+ * is no longer a threat — the red contour must die with it). Also spares
+ * the CorpseManager from claiming/fading the shared outline material.
+ */
+export function stripEnemyOutline(root: THREE.Object3D): void {
+  const doomed: THREE.Object3D[] = [];
+  root.traverse((obj) => {
+    if (obj.userData.enemyOutline) doomed.push(obj);
+  });
+  for (const mesh of doomed) mesh.removeFromParent();
 }
 
 export function loadCharacterAsset(): Promise<CharacterAsset> {
@@ -140,29 +190,34 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       }
     });
 
-    // ---- Enemy readability: light red glow rim on the TEMPLATE ----
-    // A sibling SkinnedMesh per body part, bound to the SAME skeleton:
-    // it follows every animation for free and SkeletonUtils.clone()
-    // duplicates it per avatar (geometry + material stay shared). Rim
-    // meshes are TAGGED (userData.enemyRim) so per-avatar code can find
-    // the clones (e.g. bots toggle them with line-of-sight visibility).
+    // ---- Enemy readability: crisp red contour on the TEMPLATE ----
+    // Body materials become stencil occluders, then a sibling hull
+    // SkinnedMesh per body part is bound to the SAME skeleton: it follows
+    // every animation for free and SkeletonUtils.clone() duplicates it
+    // per avatar (geometry + material stay shared). Outline meshes are
+    // TAGGED (userData.enemyOutline) so per-avatar code can find the
+    // clones (bots toggle them with line-of-sight visibility; corpses
+    // strip them). renderOrder 1 → hulls draw AFTER every body mesh,
+    // once the stencil silhouette mask is complete for ALL enemies.
+    markEnemyOutlineOccluder(model);
     const skinnedParts: THREE.SkinnedMesh[] = [];
     model.traverse((obj) => {
       const sm = obj as THREE.SkinnedMesh;
       if (sm.isSkinnedMesh) skinnedParts.push(sm);
     });
     for (const src of skinnedParts) {
-      const rim = new THREE.SkinnedMesh(src.geometry, getEnemyRimMaterial());
-      rim.bind(src.skeleton, src.bindMatrix);
-      rim.position.copy(src.position);
-      rim.quaternion.copy(src.quaternion);
-      rim.scale.copy(src.scale);
-      rim.castShadow = false;
-      rim.receiveShadow = false;
-      rim.userData.enemyRim = true;
+      const outline = new THREE.SkinnedMesh(src.geometry, getEnemyOutlineMaterial());
+      outline.bind(src.skeleton, src.bindMatrix);
+      outline.position.copy(src.position);
+      outline.quaternion.copy(src.quaternion);
+      outline.scale.copy(src.scale);
+      outline.castShadow = false;
+      outline.receiveShadow = false;
+      outline.renderOrder = 1;
+      outline.userData.enemyOutline = true;
       // Purely visual: never a raycast target.
-      rim.raycast = () => {};
-      src.parent!.add(rim);
+      outline.raycast = () => {};
+      src.parent!.add(outline);
     }
 
     // Wrap in a container so the clone root is a plain, unrotated group.

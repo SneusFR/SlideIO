@@ -5,6 +5,7 @@ import { NetworkWeaponId, isNetworkWeaponId } from "../../../shared/combat/Netwo
 import { createWeaponMount } from "../../weapons/profiles/WeaponProfile";
 import { HexSniperProfile } from "../../weapons/profiles/HexSniperProfile";
 import { loadHexSniperGltf } from "../../weapons/hexsniper/HexSniperModel";
+import { markEnemyOutlineOccluder } from "../../characters/PotatoCharacter";
 // Real weapon GLBs (same optimized assets as the local viewmodels/menu).
 import hammerUrl from "../../assets/voidhammer_opt.glb?url";
 import rifleUrl from "../../assets/voidrifle_opt.glb?url";
@@ -171,6 +172,10 @@ export function loadRemoteWeaponTemplate(id: NetworkWeaponId): Promise<THREE.Gro
         mesh.frustumCulled = false; // moves with the animated bone
       }
     });
+    // In-hand weapons mask the red enemy contour too (stencil ref 1),
+    // so the outline never bleeds over a gun crossing the body edge.
+    // Clones share these materials — one marking covers every instance.
+    markEnemyOutlineOccluder(scene);
     return scene;
   });
   templateCache.set(id, cached);
@@ -377,6 +382,12 @@ export class RemoteWeaponController {
     // Muzzle/TongueOrigin sockets through getMuzzleWorldPosition below.
     const tether = weapon.getObjectByName("Tongue_Tether");
     if (tether) tether.visible = false;
+
+    // Stencil occluder like every held weapon (see the template path):
+    // the enemy contour must never bleed over the sniper creature. The
+    // materials are shared with the FP viewmodel (same GLB cache) —
+    // harmless there: the FP pass runs AFTER the outline already drew.
+    markEnemyOutlineOccluder(weapon);
 
     const mount = createWeaponMount("HexSniperMount", HexSniperProfile.tpMount);
     socket.add(mount);

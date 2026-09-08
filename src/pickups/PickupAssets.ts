@@ -16,6 +16,8 @@ import coinUrl from "../assets/coin_opt.glb?url";
 export class PickupAssets {
   medkitTemplate: THREE.Group | null = null;
   coinTemplate: THREE.Group | null = null;
+  /** Resolves once BOTH templates finished loading (or failed — never rejects). */
+  ready: Promise<void> = Promise.resolve();
 
   private started = false;
 
@@ -24,30 +26,43 @@ export class PickupAssets {
     if (this.started) return;
     this.started = true;
     const loader = new GLTFLoader();
-    loader.load(
-      medkitUrl,
-      (gltf) => {
-        this.medkitTemplate = normalizeTemplate(
-          gltf.scene,
-          pc.medkitSize,
-          pc.medkitGlowColor,
-        );
-      },
-      undefined,
-      (err) => console.warn("[pickups] medkit GLB failed to load", err),
-    );
-    loader.load(
-      coinUrl,
-      (gltf) => {
-        this.coinTemplate = normalizeTemplate(
-          gltf.scene,
-          pc.coinSize,
-          pc.coinGlowColor,
-        );
-      },
-      undefined,
-      (err) => console.warn("[pickups] coin GLB failed to load", err),
-    );
+    const medkit = new Promise<void>((resolve) => {
+      loader.load(
+        medkitUrl,
+        (gltf) => {
+          this.medkitTemplate = normalizeTemplate(
+            gltf.scene,
+            pc.medkitSize,
+            pc.medkitGlowColor,
+          );
+          resolve();
+        },
+        undefined,
+        (err) => {
+          console.warn("[pickups] medkit GLB failed to load", err);
+          resolve();
+        },
+      );
+    });
+    const coin = new Promise<void>((resolve) => {
+      loader.load(
+        coinUrl,
+        (gltf) => {
+          this.coinTemplate = normalizeTemplate(
+            gltf.scene,
+            pc.coinSize,
+            pc.coinGlowColor,
+          );
+          resolve();
+        },
+        undefined,
+        (err) => {
+          console.warn("[pickups] coin GLB failed to load", err);
+          resolve();
+        },
+      );
+    });
+    this.ready = Promise.all([medkit, coin]).then(() => undefined);
   }
 }
 

@@ -14,6 +14,7 @@ import {
 import { NetworkWeaponId } from "../../shared/combat/NetworkWeapons";
 import {
   loadCharacterAsset,
+  stripEnemyOutline,
   FEET_OFFSET,
   MODEL_TOP,
   POTATO_BONES,
@@ -103,8 +104,8 @@ export class BotModel {
   /** Skinned character clone (null until the shared asset resolves). */
   private model: THREE.Object3D | null = null;
   private anim: RemotePlayerAnimationController | null = null;
-  /** Red rim glow meshes of THIS clone (visibility follows setSeen). */
-  private readonly rimMeshes: THREE.Object3D[] = [];
+  /** Red contour hull meshes of THIS clone (visibility follows setSeen). */
+  private readonly outlineMeshes: THREE.Object3D[] = [];
   /** Per-bot cloned materials (damage flash via emissive — never shared). */
   private readonly flashMats: THREE.Material[] = [];
   /** In-hand Plasma Rifle grip (muzzle anchor) — null until loaded. */
@@ -200,10 +201,10 @@ export class BotModel {
         // The skinned meshes are purely visual: the invisible hitboxes are
         // the ONLY raycast targets (cheap + zone-accurate).
         mesh.raycast = NO_RAYCAST;
-        if (mesh.userData.enemyRim) {
-          // Red glow rim: same shared material as the remote players, but
-          // toggled by line-of-sight visibility (never through walls).
-          this.rimMeshes.push(mesh);
+        if (mesh.userData.enemyOutline) {
+          // Red contour hull: same shared material as the remote players,
+          // but toggled by line-of-sight visibility (never through walls).
+          this.outlineMeshes.push(mesh);
           mesh.visible = this.seen && cc.enemyOutlineEnabled;
         } else {
           // Per-bot material clone → the damage flash never tints the
@@ -276,15 +277,15 @@ export class BotModel {
   }
 
   /**
-   * Toggle the enemy readability visuals (red rim glow + name + HP bar).
+   * Toggle the enemy readability visuals (red contour + name + HP bar).
    * Called every frame by BotManager.updateVisibility with the REAL
    * line-of-sight result — nothing here ever shows through walls.
    */
   setSeen(seen: boolean): void {
     if (seen === this.seen) return;
     this.seen = seen;
-    const rimOn = seen && cc.enemyOutlineEnabled;
-    for (const rim of this.rimMeshes) rim.visible = rimOn;
+    const outlineOn = seen && cc.enemyOutlineEnabled;
+    for (const outline of this.outlineMeshes) outline.visible = outlineOn;
     this.healthBar.visible = seen && cc.enemyHealthBarVisible;
   }
 
@@ -418,6 +419,10 @@ export class BotModel {
     corpse.scale.copy(this.group.scale);
     if (this.model) {
       const clone = skeletonClone(this.model);
+      // A dead body is no longer a threat: the red enemy contour dies
+      // with it (also keeps the shared outline material out of the
+      // CorpseManager's fade clones).
+      stripEnemyOutline(clone);
       corpse.add(clone);
       corpse.updateMatrixWorld(true);
     }

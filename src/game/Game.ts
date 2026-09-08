@@ -78,6 +78,8 @@ import { KillMethod } from "../combat/KillMethod";
 import { WeaponActionType } from "../../shared/combat/NetworkWeapons";
 import type { HitConfirmedEvent } from "../../shared/combat/NetworkWeapons";
 import { getQualitySettings } from "./GraphicsQuality";
+import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { loadCharacterAsset, stripEnemyOutline } from "../characters/PotatoCharacter";
 
 /**
  * Top-level game: rendering, main loop and wiring between subsystems.
@@ -282,6 +284,10 @@ export class Game {
     this.renderer = new THREE.WebGLRenderer({
       antialias: quality.antialias,
       powerPreference: "high-performance",
+      // Enemy outline: the crisp red contour is a stencil-masked inverted
+      // hull (see PotatoCharacter.getEnemyOutlineMaterial) — the default
+      // drawing buffer must carry stencil bits (three defaults to false).
+      stencil: true,
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
@@ -803,6 +809,32 @@ export class Game {
     } catch {
       /* revolver asset failed — nothing to warm */
     }
+    // FIRST-KILL PATH: a real kill spawns visuals that exist nowhere at
+    // rest — a CORPSE (skinned clone re-skinned with the CorpseManager's
+    // pooled TRANSPARENT fade materials: a different program cache key
+    // than the living, opaque characters → the first corpse used to pay a
+    // synchronous shader recompile, the "first kill freeze") and the LOOT
+    // (medkit + coin GLBs + additive halo sprites: programs AND textures
+    // never seen before). Warm both far below the map right now.
+    let releaseCorpseMats: (() => void) | null = null;
+    try {
+      const asset = await loadCharacterAsset();
+      const corpse = skeletonClone(asset.template);
+      stripEnemyOutline(corpse); // real corpses never keep the red outline
+      corpse.position.copy(far);
+      releaseCorpseMats = this.corpses.warmUp(corpse);
+      temp.push(corpse);
+    } catch {
+      /* character asset failed — nothing to warm */
+    }
+    try {
+      for (const loot of await this.pickups.createWarmUpVisuals()) {
+        loot.position.copy(far);
+        temp.push(loot);
+      }
+    } catch {
+      /* pickup assets failed — nothing to warm */
+    }
     for (const obj of temp) this.scene.add(obj);
     this.shockwave.spawn(far, 1, 0.5, this.phaseColor);
     this.particles.burst(far, 4, 1, 0.3, this.phaseColor, 0);
@@ -862,7 +894,10 @@ export class Game {
     }
 
     // 4. Cleanup: transient warm objects removed, pools back at rest.
+    // The corpse fade clones return to the CorpseManager pool with their
+    // compiled programs kept warm — the first real corpse reuses them.
     for (const obj of temp) this.scene.remove(obj);
+    releaseCorpseMats?.();
     this.shockwave.update(10);
     this.particles.update(10);
 

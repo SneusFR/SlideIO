@@ -71,6 +71,23 @@ export class CorpseManager {
   }
 
   /**
+   * GPU warm-up (see Game.warmUpRendering): claim the pooled transparent
+   * fade clones on `visual` so ONE forced render compiles the corpse
+   * shader programs NOW — `transparent: true` (+ skinning) is a different
+   * program cache key than the living, opaque character materials, so the
+   * FIRST real corpse used to pay a synchronous mid-fight recompile (the
+   * "first kill freeze"). The caller renders the visual, then invokes the
+   * returned release function: the clones go back to the pool and keep
+   * their compiled programs warm forever (they are never disposed).
+   */
+  warmUp(visual: THREE.Object3D): () => void {
+    const materials = this.claimMaterials(visual);
+    return () => {
+      for (const entry of materials) this.releaseMaterial(entry);
+    };
+  }
+
+  /**
    * Register a corpse. `visual` must already be posed at the death pose in
    * WORLD space (independent clone); `parts` were built from that pose.
    * The manager takes ownership of the visual and adds it to the scene.
@@ -198,6 +215,10 @@ export class CorpseManager {
     // final cache key — starting the fade later never recompiles anything.
     clone.transparent = true;
     clone.depthWrite = true;
+    // Corpses are NOT threats: never write the enemy-outline stencil mask
+    // (inherited from living enemy materials via clone) — a corpse behind
+    // a living enemy must not punch holes in that enemy's red contour.
+    clone.stencilWrite = false;
     return clone;
   }
 
