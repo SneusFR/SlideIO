@@ -63,6 +63,8 @@ export class PlayerMovement {
   state = MoveState.GROUNDED;
   readonly velocity = new THREE.Vector3();
   grounded = false;
+  /** Monotonic accepted-jump counter for cosmetic presentation. */
+  jumpSequence = 0;
 
   /** Optional audio listener (assigned by the Game — never gameplay). */
   sfx: MovementSfxListener | null = null;
@@ -862,6 +864,7 @@ export class PlayerMovement {
   }
 
   private consumeJump(): void {
+    this.jumpSequence++;
     this.jumpBufferTimer = 0;
     this.coyoteTimer = 0;
     this.grounded = false;

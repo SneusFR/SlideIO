@@ -1,4 +1,6 @@
+import { ViewmodelSlideMotion } from "./ViewmodelSlideMotion";
 import * as THREE from "three";
+import { ViewmodelJumpMotion, type ViewmodelMotionInput } from "./ViewmodelJumpMotion";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { loadFPArmsGltf, loadFPPoseClips } from "./FPArmsRig";
 import { WeaponViewProfile, createWeaponMount } from "../profiles/WeaponProfile";
@@ -65,6 +67,8 @@ export class ViewmodelSystem {
   private bobPhase = 0;
   private bobAmount = 0;
   private recoil = 0;
+  private readonly jumpMotion = new ViewmodelJumpMotion();
+  private readonly slideMotion = new ViewmodelSlideMotion();
 
   constructor(aspect: number) {
     this.camera = new THREE.PerspectiveCamera(
@@ -185,6 +189,8 @@ export class ViewmodelSystem {
   }
 
   private detachWeapon(): void {
+    this.jumpMotion.reset();
+    this.slideMotion.reset();
     if (this.onInspectDone) {
       const cb = this.onInspectDone;
       this.onInspectDone = null;
@@ -245,6 +251,28 @@ export class ViewmodelSystem {
     cb?.(true);
   }
 
+  /**
+   * IMMEDIATE combat-pose restore (fire interrupting an inspection): stop
+   * every arms action and pending fade, put Aim at full weight, align
+   * `state`/`current` and evaluate the mixer + world matrices NOW — so the
+   * caller can read weapon sockets this same frame without waiting for a
+   * transition. The normal Hold → Raise → Aim path is untouched for every
+   * other case. Fires the inspect callback (cancelled = true) if pending.
+   */
+  restoreCombatPoseNow(): void {
+    const a = this.actions;
+    if (!a || !this.mixer || !this.armsRoot) return;
+    const cb = this.onInspectDone;
+    this.onInspectDone = null;
+    for (const action of Object.values(a)) action?.stop();
+    a.aim.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).play();
+    this.current = a.aim;
+    this.state = "aim";
+    this.mixer.update(0);
+    this.armsRoot.updateWorldMatrix(true, true);
+    cb?.(true);
+  }
+
   /** Add a cosmetic recoil kick (group motion — grips stay glued). */
   addRecoil(amount: number): void {
     this.recoil = Math.min(1, this.recoil + amount);
@@ -258,7 +286,7 @@ export class ViewmodelSystem {
    */
   update(
     dt: number,
-    input: { straight: boolean; running: boolean; speed: number },
+    input: ViewmodelMotionInput & { running: boolean; speed: number; sliding?: boolean },
   ): void {
     const a = this.actions;
     if (a && this.mixer) {
@@ -336,12 +364,43 @@ export class ViewmodelSystem {
     this.bobPhase += dt * Math.min(input.speed, 14) * 1.35;
     this.recoil *= Math.exp(-10 * dt);
     const bob = this.bobAmount * 0.006;
+    this.jumpMotion.update(dt, input);
+    this.slideMotion.update(dt, !!input.sliding, input.speed, input.straight);
     this.swayGroup.position.set(
       Math.sin(this.bobPhase) * bob,
-      -Math.abs(Math.cos(this.bobPhase)) * bob + this.recoil * 0.03,
+      -Math.abs(Math.cos(this.bobPhase)) * bob + this.recoil * 0.03 + this.jumpMotion.offsetY + this.slideMotion.offsetY,
       this.recoil * 0.05,
     );
     this.swayGroup.rotation.x = this.recoil * 0.05;
+  }
+
+  /**
+   * WORLD point where a FP-rendered socket APPEARS on screen, expressed for
+   * the GAME camera's projection. The FP pass draws arms + weapon with its
+   * own 65° projection while world-scene effects (HexSniper tether…) are
+   * drawn with the game camera (92° dynamic, ×4 ADS): the same 3D point
+   * lands on different pixels. This keeps the view-space depth and rescales
+   * x/y by the ratio of the two projection matrices, so the effect starts
+   * exactly under the rendered socket. The FP camera is re-synced first
+   * (the weapon update runs before the frame's FP sync — no one-frame lag).
+   */
+  socketWorldForGameCamera(
+    socket: THREE.Object3D,
+    gameCamera: THREE.Camera,
+    out: THREE.Vector3,
+  ): THREE.Vector3 {
+    this.syncCamera(gameCamera); // also refreshes every FP child matrixWorld
+    socket.getWorldPosition(out);
+    this.camera.matrixWorldInverse.copy(this.camera.matrixWorld).invert();
+    out.applyMatrix4(this.camera.matrixWorldInverse); // FP view space
+    const fp = this.camera.projectionMatrix.elements;
+    const gm = gameCamera.projectionMatrix.elements;
+    // Perspective: e[0] = 1/(tan(fov/2)·aspect), e[5] = 1/tan(fov/2).
+    if (gm[0] !== 0 && gm[5] !== 0) {
+      out.x *= fp[0] / gm[0];
+      out.y *= fp[5] / gm[5];
+    }
+    return out.applyMatrix4(gameCamera.matrixWorld); // back to WORLD
   }
 
   /** Follow the FINAL game-camera pose (call after the game camera update). */

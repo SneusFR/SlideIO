@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { SlidePresentation, SLIDE_POSE } from "../../characters/SlidePresentation";
+import { JumpPresentation, JUMP_POSE } from "../../characters/JumpPresentation";
 import { NetworkMovementState } from "../NetworkMovementState";
 import { RemoteInterpolationConfig as cfg } from "../interpolation/RemoteInterpolationConfig";
 import { MovementConfig as moveCfg } from "../../player/MovementConfig";
@@ -13,7 +15,7 @@ import { MovementConfig as moveCfg } from "../../player/MovementConfig";
  * Base locomotion (Potato_TP_Character.glb, authored in place — the game
  * position provides all world travel):
  *   "Run_Goofy" (0.8 s loop) / "Jump" (1.3 s) / "Dash" (0.8 s) /
- *   "Slide" (1.1 s). `idle` is a DERIVED constant clip (no unarmed Idle
+ *   "Slide" (1.5 s). `idle` is a DERIVED constant clip (no unarmed Idle
  *   ships with the pack — see buildConstantPoseClip).
  *
  * Armed presentation (HexSniper_TP_Poses.glb + derived masked variants):
@@ -24,6 +26,8 @@ export interface RemoteCharacterClips {
   idle: THREE.AnimationClip;
   run: THREE.AnimationClip;
   jump: THREE.AnimationClip;
+  jumpVariants?: THREE.AnimationClip[];
+  armedJumpVariants?: THREE.AnimationClip[];
   dash: THREE.AnimationClip;
   slide: THREE.AnimationClip;
   // ---- HexSniper TP presentation (armed avatars) ----
@@ -54,31 +58,8 @@ const LANDING_FADE = 0.1;
 const RUN_REF_SPEED = 9; // horizontal speed at which run plays at 1.0×
 const RUN_SPEED_MIN = 0.75;
 const RUN_SPEED_MAX = 1.6;
-/**
- * JUMP clip landmarks in SECONDS (authored at 30 fps, t = (frame-1)/30):
- * anticipation f8, TAKEOFF f12 = 0.3667 s, APEX f20 = 0.6333 s, landing
- * f29 = 0.9333 s, end f40 = 1.3 s.
- *
- *  - START at the takeoff: the player already LEFT the ground when the
- *    AIRBORNE state arrives (the physics impulse happened) — playing the
- *    grounded anticipation mid-air reads as feet glued to the sky.
- *  - HOLD at the apex pose while airborne (variable-duration jumps and
- *    platform falls both stay in the aerial pose). The LANDING frames
- *    only play through the crossfade back to a grounded state — they are
- *    never triggered by clip time while still in the air.
- */
-const JUMP_START_TIME = 11 / 30; // takeoff (frame 12)
-const JUMP_HOLD_TIME = 19 / 30; // apex (frame 20)
-/**
- * SLIDE clip landmarks in SECONDS (Potato_Slide_Integration.json):
- * entry 0 → 0.2667 s (frames 1–9), hold section 0.2667 → 0.7 s (equal
- * endpoint poses — holding the 0.2667 s pose is explicitly allowed),
- * exit 0.7 → 1.1 s. The entry plays ONCE, the low pose is then held for
- * as long as SLIDING lasts; the exit is handled by the state crossfade
- * (jump/dash interrupts included). The old Meshy 17%/42% fractions are
- * intentionally gone.
- */
-const SLIDE_HOLD_TIME = 8 / 30; // frame 9 — deep slide pose
+// Jump pose time follows vertical velocity; landing is played on real contact.
+// SlidePresentation repeats the authored glide segment and plays recovery on exit.
 /**
  * While sliding the LOCAL capsule shrinks and its center settles LOWER
  * (slide half-height + radius above the ground instead of stand
@@ -103,7 +84,17 @@ const BACKPEDAL_EXIT = THREE.MathUtils.degToRad(75);
 const LEG_YAW_SMOOTHING = 10;
 
 /** Locomotion slots the controller can occupy (armed variants map 1:1). */
-type Slot = "idle" | "run" | "jump" | "dash" | "slide";
+const landingClips = new WeakMap<THREE.AnimationClip, THREE.AnimationClip>();
+function landingClip(source: THREE.AnimationClip): THREE.AnimationClip {
+  let clip = landingClips.get(source);
+  if (!clip) {
+    clip = new THREE.AnimationClip(`${source.name}_Landing`, source.duration, source.tracks);
+    landingClips.set(source, clip);
+  }
+  return clip;
+}
+
+type Slot = "idle" | "run" | "jump" | "land" | "dash" | "slide" | "slideExit";
 
 /**
  * Drives one remote character's THREE.AnimationMixer from the sampled
@@ -130,6 +121,13 @@ export class RemotePlayerAnimationController {
   private currentState = NetworkMovementState.IDLE;
   private armed = false;
   private aiming = false;
+  private readonly jumpPose = new JumpPresentation();
+  private readonly slidePose = new SlidePresentation();
+  private readonly jumpsUnarmed: THREE.AnimationAction[];
+  private readonly jumpsArmed: THREE.AnimationAction[];
+  private readonly landingsUnarmed: THREE.AnimationAction[];
+  private readonly landingsArmed: THREE.AnimationAction[];
+  private jumpVariant = -1;
 
   // Bones for procedural pitch look + lean + strafe twist (found by name).
   private readonly spineBones: THREE.Bone[] = [];
@@ -199,16 +197,26 @@ export class RemotePlayerAnimationController {
       idle: loop(clips.idle),
       run: loop(clips.run),
       jump: oneShot(clips.jump),
+      land: oneShot(landingClip(clips.jump)),
       dash: oneShot(clips.dash),
       slide: oneShot(clips.slide),
+      slideExit: oneShot(landingClip(clips.slide)),
     };
     this.armedSet = {
       idle: loop(clips.armedHold),
       run: loop(clips.armedRun),
       jump: oneShot(clips.armedJump),
+      land: oneShot(landingClip(clips.armedJump)),
       dash: oneShot(clips.armedDash),
       slide: oneShot(clips.armedSlide),
+      slideExit: oneShot(landingClip(clips.armedSlide)),
     };
+    const unarmedJumps = clips.jumpVariants?.length ? clips.jumpVariants : [clips.jump];
+    const armedJumps = clips.armedJumpVariants?.length ? clips.armedJumpVariants : [clips.armedJump];
+    this.jumpsUnarmed = unarmedJumps.map(oneShot);
+    this.jumpsArmed = armedJumps.map(oneShot);
+    this.landingsUnarmed = unarmedJumps.map(c => oneShot(landingClip(c)));
+    this.landingsArmed = armedJumps.map(c => oneShot(landingClip(c)));
     this.armedAim = loop(clips.armedAim);
     this.current = this.unarmed.idle;
     this.current.play();
@@ -272,8 +280,24 @@ export class RemotePlayerAnimationController {
     pitch: number,
     moveLocalYaw: number,
   ): void {
+    const enteredAir = state === NetworkMovementState.AIRBORNE && state !== this.currentState;
+    if (enteredAir) {
+      this.jumpVariant++;
+      this.jumpPose.start(verticalVelocity);
+    }
+    if (state === NetworkMovementState.SLIDING && state !== this.currentState) this.slidePose.start();
     if (state !== this.currentState) this.transitionTo(state);
     this.currentState = state;
+    if (this.currentSlot === "jump") {
+      if (this.jumpPose.update(dt, verticalVelocity)) {
+        this.jumpVariant++;
+        this.refreshCurrentSlot(0.05);
+      }
+      this.current.time = this.jumpPose.time;
+      this.current.paused = true; // sampled explicitly, never runs into landing in air
+    } else if (this.currentSlot === "land" && this.current.time >= JUMP_POSE.recovery) {
+      this.transitionTo(state);
+    }
 
     // ---- Direction-aware legs (strafe / backpedal) ----
     const moving =
@@ -311,23 +335,15 @@ export class RemotePlayerAnimationController {
       this.current.timeScale = this.backpedaling ? -scale : scale;
     }
 
-    // One-shot pose hold in SECONDS (jump: apex pose, slide: deep slide
-    // pose): freeze strictly BEFORE the clip's landing/stand-up frames so
-    // a long fall / long slide never plays a recovery mid-state. The next
-    // transition (ground, dash, slide…) crossfades the action out and
-    // unfreezes on replay. Dash plays through (0.8 s clip, interruptible
-    // by any state change).
-    const holdTime =
-      this.currentSlot === "jump"
-        ? JUMP_HOLD_TIME
-        : this.currentSlot === "slide"
-          ? SLIDE_HOLD_TIME
-          : 0;
-    if (holdTime > 0 && !this.current.paused) {
-      if (this.current.time >= holdTime) {
-        this.current.time = holdTime;
-        this.current.paused = true;
-      }
+    if (this.currentSlot === "slide") {
+      this.slidePose.update(dt, horizontalSpeed);
+      this.current.time = this.slidePose.time;
+      this.current.paused = true; // sample the central loop, never repeat entry
+    } else if (this.currentSlot === "slideExit") {
+      this.slidePose.updateRecovery(dt);
+      this.current.time = this.slidePose.time;
+      this.current.paused = true;
+      if (this.slidePose.time >= SLIDE_POSE.recovery) this.transitionTo(state);
     }
 
     // UNDO last frame's procedural spine offsets BEFORE the mixer runs:
@@ -361,9 +377,8 @@ export class RemotePlayerAnimationController {
     // motion — layering a procedural lean would double the inclination.
     this.smoothedLean += (0 - this.smoothedLean) * k;
 
-    // Falling hint: while airborne and clearly falling, tip the pose a bit.
-    const fallLean =
-      state === NetworkMovementState.AIRBORNE && verticalVelocity < -4 ? 0.12 : 0;
+    // The new descent pose already owns its small torso inclination.
+    const fallLean = 0;
 
     // Remote pitch look: distribute the clamped pitch over the upper-body
     // chain so "looking up" reads without breaking the rig.
@@ -380,12 +395,12 @@ export class RemotePlayerAnimationController {
     // the body is pitched near-horizontal by these clips, so layering the
     // aim pitch on top breaks the pose. AIRBORNE keeps the procedural
     // pitch: the head must HOLD the aim direction through a jump instead
-    // of snapping back to the raw Jump-clip pose (this also re-enables the
-    // fallLean hint, which only exists while airborne). Safe since the
+    // of snapping back to the raw Jump-clip pose. Safe since the
     // per-frame offsets are reverted before every mixer update — they can
     // never accumulate on top of the clip (see appliedSpineX/Y).
     const proceduralSpineOff =
       state === NetworkMovementState.SLIDING ||
+      this.currentSlot === "slideExit" ||
       state === NetworkMovementState.DASHING;
     if (n > 0 && !proceduralSpineOff) {
       const perBonePitch = (this.smoothedPitch * cfg.remotePitchBoneSign) / n;
@@ -416,30 +431,42 @@ export class RemotePlayerAnimationController {
 
   /** Action for a slot under the CURRENT armed/aiming presentation. */
   private actionFor(slot: Slot): THREE.AnimationAction {
+    if (slot === "jump" || slot === "land") {
+      const list = slot === "jump"
+        ? (this.armed ? this.jumpsArmed : this.jumpsUnarmed)
+        : (this.armed ? this.landingsArmed : this.landingsUnarmed);
+      return list[Math.max(0, this.jumpVariant) % list.length];
+    }
     if (!this.armed) return this.unarmed[slot];
     if (slot === "idle" && this.aiming) return this.armedAim;
     return this.armedSet[slot];
   }
 
   /** Re-resolve the current slot's action after an armed/aiming change. */
-  private refreshCurrentSlot(): void {
+  private refreshCurrentSlot(fade = FADE.idle): void {
     const next = this.actionFor(this.currentSlot);
     if (next === this.current) return;
     next.reset();
     this.seekEntry(next);
     next.play();
-    this.current.crossFadeTo(next, FADE.idle, false);
+    this.current.crossFadeTo(next, fade, false);
     this.current = next;
   }
 
   /** Start one-shot clips past their grounded anticipation frames. */
   private seekEntry(action: THREE.AnimationAction): void {
     if (this.currentSlot === "jump") {
-      // Skip the grounded anticipation: the physics impulse already
-      // happened when AIRBORNE arrives (never delay gameplay for anim).
-      action.time = JUMP_START_TIME;
+      action.time = this.jumpPose.time;
+      action.paused = true;
+    } else if (this.currentSlot === "land") {
+      action.time = JUMP_POSE.preLand;
+      action.timeScale = 1.8; // brief compression; next jump can interrupt immediately
     }
-    // Slide starts at 0: the authored entry (frames 1–9) IS the dive.
+    if (this.currentSlot === "slide" || this.currentSlot === "slideExit") {
+      action.time = this.slidePose.time;
+      action.paused = true;
+    }
+    // Slide starts at 0; changing weapon presentation keeps its current phase.
     // Dash starts at 0: the clip is the dash action itself.
   }
 
@@ -471,6 +498,16 @@ export class RemotePlayerAnimationController {
         break;
     }
     const wasAirborne = this.currentSlot === "jump";
+    if (wasAirborne && (slot === "idle" || slot === "run")) {
+      slot = "land";
+      fade = 0.045;
+    }
+    if (this.currentSlot === "slide" && this.slidePose.time >= SLIDE_POSE.loopStart &&
+        (slot === "idle" || slot === "run")) {
+      slot = "slideExit";
+      this.slidePose.recover();
+      fade = 0.075; // blend out from the actual loop phase, then recover
+    }
     this.currentSlot = slot;
     const next = this.actionFor(slot);
     if (next === this.current) return;

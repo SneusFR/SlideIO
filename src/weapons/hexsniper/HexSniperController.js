@@ -48,6 +48,8 @@ export class HexSniperController {
     this.tether.geometry.setAttribute('position', new Float32BufferAttribute(this.templatePositions.slice(), 3).setUsage(DynamicDrawUsage));
     this.tether.matrixAutoUpdate = false; this.tether.frustumCulled = false; this.tether.visible = false;
     this.tongueWidthScale = tongueWidthScale;
+    /** (socket, out) => out — optional world-point resolver for the tether start. */
+    this.tetherStartResolver = null;
     this.endpoint = new Vector3(); this.start = new Vector3(); this.direction = new Vector3();
     this.up = new Vector3(); this.side = new Vector3(); this.worldMatrix = new Matrix4(); this.inverseParent = new Matrix4();
     this.muzzle = this.object.getObjectByName('Muzzle');
@@ -119,10 +121,20 @@ export class HexSniperController {
     return true;
   }
   /** Cancel a running inspection: straight back to Idle (combat pose). */
-  cancelInspect() {
+  cancelInspect({ immediate = false } = {}) {
     if (this.disposed || this.state !== 'Inspect') return;
-    this._transition('Idle', .05);
+    if (!immediate) { this._transition('Idle', .05); this.state = 'Idle'; return; }
+    // Immediate restore (combat interrupting the inspection): Inspect and
+    // its fade are stopped for real, Idle is back at full weight, no
+    // deferred stop stays scheduled — one mixer.update(0) then yields the
+    // exact rest pose (TongueOrigin/sockets are read this same frame).
+    const idle = this.actions.Idle, inspect = this.actions.Inspect_Affection;
+    inspect.stopFading().stop();
+    this.fading = this.fading.filter(x => x.action !== inspect && x.action !== idle);
+    idle.enabled = true; idle.paused = false;
+    idle.stopFading().setEffectiveTimeScale(1).setEffectiveWeight(1).play();
     this.state = 'Idle';
+    this.mixer.update(0); this.object.updateWorldMatrix(true, true);
   }
   /** Legacy cosmetic reaction; gameplay uses HexSniperAttacks.tryTongue(). */
   onFire() {
@@ -130,7 +142,12 @@ export class HexSniperController {
     this.actions.Fire.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).play(); this.state = 'Fire';
   }
   _updateTether() {
-    this.object.updateWorldMatrix(true, true); this.tongueOrigin.getWorldPosition(this.start);
+    this.object.updateWorldMatrix(true, true);
+    // Optional resolver (game side): the tether lives in the WORLD scene
+    // while the weapon is drawn by a separate FP camera/projection — the
+    // resolver returns the world point that lands under the rendered mouth.
+    if (this.tetherStartResolver) this.tetherStartResolver(this.tongueOrigin, this.start);
+    else this.tongueOrigin.getWorldPosition(this.start);
     this.direction.copy(this.endpoint).sub(this.start);
     const distance = this.direction.length();
     if (distance > 1e-7) this.direction.multiplyScalar(1 / distance); else this.direction.copy(X);

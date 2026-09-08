@@ -25,6 +25,9 @@ export interface HexSniperFrameInput {
   canAct: boolean;
   /** Real physics ground contact (inspection requires standing still). */
   grounded: boolean;
+  verticalVelocity: number;
+  jumpSequence: number;
+  sliding: boolean;
   /** Horizontal speed (m/s) — drives the FP run pose + inspection gate. */
   speed: number;
 }
@@ -119,6 +122,12 @@ export class HexSniperWeapon {
         tongueWidthScale: cfg.tongueWidthScale,
       });
       this.prepareViewmodelMaterials(this.visuals.object);
+      // The tether is drawn in the WORLD pass (game camera, 92° dynamic /
+      // ×4 ADS) while the creature is drawn in the FP pass (65°): the raw
+      // socket world position lands on a different pixel. Resolve the
+      // start point through the viewmodel's projection mapping instead.
+      this.visuals.tetherStartResolver = (socket, out) =>
+        this.viewmodel.socketWorldForGameCamera(socket, this.camera, out);
       // The controller's clone IS the rendered instance: the viewmodel
       // system attaches it (whole scene, transforms preserved — the
       // HexSniper root keeps its authored 0.19 scale) under the common FP
@@ -336,7 +345,9 @@ export class HexSniperWeapon {
   /** Mouth (TongueOrigin socket) world position — the tongue's true origin. */
   private getMouthWorld(out: THREE.Vector3): THREE.Vector3 {
     const socket = this.visuals?.tongueOrigin ?? this.visuals?.muzzle;
-    if (socket) return socket.getWorldPosition(out);
+    // Same projection mapping as the rendered tether start: the shot leaves
+    // (and the tongue returns to) the point that sits under the drawn mouth.
+    if (socket) return this.viewmodel.socketWorldForGameCamera(socket, this.camera, out);
     return this.camera.getWorldPosition(out);
   }
 
@@ -381,8 +392,14 @@ export class HexSniperWeapon {
     // own animation and gameplay is never delayed by a visual transition.
     if (this.attacks && input.canAct && input.firePressed && !this.bitePending) {
       if (this.inspectionActive) {
-        this.cancelInspection();
-        this.visuals?.update(0); // settle the weapon skeleton to combat pose
+        // Immediate restore on BOTH rigs (fades alone would leave the
+        // sockets in the inspection pose this frame): arms → Aim at full
+        // weight, creature → Idle at full weight, mixers evaluated at t=0.
+        // Creature FIRST: the arms restore fires the inspect callback whose
+        // fallback fade-cancel must find the creature already at Idle.
+        this.inspectionActive = false;
+        this.visuals?.cancelInspect({ immediate: true });
+        this.viewmodel.restoreCombatPoseNow();
         this.visuals?.object.updateWorldMatrix(true, true);
       }
       this.attacks.tryTongue();
@@ -435,8 +452,12 @@ export class HexSniperWeapon {
     // not just the Fire clip — plus ADS. Run/hold otherwise.
     this.viewmodel.update(dt, {
       straight: (input.zoomHeld && input.canAct) || this.isBusy,
-      running: input.grounded && input.speed > 1.5,
+      running: input.grounded && !input.sliding && input.speed > 1.5,
+      sliding: input.sliding,
       speed: input.speed,
+      grounded: input.grounded,
+      verticalVelocity: input.verticalVelocity,
+      jumpSequence: input.jumpSequence,
     });
 
     this.visuals?.update(dt);

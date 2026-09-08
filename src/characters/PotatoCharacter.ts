@@ -206,9 +206,12 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
     //   - ARMS (TP_Hold pose, first frame, constant): shoulders, arms,
     //     hands, fingers and the animated Weapon_R socket correction —
     //     the two-hand grip survives every airborne/dash/slide state.
-    const armedJump = buildArmedVariant(jump, armedHoldSrc);
+    const jumpVariants = [jump, ...gltf.animations.filter(c =>
+      c.name === "Jump_LeftLead" || c.name === "Jump_RightLead")];
+    const armedJumpVariants = jumpVariants.map(c => buildArmedVariant(c, armedHoldSrc));
+    const armedJump = armedJumpVariants[0];
     const armedDash = buildArmedVariant(dash, armedHoldSrc);
-    const armedSlide = buildArmedVariant(slide, armedHoldSrc);
+    const armedSlide = stabilizeSlideGrip(buildArmedVariant(slide, armedHoldSrc), armedHoldSrc, template);
 
     const clips: RemoteCharacterClips = {
       idle,
@@ -222,6 +225,8 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       armedRaise,
       armedLower,
       armedJump,
+      jumpVariants,
+      armedJumpVariants,
       armedDash,
       armedSlide,
     };
@@ -322,12 +327,58 @@ function buildArmedVariant(
   base: THREE.AnimationClip,
   holdPose: THREE.AnimationClip,
 ): THREE.AnimationClip {
+  // The calibrated grip includes Spine_1: its hold-space basis must stay
+  // with the arms during Jump. Hips/Spine/Chest still carry body motion.
+  const ownsGrip = (name: string) => ARMED_LAYER_BONES.has(name) ||
+    ((base.name.startsWith("Jump") || base.name === "Slide") && name === "Spine_1");
   const tracks: THREE.KeyframeTrack[] = [];
   for (const track of base.tracks) {
-    if (!ARMED_LAYER_BONES.has(trackBone(track.name))) tracks.push(track.clone());
+    if (!ownsGrip(trackBone(track.name))) tracks.push(track.clone());
   }
   for (const track of holdPose.tracks) {
-    if (ARMED_LAYER_BONES.has(trackBone(track.name))) tracks.push(constantTrack(track));
+    if (ownsGrip(trackBone(track.name))) tracks.push(constantTrack(track));
   }
   return new THREE.AnimationClip(`${base.name}_Armed`, base.duration, tracks);
+}
+
+/** Bake shoulder compensation once: a reclined slide must not aim the gun skyward.
+ * All arm/finger/socket tracks stay in the same calibrated two-hand hold space.
+ * The temporary hierarchy is used for transforms only (no skinning/rendering).
+ */
+function stabilizeSlideGrip(
+  clip: THREE.AnimationClip,
+  hold: THREE.AnimationClip,
+  template: THREE.Object3D,
+): THREE.AnimationClip {
+  const hierarchy = template.clone(true);
+  const shoulderBase = hierarchy.getObjectByName("Spine_1");
+  if (!shoulderBase?.parent) return clip;
+  const mixer = new THREE.AnimationMixer(hierarchy);
+  const reference = mixer.clipAction(hold).play();
+  mixer.update(0);
+  hierarchy.updateMatrixWorld(true);
+  const heldWorld = shoulderBase.getWorldQuaternion(new THREE.Quaternion());
+  reference.stop();
+  const action = mixer.clipAction(clip).play();
+  action.paused = true;
+  const q = new THREE.Quaternion(), previous = new THREE.Quaternion();
+  const times: number[] = [], values: number[] = [];
+  const count = Math.round(clip.duration * 120);
+  for (let i = 0; i <= count; i++) {
+    const t = i * clip.duration / count;
+    action.time = t;
+    mixer.update(0);
+    hierarchy.updateMatrixWorld(true);
+    shoulderBase.parent.getWorldQuaternion(q).invert().multiply(heldWorld);
+    if (i > 0 && previous.dot(q) < 0) q.set(-q.x, -q.y, -q.z, -q.w);
+    previous.copy(q);
+    times.push(t);
+    values.push(q.x, q.y, q.z, q.w);
+  }
+  mixer.stopAllAction();
+  mixer.uncacheRoot(hierarchy);
+  return new THREE.AnimationClip(clip.name, clip.duration, [
+    ...clip.tracks.filter(t => t.name !== "Spine_1.quaternion"),
+    new THREE.QuaternionKeyframeTrack("Spine_1.quaternion", times, values),
+  ]);
 }

@@ -151,6 +151,27 @@ assert(ctl.state === "Idle", "cancelInspect returns to Idle");
 ctl.beginInspect();
 ctl.update(5.4); // clip finished event → reset
 assert(ctl.state === "Idle", "inspection completes back to Idle");
+// Immediate cancel (fire interrupting the inspection): TongueOrigin must be
+// back at its Idle world position the SAME frame — no residual fade.
+// Reference = Idle at t=0 (a fresh controller evaluates exactly that pose;
+// Idle is a breathing loop, so it is compared at the same clip time).
+const refCtl = new HexSniperController(weapon, { effectsParent: new THREE.Group() });
+const idleOrigin = refCtl.tongueOrigin.getWorldPosition(new THREE.Vector3());
+refCtl.dispose();
+ctl.update(1.0);
+ctl.beginInspect();
+ctl.update(2.5); // deep in the flipped inspection pose
+const midOrigin = ctl.tongueOrigin.getWorldPosition(new THREE.Vector3());
+assert(midOrigin.distanceTo(idleOrigin) > 1e-3, "inspection actually moves TongueOrigin");
+ctl.cancelInspect({ immediate: true });
+const restored = ctl.tongueOrigin.getWorldPosition(new THREE.Vector3());
+assert(ctl.state === "Idle" && restored.distanceTo(idleOrigin) < 1e-4,
+  `immediate cancelInspect restores TongueOrigin this frame (Δ=${restored.distanceTo(idleOrigin).toExponential(2)})`);
+assert(!ctl.actions.Inspect_Affection.isRunning() && ctl.fading.length === 0,
+  "immediate cancel leaves no running Inspect action nor deferred stop");
+ctl.update(0.016);
+assert(ctl.tongueOrigin.getWorldPosition(new THREE.Vector3()).distanceTo(idleOrigin) < 1e-3,
+  "Idle stays at full weight on the next frame");
 // Inspection never touches the attack tether.
 assert(ctl.tether.visible === false, "tether stays hidden through inspection");
 ctl.beginTongue(new THREE.Vector3(1, 0, 0));

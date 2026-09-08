@@ -1547,6 +1547,9 @@ export class Game {
           hexEquipped && !this.interactNearby && this.input.wasPressed("KeyF"),
         canAct: hexEquipped && playerAlive && !meleeBlocked && this.input.pointerLocked,
         grounded: this.movement.grounded,
+        verticalVelocity: this.movement.velocity.y,
+        jumpSequence: this.movement.jumpSequence,
+        sliding: this.movement.state === MoveState.SLIDING,
         speed: this.movement.horizontalSpeed,
       });
 

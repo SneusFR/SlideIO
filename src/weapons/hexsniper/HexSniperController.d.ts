@@ -29,6 +29,13 @@ export class HexSniperController {
   readonly scope: Object3D | undefined;
   /** Current visual state (Idle / Tongue_Cast / Tongue_Hold / …). */
   state: string;
+  /**
+   * Optional resolver for the tether's WORLD start point. The tether lives
+   * in the world scene while the weapon is drawn by a separate FP
+   * camera/projection: return the world point that lands under the
+   * rendered `socket` (default: the socket's raw world position).
+   */
+  tetherStartResolver: ((socket: Object3D, out: Vector3) => Vector3) | null;
   /** Tongue launched: hides Tongue_Idle, shows the stretched tether. */
   beginTongue(point?: Vector3 | null): void;
   /** Move the tether tip to a WORLD-space point (call as the tip flies). */
@@ -51,8 +58,13 @@ export class HexSniperController {
    * inspect clip the SAME frame — same clock, same progression).
    */
   beginInspect(): boolean;
-  /** Cancel a running inspection: straight back to Idle (combat pose). */
-  cancelInspect(): void;
+  /**
+   * Cancel a running inspection: back to Idle (combat pose). Default = a
+   * short fade; `immediate` stops Inspect + its fade for real, puts Idle at
+   * full weight and evaluates the mixer/world matrices right away (fire
+   * interrupting the inspection — sockets are read the same frame).
+   */
+  cancelInspect(options?: { immediate?: boolean }): void;
   /** Legacy cosmetic reaction; gameplay uses HexSniperAttacks.tryTongue(). */
   onFire(): void;
   /** Advance the mixer + tether — call exactly once per RENDER frame. */
