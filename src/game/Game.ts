@@ -236,6 +236,8 @@ export class Game {
 
   private lastTime = 0;
   private elapsed = 0;
+  /** DEBUG (KeyH): damage-hitbox wireframe overlay currently visible. */
+  private hitboxDebug = false;
   /** True once the one-time GPU warm-up pass has run. */
   private gpuWarmedUp = false;
   /**
@@ -1315,6 +1317,18 @@ export class Game {
 
     if (running) {
       this.fpsCamera.handleMouse(this.input.mouseDX, this.input.mouseDY);
+      // DEBUG (KeyH): toggle the DAMAGE-hitbox wireframe overlay — green
+      // body box + red head box on every bot (the head follows the animated
+      // Head bone: verify it standing, running, jumping, sliding) + cyan
+      // cylinder on the local player's hit proxy. Purely visual; the
+      // raycast volumes and the movement colliders never change.
+      if (this.input.wasPressed("KeyH")) {
+        this.hitboxDebug = !this.hitboxDebug;
+        this.playerCombatant.setHitboxDebug(this.hitboxDebug);
+      }
+      // Applied every frame (state-guarded, free) so bots added later from
+      // the Escape menu inherit the current debug state automatically.
+      for (const bot of this.botManager.bots) bot.model.setHitboxDebug(this.hitboxDebug);
       // Assist-window clock: game time, so the Escape menu never expires
       // recent damage contributions while everything is frozen.
       this.matchStats.setTime(this.elapsed);

@@ -17,8 +17,10 @@ import {
   stripEnemyOutline,
   FEET_OFFSET,
   MODEL_TOP,
+  CHARACTER_HEIGHT,
   POTATO_BONES,
 } from "../characters/PotatoCharacter";
+import { CHARACTER_HITBOX_SCALE } from "../../shared/combat/NetworkWeapons";
 
 /** Per-frame pose data fed by the Bot (drives the animation state). */
 export interface BotPose {
@@ -38,15 +40,27 @@ export interface BotPose {
   vz: number;
 }
 
-/** Vertical extent reserved for the HEAD hit zone at the capsule top (m). */
-const HEAD_ZONE_HEIGHT = 0.35;
+/** Vertical extent of the HEAD hit zone (m): base 1.80 m calibration
+ *  (0.35) × the CENTRAL hitbox scale (shared with the server hit sphere). */
+const HEAD_ZONE_HEIGHT = 0.35 * CHARACTER_HITBOX_SCALE;
+/** Head bone (jaw line) height as a fraction of the model height —
+ *  measured on the Potato rest pose (scripts/inspect-glb-proportions.mjs:
+ *  Head restY 0.5624 / native height 0.83545). */
+const HEAD_JAW_FRACTION = 0.6731;
+/** Cranium top as a fraction of the model height, PLANT LEAF EXCLUDED
+ *  (body mesh max y 0.779 / 0.83545 — Plant_Root starts right above at
+ *  0.926: leaf shots are never headshots). */
+const HEAD_TOP_FRACTION = 0.9324;
 /**
  * World-up offset from the Potato Head JOINT to the head volume's visual
- * center (m). Measured on the normalized rig: the Head bone sits at the
- * jaw line (~67% of the body height) and the cranium extends above it —
- * excluding the plant sprout, which is never part of the headshot zone.
+ * center (m): midpoint of the jaw→cranium-top span on the SCALED rig
+ * (CHARACTER_HEIGHT already carries the central 1.25 factor). The bone's
+ * WORLD position is ALREADY at model scale (the template is normalized to
+ * CHARACTER_HEIGHT), so the factor is NEVER applied to it a second time —
+ * this constant offset alone carries the scaled calibration.
  */
-const HEAD_BONE_CENTER_OFFSET = 0.14;
+const HEAD_BONE_CENTER_OFFSET =
+  ((HEAD_TOP_FRACTION - HEAD_JAW_FRACTION) / 2) * CHARACTER_HEIGHT; // ≈ 0.29
 /** Enemy UI heights above the capsule center (model is MODEL_TOP tall). */
 const HEALTHBAR_HEIGHT = MODEL_TOP + 0.24;
 
@@ -125,31 +139,39 @@ export class BotModel {
   private flashAmount = 0;
   private headFlashAmount = 0;
   private disposed = false;
+  /** DEBUG: wireframe overlay of the damage volumes currently shown. */
+  private hitboxDebugOn = false;
 
   // scratch
   private readonly tmpA = new THREE.Vector3();
 
   constructor(_index: number) {
     // ---- Hitboxes (synchronous — gameplay never waits for the GLB) ----
-    // Body: matches the physics capsule (minus the head zone at the top).
-    const bodyHeight = FEET_OFFSET * 2 - HEAD_ZONE_HEIGHT;
+    // DAMAGE volumes calibrated on the SCALED (2.25 m) silhouette via the
+    // central CHARACTER_HITBOX_SCALE — the MOVEMENT capsule is untouched.
+    // Head zone rest center: jaw→cranium-top midpoint of the scaled model
+    // (≈ 1.81 m above the feet — the plant leaf above 2.08 m is excluded).
+    const headCenterY = ((HEAD_JAW_FRACTION + HEAD_TOP_FRACTION) / 2) * CHARACTER_HEIGHT;
+    // Body: FEET-ANCHORED box spanning feet → bottom of the head zone (no
+    // dead gap between the two volumes), width scaled with the body.
+    const bodyTop = headCenterY - HEAD_ZONE_HEIGHT / 2; // above the FEET
+    const bodyWidth = mc.capsuleRadius * 2 * CHARACTER_HITBOX_SCALE;
     this.bodyHitbox = new THREE.Mesh(
-      new THREE.BoxGeometry(mc.capsuleRadius * 2, bodyHeight, mc.capsuleRadius * 2),
+      new THREE.BoxGeometry(bodyWidth, bodyTop, bodyWidth),
       HITBOX_MATERIAL,
     );
-    this.bodyHitbox.position.y = -HEAD_ZONE_HEIGHT / 2;
-    this.bodyHitbox.visible = false;
+    // Group origin = capsule center (feet at -FEET_OFFSET, unscaled anchor).
+    this.bodyHitbox.position.y = -FEET_OFFSET + bodyTop / 2;
     this.bodyHitbox.castShadow = false;
 
-    // Head: fallback static box at the capsule top; re-anchored onto the
-    // REAL Head bone as soon as the skinned model is attached (headshots
+    // Head: fallback static box at the SCALED head height; re-anchored onto
+    // the REAL Head bone as soon as the skinned model is attached (headshots
     // then track every animation, including the slide crouch).
     this.headHitbox = new THREE.Mesh(
       new THREE.BoxGeometry(HEAD_ZONE_HEIGHT, HEAD_ZONE_HEIGHT, HEAD_ZONE_HEIGHT),
       HITBOX_MATERIAL,
     );
-    this.headHitbox.position.y = FEET_OFFSET - HEAD_ZONE_HEIGHT / 2;
-    this.headHitbox.visible = false;
+    this.headHitbox.position.y = -FEET_OFFSET + headCenterY;
     this.headHitbox.castShadow = false;
     this.headHitbox.userData.hitZone = HitZone.HEAD;
 
@@ -274,6 +296,20 @@ export class BotModel {
       bone.add(grip);
       this.grip = grip;
     });
+  }
+
+  /**
+   * DEBUG overlay (KeyH): render the DAMAGE volumes as wireframes — green
+   * body box + red head box. Pure material swap (the raycast geometry is
+   * untouched), state-guarded so calling it every frame is free. The head
+   * box follows the animated Head bone (see update), so its placement can
+   * be checked standing, running, jumping and sliding.
+   */
+  setHitboxDebug(on: boolean): void {
+    if (on === this.hitboxDebugOn) return;
+    this.hitboxDebugOn = on;
+    this.bodyHitbox.material = on ? DEBUG_BODY_MATERIAL : HITBOX_MATERIAL;
+    this.headHitbox.material = on ? DEBUG_HEAD_MATERIAL : HITBOX_MATERIAL;
   }
 
   /**
@@ -456,3 +492,23 @@ const NO_RAYCAST = () => {};
 /** Shared material for the invisible hitbox meshes (never rendered). */
 const HITBOX_MATERIAL = new THREE.MeshBasicMaterial({ visible: false });
 HITBOX_MATERIAL.userData.shared = true;
+/** Shared DEBUG wireframes (KeyH overlay): green = body, red = head.
+ *  depthTest off so the volumes read through the character model. */
+const DEBUG_BODY_MATERIAL = new THREE.MeshBasicMaterial({
+  color: 0x22ff88,
+  wireframe: true,
+  toneMapped: false,
+  depthTest: false,
+  transparent: true,
+  opacity: 0.9,
+});
+DEBUG_BODY_MATERIAL.userData.shared = true;
+const DEBUG_HEAD_MATERIAL = new THREE.MeshBasicMaterial({
+  color: 0xff3344,
+  wireframe: true,
+  toneMapped: false,
+  depthTest: false,
+  transparent: true,
+  opacity: 0.9,
+});
+DEBUG_HEAD_MATERIAL.userData.shared = true;

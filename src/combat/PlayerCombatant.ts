@@ -5,6 +5,7 @@ import { PlayerController } from "../player/PlayerController";
 import { PlayerMovement } from "../player/PlayerMovement";
 import { MovementConfig as mc } from "../player/MovementConfig";
 import { RagdollConfig as rc } from "../ragdoll/RagdollConfig";
+import { CHARACTER_HITBOX_SCALE } from "../../shared/combat/NetworkWeapons";
 
 /**
  * The human player as an FFA combatant: shares the exact same Health
@@ -31,13 +32,34 @@ export class PlayerCombatant implements Combatant {
     private readonly movement: PlayerMovement,
     scene: THREE.Scene,
   ) {
-    const h = (mc.standHalfHeight + mc.capsuleRadius) * 2;
-    const geo = new THREE.CylinderGeometry(mc.capsuleRadius, mc.capsuleRadius, h, 8);
-    const mat = new THREE.MeshBasicMaterial();
+    // DAMAGE proxy scaled with the rendered 2.25 m silhouette (central
+    // CHARACTER_HITBOX_SCALE — same factor as the bots and the server
+    // capsule), FEET ANCHORED: the proxy still tracks the MOVEMENT capsule
+    // center (unscaled), so the cylinder is offset upward to keep its base
+    // at the feet while its top reaches the scaled head. The movement
+    // capsule itself is untouched.
+    const feet = mc.standHalfHeight + mc.capsuleRadius;
+    const h = feet * 2 * CHARACTER_HITBOX_SCALE;
+    const r = mc.capsuleRadius * CHARACTER_HITBOX_SCALE;
+    const geo = new THREE.CylinderGeometry(r, r, h, 8);
+    // Base at the feet (capsule center − feet): shift the geometry up by
+    // (scaled half-height − feet offset) so growth goes upward only.
+    geo.translate(0, h / 2 - feet, 0);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x33ccff,
+      wireframe: true,
+      toneMapped: false,
+    });
     mat.visible = false; // skipped by the renderer, still hit by raycasts
     this.hitProxy = new THREE.Mesh(geo, mat);
     this.hitProxy.userData.combatant = this;
     scene.add(this.hitProxy);
+  }
+
+  /** DEBUG overlay (KeyH): show the damage proxy as a cyan wireframe.
+   *  Material visibility flip only — the raycast volume never changes. */
+  setHitboxDebug(on: boolean): void {
+    (this.hitProxy.material as THREE.MeshBasicMaterial).visible = on;
   }
 
   get velocity(): THREE.Vector3 {

@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader, GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MovementConfig as moveCfg } from "../player/MovementConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
+import { CHARACTER_HITBOX_SCALE } from "../../shared/combat/NetworkWeapons";
 import { getQualitySettings } from "../game/GraphicsQuality";
 import type { RemoteCharacterClips } from "../network/remote/RemotePlayerAnimationController";
 // POTATO character pack (src/assets/potato) — the common third-person model
@@ -14,8 +15,13 @@ import tpPosesUrl from "../assets/potato/HexSniper_TP_Poses.glb?url";
 
 /** Capsule center → feet distance (model root sits at the feet). */
 export const FEET_OFFSET = moveCfg.standHalfHeight + moveCfg.capsuleRadius;
-/** Visual upscale of the character model (purely cosmetic — hitbox unchanged). */
-export const CHARACTER_SCALE = 1.25;
+/**
+ * Visual upscale of the character model. SAME central factor as every
+ * damage hitbox (shared/combat/NetworkWeapons.CHARACTER_HITBOX_SCALE) so
+ * the shot volumes always match the rendered silhouette. The MOVEMENT
+ * capsule stays unscaled.
+ */
+export const CHARACTER_SCALE = CHARACTER_HITBOX_SCALE;
 /** Visual character height (capsule height × cosmetic upscale). */
 export const CHARACTER_HEIGHT = FEET_OFFSET * 2 * CHARACTER_SCALE;
 /** Top of the (scaled) model relative to the capsule center (feet at -FEET_OFFSET). */

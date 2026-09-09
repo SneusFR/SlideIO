@@ -87,23 +87,41 @@ export enum NetworkHitZone {
 // ---------------------------------------------------------------------
 
 /**
- * HIT capsule tuned to the "Sprouty Smile" avatar silhouette (chubby chibi:
- * wider torso, huge head). Radius/half-height changed TOGETHER so that
- * halfHeight + radius stays 0.90 — the capsule still spans exactly
- * feet → top of head and PLAYER_FEET_OFFSET keeps matching the frontend
- * MovementConfig feet offset (movement capsule center = network y).
+ * CENTRAL character upscale factor: the Potato avatar renders 2.25 m tall
+ * (1.80 m base × this factor), FEET ANCHORED. Every damage hitbox — the
+ * server capsule/head-sphere below, the solo-bot hitboxes (BotModel) and
+ * the local player's hit proxy (PlayerCombatant) — derives its dimensions
+ * and vertical offsets from this single constant so client and server stay
+ * coherent. The MOVEMENT capsule (MovementConfig / PlayerController / bot
+ * colliders) is deliberately NOT scaled: this factor only affects what
+ * shots can hit, never how characters move or collide.
  */
-export const PLAYER_CAPSULE_RADIUS = 0.42;
-export const PLAYER_CAPSULE_HALF_HEIGHT = 0.48; // cylinder half-height
-/** Capsule center → feet distance (= halfHeight + radius). */
-export const PLAYER_FEET_OFFSET = PLAYER_CAPSULE_HALF_HEIGHT + PLAYER_CAPSULE_RADIUS;
+export const CHARACTER_HITBOX_SCALE = 1.25;
+
+/**
+ * HIT capsule tuned to the "Sprouty Smile" avatar silhouette (chubby chibi:
+ * wider torso, huge head) at its REAL rendered height (1.80 m base ×
+ * CHARACTER_HITBOX_SCALE = 2.25 m). FEET ANCHOR PRESERVED: the radius
+ * grows with the silhouette while the half-height shrinks so that
+ * halfHeight + radius stays 0.90 — the capsule still starts exactly at the
+ * feet (movement capsule center = network y, PLAYER_FEET_OFFSET keeps
+ * matching the frontend MovementConfig feet offset). The capsule spans
+ * feet → 1.80 m; the scaled HEAD sphere covers the skull above it.
+ */
+export const PLAYER_CAPSULE_RADIUS = 0.42 * CHARACTER_HITBOX_SCALE; // 0.525
+/** Capsule center → feet distance — UNSCALED feet anchor (movement capsule). */
+export const PLAYER_FEET_OFFSET = 0.9;
+export const PLAYER_CAPSULE_HALF_HEIGHT = PLAYER_FEET_OFFSET - PLAYER_CAPSULE_RADIUS; // 0.375
 /** Head sphere center, relative to the CAPSULE CENTER (network y).
- *  Sprouty Smile's head is nearly half the body: in the normalized 1.8 m
- *  avatar it spans ≈ 1.04 → 1.80 above the feet → center ≈ 0.52 above the
- *  capsule center with a ≈ 0.36 radius. */
-export const PLAYER_HEAD_OFFSET = 0.52;
-export const PLAYER_HEAD_RADIUS = 0.36;
-/** Eye height above the capsule center (fire-origin sanity checks). */
+ *  Base 1.8 m avatar: head center 1.42 m above the feet (0.52 above the
+ *  center). Scaled: 1.42 × 1.25 = 1.775 m above the feet — the feet anchor
+ *  itself never scales, so the center offset becomes 1.775 − 0.9 = 0.875. */
+export const PLAYER_HEAD_OFFSET =
+  (0.52 + PLAYER_FEET_OFFSET) * CHARACTER_HITBOX_SCALE - PLAYER_FEET_OFFSET; // 0.875
+export const PLAYER_HEAD_RADIUS = 0.36 * CHARACTER_HITBOX_SCALE; // 0.45
+/** Eye height above the capsule center (fire-origin sanity checks).
+ *  CAMERA constant, not a hitbox — never scaled (the movement capsule and
+ *  the local camera eye offset are unchanged). */
 export const PLAYER_EYE_OFFSET = 0.55;
 
 // ---------------------------------------------------------------------
