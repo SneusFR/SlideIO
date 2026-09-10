@@ -14,6 +14,8 @@ import { netTrace, NetPipelineDebug, NET_TRACE_ENABLED } from "./diagnostics/Net
 import type {
   HitConfirmedEvent,
   DamageTakenEvent,
+  HexPullEvent,
+  WeaponActionConfirmedEvent,
 } from "../../shared/combat/NetworkWeapons";
 import type { PlayerMatchStats } from "../stats/MatchStatsManager";
 import type { FPSCamera } from "../camera/FPSCamera";
@@ -82,6 +84,15 @@ export class MultiplayerGameController {
   onDamageTaken: ((event: DamageTakenEvent) => void) | null = null;
   /** Server knockback for the LOCAL player (applied to local physics). */
   onApplyImpulse: ((x: number, y: number, z: number) => void) | null = null;
+  /**
+   * A server-confirmed action of the LOCAL player whose RESULT the local
+   * weapon must follow (HexSniper: grab / miss / pull end / bite — the
+   * tongue's outcome is decided by the server, never predicted locally).
+   * Regular actions are still discarded (local prediction rendered them).
+   */
+  onLocalActionConfirmed: ((event: WeaponActionConfirmedEvent) => void) | null = null;
+  /** HEX SNIPER: the LOCAL player is being reeled in by `attackerId`. */
+  onHexPull: ((event: HexPullEvent) => void) | null = null;
 
   private readonly statsSource = new NetworkStatsSource();
   /** Local alive state as told BY THE SERVER (never by local HP math). */
@@ -143,10 +154,16 @@ export class MultiplayerGameController {
     client.onPlayerRespawned = (event) => this.handlePlayerRespawned(event);
 
     // ---- Phase 5: server-confirmed weapon events ----
-    client.onWeaponActionConfirmed = (event) => this.vfx.handleAction(event);
+    client.onWeaponActionConfirmed = (event) => {
+      // Our OWN confirms only reach us for weapons whose outcome is
+      // server-decided (HexSniper) — route them to the local weapon.
+      if (event.playerId === client.sessionId) this.onLocalActionConfirmed?.(event);
+      else this.vfx.handleAction(event);
+    };
     client.onHitConfirmed = (event) => this.onHitConfirmed?.(event);
     client.onDamageTaken = (event) => this.onDamageTaken?.(event);
     client.onApplyImpulse = (event) => this.onApplyImpulse?.(event.x, event.y, event.z);
+    client.onHexPull = (event) => this.onHexPull?.(event);
 
     this.lastFrameAt = performance.now();
     this.keepaliveTimer = setInterval(() => this.backgroundKeepalive(), 250);
@@ -425,6 +442,7 @@ export class MultiplayerGameController {
     this.client.onHitConfirmed = null;
     this.client.onDamageTaken = null;
     this.client.onApplyImpulse = null;
+    this.client.onHexPull = null;
     this.client.onStatePatched = null;
     this.vfx.dispose();
     if (import.meta.env.DEV) {

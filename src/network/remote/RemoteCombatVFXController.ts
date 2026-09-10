@@ -20,7 +20,12 @@ import {
   WeaponActionConfirmedEvent,
   PLAYER_EYE_OFFSET,
   PLAYER_FEET_OFFSET,
+  HEX_ACTION_TONGUE_HIT,
+  HEX_ACTION_TONGUE_MISS,
+  HEX_ACTION_PULL_END,
+  HEX_ACTION_BITE,
 } from "../../../shared/combat/NetworkWeapons";
+import { HexSniperConfig as hexCfg } from "../../weapons/hexsniper/HexSniperConfig";
 import { loadRemoteWeaponTemplate } from "./RemoteWeaponController";
 import type { RemotePlayerManager } from "../RemotePlayerManager";
 
@@ -91,6 +96,26 @@ interface Tracer {
   age: number;
 }
 
+/**
+ * One remote HEX SNIPER tongue in flight / holding / returning. Pure
+ * replay of the server-confirmed sequence: the tip flies from the remote
+ * creature's mouth to the confirmed end point (grab point or wall), then
+ * either sticks to the grabbed avatar (pull) or snaps straight back.
+ */
+interface RemoteTongue {
+  phase: "extending" | "holding" | "retracting";
+  /** Confirmed end point of the flight (grab point / wall). */
+  target: THREE.Vector3;
+  /** Current world tip. */
+  tip: THREE.Vector3;
+  /** Grabbed victim (holding phase) — the tip follows this avatar. */
+  victimId: string | null;
+  /** Offset kept between the avatar center and the grab point. */
+  victimOffset: THREE.Vector3;
+  /** Play the Bite clip once the tip is home (arrival bite). */
+  biteOnReturn: boolean;
+}
+
 /** Generic short-lived expanding + fading mesh (explosions, slam rings). */
 interface Burst {
   mesh: THREE.Mesh;
@@ -116,6 +141,8 @@ export class RemoteCombatVFXController {
   private readonly projectiles = new Map<string, RemoteProjectile>();
   private readonly oblits = new Map<string, RemoteOblit>();
   private readonly burrows = new Map<string, RemoteBurrow>();
+  /** Remote HexSniper tongues by shooter id (one per player at a time). */
+  private readonly tongues = new Map<string, RemoteTongue>();
   private readonly tracers: Tracer[] = [];
   private readonly bursts: Burst[] = [];
   /** In-flight remote Bass Blaster notes (short-lived, flat list). */
@@ -134,6 +161,8 @@ export class RemoteCombatVFXController {
 
   /** Shared particle system (suction/spark parity with the local beam). */
   private particles: ParticleSystem | null = null;
+  /** LOCAL player capsule center (a remote tongue can be reeling US in). */
+  private localPosition: ((out: THREE.Vector3) => THREE.Vector3) | null = null;
 
   private elapsed = 0;
   private disposed = false;
@@ -192,6 +221,11 @@ export class RemoteCombatVFXController {
   /** Shared ParticleSystem: remote beams emit the same suction/sparks. */
   setParticles(particles: ParticleSystem): void {
     this.particles = particles;
+  }
+
+  /** Local player position provider (remote tongue latched on US). */
+  setLocalPosition(provider: (out: THREE.Vector3) => THREE.Vector3): void {
+    this.localPosition = provider;
   }
 
   /**
@@ -315,15 +349,36 @@ export class RemoteCombatVFXController {
         this.revolverExplode(ev);
         return;
       case WeaponActionType.HAMMER_SWEEP:
-        this.remotes.triggerMeleeSwing(ev.playerId, NetworkWeaponId.HAMMER, "sweep");
+        // Brick Maul WHIRLWIND: TP clip resumed at the server-start offset
+        // (late / duplicated confirms land on the right turn).
+        this.remotes.maulWhirlwind(ev.playerId, this.remotes.elapsedSince(ev.ts));
         this.playSwingSound(ev);
+        return;
+      case WeaponActionType.MELEE_SHOW:
+        this.remotes.setMeleeHeld(ev.playerId, true);
+        return;
+      case WeaponActionType.MELEE_HIDE:
+        this.remotes.setMeleeHeld(ev.playerId, false);
+        return;
+      case WeaponActionType.INSPECT_START:
+        // Only the Brick Maul has a replicated TP inspection today: the
+        // local player can only inspect it while HOLDING it (slot 2), which
+        // the MELEE_SHOW state already mirrors here. The event's weapon is
+        // the server primary (unchanged by the melee slot) — not a filter.
+        if (this.remotes.isMeleeHeld(ev.playerId)) {
+          this.remotes.maulInspectStart(ev.playerId, this.remotes.elapsedSince(ev.ts));
+        }
+        return;
+      case WeaponActionType.INSPECT_CANCEL:
+        this.remotes.maulInspectCancel(ev.playerId);
         return;
       case WeaponActionType.SPEAR_SWEEP:
         this.remotes.triggerMeleeSwing(ev.playerId, NetworkWeaponId.SPEAR, "sweep");
         this.playSwingSound(ev);
         return;
       case WeaponActionType.HAMMER_SLAM_START:
-        this.remotes.triggerMeleeSwing(ev.playerId, NetworkWeaponId.HAMMER, "slam");
+        // Slam_Start (0.20 s) → Slam_Dive loop until the confirmed impact.
+        this.remotes.maulSlamStart(ev.playerId, this.remotes.elapsedSince(ev.ts));
         audio.playAt("hammer_slam_descent", { x: ev.ox, y: ev.oy, z: ev.oz }, {
           bus: "weapons",
           volume: 0.7,
@@ -360,6 +415,16 @@ export class RemoteCombatVFXController {
       case WeaponActionType.MOLE_EMERGE:
         this.moleEmerge(ev);
         return;
+      case HEX_ACTION_TONGUE_HIT:
+      case HEX_ACTION_TONGUE_MISS:
+        this.hexTongueShot(ev, ev.action === HEX_ACTION_TONGUE_HIT);
+        return;
+      case HEX_ACTION_PULL_END:
+        this.hexTongueRelease(ev.playerId, false);
+        return;
+      case HEX_ACTION_BITE:
+        this.hexBite(ev);
+        return;
       default:
         return; // unknown action — silently ignored
     }
@@ -370,6 +435,16 @@ export class RemoteCombatVFXController {
     this.stopPlasma(playerId, null);
     const ps = this.poisons.get(playerId);
     if (ps) ps.active = false;
+    // A dead shooter's tongue vanishes with the creature; a dead VICTIM
+    // simply stops being followed (the server retracts the shooter's
+    // tongue through HEX_PULL_END right after).
+    if (this.tongues.has(playerId)) {
+      this.tongues.delete(playerId);
+      this.remotes.hexReset(playerId);
+    }
+    for (const t of this.tongues.values()) {
+      if (t.victimId === playerId) t.victimId = null;
+    }
     // The server clears its anchors on death without a broadcast — mirror.
     this.stopOblitBeam(playerId, true);
     this.clearOblitAnchors(playerId);
@@ -409,6 +484,9 @@ export class RemoteCombatVFXController {
     }
     for (const id of [...this.poisons.keys()]) {
       if (!validIds.has(id)) this.poisons.delete(id);
+    }
+    for (const id of [...this.tongues.keys()]) {
+      if (!validIds.has(id)) this.tongues.delete(id); // avatar (and tether) already disposed
     }
   }
 
@@ -509,6 +587,9 @@ export class RemoteCombatVFXController {
         );
       }
     }
+
+    // ---- HEX SNIPER remote tongues (replay of the confirmed sequence) ----
+    this.updateTongues(dt);
 
     // ---- Thrown revolver projectiles (client-side visual sim) ----
     for (const [id, proj] of this.projectiles) {
@@ -989,7 +1070,9 @@ export class RemoteCombatVFXController {
   }
 
   private hammerSlamImpact(ev: WeaponActionConfirmedEvent): void {
-    // The confirm carries the validated impact point in ox/oy/oz.
+    // The confirm carries the validated impact point in ox/oy/oz. The TP
+    // animation enters Slam_Land at the real impact (not just sound/VFX).
+    this.remotes.maulSlamImpact(ev.playerId, this.remotes.elapsedSince(ev.ts));
     const at = { x: ev.ox, y: ev.oy, z: ev.oz };
     this.spawnGroundRing(at, W.hammer.slamRadius, 0.5, 0xd8b4fe);
     audio.playAt("hammer_slam_impact", at, { bus: "weapons", volume: 1 });
@@ -1172,6 +1255,155 @@ export class RemoteCombatVFXController {
       const mesh = child as THREE.Mesh;
       mesh.geometry?.dispose();
       (mesh.material as THREE.Material)?.dispose();
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // HEX SNIPER — remote tongue (creature clips + world tether)
+  // ------------------------------------------------------------------
+
+  /**
+   * HEX_TONGUE_HIT / MISS: the tongue leaves the remote creature's mouth
+   * toward the confirmed end point (hx/hy/hz). A hit sticks to the victim
+   * avatar on arrival (hold while the server reels it in); a miss snaps
+   * back the moment the tip reaches the wall.
+   */
+  private hexTongueShot(ev: WeaponActionConfirmedEvent, grabbed: boolean): void {
+    // Any previous tongue of this shooter is superseded (server = one at a time).
+    if (!this.remotes.getMuzzleWorldPosition(ev.playerId, this.originScratch)) {
+      this.originScratch.set(ev.ox, ev.oy, ev.oz);
+    }
+    const target = new THREE.Vector3(
+      ev.hx ?? ev.ox + ev.dx * 50,
+      ev.hy ?? ev.oy + ev.dy * 50,
+      ev.hz ?? ev.oz + ev.dz * 50,
+    );
+    const tongue: RemoteTongue = {
+      phase: "extending",
+      target,
+      tip: this.originScratch.clone(),
+      victimId: grabbed && ev.tid ? ev.tid : null,
+      victimOffset: new THREE.Vector3(),
+      biteOnReturn: false,
+    };
+    // Grab point relative to the victim's DISPLAYED center at confirm time
+    // — the tip then follows the avatar with this offset while it is reeled.
+    if (tongue.victimId) {
+      let haveCenter = false;
+      if (tongue.victimId === this.getLocalId() && this.localPosition) {
+        this.localPosition(this.poseScratch.pos);
+        haveCenter = true;
+      } else if (this.remotes.getPose(tongue.victimId, this.poseScratch)) {
+        haveCenter = true;
+      }
+      if (haveCenter) {
+        tongue.victimOffset.subVectors(target, this.poseScratch.pos);
+        // Clamp an implausible offset (lag-comp rewind vs displayed pose).
+        if (tongue.victimOffset.lengthSq() > 1.5 * 1.5) tongue.victimOffset.set(0, 0.2, 0);
+      }
+    }
+    this.tongues.set(ev.playerId, tongue);
+    this.remotes.hexTongueBegin(ev.playerId, tongue.tip);
+    // Whip cast (same palette as the local onTongueStart → revolverThrow).
+    audio.playAt("jump", this.originScratch, { bus: "weapons", volume: 0.55, rate: 1.35 });
+    audio.playAt("dash_whoosh", this.originScratch, { bus: "weapons", volume: 0.3, rate: 1.5 });
+  }
+
+  /** HEX_PULL_END (no bite) / HEX_BITE (bite when home): start the return. */
+  private hexTongueRelease(playerId: string, bite: boolean): void {
+    const t = this.tongues.get(playerId);
+    if (!t) return;
+    if (t.phase === "retracting") {
+      t.biteOnReturn = t.biteOnReturn || bite;
+      return;
+    }
+    t.phase = "retracting";
+    t.victimId = null;
+    t.biteOnReturn = bite;
+  }
+
+  /** HEX_BITE: the victim arrived — heavy arrival thud, then the jaws. */
+  private hexBite(ev: WeaponActionConfirmedEvent): void {
+    const at = { x: ev.hx ?? ev.ox, y: ev.hy ?? ev.oy, z: ev.hz ?? ev.oz };
+    audio.playAt("hammer_slam_impact", at, { bus: "impacts", volume: 0.7, rateVar: 0.03 });
+    const t = this.tongues.get(ev.playerId);
+    if (t) {
+      this.hexTongueRelease(ev.playerId, true);
+    } else {
+      // Tongue already home (events coalesced): bite right away.
+      this.hexPlayBite(ev.playerId);
+    }
+  }
+
+  private hexPlayBite(playerId: string): void {
+    this.remotes.hexBite(playerId);
+    if (this.remotes.getMuzzleWorldPosition(playerId, this.originScratch)) {
+      const keys = ["hammer_swing_01", "hammer_swing_02", "hammer_swing_03"];
+      audio.playAt(keys[Math.floor(Math.random() * keys.length)], this.originScratch, {
+        bus: "weapons",
+        volume: 0.7,
+        rate: 1.1,
+      });
+    }
+  }
+
+  /**
+   * Per-frame tongue motion — same speeds as the local kit (projectile /
+   * return) so a spectator sees the exact same snap. The mouth position
+   * is read every frame (the shooter keeps moving while it holds).
+   */
+  private updateTongues(dt: number): void {
+    for (const [id, t] of this.tongues) {
+      const hasMouth = this.remotes.getMuzzleWorldPosition(id, this.originScratch);
+      if (!hasMouth) {
+        // Avatar hidden / dead / weapon swapped: drop the visual silently.
+        this.tongues.delete(id);
+        this.remotes.hexReset(id);
+        continue;
+      }
+
+      if (t.phase === "extending") {
+        const step = hexCfg.projectileSpeed * dt;
+        this.vecScratch.subVectors(t.target, t.tip);
+        const remaining = this.vecScratch.length();
+        if (remaining <= step) {
+          t.tip.copy(t.target);
+          if (t.victimId) {
+            t.phase = "holding";
+            this.remotes.hexTonguePull(id);
+            audio.playAt("phase_warp", t.tip, { bus: "weapons", volume: 0.5, rate: 1.2 });
+          } else {
+            t.phase = "retracting";
+          }
+        } else {
+          t.tip.addScaledVector(this.vecScratch, step / remaining);
+        }
+      } else if (t.phase === "holding") {
+        if (t.victimId === this.getLocalId() && t.victimId !== null && this.localPosition) {
+          // WE are the one being reeled in: the remote tongue follows our
+          // own capsule (no remote avatar exists for the local player).
+          this.localPosition(this.vecScratch);
+          t.tip.copy(this.vecScratch).add(t.victimOffset);
+        } else if (t.victimId && this.remotes.getPose(t.victimId, this.poseScratch)) {
+          t.tip.copy(this.poseScratch.pos).add(t.victimOffset);
+        } else {
+          // Victim vanished (death / leave): the server releases shortly —
+          // hold the last tip meanwhile.
+          t.victimId = null;
+        }
+      } else {
+        const step = hexCfg.returnSpeed * dt;
+        this.vecScratch.subVectors(this.originScratch, t.tip);
+        const remaining = this.vecScratch.length();
+        if (remaining <= step) {
+          this.tongues.delete(id);
+          this.remotes.hexTongueEnd(id);
+          if (t.biteOnReturn) this.hexPlayBite(id);
+          continue;
+        }
+        t.tip.addScaledVector(this.vecScratch, step / remaining);
+      }
+      this.remotes.hexTongueSetEndpoint(id, t.tip);
     }
   }
 

@@ -1,13 +1,17 @@
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { NetworkWeaponId, isNetworkWeaponId } from "../../../shared/combat/NetworkWeapons";
 import { createWeaponMount } from "../../weapons/profiles/WeaponProfile";
 import { HexSniperProfile } from "../../weapons/profiles/HexSniperProfile";
 import { loadHexSniperGltf } from "../../weapons/hexsniper/HexSniperModel";
+import { HexSniperController } from "../../weapons/hexsniper/HexSniperController";
+import { HexSniperConfig as hexCfg } from "../../weapons/hexsniper/HexSniperConfig";
 import { markEnemyOutlineOccluder } from "../../characters/PotatoCharacter";
+import { BrickMaulProfile, BRICKMAUL_EYES, BRICKMAUL_TIMING } from "../../weapons/brickmaul/BrickMaulProfile";
+import { loadBrickMaulGltf, instantiateBrickMaul } from "../../weapons/brickmaul/BrickMaulModel";
+import { BrickMaulEyes } from "../../weapons/brickmaul/BrickMaulEyes";
+import { HEXSNIPER_PROFILE_ID } from "./RemotePlayerAnimationController";
 // Real weapon GLBs (same optimized assets as the local viewmodels/menu).
-import hammerUrl from "../../assets/voidhammer_opt.glb?url";
 import rifleUrl from "../../assets/voidrifle_opt.glb?url";
 import spearUrl from "../../assets/lance_opt.glb?url";
 import obliterreurUrl from "../../assets/obliterreur_opt.glb?url";
@@ -48,13 +52,9 @@ interface RemoteWeaponAttachment {
  * (MenuConfig); the other three reuse the matching hand's grip.
  */
 export const REMOTE_WEAPON_CONFIG: Partial<Record<NetworkWeaponId, RemoteWeaponAttachment>> = {
-  [NetworkWeaponId.HAMMER]: {
-    url: hammerUrl,
-    bone: "Weapon_R",
-    position: new THREE.Vector3(0, 0.1, 0),
-    rotation: new THREE.Euler(0.15, 0, -0.2),
-    size: 1.05,
-  },
+  // HAMMER (Brick Maul) is NOT in this table anymore: it uses the authored
+  // TP mount of WeaponProfile_BrickMaul.json + the profile's TP clips (see
+  // attachBrickMaul) — no normalization, no procedural swing.
   [NetworkWeaponId.PLASMA_RIFLE]: {
     url: rifleUrl,
     bone: "Weapon_L",
@@ -192,13 +192,21 @@ export function preloadRemoteWeaponTemplates(): Promise<void> {
     .filter((id) => REMOTE_WEAPON_CONFIG[id] !== undefined)
     .map((id) => loadRemoteWeaponTemplate(id));
   jobs.push(loadRemoteHexSniper()); // animated path (shared GLB cache)
+  jobs.push(loadBrickMaulGltf()); // Brick Maul (profile path, shared cache)
   return Promise.all(jobs).then(() => undefined);
 }
 
-/** Swing animation duration (procedural grip rotation, seconds). */
+/** Swing animation duration (procedural grip rotation, seconds) — SPEAR only. */
 const SWING_DURATION = 0.35;
-/** How long a melee weapon stays visible in the hand after an attack (s). */
+/** How long the SPEAR stays visible in the hand after an attack (s). */
 const MELEE_OVERRIDE_DURATION = 0.9;
+/** Safety cap for a maul slam waiting for its impact event (s). */
+const MAUL_SLAM_MAX_AIR = 6;
+/** Extra grace after the last maul phase before the primary comes back (s). */
+const MAUL_RESTORE_GRACE = 0.15;
+
+/** Hammer visual phases replayed on a remote avatar (server-confirmed). */
+type MaulPhase = "whirlwind" | "slamStart" | "slamDive" | "slamLand" | "inspect" | null;
 
 /**
  * Puts the REAL equipped weapon GLB in a remote player's hand (Phase 5).
@@ -228,20 +236,54 @@ export class RemoteWeaponController {
   // ---- HEX SNIPER dedicated state (animated scene + authored TP mount) ----
   private hexWeapon: THREE.Object3D | null = null;
   private hexMount: THREE.Group | null = null;
-  private hexMixer: THREE.AnimationMixer | null = null;
+  /** Kit visual controller (mixer + world tether) — one per remote instance. */
+  private hexVisuals: HexSniperController | null = null;
   private hexMuzzle: THREE.Object3D | null = null;
   /**
-   * Armed-presentation hook: fired with true when the HexSniper attaches
-   * (TP two-hand poses on) and false when any other weapon replaces it.
-   * Wired by RemotePlayer to RemotePlayerAnimationController.setArmed.
+   * Armed-presentation hook: fired with the PROFILE id of the attached
+   * weapon ("hexsniper" two-hand set, "brickmaul" one-hand masked set) or
+   * null when a legacy static weapon / nothing is displayed. Wired by
+   * RemotePlayer to RemotePlayerAnimationController.setArmedProfile.
    */
-  onArmedChanged: ((armed: boolean) => void) | null = null;
+  onArmedChanged: ((profileId: string | null) => void) | null = null;
+  /**
+   * Full-body TP action hook (Brick Maul phases / inspection): the avatar's
+   * animation controller plays the profile clip with priority over the
+   * locomotion. `kind` = profile action key | "inspect" | "equip" |
+   * "unequip"; null = clear the override (back to the real locomotion).
+   */
+  onProfileAction:
+    | ((kind: string | null, options: { startAt?: number; fadeIn?: number; onFinished?: () => void }) => void)
+    | null = null;
 
-  // Procedural swing state
+  // ---- BRICK MAUL dedicated state (profile mount + moving pupils) ----
+  private maulWeapon: THREE.Object3D | null = null;
+  private maulMount: THREE.Group | null = null;
+  private maulEyes: BrickMaulEyes | null = null;
+  /** Maul HELD on slot 2 (MELEE_SHOW) — persistent visual override. */
+  private maulHeld = false;
+  /** Current replayed maul phase + its authoritative start (local clock, s). */
+  private maulPhase: MaulPhase = null;
+  private maulPhaseTimer = 0;
+  /** Remaining seconds of the temporary maul override (attack from primary). */
+  private maulOverrideTimer = 0;
+  /** True while the avatar is hidden/far: cosmetic eye work suspended. */
+  private cosmeticSuspended = false;
+
+  // Procedural swing state (SPEAR legacy path only)
   private swingTimer = -1;
   private swingKind: "sweep" | "slam" = "sweep";
 
-  constructor(private readonly characterModel: THREE.Object3D) {}
+  constructor(
+    private readonly characterModel: THREE.Object3D,
+    /**
+     * WORLD scene the remote HexSniper tether is drawn in (a world-space
+     * stretched mesh between the creature's mouth and the tip — occluded
+     * by walls like any world object). Null = tether parented under the
+     * weapon (kit default; only used by tests without a scene).
+     */
+    private readonly effectsParent: THREE.Object3D | null = null,
+  ) {}
 
   /** Mirror the server-synced weapon id (unknown strings are ignored). */
   setWeapon(raw: string): void {
@@ -257,6 +299,11 @@ export class RemoteWeaponController {
    */
   triggerMelee(raw: string, kind: "sweep" | "slam"): void {
     if (!isNetworkWeaponId(raw)) return;
+    if (raw === NetworkWeaponId.HAMMER) {
+      // Brick Maul: phases are replayed through the profile path (below).
+      this.maulPhaseStart(kind === "sweep" ? "whirlwind" : "slamStart", 0);
+      return;
+    }
     this.overrideId = raw;
     this.overrideTimer = MELEE_OVERRIDE_DURATION;
     this.swingTimer = 0;
@@ -264,10 +311,128 @@ export class RemoteWeaponController {
     this.refreshDisplayed();
   }
 
+  // ---- BRICK MAUL visual replication (server-confirmed events) ----
+
+  /** MELEE_SHOW / MELEE_HIDE: the maul is HELD (slot 2) or stowed again. */
+  setMeleeHeld(held: boolean): void {
+    if (this.maulHeld === held) return;
+    this.maulHeld = held;
+    if (held) {
+      this.maulOverrideTimer = 0;
+      this.pendingMaulEquipClip = true; // real Equip clip once attached
+      this.refreshDisplayed();
+    } else if (this.maulPhase === null || this.maulPhase === "inspect") {
+      // Real Unequip (0.30 s) then the primary presentation comes back —
+      // an attack phase in progress finishes first instead.
+      this.maulPhase = null;
+      this.maulOverrideTimer = BRICKMAUL_TIMING.unequip + MAUL_RESTORE_GRACE;
+      this.onProfileAction?.("unequip", { fadeIn: 0.08 });
+    }
+  }
+
+  /**
+   * Start a maul phase at `elapsed` seconds into it (late arrivals resume
+   * mid-clip). The maul override lasts until the REAL recovery ends:
+   * whirlwind 1.35 s; slam = start → dive loop → land (0.72 s after the
+   * impact event) — never a fixed 0.9 s.
+   */
+  maulPhaseStart(phase: Exclude<MaulPhase, null>, elapsed: number): void {
+    const t = Math.max(0, elapsed);
+    // A new attack always wins over an inspection; an inspection never
+    // interrupts an attack in progress.
+    if (phase === "inspect" && this.maulPhase !== null && this.maulPhase !== "inspect") return;
+    this.maulPhase = phase;
+    this.maulPhaseTimer = t;
+    const T = BRICKMAUL_TIMING;
+    switch (phase) {
+      case "whirlwind":
+        this.maulOverrideTimer = Math.max(0.05, T.whirlwind.duration - t) + MAUL_RESTORE_GRACE;
+        break;
+      case "slamStart":
+      case "slamDive":
+        this.maulOverrideTimer = MAUL_SLAM_MAX_AIR; // until the impact event
+        break;
+      case "slamLand":
+        this.maulOverrideTimer = Math.max(0.05, T.slam.recoveryAfterGroundContact - t) + MAUL_RESTORE_GRACE;
+        break;
+      case "inspect":
+        this.maulOverrideTimer = Math.max(0.05, T.inspect - t) + MAUL_RESTORE_GRACE;
+        break;
+    }
+    this.refreshDisplayed();
+    this.playMaulPhaseClip(phase, t);
+  }
+
+  /** Real slam impact (HAMMER_SLAM_IMPACT): Slam_Land at 0.10 s, hard cut. */
+  maulSlamImpact(elapsed: number): void {
+    this.maulPhaseStart("slamLand", BRICKMAUL_TIMING.slam.enterLandAt + Math.max(0, elapsed));
+    this.maulEyes?.kick(1.5);
+  }
+
+  /** INSPECT_CANCEL / attack / death: stop the inspection replay. */
+  maulInspectCancel(): void {
+    if (this.maulPhase !== "inspect") return;
+    this.maulPhase = null;
+    this.onProfileAction?.(null, {});
+    if (!this.maulHeld) this.maulOverrideTimer = MAUL_RESTORE_GRACE;
+  }
+
+  /** Death / ragdoll / respawn: drop every maul phase + stale callbacks. */
+  maulReset(): void {
+    this.maulPhase = null;
+    this.maulPhaseTimer = 0;
+    this.maulOverrideTimer = 0;
+    this.pendingMaulEquipClip = false;
+    this.onProfileAction?.(null, {});
+    this.maulEyes?.reset();
+    this.refreshDisplayed();
+  }
+
+  /** Far / invisible avatars: suspend the cosmetic pupils, reset on resume. */
+  setCosmeticSuspended(suspended: boolean): void {
+    if (this.cosmeticSuspended === suspended) return;
+    this.cosmeticSuspended = suspended;
+    if (!suspended) this.maulEyes?.reset();
+  }
+
+  private pendingMaulEquipClip = false;
+
+  /** True while the remote HOLDS the maul (slot 2 — MELEE_SHOW). */
+  get meleeHeld(): boolean {
+    return this.maulHeld;
+  }
+
+  /** True while the maul must be the displayed weapon. */
+  private get maulWanted(): boolean {
+    return this.maulHeld || this.maulPhase !== null || this.maulOverrideTimer > 0;
+  }
+
+  private playMaulPhaseClip(phase: Exclude<MaulPhase, null>, startAt: number): void {
+    if (!this.maulWeapon) return; // replayed once attached (attachBrickMaul)
+    if (phase !== "slamLand" && phase !== "inspect") this.maulEyes?.kick(1);
+    this.onProfileAction?.(phase, {
+      startAt,
+      fadeIn: phase === "slamLand" ? 0.02 : 0.08,
+      onFinished: () => {
+        // Stale by construction if another phase replaced this one (the
+        // animation controller nulls the callback on replacement).
+        if (this.maulPhase !== phase) return;
+        if (phase === "slamStart") {
+          this.maulPhase = "slamDive";
+          this.maulPhaseTimer = 0;
+          this.onProfileAction?.("slamDive", { fadeIn: 0.06 });
+          return;
+        }
+        this.maulPhase = null;
+      },
+    });
+  }
+
   /** Per-frame: override expiry + swing animation + HexSniper idle. */
   update(dt: number): void {
-    // HexSniper creature idle (visual mixer — never a re-simulation).
-    this.hexMixer?.update(dt);
+    // HexSniper creature clips + world tether (visual controller — never a
+    // re-simulation; the tip is fed by the remote combat VFX controller).
+    this.hexVisuals?.update(dt);
     if (this.overrideId) {
       this.overrideTimer -= dt;
       if (this.overrideTimer <= 0) {
@@ -277,6 +442,16 @@ export class RemoteWeaponController {
       }
     }
 
+    // Brick Maul: phase clock + override expiry (real recovery, not 0.9 s).
+    if (this.maulPhase !== null) this.maulPhaseTimer += dt;
+    if (this.maulOverrideTimer > 0) {
+      this.maulOverrideTimer -= dt;
+      if (this.maulOverrideTimer <= 0) {
+        this.maulOverrideTimer = 0;
+        if (this.maulPhase !== "slamDive" && this.maulPhase !== "slamStart") this.maulPhase = null;
+        if (!this.maulWanted) this.refreshDisplayed(); // primary comes back
+      }
+    }
     if (this.swingTimer >= 0 && this.grip) {
       this.swingTimer += dt;
       const p = Math.min(this.swingTimer / SWING_DURATION, 1);
@@ -304,6 +479,17 @@ export class RemoteWeaponController {
   }
 
   /**
+   * Cosmetic pass AFTER the avatar's character mixer (the pupils read the
+   * weapon's animated world matrix). Suspended while the avatar is hidden
+   * / far (see setCosmeticSuspended) — reset on resume.
+   */
+  updateCosmetics(dt: number): void {
+    if (!this.maulEyes || !this.maulWeapon || this.cosmeticSuspended) return;
+    this.maulWeapon.updateWorldMatrix(true, true);
+    this.maulEyes.update(dt);
+  }
+
+  /**
    * World position of the displayed weapon's grip (beam/tracer anchor).
    * Requires up-to-date world matrices (the game updates them per frame).
    */
@@ -312,6 +498,10 @@ export class RemoteWeaponController {
     // the game updates world matrices before remote VFX read anchors).
     if (this.hexMuzzle) {
       this.hexMuzzle.getWorldPosition(out);
+      return true;
+    }
+    if (this.maulWeapon) {
+      this.maulWeapon.getWorldPosition(out);
       return true;
     }
     if (!this.grip) return false;
@@ -328,9 +518,24 @@ export class RemoteWeaponController {
   // ------------------------------------------------------------------
 
   private refreshDisplayed(): void {
-    const target = this.overrideId ?? this.equipped;
+    // Priority: maul (held / attack phase / recovery) > spear override >
+    // server-equipped primary.
+    const target = this.maulWanted ? NetworkWeaponId.HAMMER : (this.overrideId ?? this.equipped);
     if (this.displayed === target) return;
     const token = ++this.loadToken;
+    if (target === NetworkWeaponId.HAMMER) {
+      // Brick Maul profile path: whole skinned scene + authored TP mount.
+      void loadBrickMaulGltf()
+        .then((gltf) => {
+          if (this.disposed || token !== this.loadToken) return;
+          this.detach();
+          this.attachBrickMaul(gltf);
+        })
+        .catch((err) => {
+          if (import.meta.env.DEV) console.warn("[RemoteWeapon] BrickMaul load failed", err);
+        });
+      return;
+    }
     if (target === NetworkWeaponId.HEX_SNIPER) {
       // Dedicated animated path: whole scene + clips, authored TP mount.
       void loadRemoteHexSniper().then(({ scene, animations }) => {
@@ -367,21 +572,35 @@ export class RemoteWeaponController {
       }
       return;
     }
-    const weapon = skeletonClone(templateScene);
-    weapon.traverse((obj) => {
-      const mesh = obj as THREE.Mesh;
-      if (mesh.isMesh) {
-        mesh.raycast = () => {}; // visual only — hitboxes own the raycasts
-        mesh.castShadow = false;
-        mesh.receiveShadow = false;
-        mesh.frustumCulled = false; // moves with the animated bone
-      }
-    });
-    // The remote instance never fires the tether: hide the attack mesh,
-    // keep the visual idle tongue. Remote tongue VFX read the REAL
-    // Muzzle/TongueOrigin sockets through getMuzzleWorldPosition below.
-    const tether = weapon.getObjectByName("Tongue_Tether");
-    if (tether) tether.visible = false;
+    // The kit's VISUAL controller owns the creature: skeleton clone, the
+    // single mixer for every clip (Idle / Tongue_Cast / Tongue_Hold /
+    // Tongue_Return / Bite) and the stretched Tongue_Tether — reparented
+    // into the WORLD scene so the remote tongue is a real world-space
+    // tether (occluded by walls) driven by the server-confirmed events.
+    // No gameplay here: HexSniperAttacks never runs for a remote player.
+    let visuals: HexSniperController;
+    try {
+      visuals = new HexSniperController(
+        { scene: templateScene, animations } as unknown as GLTF,
+        { effectsParent: this.effectsParent, tongueWidthScale: hexCfg.tongueWidthScale },
+      );
+    } catch (err) {
+      if (import.meta.env.DEV) console.warn("[RemoteWeapon] HexSniper controller failed", err);
+      return;
+    }
+    const weapon = visuals.object;
+    const prepare = (root: THREE.Object3D) =>
+      root.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (mesh.isMesh) {
+          mesh.raycast = () => {}; // visual only — hitboxes own the raycasts
+          mesh.castShadow = false;
+          mesh.receiveShadow = false;
+          mesh.frustumCulled = false; // moves with the animated bone
+        }
+      });
+    prepare(weapon);
+    prepare(visuals.tether);
 
     // Stencil occluder like every held weapon (see the template path):
     // the enemy contour must never bleed over the sniper creature. The
@@ -393,20 +612,74 @@ export class RemoteWeaponController {
     socket.add(mount);
     mount.add(weapon);
 
-    // Creature idle loop on ITS OWN skeleton (one mixer per instance).
-    const idleClip = animations.find((c) => c.name === "Idle");
-    if (idleClip) {
-      this.hexMixer = new THREE.AnimationMixer(weapon);
-      const idle = this.hexMixer.clipAction(idleClip);
-      idle.setLoop(THREE.LoopRepeat, Infinity);
-      idle.play();
-    }
+    this.hexVisuals = visuals;
     this.hexWeapon = weapon;
     this.hexMount = mount;
-    this.hexMuzzle =
-      weapon.getObjectByName("TongueOrigin") ?? weapon.getObjectByName("Muzzle") ?? null;
+    this.hexMuzzle = visuals.tongueOrigin ?? visuals.muzzle ?? null;
     this.displayed = NetworkWeaponId.HEX_SNIPER;
-    this.onArmedChanged?.(true);
+    this.onArmedChanged?.(HEXSNIPER_PROFILE_ID);
+  }
+
+  /**
+   * BRICK MAUL remote attach: SkeletonUtils clone of the COMPLETE weapon
+   * scene (Pupil_L / Pupil_R graph intact) under Weapon_R through the
+   * authored TP mount matrix (applied once, scale included — the weapon
+   * INHERITS the character scale, never the legacy ancestor-scale cancel).
+   * The avatar's animation controller switches to the "brickmaul" TP pose
+   * set; a phase already in flight (late attach) is replayed at its
+   * elapsed time; a real slot equip plays the Equip clip.
+   */
+  private attachBrickMaul(gltf: GLTF): void {
+    const socket = this.characterModel.getObjectByName("Weapon_R");
+    if (!socket) {
+      if (import.meta.env.DEV) console.warn("[RemoteWeapon] Weapon_R socket not found — cannot attach HAMMER");
+      return;
+    }
+    const weapon = instantiateBrickMaul(gltf);
+    const mount = createWeaponMount("BrickMaulMount", BrickMaulProfile.tpMount);
+    socket.add(mount);
+    mount.add(weapon);
+
+    this.maulWeapon = weapon;
+    this.maulMount = mount;
+    this.maulEyes = new BrickMaulEyes(weapon, BRICKMAUL_EYES);
+    this.maulEyes.reset();
+    this.displayed = NetworkWeaponId.HAMMER;
+    this.onArmedChanged?.(BrickMaulProfile.id);
+
+    if (this.maulPhase !== null) {
+      // Late attach during an attack / inspection: resume at the elapsed time.
+      this.playMaulPhaseClip(this.maulPhase, this.maulPhaseTimer);
+    } else if (this.pendingMaulEquipClip) {
+      this.onProfileAction?.("equip", { fadeIn: 0.06 });
+    }
+    this.pendingMaulEquipClip = false;
+  }
+
+  // ---- HEX SNIPER remote tongue visuals (server-confirmed replay) ----
+
+  hexTongueBegin(tip: THREE.Vector3): void {
+    this.hexVisuals?.beginTongue(tip);
+  }
+
+  hexTongueSetEndpoint(tip: THREE.Vector3): void {
+    this.hexVisuals?.setTongueEndpoint(tip);
+  }
+
+  hexTonguePull(): void {
+    this.hexVisuals?.beginPull();
+  }
+
+  hexTongueEnd(): void {
+    this.hexVisuals?.endTongue();
+  }
+
+  hexBite(): void {
+    this.hexVisuals?.bite();
+  }
+
+  hexReset(): void {
+    this.hexVisuals?.reset();
   }
 
   /** Menu-proven attachment recipe (legacy static weapons). */
@@ -451,20 +724,30 @@ export class RemoteWeaponController {
   private detach(): void {
     // HexSniper animated path cleanup (per-instance mixer + mount).
     if (this.hexWeapon) {
-      this.hexMixer?.stopAllAction();
-      if (this.hexMixer && this.hexWeapon) this.hexMixer.uncacheRoot(this.hexWeapon);
-      this.hexMixer = null;
-      this.hexWeapon.traverse((o) => {
-        const sm = o as THREE.SkinnedMesh;
-        if (sm.isSkinnedMesh) sm.skeleton.dispose();
-      });
+      // The kit controller frees its mixer, skeleton clone, tether buffer
+      // and removes both the weapon and the world tether from their parents.
+      this.hexVisuals?.dispose();
+      this.hexVisuals = null;
       this.hexWeapon.removeFromParent();
       this.hexWeapon = null;
       this.hexMount?.removeFromParent();
       this.hexMount = null;
       this.hexMuzzle = null;
       this.displayed = null;
-      this.onArmedChanged?.(false);
+      this.onArmedChanged?.(null);
+    }
+    // Brick Maul profile path cleanup: the instance's skeleton clone goes,
+    // the shared geometry / materials stay cached. The avatar's pose set
+    // returns to unarmed (or the next weapon's profile).
+    if (this.maulWeapon) {
+      this.maulWeapon.removeFromParent();
+      this.maulWeapon = null;
+      this.maulMount?.removeFromParent();
+      this.maulMount = null;
+      this.maulEyes = null;
+      this.displayed = null;
+      this.onProfileAction?.(null, {});
+      this.onArmedChanged?.(null);
     }
     if (!this.grip) return;
     this.grip.removeFromParent();

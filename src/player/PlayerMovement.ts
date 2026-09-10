@@ -9,6 +9,10 @@ import { HammerConfig as hc } from "../weapons/HammerConfig";
 import { SpearConfig as sc } from "../weapons/SpearConfig";
 import { RagdollConfig as rc } from "../ragdoll/RagdollConfig";
 import { MoleStrikeConfig as mole } from "../killstreaks/mole/MoleStrikeConfig";
+import { NetworkWeaponConfig } from "../../shared/combat/NetworkWeapons";
+
+/** HEX SNIPER pull tuning — SHARED with the server (arrival distance parity). */
+const hx = NetworkWeaponConfig.hexSniper;
 
 /** Fired once per successful wall traversal — consumed by Game for VFX. */
 export interface PhaseEvent {
@@ -49,6 +53,13 @@ export enum MoveState {
    * physics only; the player gets back up with Space / a movement key.
    */
   KNOCKED_DOWN = "KNOCKED_DOWN",
+  /**
+   * MULTIPLAYER — grabbed by another player's HEX SNIPER tongue: the body
+   * is reeled toward the attacker at the tongue pull speed through the
+   * normal character controller (walls / floors apply — never a
+   * teleport). Inputs are ignored until the server releases the grab.
+   */
+  HEX_PULLED = "HEX_PULLED",
 }
 
 /** Why a spear rush ended — consumed once by the Game for feedback/cooldown. */
@@ -131,6 +142,13 @@ export class PlayerMovement {
   /** Total time spent in the current KNOCKED_DOWN state (hard-cap clock). */
   private downedTimer = 0;
 
+  // ---- HEX SNIPER pull (multiplayer victim side — server start/stop) ----
+  /** Attacker position provider (false = attacker gone → self-release). */
+  private hexPullTarget: ((out: THREE.Vector3) => boolean) | null = null;
+  /** Safety cap: never reeled forever if the server's stop is lost (s). */
+  private hexPullTimer = 0;
+  private readonly hexPullDest = new THREE.Vector3();
+
   private wallNormal = new THREE.Vector3();
   private touchingWall = false;
 
@@ -191,6 +209,50 @@ export class PlayerMovement {
     return this.state === MoveState.KNOCKED_DOWN;
   }
 
+  /** True while reeled in by a HEX SNIPER tongue (multiplayer victim). */
+  get isHexPulled(): boolean {
+    return this.state === MoveState.HEX_PULLED;
+  }
+
+  /**
+   * HEX SNIPER grab (server HEX_PULL start): the body follows the attacker
+   * at the tongue pull speed through the character controller. Every
+   * committed special move is interrupted; inputs are eaten until release.
+   * Burrowed players are untouchable (the server never grabs them either).
+   */
+  startHexPull(target: (out: THREE.Vector3) => boolean): void {
+    if (this.state === MoveState.UNDERGROUND) return;
+    if (this.state === MoveState.DASHING) this.dashTimer = 0;
+    if (this.state === MoveState.SLIDING) this.endSlide();
+    if (this.state === MoveState.SPEAR_RUSHING) this.endSpearRush("TIMEOUT");
+    if (this.state === MoveState.KNOCKED_DOWN) {
+      // Yanked back up: the grab overrides the floor state (the reel is
+      // the stronger force) — the capsule stands back up if it can.
+      if (this.player.canStandUp()) this.player.setCrouched(false);
+      this.knockdownTimer = 0;
+      this.downedTimer = 0;
+    }
+    this.slamWindupTimer = 0;
+    this.slamImpactPending = false;
+    this.wallSide = 0;
+    this.phaseGraceTimer = 0; // being reeled is never a phase mechanic
+    this.jumpBufferTimer = 0;
+    this.slideBufferTimer = 0;
+    this.hexPullTarget = target;
+    this.hexPullTimer = hx.pullMaxSeconds;
+    this.state = MoveState.HEX_PULLED;
+  }
+
+  /** HEX SNIPER release (server HEX_PULL stop / bite): momentum is kept. */
+  stopHexPull(): void {
+    this.hexPullTarget = null;
+    this.hexPullTimer = 0;
+    if (this.state !== MoveState.HEX_PULLED) return;
+    // The reel-in velocity carries on (never a hard reset) — the bite
+    // knockback then arrives as a normal server impulse on top of it.
+    this.state = this.grounded ? MoveState.GROUNDED : MoveState.AIRBORNE;
+  }
+
   /**
    * True once the forced-down window expired: the player is still on the
    * ground but pressing Space / a movement key stands them back up.
@@ -219,6 +281,9 @@ export class PlayerMovement {
     if (this.state === MoveState.DASHING) this.dashTimer = 0;
     if (this.state === MoveState.SLIDING) this.endSlide();
     if (this.state === MoveState.SPEAR_RUSHING) this.endSpearRush("TIMEOUT");
+    // A knockdown-grade hit mid-reel drops the grab locally (the server
+    // releases on its side too — stall / death paths).
+    if (this.state === MoveState.HEX_PULLED) this.stopHexPull();
     this.slamWindupTimer = 0; // a slam dive is dropped (Game resets the hammer)
     this.slamImpactPending = false;
     this.wallSide = 0;
@@ -383,7 +448,11 @@ export class PlayerMovement {
     // Dash triggers instantly from any state (except while already dashing).
     // While UNDERGROUND, E means "emerge" (handled by the Game) — never dash.
     // While KNOCKED_DOWN, getting up is the only action — never dash.
-    if (this.input.wasPressed("KeyE") && this.state !== MoveState.KNOCKED_DOWN) {
+    if (
+      this.input.wasPressed("KeyE") &&
+      this.state !== MoveState.KNOCKED_DOWN &&
+      this.state !== MoveState.HEX_PULLED
+    ) {
       this.tryStartDash();
     }
 
@@ -415,6 +484,9 @@ export class PlayerMovement {
       case MoveState.KNOCKED_DOWN:
         this.updateKnockedDown(dt);
         break;
+      case MoveState.HEX_PULLED:
+        this.updateHexPulled(dt);
+        break;
     }
 
     this.clampVelocity();
@@ -428,6 +500,8 @@ export class PlayerMovement {
     this.state = MoveState.GROUNDED;
     this.knockdownTimer = 0;
     this.downedTimer = 0;
+    this.hexPullTarget = null;
+    this.hexPullTimer = 0;
     this.wallSide = 0;
     this.coyoteTimer = 0;
     this.jumpBufferTimer = 0;
@@ -685,6 +759,42 @@ export class PlayerMovement {
   }
 
   /**
+   * HEX SNIPER reel (multiplayer victim): velocity points at the attacker's
+   * DISPLAYED position at the shared pull speed, integrated by the normal
+   * character controller below (walls / floors / autostep apply — a
+   * blocked reel simply stops progressing and the SERVER releases it on
+   * its stall check). Inputs are eaten; gravity is off (the tongue holds
+   * the body). Arrival is decided by the server (HEX_PULL stop) — locally
+   * the body just stops short at the stop distance so it never overshoots
+   * into the attacker while the release message is in flight.
+   */
+  private updateHexPulled(dt: number): void {
+    this.jumpBufferTimer = 0;
+    this.slideBufferTimer = 0;
+    this.wishDir.set(0, 0, 0);
+
+    this.hexPullTimer -= dt;
+    if (this.hexPullTimer <= 0 || !this.hexPullTarget || !this.hexPullTarget(this.hexPullDest)) {
+      // Safety release: server stop lost / attacker vanished.
+      this.stopHexPull();
+      return;
+    }
+
+    const pos = this.player.getPosition(this.posScratch);
+    this.tmp.subVectors(this.hexPullDest, pos);
+    const dist = this.tmp.length();
+    const remaining = dist - hx.pullStopDistance;
+    if (remaining <= 0.001 || dist < 1e-6) {
+      // Held at the stop gap: hover in place until the server bites/releases.
+      this.velocity.set(0, 0, 0);
+      return;
+    }
+    // Never overshoot past the stop distance within one step.
+    const speed = Math.min(hx.pullSpeed, remaining / Math.max(dt, 1e-4));
+    this.velocity.copy(this.tmp).multiplyScalar(speed / dist);
+  }
+
+  /**
    * Stand back up from a knockdown. Space performs a small recovery hop
    * (kip-up feel); a movement key simply stands up and control resumes.
    * Momentum is partially kept — same retention rule as the bot ragdoll.
@@ -783,6 +893,8 @@ export class PlayerMovement {
     if (this.state === MoveState.UNDERGROUND) return;
     // Knocked down: the body is on the floor — no dash until recovery.
     if (this.state === MoveState.KNOCKED_DOWN) return;
+    // Reeled by a tongue: the grab owns the body — no dash escape.
+    if (this.state === MoveState.HEX_PULLED) return;
 
     // Dashing out of a slide: stand back up first (skip if blocked by a ceiling).
     if (this.state === MoveState.SLIDING) {
@@ -1119,6 +1231,12 @@ export class PlayerMovement {
         // wall-slide window for after the recovery.
         if (this.grounded) this.wallSlideTimer = cfg.wallSlideDuration;
         break;
+
+      case MoveState.HEX_PULLED:
+        // Owned by the server (startHexPull/stopHexPull). No wall slides,
+        // no landing chains while the tongue holds the body.
+        if (this.grounded) this.wallSlideTimer = cfg.wallSlideDuration;
+        break;
     }
   }
 
@@ -1201,6 +1319,9 @@ export class PlayerMovement {
   }
 
   private clampVelocity(): void {
+    // The tongue reel (60 m/s, server-shared) legitimately exceeds the
+    // player's own speed ceiling — the cap resumes the frame it releases.
+    if (this.state === MoveState.HEX_PULLED) return;
     const speed = this.horizontalSpeed;
     if (speed > cfg.hardCapSpeed) {
       const scale = cfg.hardCapSpeed / speed;

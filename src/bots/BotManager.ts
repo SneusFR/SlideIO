@@ -116,6 +116,18 @@ export class BotManager {
   }
 
   /**
+   * Re-orient the enemy UI billboards toward the camera actually RENDERED
+   * this frame (Brick Maul whirlwind spin) — dt = 0: flashes / animations /
+   * ragdolls are NOT advanced again (never a second postStep).
+   */
+  rebillboard(camQuat: THREE.Quaternion, time: number): void {
+    for (const bot of this.bots) {
+      if (!bot.health.alive) continue;
+      bot.model.updateUI(0, bot.health.ratio, camQuat, bot.health.protected, time);
+    }
+  }
+
+  /**
    * REAL player→bot visibility for the enemy readability visuals
    * (red outline + name + HP bar). A bot is "seen" only when:
    *   1. it is inside the camera frustum, AND

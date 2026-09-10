@@ -6,6 +6,7 @@ import type {
   HitConfirmedEvent,
   DamageTakenEvent,
   ApplyImpulseEvent,
+  HexPullEvent,
 } from "../../shared/combat/NetworkWeapons";
 
 /** Snapshot of a networked player (mirrors the backend NetworkPlayer). */
@@ -138,6 +139,8 @@ export class MultiplayerClient {
   onDamageTaken: ((event: DamageTakenEvent) => void) | null = null;
   /** Server knockback impulse for the LOCAL player. */
   onApplyImpulse: ((event: ApplyImpulseEvent) => void) | null = null;
+  /** HEX SNIPER: the LOCAL player is grabbed / released by another player. */
+  onHexPull: ((event: HexPullEvent) => void) | null = null;
   /**
    * Fired after EVERY applied state patch (not once per render frame).
    * Snapshot ingestion hooks here so a burst of patches arriving between
@@ -500,6 +503,9 @@ export class MultiplayerClient {
         weapon: typeof message.weapon === "string" ? message.weapon : "PLASMA_RIFLE",
         action: message.action,
         seq: typeof message.seq === "number" ? message.seq : 0,
+        // Authoritative phase start (server clock) — also feeds the shared
+        // clock estimate like every other server timestamp.
+        ...(typeof message.ts === "number" && message.ts > 0 ? { ts: message.ts } : {}),
         ox: num(message.ox),
         oy: num(message.oy),
         oz: num(message.oz),
@@ -512,6 +518,7 @@ export class MultiplayerClient {
         ...(typeof message.px === "number"
           ? { px: message.px, py: num(message.py), pz: num(message.pz) }
           : {}),
+        ...(typeof message.tid === "string" ? { tid: message.tid } : {}),
       });
     });
     room.onMessage("HIT_CONFIRMED", (message: Partial<HitConfirmedEvent>) => {
@@ -538,6 +545,13 @@ export class MultiplayerClient {
     room.onMessage("APPLY_IMPULSE", (message: Partial<ApplyImpulseEvent>) => {
       netTrace.noteCombatMessageReceived();
       this.onApplyImpulse?.({ x: num(message?.x), y: num(message?.y), z: num(message?.z) });
+    });
+    room.onMessage("HEX_PULL", (message: Partial<HexPullEvent>) => {
+      netTrace.noteCombatMessageReceived();
+      const active = message?.active === true;
+      const attackerId = typeof message?.attackerId === "string" ? message.attackerId : null;
+      // An active pull without an attacker is meaningless — treat as stop.
+      this.onHexPull?.({ attackerId: active ? attackerId : null, active: active && attackerId !== null });
     });
 
     // ---- RTT measurement: PONG echoes our nonce; the RTT is computed

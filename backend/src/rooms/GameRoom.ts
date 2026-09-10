@@ -9,6 +9,7 @@ import { GameRoomPhase, GameRoomState } from "../schemas/GameRoomState";
 import { NetworkPlayer } from "../schemas/NetworkPlayer";
 import { WeaponManager } from "../weapons/WeaponManager";
 import {
+  NetworkWeaponId,
   PLAYER_FEET_OFFSET,
   WeaponActionMessage,
   WeaponEquipMessage,
@@ -164,7 +165,11 @@ export class GameRoom extends Room<GameRoomState> {
       // prediction already rendered them) — never echo the broadcast back
       // to the originating client: pure redundant traffic on its socket.
       broadcastAction: (event) => {
-        const shooter = this.clientById(event.playerId);
+        // EXCEPTION — HEX SNIPER: the tongue's outcome (grab / miss / pull
+        // end / bite) is decided HERE, so the shooter needs its own confirm
+        // to drive its local weapon. Every other weapon stays shooter-excluded.
+        const shooter =
+          event.weapon === NetworkWeaponId.HEX_SNIPER ? undefined : this.clientById(event.playerId);
         this.broadcast(
           "WEAPON_ACTION_CONFIRMED",
           event,
@@ -190,6 +195,15 @@ export class GameRoom extends Room<GameRoomState> {
         const client = this.clientById(victimId);
         if (client) {
           client.send("APPLY_IMPULSE", impulse);
+          this.combatMsgSent++;
+        }
+      },
+      // HEX SNIPER: the victim reels itself toward the attacker (movement
+      // is client-simulated) — start/stop is a direct message to it.
+      sendHexPull: (victimId, ev) => {
+        const client = this.clientById(victimId);
+        if (client) {
+          client.send("HEX_PULL", ev);
           this.combatMsgSent++;
         }
       },

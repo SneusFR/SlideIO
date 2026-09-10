@@ -60,7 +60,7 @@ export class LoadoutMenu {
 
   private selection: LoadoutSelection = loadLoadout();
   private activeSlot: SlotDef = SLOTS[0];
-  /** Which of the three killstreak slots (keys 1/2/3) is being edited. */
+  /** Which of the three killstreak slots (keys W/X/C) is being edited. */
   private activeKillstreakSlot: 0 | 1 | 2 = 0;
   /** Item currently INSPECTED (not necessarily equipped). */
   private inspectedId = "";

@@ -113,6 +113,18 @@ export class HexSniperAttacks {
   tryBite(): boolean;
   /** Advance the simulation — call once per PHYSICS step (seconds). */
   update(dt: number): void;
+  /**
+   * NETWORK (SlideIO addition): an external authority confirmed a grab on
+   * `playerId` — latch the tongue on it (Extending / Pulling only). Fires
+   * `tongue-player`. False when impossible (idle, unknown target…).
+   */
+  latchOn(playerId: number | string): boolean;
+  /**
+   * NETWORK (SlideIO addition): an external authority ended the flight /
+   * pull WITHOUT a bite — empty return from the current tip. False unless
+   * Extending / Pulling.
+   */
+  release(reason?: string): boolean;
   /** Death / unequip / stun: release without moving the target. */
   cancel(reason?: string): void;
   dispose(): void;

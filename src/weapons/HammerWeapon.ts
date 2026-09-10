@@ -12,19 +12,19 @@ import { HammerViewmodel } from "./HammerViewmodel";
  */
 export enum HammerState {
   IDLE = "IDLE",
-  SWING = "SWING", // grounded horizontal sweep
+  SWING = "SWING", // grounded WHIRLWIND (360°, three turns)
   SLAM_DIVE = "SLAM_DIVE", // airborne charge toward the ground
-  SLAM_RECOVERY = "SLAM_RECOVERY", // short lockout after the AoE impact
+  SLAM_RECOVERY = "SLAM_RECOVERY", // Slam_Land lockout after the AoE impact
 }
 
-export type SwingSide = "LEFT" | "RIGHT";
-
 /**
- * Combat hammer melee controller (reusable logic, not tied to the camera).
- * - A while grounded → alternating horizontal sweep (melee zone, hit window,
- *   one hit per target per swing, 50% max-HP damage, violent knockback).
+ * Brick Maul melee controller (reusable logic, not tied to the camera).
+ * - A while grounded → WHIRLWIND: 1.35 s, 360° zone active during
+ *   0.20–1.04 s, ONE set of victims for the whole attack (three visual
+ *   turns never re-hit), FLAT 50 damage per victim, violent knockback.
  * - A while airborne → Ground Slam (the descent itself is driven by the
- *   owner's movement; on landing this controller resolves the AoE).
+ *   owner's movement; on the REAL landing this controller resolves ONE
+ *   AoE of FLAT 50 damage per victim, then 0.72 s of recovery).
  * Damage goes through the SAME generic Health system as the Plasma Rifle.
  */
 export class HammerWeapon {
@@ -32,9 +32,6 @@ export class HammerWeapon {
 
   /** The combatant wielding the hammer (never damaged by its own hits). */
   owner: Combatant | null = null;
-
-  /** Direction of the NEXT swing — flips after each attack actually launched. */
-  nextSwingDirection: SwingSide = "LEFT"; // first swing: right → left
 
   /** Camera feedback hook (wired to FPSCamera.addShake by the Game). */
   onCameraShake: ((amount: number) => void) | null = null;
@@ -80,6 +77,15 @@ export class HammerWeapon {
     return this.isBusy;
   }
 
+  /**
+   * Elapsed time (s) of the RUNNING whirlwind, -1 otherwise. Read-only view
+   * of the existing attack clock — the FP camera spin and a late FP clip
+   * entry sample it; nothing else may drive it.
+   */
+  get whirlwindElapsedSeconds(): number {
+    return this.state === HammerState.SWING ? this.swingTimer : -1;
+  }
+
   // ------------------------------------------------------------------
   // Attack triggers
   // ------------------------------------------------------------------
@@ -93,14 +99,9 @@ export class HammerWeapon {
 
     this.state = HammerState.SWING;
     this.swingTimer = 0;
-    this.hitTargetsThisSwing.clear();
+    this.hitTargetsThisSwing.clear(); // ONE victim set for the whole whirlwind
 
-    // Visual alternation: +1 sweeps right → left ("SWING LEFT").
-    const dirSign = this.nextSwingDirection === "LEFT" ? 1 : -1;
-    this.viewmodel?.startSwing(dirSign);
-
-    // Flip AFTER the attack actually launched.
-    this.nextSwingDirection = this.nextSwingDirection === "LEFT" ? "RIGHT" : "LEFT";
+    this.viewmodel?.startSwing();
 
     this.onCameraShake?.(hc.hammerSwingCameraShake);
     this.onSwingStart?.();
@@ -138,13 +139,17 @@ export class HammerWeapon {
     this.recoveryTimer = hc.groundSlamRecovery;
   }
 
-  /** Hard reset (death / respawn): drop any attack in progress. */
+  /**
+   * Hard reset (death / respawn / knockdown): drop any attack in progress.
+   * The FP actions are cancelled; the presentation itself (attached or
+   * not) stays the Game's decision — never a hidden hide() from here.
+   */
   reset(): void {
     this.state = HammerState.IDLE;
     this.swingTimer = 0;
     this.recoveryTimer = 0;
     this.hitTargetsThisSwing.clear();
-    this.viewmodel?.hide();
+    this.viewmodel?.cancelActions();
   }
 
   // ------------------------------------------------------------------
@@ -158,14 +163,18 @@ export class HammerWeapon {
   update(dt: number, eye: THREE.Vector3, forwardFlat: THREE.Vector3): void {
     switch (this.state) {
       case HammerState.SWING: {
+        const prev = this.swingTimer;
         this.swingTimer += dt;
 
-        // Hit window only — no damage during wind-up or follow-through.
-        if (this.swingTimer >= hc.hammerHitStart && this.swingTimer <= hc.hammerHitEnd) {
+        // Active phase: test the OVERLAP of [prev, now] with the authored
+        // window so a long frame that jumps across it never loses the
+        // sweep. Targets entering during the window are hit once; the
+        // victim set persists for the three turns (no re-hit).
+        if (this.swingTimer >= hc.hammerHitStart && prev <= hc.hammerHitEnd) {
           this.performSwingHits(eye, forwardFlat);
         }
 
-        // The swing ALWAYS finishes its full sequence (nothing cancels it).
+        // The whirlwind ALWAYS finishes its full sequence (nothing cancels it).
         if (this.swingTimer >= hc.hammerSwingDuration) {
           this.state = HammerState.IDLE;
         }
@@ -184,8 +193,8 @@ export class HammerWeapon {
       case HammerState.IDLE:
         break;
     }
-
-    this.viewmodel?.update(dt);
+    // The FP presentation (shared arms mixer) is advanced by the Game —
+    // exactly once per frame, by whichever weapon owns the arms.
   }
 
   // ------------------------------------------------------------------
@@ -193,6 +202,8 @@ export class HammerWeapon {
   // ------------------------------------------------------------------
 
   private performSwingHits(eye: THREE.Vector3, forwardFlat: THREE.Vector3): void {
+    // 360° → every direction passes (the cosine test below is skipped).
+    const fullCircle = hc.hammerSwingArcDegrees >= 360;
     const cosHalfArc = Math.cos(((hc.hammerSwingArcDegrees / 2) * Math.PI) / 180);
 
     for (const target of this.combatants) {
@@ -209,13 +220,13 @@ export class HammerWeapon {
       const distXZ = Math.hypot(dx, dz);
       if (distXZ > hc.hammerSwingRange) continue;
 
-      // Horizontal arc in front of the attacker (matches the visual sweep).
-      if (distXZ > 0.001) {
+      // Horizontal arc around the attacker (360° for the whirlwind).
+      if (!fullCircle && distXZ > 0.001) {
         const dot = (forwardFlat.x * dx + forwardFlat.z * dz) / distXZ;
         if (dot < cosHalfArc) continue;
       }
 
-      this.hitTargetsThisSwing.add(target); // one hit max per swing
+      this.hitTargetsThisSwing.add(target); // one hit max per attack
       this.applySwingHit(target, dx, dz, distXZ);
     }
   }
@@ -243,9 +254,8 @@ export class HammerWeapon {
     this.tmpPos.y += 0.15;
     target.registerImpact?.(this.tmpKb, this.tmpPos);
 
-    // Generic damage system — exactly like the Plasma Rifle.
-    const damage = target.health.max * hc.hammerGroundDamageFraction;
-    const applied = target.health.applyDamage(damage, this.owner, KillMethod.HAMMER_SWING);
+    // Generic damage system — FLAT 50 (same on 100 or 200 max HP).
+    const applied = target.health.applyDamage(hc.hammerGroundDamage, this.owner, KillMethod.HAMMER_SWING);
     if (!applied) return; // spawn protection etc. → no knockback either
 
     target.applyImpulse(this.tmpKb);
@@ -303,8 +313,7 @@ export class HammerWeapon {
       this.tmpDir.y -= 0.4;
       target.registerImpact?.(this.tmpKb, this.tmpDir);
 
-      const damage = target.health.max * hc.groundSlamDamageFraction;
-      const applied = target.health.applyDamage(damage, this.owner, KillMethod.GROUND_SLAM);
+      const applied = target.health.applyDamage(hc.groundSlamDamage, this.owner, KillMethod.GROUND_SLAM);
       if (!applied) continue;
       hitCount++;
 

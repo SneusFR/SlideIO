@@ -207,6 +207,8 @@ class RemotePlayer {
     private readonly onAnomaly: (text: string) => void,
     /** Death hook: the manager snapshots a physical ragdoll corpse. */
     private readonly onDied: ((remote: RemotePlayer) => void) | null = null,
+    /** WORLD scene (remote HexSniper tether lives there, not on the hand). */
+    scene: THREE.Object3D | null = null,
   ) {
     // SkeletonUtils clone: required for skinned meshes (shares geometry /
     // materials / textures with the cached template — cheap per player).
@@ -218,13 +220,19 @@ class RemotePlayer {
     this.group.visible = false; // hidden until the first snapshot arrives
 
     this.anim = new RemotePlayerAnimationController(model, -FEET_OFFSET, asset.clips);
-    this.weapons = new RemoteWeaponController(model);
+    this.weapons = new RemoteWeaponController(model, scene);
     // HexSniper equipped → the avatar swaps to the TP two-hand pose set
     // (hold/run/masked jump-dash-slide). Derived from the EXISTING synced
     // weapon id — no new protocol field needed for the base hold. ADS is
     // not transmitted yet (documented limitation): remote avatars keep
     // Hold/Run; anim.setAiming is the ready hook for a future field.
-    this.weapons.onArmedChanged = (armed) => this.anim.setArmed(armed);
+    this.weapons.onArmedChanged = (profileId) => this.anim.setArmedProfile(profileId);
+    // Brick Maul full-body TP phases (Whirlwind / Slam_* / Inspect / Equip):
+    // the profile clip takes priority over the locomotion until it ends.
+    this.weapons.onProfileAction = (kind, options) => {
+      if (kind === null) this.anim.clearOverride();
+      else this.anim.playOverride(kind, options);
+    };
     this.group.add(this.createNametag(name));
     this.createHealthBar();
 
@@ -304,6 +312,10 @@ class RemotePlayer {
       // pose + interpolated velocity (momentum preserved), then hide the
       // avatar — a dead player never stays standing. The corpse is an
       // independent clone: the respawned avatar never teleports the body.
+      // Death stops every maul phase / inspection BEFORE the ragdoll takes
+      // over (stale callbacks dropped, pupils reset; the corpse is an
+      // independent clone of the current pose).
+      this.weapons.maulReset();
       if (this.group.visible) this.onDied?.(this);
       this.alive = false;
       this.group.visible = false;
@@ -327,6 +339,7 @@ class RemotePlayer {
     this.group.visible = false; // shown again on the first fresh snapshot
     this.healthRatioShown = 1; // full bar instantly — no dead→full easing
     this.healthRatioTarget = 1;
+    this.weapons.maulReset(); // respawn = teleport: phases dropped, pupils reset
   }
 
   /** Sample the buffer at renderTime (server ms) and drive visuals. */
@@ -334,6 +347,9 @@ class RemotePlayer {
     // Dead: stay hidden, don't animate — respawn resets everything.
     if (!this.alive) return;
     this.updateHealthBar(dt);
+    // Cosmetic pupils are skipped while the avatar is hidden (burrowed /
+    // waiting for its first snapshot) and reset when it reappears.
+    this.weapons.setCosmeticSuspended(!this.group.visible);
     this.weapons.update(dt);
     // Decaying max of snapshot gaps (a calm minute clears an old spike).
     this.maxSnapGapMs = Math.max(0, this.maxSnapGapMs - 20 * dt);
@@ -454,6 +470,9 @@ class RemotePlayer {
       moveLocalYaw = shortestAngleDelta(s.yaw, moveYaw);
     }
     this.anim.update(dt, s.movementState, horizontalSpeed, s.velocityY, s.pitch, moveLocalYaw);
+    // Brick Maul pupils: AFTER the character mixer (they read the weapon's
+    // world matrix as animated this frame).
+    this.weapons.updateCosmetics(dt);
 
     if (this.debugMarker) {
       const newest = this.buffer.newest;
@@ -677,6 +696,7 @@ export class RemotePlayerManager {
           this.asset,
           (text) => this.pushAnomaly(text),
           (dead) => this.spawnRemoteCorpse(dead),
+          this.scene,
         );
         this.remotes.set(p.id, remote);
         this.scene.add(remote.group);
@@ -782,9 +802,103 @@ export class RemotePlayerManager {
     return remote.weapons.getMuzzleWorldPosition(out);
   }
 
+  /**
+   * Every ALIVE, VISIBLE remote avatar with its INTERPOLATED capsule
+   * center — the local HexSniper's tongue sweeps these (prediction only;
+   * the server hitscans its own rewound transforms).
+   */
+  forEachVisible(cb: (sessionId: string, center: THREE.Vector3) => void): void {
+    for (const remote of this.remotes.values()) {
+      if (!remote.alive || !remote.group.visible) continue;
+      cb(remote.sessionId, remote.group.position);
+    }
+  }
+
   /** A confirmed melee action → real melee GLB in hand + swing anim. */
   triggerMeleeSwing(sessionId: string, weapon: string, kind: "sweep" | "slam"): void {
     this.remotes.get(sessionId)?.weapons.triggerMelee(weapon, kind);
+  }
+
+  /**
+   * Seconds elapsed since a confirmed action's SERVER start (`ts`) at the
+   * time REMOTE AVATARS ARE DISPLAYED (render timestamp) — late/duplicated
+   * confirmations resume the phase at the right frame. 0 without ts/sync.
+   */
+  elapsedSince(ts: number | undefined): number {
+    if (ts === undefined || !this.clock.hasSync) return 0;
+    const render = this.clock.now() - this.adaptiveDelay.delayMs;
+    return Math.max(0, (render - ts) / 1000);
+  }
+
+  // ---- BRICK MAUL remote phases (server-confirmed replay) ----
+
+  /** HAMMER_SWEEP → Whirlwind (three turns) resumed at `elapsed`. */
+  maulWhirlwind(sessionId: string, elapsed: number): void {
+    this.remotes.get(sessionId)?.weapons.maulPhaseStart("whirlwind", elapsed);
+  }
+
+  /** HAMMER_SLAM_START → Slam_Start then Slam_Dive loop until the impact. */
+  maulSlamStart(sessionId: string, elapsed: number): void {
+    const w = this.remotes.get(sessionId)?.weapons;
+    if (!w) return;
+    // A late arrival past the 0.20 s anticipation is already diving.
+    if (elapsed >= 0.2) w.maulPhaseStart("slamDive", elapsed - 0.2);
+    else w.maulPhaseStart("slamStart", elapsed);
+  }
+
+  /** HAMMER_SLAM_IMPACT → Slam_Land at 0.10 s (+ elapsed), 0.72 s recovery. */
+  maulSlamImpact(sessionId: string, elapsed: number): void {
+    this.remotes.get(sessionId)?.weapons.maulSlamImpact(elapsed);
+  }
+
+  /** MELEE_SHOW / MELEE_HIDE: the remote holds / stows the maul (slot 2). */
+  setMeleeHeld(sessionId: string, held: boolean): void {
+    this.remotes.get(sessionId)?.weapons.setMeleeHeld(held);
+  }
+
+  isMeleeHeld(sessionId: string): boolean {
+    return this.remotes.get(sessionId)?.weapons.meleeHeld ?? false;
+  }
+
+  /** INSPECT_START (weapon HAMMER) → TP_BrickMaul_Inspect resumed at `elapsed`. */
+  maulInspectStart(sessionId: string, elapsed: number): void {
+    this.remotes.get(sessionId)?.weapons.maulPhaseStart("inspect", elapsed);
+  }
+
+  maulInspectCancel(sessionId: string): void {
+    this.remotes.get(sessionId)?.weapons.maulInspectCancel();
+  }
+
+  // ---- HEX SNIPER remote tongue (creature clips + world tether) ----
+
+  /** Tongue launched from the remote creature's mouth toward `tip`. */
+  hexTongueBegin(sessionId: string, tip: THREE.Vector3): void {
+    this.remotes.get(sessionId)?.weapons.hexTongueBegin(tip);
+  }
+
+  /** Move the remote tether tip (world space). */
+  hexTongueSetEndpoint(sessionId: string, tip: THREE.Vector3): void {
+    this.remotes.get(sessionId)?.weapons.hexTongueSetEndpoint(tip);
+  }
+
+  /** Grabbed a player: hold loop on the creature. */
+  hexTonguePull(sessionId: string): void {
+    this.remotes.get(sessionId)?.weapons.hexTonguePull();
+  }
+
+  /** Tip back at the mouth: Tongue_Return clip, idle tongue restored. */
+  hexTongueEnd(sessionId: string): void {
+    this.remotes.get(sessionId)?.weapons.hexTongueEnd();
+  }
+
+  /** Arrival bite: the remote creature snaps its jaws. */
+  hexBite(sessionId: string): void {
+    this.remotes.get(sessionId)?.weapons.hexBite();
+  }
+
+  /** Hard reset of the remote creature visuals (death / leave). */
+  hexReset(sessionId: string): void {
+    this.remotes.get(sessionId)?.weapons.hexReset();
   }
 
   /** Feed the shared server-clock estimate (e.g. from the LOCAL player ts). */

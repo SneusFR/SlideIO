@@ -8,6 +8,11 @@ import {
   PLAYER_FEET_OFFSET,
   WeaponActionMessage,
   WeaponActionConfirmedEvent,
+  HexPullEvent,
+  HEX_ACTION_TONGUE_HIT,
+  HEX_ACTION_TONGUE_MISS,
+  HEX_ACTION_PULL_END,
+  HEX_ACTION_BITE,
 } from "../../../shared/combat/NetworkWeapons";
 import { DamageType, HitZone } from "../combat/DamageTypes";
 import { DamageResult } from "../combat/DamageResult";
@@ -59,6 +64,8 @@ const HISTORY_LERP_MAX_SPAN_MS = 250;
 const HISTORY_MS = 1000;
 /** Fire origin must be within this distance of the player transform. */
 const MAX_ORIGIN_DRIFT = 3.0;
+/** Direction placeholder for direction-less visual events. */
+const UP: Vec3 = { x: 0, y: 1, z: 0 };
 
 interface HistoryEntry {
   t: number;
@@ -83,6 +90,31 @@ interface BassNoteProjectile {
   /** Shooter view delay (now − viewTime) captured at fire time — every
    *  flight tick rewinds the targets by this amount (already clamped). */
   viewDelayMs: number;
+}
+
+/**
+ * One engaged BRICK MAUL attack (server-authoritative, advanced in tick()).
+ *   WHIRLWIND: damage is applied inside [activeStart, activeEnd] from the
+ *   authoritative start — the tick tests the OVERLAP of the elapsed span
+ *   with the window (a long tick never skips it); each victim is hit at
+ *   most ONCE for the whole attack (three visual turns = one victim set).
+ *   SLAM: started by HAMMER_SLAM_START, the ONE impact is consumed by the
+ *   first valid HAMMER_SLAM_IMPACT (duplicates refused even with a new
+ *   seq), then the attack stays engaged for the 0.72 s recovery.
+ */
+interface HammerAttackState {
+  kind: "WHIRLWIND" | "SLAM";
+  /** Server clock (ms) at the authoritative start (also sent as `ts`). */
+  startedAt: number;
+  /** Elapsed seconds already processed by the tick (overlap test). */
+  processed: number;
+  /** Shooter view delay captured at start (rewind of the victims). */
+  viewDelayMs: number;
+  hitIds: Set<string>;
+  /** SLAM: true once the single impact has been resolved. */
+  impactConsumed: boolean;
+  /** Absolute end (ms) — recomputed at the slam impact (recovery). */
+  endsAt: number;
 }
 
 /** Per-player server-side weapon state (never trusted from the client). */
@@ -110,8 +142,16 @@ class PlayerWeaponState {
   // the low per-note damage makes the fan-fire-style tolerance safe)
   lastBassShotAt = 0;
   // Melee
-  lastHammerSweepAt = 0;
   lastSpearSweepAt = 0;
+  /**
+   * BRICK MAUL bounded attack state (authoritative start, active window,
+   * ONE victim set per attack). Null = no hammer attack engaged. The
+   * anti-spam floor IS the engaged attack: a new HAMMER_* start is refused
+   * until the running one (whirlwind 1.35 s / slam until recovery) ends.
+   */
+  hammerAttack: HammerAttackState | null = null;
+  /** Visual-only inspection running (replicated start / cancel dedup). */
+  inspecting = false;
   // Spear rush
   rushActive = false;
   rushEndsAt = 0;
@@ -128,6 +168,14 @@ class PlayerWeaponState {
   // Mole strike (burrowed = INVULNERABLE + untargetable, mirrors local)
   burrowed = false;
   burrowedUntil = 0;
+  // Hex sniper (tongue pull in progress — ONE victim at a time)
+  hexLastFireAt = 0;
+  /** Victim currently being reeled in (null = no pull running). */
+  hexVictimId: string | null = null;
+  hexPullSince = 0;
+  /** Stall detection: best (smallest) distance so far + when it improved. */
+  hexBestDist = Infinity;
+  hexLastProgressAt = 0;
 }
 
 /** IO the room provides — WeaponManager stays free of Colyseus types. */
@@ -151,6 +199,8 @@ export interface WeaponManagerHost {
     ev: { attackerId: string | null; amount: number; ax?: number; ay?: number; az?: number },
   ): void;
   sendImpulse(victimId: string, impulse: Vec3): void;
+  /** HEX SNIPER: tell the VICTIM to start / stop reeling toward the attacker. */
+  sendHexPull(victimId: string, ev: HexPullEvent): void;
   now(): number;
 }
 
@@ -281,9 +331,13 @@ export class WeaponManager {
     this.stopPlasma(player, s);
     this.stopPoison(player, s);
     this.cancelObliterreurBeam(player, s);
+    // Unequipping the HexSniper mid-pull releases the victim (local parity:
+    // hexSniper.reset() cancels the tongue on every weapon swap).
+    this.releaseHexPull(player, s, true);
     s.oblitA = null;
     s.oblitB = null;
     s.oblitNextIndex = 0;
+    s.inspecting = false; // a weapon swap always ends an inspection
     s.weapon = rawWeapon;
     player.weapon = rawWeapon; // synced schema state → all clients
   }
@@ -345,17 +399,33 @@ export class WeaponManager {
         this.handleRevolverThrow(player, s, seq, origin, dir);
         return;
       case WeaponActionType.HAMMER_SWEEP:
-        this.handleMeleeSweep(player, s, seq, origin, dir, NetworkWeaponId.HAMMER, this.resolveRewindTime(msg));
+        this.handleHammerWhirlwind(player, s, seq, origin, dir, this.resolveRewindTime(msg));
         return;
       case WeaponActionType.HAMMER_SLAM_START:
-        if (!origin || !dir) return;
-        this.confirm(player, NetworkWeaponId.HAMMER, action, seq, origin, dir);
+        this.handleHammerSlamStart(player, s, seq, origin, dir);
         return;
       case WeaponActionType.HAMMER_SLAM_IMPACT:
         this.handleSlamImpact(player, s, seq, msg);
         return;
       case WeaponActionType.SPEAR_SWEEP:
-        this.handleMeleeSweep(player, s, seq, origin, dir, NetworkWeaponId.SPEAR, this.resolveRewindTime(msg));
+        this.handleMeleeSweep(player, s, seq, origin, dir, this.resolveRewindTime(msg));
+        return;
+      // ---- VISUAL-ONLY replication (no damage, no state authority) ----
+      case WeaponActionType.MELEE_SHOW:
+      case WeaponActionType.MELEE_HIDE:
+        // Melee held / stowed: the authoritative primary never changes.
+        this.confirm(player, NetworkWeaponId.HAMMER, action, seq, this.playerPos(player), dir ?? UP);
+        return;
+      case WeaponActionType.INSPECT_START:
+        // Only while no attack is engaged (an inspection never hides one).
+        if (s.hammerAttack || s.rushActive || s.inspecting) return;
+        s.inspecting = true;
+        this.confirm(player, s.weapon, action, seq, this.playerPos(player), dir ?? UP);
+        return;
+      case WeaponActionType.INSPECT_CANCEL:
+        if (!s.inspecting) return;
+        s.inspecting = false;
+        this.confirm(player, s.weapon, action, seq, this.playerPos(player), dir ?? UP);
         return;
       case WeaponActionType.SPEAR_RUSH_START:
         this.handleSpearRushStart(player, s, seq, origin, dir);
@@ -381,6 +451,9 @@ export class WeaponManager {
       case WeaponActionType.MOLE_EMERGE:
         this.handleMoleEmerge(player, s, seq, msg);
         return;
+      case WeaponActionType.HEX_TONGUE_FIRE:
+        this.handleHexTongueFire(player, s, seq, origin, dir, this.resolveRewindTime(msg));
+        return;
       default:
         return; // unknown action — silently refused
     }
@@ -398,10 +471,12 @@ export class WeaponManager {
       if (s.plasmaActive) this.tickPlasma(player, s, dt, now);
       if (s.poisonActive) this.tickPoison(player, s, dt, now);
       if (s.rushActive) this.tickSpearRush(player, s, now);
+      if (s.hammerAttack) this.tickHammerAttack(player, s, now);
       if (s.beamSamples && now < s.beamEndsAt) this.tickObliterreurBeam(player, s, dt);
       else if (s.beamSamples && now >= s.beamEndsAt) s.beamSamples = null;
       // Burrow safety: never invulnerable forever if MOLE_EMERGE is lost.
       if (s.burrowed && now >= s.burrowedUntil) s.burrowed = false;
+      if (s.hexVictimId !== null) this.tickHexPull(player, s, now);
     }
     this.tickProjectiles(dt);
     this.tickBassProjectiles(dt);
@@ -661,24 +736,23 @@ export class WeaponManager {
     }
   }
 
+  /** SPEAR sweep — immediate arc resolve (unchanged legacy path). */
   private handleMeleeSweep(
     player: NetworkPlayer,
     s: PlayerWeaponState,
     seq: number,
     origin: Vec3 | null,
     dir: Vec3 | null,
-    weapon: NetworkWeaponId.HAMMER | NetworkWeaponId.SPEAR,
     rewindTime?: number,
   ): void {
     if (!origin || !dir) return;
-    const cfg = weapon === NetworkWeaponId.HAMMER ? W.hammer : W.spear;
+    const weapon = NetworkWeaponId.SPEAR;
+    const cfg = W.spear;
     const now = this.host.now();
-    const last = weapon === NetworkWeaponId.HAMMER ? s.lastHammerSweepAt : s.lastSpearSweepAt;
-    if (now - last < cfg.sweepCooldown * 1000) return;
-    if (weapon === NetworkWeaponId.HAMMER) s.lastHammerSweepAt = now;
-    else s.lastSpearSweepAt = now;
+    if (now - s.lastSpearSweepAt < cfg.sweepCooldown * 1000) return;
+    s.lastSpearSweepAt = now;
 
-    this.confirm(player, weapon, weapon === NetworkWeaponId.HAMMER ? WeaponActionType.HAMMER_SWEEP : WeaponActionType.SPEAR_SWEEP, seq, origin, dir);
+    this.confirm(player, weapon, WeaponActionType.SPEAR_SWEEP, seq, origin, dir);
 
     // Melee volume: horizontal arc in front of the attacker.
     const cosHalfArc = Math.cos(((cfg.sweepArcDegrees / 2) * Math.PI) / 180);
@@ -698,52 +772,180 @@ export class WeaponManager {
       const eye = this.eyePos(player);
       if (!hasLineOfSight(eye, { x: target.x, y: target.y, z: target.z }, this.mapBoxes)) continue;
 
-      const amount =
-        t.maxHealth *
-        (weapon === NetworkWeaponId.HAMMER ? W.hammer.sweepDamageFraction : W.spear.sweepDamageFraction);
       const result = this.dealDamage(
         player,
         target.id,
-        amount,
-        weapon === NetworkWeaponId.HAMMER ? DamageType.HAMMER : DamageType.SPEAR,
+        t.maxHealth * cfg.sweepDamageFraction,
+        DamageType.SPEAR,
         HitZone.BODY,
         weapon,
       );
       if (result.applied) {
-        const kb = weapon === NetworkWeaponId.HAMMER ? W.hammer.sweepKnockback : W.spear.sweepKnockback;
-        const kbV =
-          weapon === NetworkWeaponId.HAMMER
-            ? W.hammer.sweepVerticalKnockback
-            : W.spear.sweepVerticalKnockback;
         const away = normalize({ x: dx, y: 0, z: dz }) ?? flatDir;
-        this.host.sendImpulse(target.id, { x: away.x * kb, y: kbV, z: away.z * kb });
+        this.host.sendImpulse(target.id, {
+          x: away.x * cfg.sweepKnockback,
+          y: cfg.sweepVerticalKnockback,
+          z: away.z * cfg.sweepKnockback,
+        });
       }
     }
   }
 
+  // ------------------------------------------------------------------
+  // BRICK MAUL — bounded attack state (whirlwind window / single slam)
+  // ------------------------------------------------------------------
+
+  /**
+   * HAMMER_SWEEP → engage a WHIRLWIND. Refused while another hammer attack
+   * is engaged (the 1.35 s attack IS the anti-spam floor). Damage is NOT
+   * applied here: the tick resolves the 0.20–1.04 s active window.
+   */
+  private handleHammerWhirlwind(
+    player: NetworkPlayer,
+    s: PlayerWeaponState,
+    seq: number,
+    origin: Vec3 | null,
+    dir: Vec3 | null,
+    rewindTime?: number,
+  ): void {
+    if (!origin || !dir) return;
+    const now = this.host.now();
+    if (s.hammerAttack && now < s.hammerAttack.endsAt) return; // engaged → refused
+    s.inspecting = false;
+    const viewDelay = rewindTime !== undefined ? now - rewindTime : LAG_COMP_FALLBACK_MS;
+    s.hammerAttack = {
+      kind: "WHIRLWIND",
+      startedAt: now,
+      processed: 0,
+      viewDelayMs: Math.max(0, Math.min(viewDelay, LAG_COMP_MAX_REWIND_MS)),
+      hitIds: new Set(),
+      impactConsumed: false,
+      endsAt: now + W.hammer.sweepDuration * 1000,
+    };
+    this.confirm(player, NetworkWeaponId.HAMMER, WeaponActionType.HAMMER_SWEEP, seq, origin, dir);
+  }
+
+  /** HAMMER_SLAM_START → engage a SLAM waiting for its single impact. */
+  private handleHammerSlamStart(
+    player: NetworkPlayer,
+    s: PlayerWeaponState,
+    seq: number,
+    origin: Vec3 | null,
+    dir: Vec3 | null,
+  ): void {
+    if (!origin || !dir) return;
+    const now = this.host.now();
+    if (s.hammerAttack && now < s.hammerAttack.endsAt) return; // engaged → refused
+    s.inspecting = false;
+    s.hammerAttack = {
+      kind: "SLAM",
+      startedAt: now,
+      processed: 0,
+      viewDelayMs: LAG_COMP_FALLBACK_MS,
+      hitIds: new Set(),
+      impactConsumed: false,
+      // Safety cap: a lost IMPACT can never lock the melee forever.
+      endsAt: now + W.hammer.slamMaxAirSeconds * 1000,
+    };
+    this.confirm(player, NetworkWeaponId.HAMMER, WeaponActionType.HAMMER_SLAM_START, seq, origin, dir);
+  }
+
+  /**
+   * Fixed tick of an engaged hammer attack: whirlwind window overlap test
+   * + damage (one hit per victim per attack), then expiry.
+   */
+  private tickHammerAttack(player: NetworkPlayer, s: PlayerWeaponState, now: number): void {
+    const a = s.hammerAttack!;
+    if (!player.isAlive) {
+      s.hammerAttack = null; // death drops the attack (no late damage)
+      return;
+    }
+    if (a.kind === "WHIRLWIND") {
+      const elapsed = (now - a.startedAt) / 1000;
+      const prev = a.processed;
+      a.processed = elapsed;
+      // Overlap of [prev, elapsed] with the active window: a long tick that
+      // jumps across the window still resolves it exactly once.
+      if (elapsed >= W.hammer.sweepActiveStart && prev <= W.hammer.sweepActiveEnd) {
+        this.resolveWhirlwindHits(player, a, now);
+      }
+    }
+    if (now >= a.endsAt) s.hammerAttack = null;
+  }
+
+  /** 360° melee volume around the attacker — FLAT damage, once per victim. */
+  private resolveWhirlwindHits(player: NetworkPlayer, a: HammerAttackState, now: number): void {
+    const cfg = W.hammer;
+    const rewindTime = now - a.viewDelayMs;
+    const fullCircle = cfg.sweepArcDegrees >= 360;
+    const cosHalfArc = Math.cos(((cfg.sweepArcDegrees / 2) * Math.PI) / 180);
+    const eye = this.eyePos(player);
+    for (const target of this.rewindTargets(player.id, rewindTime)) {
+      if (a.hitIds.has(target.id)) continue; // one hit per victim per attack
+      const t = this.host.getPlayer(target.id);
+      if (!t || !t.isAlive) continue;
+      const dx = target.x - player.x;
+      const dy = target.y - player.y;
+      const dz = target.z - player.z;
+      const flatDist = Math.sqrt(dx * dx + dz * dz);
+      if (flatDist > cfg.sweepRange || Math.abs(dy) > cfg.sweepHeight) continue;
+      if (!fullCircle && flatDist > 0.01) {
+        // Kept for a non-360 tuning: frontal arc around the player's yaw.
+        const fwd = { x: -Math.sin(player.yaw), z: -Math.cos(player.yaw) };
+        const dot = (dx / flatDist) * fwd.x + (dz / flatDist) * fwd.z;
+        if (dot < cosHalfArc) continue;
+      }
+      if (!hasLineOfSight(eye, { x: target.x, y: target.y, z: target.z }, this.mapBoxes)) continue;
+
+      a.hitIds.add(target.id);
+      const result = this.dealDamage(player, target.id, cfg.sweepDamage, DamageType.HAMMER, HitZone.BODY, NetworkWeaponId.HAMMER);
+      if (result.applied) {
+        const away = normalize({ x: dx, y: 0, z: dz }) ?? { x: 0, y: 0, z: -1 };
+        this.host.sendImpulse(target.id, {
+          x: away.x * cfg.sweepKnockback,
+          y: cfg.sweepVerticalKnockback,
+          z: away.z * cfg.sweepKnockback,
+        });
+      }
+    }
+  }
+
+  /**
+   * HAMMER_SLAM_IMPACT: consumed ONCE per engaged SLAM (a second impact of
+   * the same attack — even with a fresh seq — is refused, as is an impact
+   * without a start). Impact point validated against the attacker.
+   */
   private handleSlamImpact(
     player: NetworkPlayer,
     s: PlayerWeaponState,
     seq: number,
     msg: WeaponActionMessage,
   ): void {
+    const a = s.hammerAttack;
+    if (!a || a.kind !== "SLAM" || a.impactConsumed) return;
     const impact = this.readPoint(msg);
     if (!impact) return;
     // The impact must be plausibly at the attacker's feet.
     if (distance(impact, this.playerPos(player)) > W.hammer.slamMaxImpactDistance) return;
 
-    this.confirm(player, NetworkWeaponId.HAMMER, WeaponActionType.HAMMER_SLAM_IMPACT, seq, impact, { x: 0, y: 1, z: 0 });
+    const now = this.host.now();
+    a.impactConsumed = true;
+    a.endsAt = now + W.hammer.slamRecovery * 1000; // recovery keeps it engaged
+
+    this.confirm(player, NetworkWeaponId.HAMMER, WeaponActionType.HAMMER_SLAM_IMPACT, seq, impact, UP);
 
     for (const target of this.host.players()) {
       if (!target.isAlive || target.id === player.id) continue;
+      if (a.hitIds.has(target.id)) continue;
       const center = { x: target.x, y: target.y, z: target.z };
       const flat = Math.sqrt((center.x - impact.x) ** 2 + (center.z - impact.z) ** 2);
       if (flat > W.hammer.slamRadius) continue;
       if (Math.abs(center.y - impact.y) > W.hammer.slamHeightTolerance) continue;
+      a.hitIds.add(target.id);
       const result = this.dealDamage(
         player,
         target.id,
-        target.maxHealth * W.hammer.slamDamageFraction,
+        W.hammer.slamDamage,
         DamageType.HAMMER,
         HitZone.BODY,
         NetworkWeaponId.HAMMER,
@@ -987,6 +1189,183 @@ export class WeaponManager {
   }
 
   // ------------------------------------------------------------------
+  // HEX SNIPER — tongue hitscan + server-driven pull + arrival bite
+  // ------------------------------------------------------------------
+
+  /**
+   * LMB tongue shot. The tongue is a swept ball with no weapon range:
+   * a lag-compensated hitscan against the players (inflated by the tongue
+   * radius) and the map walls. A grabbed player takes the flat tongue
+   * damage immediately, then the PULL starts: the victim is told to reel
+   * toward the attacker (HEX_PULL) and every client replays the grab.
+   * A wall / nothing → empty return (HEX_TONGUE_MISS), no damage.
+   */
+  private handleHexTongueFire(
+    player: NetworkPlayer,
+    s: PlayerWeaponState,
+    seq: number,
+    origin: Vec3 | null,
+    dir: Vec3 | null,
+    rewindTime: number,
+  ): void {
+    if (s.weapon !== NetworkWeaponId.HEX_SNIPER || !origin || !dir) return;
+    if (s.hexVictimId !== null) return; // one attack at a time (local parity)
+    const now = this.host.now();
+    if (now - s.hexLastFireAt < W.hexSniper.fireCooldown * 1000) return;
+    s.hexLastFireAt = now;
+
+    const hit = hitscan(
+      origin,
+      dir,
+      W.hexSniper.maxRange,
+      this.rewindTargets(player.id, rewindTime),
+      player.id,
+      this.mapBoxes,
+      W.hexSniper.tongueRadius,
+    );
+
+    if (!hit || hit.kind !== "player" || !hit.targetId) {
+      // Empty tongue: the tip stops at the wall (or the ray end) and
+      // returns — the shooter re-arms locally the moment it is back.
+      const end = hit ? hit.point : pointAt(origin, dir, W.hexSniper.maxRange);
+      this.confirmHex(player, HEX_ACTION_TONGUE_MISS, seq, origin, dir, end);
+      return;
+    }
+
+    const victimId = hit.targetId;
+    const result = this.dealDamage(
+      player,
+      victimId,
+      W.hexSniper.tongueDamage,
+      DamageType.HEX_SNIPER_TONGUE,
+      HitZone.BODY, // the tongue grabs the body — no headshot rule
+      NetworkWeaponId.HEX_SNIPER,
+    );
+    if (!result.applied) {
+      // Spawn-protected / untargetable victim: the tongue bounces off
+      // like a wall — never a pull on a player that can't be damaged.
+      this.confirmHex(player, HEX_ACTION_TONGUE_MISS, seq, origin, dir, hit.point);
+      return;
+    }
+    const victim = this.host.getPlayer(victimId);
+    if (result.victimDied || !victim || !victim.isAlive) {
+      // Killed by the grab itself: the tongue snaps back empty, no pull.
+      this.confirmHex(player, HEX_ACTION_TONGUE_HIT, seq, origin, dir, hit.point, victimId);
+      this.confirmHex(player, HEX_ACTION_PULL_END, 0, origin, dir);
+      return;
+    }
+
+    // Grab confirmed → start the pull.
+    s.hexVictimId = victimId;
+    s.hexPullSince = now;
+    s.hexBestDist = distance(this.playerPos(player), this.playerPos(victim));
+    s.hexLastProgressAt = now;
+    this.confirmHex(player, HEX_ACTION_TONGUE_HIT, seq, origin, dir, hit.point, victimId);
+    this.host.sendHexPull(victimId, { attackerId: player.id, active: true });
+  }
+
+  /**
+   * Pull tick (20 Hz): the victim's client moves it toward the attacker;
+   * the server only checks ARRIVAL on its own transforms (bite + release),
+   * and releases on stall / timeout / death / disconnect — a victim can
+   * never stay hooked forever.
+   */
+  private tickHexPull(player: NetworkPlayer, s: PlayerWeaponState, now: number): void {
+    const victimId = s.hexVictimId;
+    if (victimId === null) return;
+    const victim = this.host.getPlayer(victimId);
+    if (!player.isAlive || !victim || !victim.isAlive || s.weapon !== NetworkWeaponId.HEX_SNIPER) {
+      this.releaseHexPull(player, s, true);
+      return;
+    }
+    if (now - s.hexPullSince > W.hexSniper.pullMaxSeconds * 1000) {
+      this.releaseHexPull(player, s, true);
+      return;
+    }
+
+    const attackerPos = this.playerPos(player);
+    const victimPos = this.playerPos(victim);
+    const dist = distance(attackerPos, victimPos);
+
+    // Arrival → INSTANT bite (local parity: bitePending → tryBite), then
+    // the tongue is free again.
+    if (dist <= W.hexSniper.pullStopDistance + W.hexSniper.arrivalTolerance) {
+      s.hexVictimId = null;
+      this.host.sendHexPull(victimId, { attackerId: null, active: false });
+      const bite = this.dealDamage(
+        player,
+        victimId,
+        W.hexSniper.biteDamage,
+        DamageType.HEX_SNIPER,
+        HitZone.BODY,
+        NetworkWeaponId.HEX_SNIPER,
+      );
+      // Knockback AWAY from the shooter (mirrors the local bite: camera
+      // forward, flattened, plus a small pop-up).
+      const away = normalize({
+        x: victimPos.x - attackerPos.x,
+        y: 0,
+        z: victimPos.z - attackerPos.z,
+      }) ?? { x: 0, y: 0, z: 1 };
+      if (bite.applied) {
+        this.host.sendImpulse(victimId, {
+          x: away.x * W.hexSniper.biteKnockback,
+          y: W.hexSniper.biteVerticalKnockback,
+          z: away.z * W.hexSniper.biteKnockback,
+        });
+      }
+      this.confirmHex(player, HEX_ACTION_BITE, 0, this.eyePos(player), away, victimPos, victimId);
+      return;
+    }
+
+    // Stall detection: the reel must keep closing the gap — a wall / ledge
+    // blocking the victim releases the grab (local "pull-blocked" rule).
+    if (dist < s.hexBestDist - W.hexSniper.pullStallMinProgress) {
+      s.hexBestDist = dist;
+      s.hexLastProgressAt = now;
+    } else if (now - s.hexLastProgressAt > W.hexSniper.pullStallSeconds * 1000) {
+      this.releaseHexPull(player, s, true);
+    }
+  }
+
+  /** Release the current victim WITHOUT a bite (retract everywhere). */
+  private releaseHexPull(player: NetworkPlayer, s: PlayerWeaponState, broadcast: boolean): void {
+    const victimId = s.hexVictimId;
+    if (victimId === null) return;
+    s.hexVictimId = null;
+    this.host.sendHexPull(victimId, { attackerId: null, active: false });
+    if (broadcast) {
+      this.confirmHex(player, HEX_ACTION_PULL_END, 0, this.eyePos(player), { x: 0, y: 0, z: -1 });
+    }
+  }
+
+  /** HexSniper confirm with the optional victim id (`tid`). */
+  private confirmHex(
+    player: NetworkPlayer,
+    action: string,
+    seq: number,
+    origin: Vec3,
+    dir: Vec3,
+    hit?: Vec3,
+    tid?: string,
+  ): void {
+    this.host.broadcastAction({
+      playerId: player.id,
+      weapon: NetworkWeaponId.HEX_SNIPER,
+      action,
+      seq,
+      ox: origin.x,
+      oy: origin.y,
+      oz: origin.z,
+      dx: dir.x,
+      dy: dir.y,
+      dz: dir.z,
+      ...(hit ? { hx: hit.x, hy: hit.y, hz: hit.z } : {}),
+      ...(tid !== undefined ? { tid } : {}),
+    });
+  }
+
+  // ------------------------------------------------------------------
   // Lifecycle hooks (death / respawn / leave)
   // ------------------------------------------------------------------
 
@@ -994,17 +1373,34 @@ export class WeaponManager {
   onPlayerDeath(playerId: string): void {
     const s = this.states.get(playerId);
     const player = this.host.getPlayer(playerId);
+    // A dying VICTIM is released by whoever is pulling it (the pulling
+    // player's state owns the pull — scan for it).
+    this.releaseHexVictim(playerId);
     if (!s) return;
     if (player) {
       this.stopPlasma(player, s);
       this.stopPoison(player, s);
       this.cancelObliterreurBeam(player, s);
+      this.releaseHexPull(player, s, true);
     }
     s.rushActive = false;
+    s.hammerAttack = null; // a corpse never finishes its whirlwind / slam
+    s.inspecting = false;
     s.oblitA = null;
     s.oblitB = null;
     s.oblitNextIndex = 0;
     s.burrowed = false;
+    s.hexVictimId = null;
+  }
+
+  /** Whoever is pulling `victimId` drops the grab (victim died / left). */
+  private releaseHexVictim(victimId: string): void {
+    for (const [attackerId, st] of this.states) {
+      if (st.hexVictimId !== victimId) continue;
+      const attacker = this.host.getPlayer(attackerId);
+      if (attacker) this.releaseHexPull(attacker, st, true);
+      else st.hexVictimId = null;
+    }
   }
 
   /** Respawn: clean combat state + fresh revolver cylinder. */
@@ -1015,16 +1411,28 @@ export class WeaponManager {
     s.poisonActive = false;
     s.rushActive = false;
     s.rushHitIds.clear();
+    s.hammerAttack = null;
+    s.inspecting = false;
     s.beamSamples = null;
     s.oblitA = null;
     s.oblitB = null;
     s.oblitNextIndex = 0;
     s.burrowed = false;
+    s.hexVictimId = null;
     s.revolverAmmo = W.revolver.capacity;
     s.revolverUnavailableUntil = 0;
   }
 
   removePlayer(playerId: string): void {
+    // Leaving mid-pull: the remaining side must never stay hooked to a
+    // ghost — release the victim (attacker left) / drop the attacker's
+    // pull (victim left).
+    const leaving = this.states.get(playerId);
+    if (leaving?.hexVictimId) {
+      this.host.sendHexPull(leaving.hexVictimId, { attackerId: null, active: false });
+      leaving.hexVictimId = null;
+    }
+    this.releaseHexVictim(playerId);
     this.states.delete(playerId);
     this.history.delete(playerId);
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
@@ -1117,6 +1525,9 @@ export class WeaponManager {
       weapon,
       action,
       seq,
+      // Authoritative phase start: late/duplicated arrivals reconstruct the
+      // elapsed time from it (whirlwind turns, slam phases, inspection).
+      ts: this.host.now(),
       ox: origin.x,
       oy: origin.y,
       oz: origin.z,

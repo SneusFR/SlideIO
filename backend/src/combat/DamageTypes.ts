@@ -19,6 +19,10 @@ export enum DamageType {
   OBLITERREUR = "OBLITERREUR",
   BASS_BLASTER = "BASS_BLASTER",
   POISON = "POISON",
+  /** HEX SNIPER tongue grab (flat hit damage on the grabbed player). */
+  HEX_SNIPER_TONGUE = "HEX_SNIPER_TONGUE",
+  /** HEX SNIPER arrival bite (mirrors the frontend KillMethod mapping). */
+  HEX_SNIPER = "HEX_SNIPER",
   MOLE_STRIKE = "MOLE_STRIKE",
   ENVIRONMENT = "ENVIRONMENT",
 }

@@ -48,20 +48,40 @@ export class ViewmodelSystem {
   private actions: {
     hold: THREE.AnimationAction;
     run: THREE.AnimationAction;
-    aim: THREE.AnimationAction;
-    raise: THREE.AnimationAction;
-    lower: THREE.AnimationAction;
+    /** ADS trio — null for weapons without an aim pose (hammer). */
+    aim: THREE.AnimationAction | null;
+    raise: THREE.AnimationAction | null;
+    lower: THREE.AnimationAction | null;
     inspect: THREE.AnimationAction | null;
+    equip: THREE.AnimationAction | null;
+    unequip: THREE.AnimationAction | null;
   } | null = null;
+  /**
+   * Priority ACTION clips of the equipped profile (attacks), one dedicated
+   * AnimationAction per key — a LoopOnce and a LoopRepeat clip never share
+   * an action.
+   */
+  private actionClips = new Map<string, THREE.AnimationAction>();
   /** Guards stale async equips (fast weapon switches / dispose). */
   private equipToken = 0;
   private disposed = false;
 
   // ---- Presentation state machine ----
-  private state: "hold" | "run" | "raise" | "aim" | "lower" | "inspect" = "hold";
+  private state: "hold" | "run" | "raise" | "aim" | "lower" | "inspect" | "equip" | "action" = "hold";
   private current: THREE.AnimationAction | null = null;
   /** Called when the inspect clip ends OR is cancelled. */
   private onInspectDone: ((cancelled: boolean) => void) | null = null;
+  /** Running priority action (attack) — see playAction(). */
+  private activeAction: {
+    key: string;
+    action: THREE.AnimationAction;
+    /** Invalidated (set to null) by cancelAction / a newer playAction. */
+    onFinished: (() => void) | null;
+    /** Fade used to go back to Hold/Run once the action ends. */
+    exitFade: number;
+  } | null = null;
+  /** Equip transition end callback (real equip, not before every attack). */
+  private onEquipDone: (() => void) | null = null;
 
   // ---- Cosmetic sway (never changes real fire direction) ----
   private bobPhase = 0;
@@ -130,7 +150,16 @@ export class ViewmodelSystem {
    * (e.g. HexSniperController.object) — the system NEVER re-clones it, so
    * a single mixer drives the weapon's internal skeleton.
    */
-  async equip(profile: WeaponViewProfile, weaponRoot: THREE.Object3D): Promise<void> {
+  async equip(
+    profile: WeaponViewProfile,
+    weaponRoot: THREE.Object3D,
+    options: {
+      /** Play the authored Equip clip first (REAL equip transition only). */
+      playEquipClip?: boolean;
+      /** Fired when the Equip clip ends (or immediately without one). */
+      onEquipped?: () => void;
+    } = {},
+  ): Promise<void> {
     const token = ++this.equipToken;
     const clips = await loadFPPoseClips(profile.fpPosesUrl);
     if (this.disposed || token !== this.equipToken) return;
@@ -163,22 +192,143 @@ export class ViewmodelSystem {
         a.clampWhenFinished = true;
         return a;
       };
+      const fp = profile.fpClips;
       this.actions = {
-        hold: loop(profile.fpClips.hold),
-        run: loop(profile.fpClips.run),
-        aim: loop(profile.fpClips.aim),
-        raise: once(profile.fpClips.raise),
-        lower: once(profile.fpClips.lower),
-        inspect: profile.fpClips.inspect ? once(profile.fpClips.inspect) : null,
+        hold: loop(fp.hold),
+        run: loop(fp.run),
+        aim: fp.aim ? loop(fp.aim) : null,
+        raise: fp.raise ? once(fp.raise) : null,
+        lower: fp.lower ? once(fp.lower) : null,
+        inspect: fp.inspect ? once(fp.inspect) : null,
+        equip: fp.equip ? once(fp.equip) : null,
+        unequip: fp.unequip ? once(fp.unequip) : null,
       };
-      this.state = "hold";
-      this.current = this.actions.hold;
+      this.actionClips.clear();
+      if (profile.fpActions) {
+        for (const [key, def] of Object.entries(profile.fpActions)) {
+          this.actionClips.set(key, def.loop ? loop(def.clip) : once(def.clip));
+        }
+      }
+      if (options.playEquipClip && this.actions.equip) {
+        this.state = "equip";
+        this.current = this.actions.equip;
+        this.onEquipDone = options.onEquipped ?? null;
+      } else {
+        this.state = "hold";
+        this.current = this.actions.hold;
+        this.onEquipDone = null;
+        options.onEquipped?.();
+      }
       this.current.reset().play();
       mixer.update(0);
     };
 
     if (this.weaponSocket && this.mixer) attach();
     else this.pendingAttach = attach;
+  }
+
+  /** True while the equipped profile has the ADS (aim) presentation. */
+  get hasAim(): boolean {
+    return !!this.actions?.aim;
+  }
+
+  /** True while a priority action (attack) is playing. */
+  get acting(): boolean {
+    return this.state === "action";
+  }
+
+  /** Key of the running priority action, or null. */
+  get activeActionKey(): string | null {
+    return this.activeAction?.key ?? null;
+  }
+
+  /**
+   * PRIORITY ACTION API (attacks / smash phases). While an action runs,
+   * Hold/Run/ADS never take the arms back per frame. A new action
+   * replaces the running one immediately (its finish callback is
+   * invalidated — a stale "Slam_Start ended → start Dive" can never fire
+   * after the impact already started Slam_Land).
+   *
+   * @param key        profile fpActions key
+   * @param startAt    entry time inside the clip (e.g. 0.10 s for Slam_Land)
+   * @param fadeIn     blend from the current pose (0–0.03 s at a real impact)
+   * @param onFinished for one-shot clips: fired when the clip ends (never
+   *                   for loops; never after cancel / replacement)
+   * Returns false when the key is unknown or no weapon is equipped.
+   */
+  playAction(
+    key: string,
+    options: { startAt?: number; fadeIn?: number; exitFade?: number; onFinished?: () => void } = {},
+  ): boolean {
+    const action = this.actionClips.get(key);
+    if (!action || !this.mixer) return false;
+    // A running inspection yields to any attack.
+    if (this.state === "inspect") {
+      const cb = this.onInspectDone;
+      this.onInspectDone = null;
+      cb?.(true);
+    }
+    if (this.activeAction) this.activeAction.onFinished = null; // invalidate
+    const fadeIn = options.fadeIn ?? 0.1;
+    action.reset();
+    action.time = Math.max(0, options.startAt ?? 0);
+    action.setEffectiveTimeScale(1).setEffectiveWeight(1);
+    if (this.current && this.current !== action) {
+      if (fadeIn > 0) this.current.fadeOut(fadeIn);
+      else this.current.stop(); // hard cut at a real impact
+    }
+    if (fadeIn > 0) action.fadeIn(fadeIn);
+    action.play();
+    this.current = action;
+    this.state = "action";
+    this.activeAction = {
+      key,
+      action,
+      onFinished: options.onFinished ?? null,
+      exitFade: options.exitFade ?? 0.1,
+    };
+    return true;
+  }
+
+  /**
+   * Cancel the running action (death / weapon switch / ragdoll / disable):
+   * stale callbacks are dropped and the pose returns to Hold. `immediate`
+   * = no fade (the caller detaches or hides right away).
+   */
+  cancelAction(immediate = false): void {
+    if (!this.activeAction) return;
+    this.activeAction.onFinished = null;
+    this.activeAction = null;
+    if (this.state === "action") {
+      this.state = "hold";
+      if (this.actions) this.transition(this.actions.hold, immediate ? 0 : 0.1);
+    }
+  }
+
+  /**
+   * Real UNEQUIP transition (0.30 s Unequip clip) then `onDone` — the
+   * caller detaches / switches afterwards. Without an Unequip clip the
+   * callback fires immediately. Never used between quick melee attacks.
+   */
+  playUnequip(onDone: () => void): boolean {
+    const a = this.actions;
+    if (!a?.unequip || !this.mixer) {
+      onDone();
+      return false;
+    }
+    if (this.activeAction) {
+      this.activeAction.onFinished = null;
+      this.activeAction = null;
+    }
+    if (this.onInspectDone) {
+      const cb = this.onInspectDone;
+      this.onInspectDone = null;
+      cb(true);
+    }
+    this.transition(a.unequip, 0.06);
+    this.state = "action"; // priority: nothing else takes the arms back
+    this.activeAction = { key: "__unequip", action: a.unequip, onFinished: onDone, exitFade: 0 };
+    return true;
   }
 
   /** Unequip: detach the weapon scene; the arms stay loaded and cached. */
@@ -196,10 +346,16 @@ export class ViewmodelSystem {
       this.onInspectDone = null;
       cb(true);
     }
+    // Stale action / equip callbacks can never fire after a detach.
+    if (this.activeAction) this.activeAction.onFinished = null;
+    this.activeAction = null;
+    this.onEquipDone = null;
     if (this.actions && this.mixer) {
       for (const a of Object.values(this.actions)) a?.stop();
+      for (const a of this.actionClips.values()) a.stop();
       this.mixer.stopAllAction();
     }
+    this.actionClips.clear();
     this.actions = null;
     this.current = null;
     this.state = "hold";
@@ -235,10 +391,17 @@ export class ViewmodelSystem {
    */
   startInspect(onDone: (cancelled: boolean) => void): boolean {
     if (!this.actions?.inspect || this.state === "inspect") return false;
+    // An inspection never cancels an attack / equip transition in progress.
+    if (this.state === "action" || this.state === "equip") return false;
     this.transition(this.actions.inspect, 0.08);
     this.state = "inspect";
     this.onInspectDone = onDone;
     return true;
+  }
+
+  /** Elapsed time of the running inspection clip (s), or -1. */
+  get inspectTime(): number {
+    return this.state === "inspect" && this.actions?.inspect ? this.actions.inspect.time : -1;
   }
 
   /** Cancel a running inspection (fire/ADS/move/switch/death/ragdoll). */
@@ -265,9 +428,11 @@ export class ViewmodelSystem {
     const cb = this.onInspectDone;
     this.onInspectDone = null;
     for (const action of Object.values(a)) action?.stop();
-    a.aim.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).play();
-    this.current = a.aim;
-    this.state = "aim";
+    // Weapons without an aim pose restore Hold instead.
+    const combat = a.aim ?? a.hold;
+    combat.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).play();
+    this.current = combat;
+    this.state = a.aim ? "aim" : "hold";
     this.mixer.update(0);
     this.armsRoot.updateWorldMatrix(true, true);
     cb?.(true);
@@ -290,17 +455,51 @@ export class ViewmodelSystem {
   ): void {
     const a = this.actions;
     if (a && this.mixer) {
+      // ADS only exists when the profile ships the aim trio.
+      const straight = input.straight && !!a.aim && !!a.raise && !!a.lower;
       // ---- State machine (authored Raise/Lower transitions for ADS) ----
       switch (this.state) {
+        case "action": {
+          // Priority action: nothing takes the arms back per frame. A
+          // one-shot clip ending fires its callback ONCE, then the pose
+          // returns to the REAL active locomotion state (hold / run).
+          const act = this.activeAction;
+          if (act) {
+            const clip = act.action.getClip();
+            const oneShot = act.action.loop === THREE.LoopOnce;
+            if (oneShot && act.action.time >= clip.duration - 1e-4) {
+              const cb = act.onFinished;
+              this.activeAction = null;
+              this.state = input.running ? "run" : "hold";
+              this.transition(input.running ? a.run : a.hold, act.exitFade);
+              cb?.();
+            }
+          } else {
+            this.state = "hold";
+            this.transition(a.hold, 0.1);
+          }
+          break;
+        }
+        case "equip": {
+          const eq = a.equip;
+          if (!eq || eq.time >= eq.getClip().duration - 1e-4) {
+            const cb = this.onEquipDone;
+            this.onEquipDone = null;
+            this.state = input.running ? "run" : "hold";
+            this.transition(input.running ? a.run : a.hold, 0.1);
+            cb?.();
+          }
+          break;
+        }
         case "inspect": {
           const clip = a.inspect!.getClip();
-          if (input.straight) {
+          if (straight) {
             // CRITICAL interruption order (fire during inspection): cancel
             // arms inspect, restore the combat pose and evaluate the mixer
             // NOW — the caller reads TongueOrigin/sockets after update(),
             // never from the flipped inspection pose.
             this.cancelInspect();
-            this.transition(a.raise, 0.05);
+            this.transition(a.raise!, 0.05);
             this.state = "raise";
           } else if (a.inspect!.time >= clip.duration - 1e-4) {
             const cb = this.onInspectDone;
@@ -313,8 +512,8 @@ export class ViewmodelSystem {
         }
         case "hold":
         case "run":
-          if (input.straight) {
-            this.transition(a.raise, 0.04);
+          if (straight) {
+            this.transition(a.raise!, 0.04);
             this.state = "raise";
           } else {
             const want = input.running ? "run" : "hold";
@@ -329,37 +528,45 @@ export class ViewmodelSystem {
           }
           break;
         case "raise":
-          if (!input.straight) {
-            this.transition(a.lower, 0.03);
+          if (!straight) {
+            this.transition(a.lower!, 0.03);
             this.state = "lower";
-          } else if (a.raise.time >= a.raise.getClip().duration - 1e-4) {
-            this.transition(a.aim, 0.05);
+          } else if (a.raise!.time >= a.raise!.getClip().duration - 1e-4) {
+            this.transition(a.aim!, 0.05);
             this.state = "aim";
           }
           break;
         case "aim":
-          if (!input.straight) {
-            this.transition(a.lower, 0.03);
+          if (!straight) {
+            this.transition(a.lower!, 0.03);
             this.state = "lower";
           }
           break;
         case "lower":
-          if (input.straight) {
-            this.transition(a.raise, 0.03);
+          if (straight) {
+            this.transition(a.raise!, 0.03);
             this.state = "raise";
-          } else if (a.lower.time >= a.lower.getClip().duration - 1e-4) {
+          } else if (a.lower!.time >= a.lower!.getClip().duration - 1e-4) {
             this.transition(input.running ? a.run : a.hold, 0.06);
             this.state = input.running ? "run" : "hold";
           }
           break;
       }
+      // THE single per-frame advance of the shared arms mixer.
       this.mixer.update(dt);
     }
 
     // ---- Cosmetic sway: bob + recoil on the WHOLE group (arms + weapon
-    // together — the grips never separate). Attack states suppress the
-    // run bob (active attack takes precedence over locomotion sway).
-    const bobTarget = input.running && !input.straight && this.state !== "inspect" ? 1 : 0;
+    // together — the grips never separate). Attack / inspect / equip
+    // states suppress the run bob (the authored clip owns the motion).
+    const bobTarget =
+      input.running &&
+      !input.straight &&
+      this.state !== "inspect" &&
+      this.state !== "action" &&
+      this.state !== "equip"
+        ? 1
+        : 0;
     this.bobAmount += (bobTarget - this.bobAmount) * Math.min(1, dt * 8);
     this.bobPhase += dt * Math.min(input.speed, 14) * 1.35;
     this.recoil *= Math.exp(-10 * dt);
@@ -452,8 +659,15 @@ export class ViewmodelSystem {
   private transition(next: THREE.AnimationAction, fade: number): void {
     if (!this.mixer) return;
     if (this.current === next) return;
-    next.reset().fadeIn(fade).play();
-    if (this.current) this.current.fadeOut(fade);
+    if (fade <= 0) {
+      // Hard cut (no zero-length fade interpolant): stop the outgoing
+      // action, full weight on the incoming one right away.
+      this.current?.stop();
+      next.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).play();
+    } else {
+      next.reset().fadeIn(fade).play();
+      if (this.current) this.current.fadeOut(fade);
+    }
     this.current = next;
   }
 }

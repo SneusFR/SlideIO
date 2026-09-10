@@ -1,4 +1,4 @@
-import type { AnimationMixer, Object3D, Vector3 } from "three";
+import type { AnimationMixer, Mesh, Object3D, Vector3 } from "three";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 /**
@@ -27,6 +27,8 @@ export class HexSniperController {
   readonly grip: Object3D | undefined;
   readonly offhand: Object3D | undefined;
   readonly scope: Object3D | undefined;
+  /** The stretched attack mesh (reparented into `effectsParent`). */
+  readonly tether: Mesh;
   /** Current visual state (Idle / Tongue_Cast / Tongue_Hold / …). */
   state: string;
   /**

@@ -1,295 +1,343 @@
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { HammerConfig as hc } from "./HammerConfig";
-import hammerModelUrl from "../assets/voidhammer_opt.glb?url";
+import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { ViewmodelSystem } from "./viewmodel/ViewmodelSystem";
+import { loadFPPoseClips } from "./viewmodel/FPArmsRig";
+import { BrickMaulProfile, BRICKMAUL_EYES, BRICKMAUL_TIMING } from "./brickmaul/BrickMaulProfile";
+import { loadBrickMaulGltf, instantiateBrickMaul } from "./brickmaul/BrickMaulModel";
+import { BrickMaulEyes } from "./brickmaul/BrickMaulEyes";
 
-type VmMode = "HIDDEN" | "SWING" | "SLAM_RAISE" | "SLAM_DIVE" | "SLAM_IMPACT";
-
-const lerp = THREE.MathUtils.lerp;
-const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
-const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+/** Per-frame locomotion snapshot handed by the Game (cosmetic only). */
+export interface HammerViewmodelMotion {
+  running: boolean;
+  speed: number;
+  grounded: boolean;
+  verticalVelocity: number;
+  jumpSequence: number;
+  sliding: boolean;
+}
 
 /**
- * Sci-fi combat hammer view model (GLB asset).
- * Purely visual: attached to the camera, animates the wind-up / sweep /
- * dive / impact poses. Damage is handled by HammerWeapon — the poses here
- * are tuned so the hitbox timing matches what the player sees.
+ * BRICK MAUL first-person adapter (r5) — a thin bridge between the hammer
+ * gameplay (HammerWeapon / Game) and the COMMON ViewmodelSystem (shared
+ * Potato arms, dedicated FP scene, single arms mixer).
  *
- * Local hammer space: handle along +Y (grip at the origin, head on top).
- * Camera space: x right, y up, -z forward.
+ * The weapon scene is mounted under the arms' Weapon_R socket through the
+ * authored FP mount matrix (applied once, scale included). Every pose is an
+ * authored clip of Potato_FP_BrickMaul.glb: Hold / Run / Equip / Unequip /
+ * Inspect and the priority actions Whirlwind / Slam_Start / Slam_Dive /
+ * Slam_Land. No camera-attached model, no procedural rotation, no forced
+ * transparency or renderOrder: opaque arms + weapon keep real depth.
+ *
+ * OWNERSHIP: the Game decides WHEN the maul is the active FP presentation
+ * (equip / hide) — an action ending returns to Hold/Run while the maul is
+ * attached; it never hides itself from inside a clip.
  */
 export class HammerViewmodel {
-  /** Resolves once the GLB is parsed and attached (or failed) — used by
-   *  the Game's GPU warm-up so the first swing never compiles shaders. */
+  /** Resolves once weapon + pose libraries are loaded (or failed) — used by
+   *  the Game's GPU warm-up. Never rejects, never blocks forever. */
   readonly ready: Promise<void>;
-  private readyResolve!: () => void;
 
-  private readonly root = new THREE.Group();
-  private readonly hammer = new THREE.Group();
-  /** Emissive materials from the GLB, pulsed for a bit of life. */
-  private readonly pulseMats: { mat: THREE.MeshStandardMaterial; base: number }[] = [];
+  private weapon: THREE.Object3D | null = null;
+  private eyes: BrickMaulEyes | null = null;
+  /** True while the maul is attached to the shared arms (our presentation). */
+  private attached = false;
+  /** Guards stale async equips (fast slot switches while loading). */
+  private equipToken = 0;
+  /** Slam phase bookkeeping (real ground contact interrupts everything). */
+  private slamPhase: "none" | "start" | "dive" | "land" = "none";
+  private inspecting = false;
 
-  private mode: VmMode = "HIDDEN";
-  private clock = 0;
-  /** +1: the head starts RIGHT and sweeps to the LEFT. -1: mirrored. */
-  private swingDir = 1;
-  private readonly diveFrom = new THREE.Vector3();
-  private readonly diveFromRot = new THREE.Euler();
-
-  // Rest pose (hammer held low, slightly right — used as anim anchor)
-  private static readonly REST_POS = new THREE.Vector3(0.3, -0.45, -0.62);
-  private static readonly REST_ROT = new THREE.Euler(-0.2, 0.15, 0);
-
-  // Dimensions of the previous procedural hammer — the GLB is normalized to
-  // occupy exactly the same space so all pose tuning stays valid.
-  /** Total height (bottom of the pommel → top of the head). */
-  private static readonly TARGET_HEIGHT = 1.2;
-  /** Bottom of the old hammer in local space (pommel tip). */
-  private static readonly BOTTOM_Y = -0.13;
-
-  constructor(camera: THREE.Camera) {
-    this.ready = new Promise((resolve) => (this.readyResolve = resolve));
-    this.loadModel();
-    this.root.add(this.hammer);
-    camera.add(this.root);
-    this.root.visible = false;
+  constructor(private readonly viewmodel: ViewmodelSystem) {
+    this.ready = this.load();
   }
 
+  private async load(): Promise<void> {
+    try {
+      const [gltf]: [GLTF, THREE.AnimationClip[]] = await Promise.all([
+        loadBrickMaulGltf(),
+        loadFPPoseClips(BrickMaulProfile.fpPosesUrl), // pre-cached for equip()
+      ]);
+      // One rendered FP instance (skeleton clone — geometry/materials
+      // shared). Created once; equip/unequip only attach/detach it.
+      this.weapon = instantiateBrickMaul(gltf);
+      this.prepareViewmodelMaterials(this.weapon);
+      this.eyes = new BrickMaulEyes(this.weapon, BRICKMAUL_EYES);
+    } catch (err) {
+      console.error("BrickMaul: failed to load the FP weapon / poses", err);
+    }
+  }
+
+  /**
+   * Opaque FP surfaces keep REAL depthTest/depthWrite inside the FP pass
+   * (its single depth clear owns the depth story). Materials are cloned
+   * per unique material so the shared TP instances keep the originals.
+   */
+  private prepareViewmodelMaterials(root: THREE.Object3D): void {
+    const cloned = new Map<THREE.Material, THREE.Material>();
+    const vmClone = (mat: THREE.Material): THREE.Material => {
+      let copy = cloned.get(mat);
+      if (!copy) {
+        copy = mat.clone();
+        copy.depthTest = true;
+        copy.depthWrite = true;
+        cloned.set(mat, copy);
+      }
+      return copy;
+    };
+    root.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.material = Array.isArray(mesh.material)
+        ? mesh.material.map(vmClone)
+        : vmClone(mesh.material);
+    });
+  }
+
+  /** True while the maul is the attached FP presentation. */
   get visible(): boolean {
-    return this.root.visible;
+    return this.attached && this.viewmodel.visible;
+  }
+
+  /** True once the assets are usable (a failed load keeps this false). */
+  get loaded(): boolean {
+    return this.weapon !== null;
+  }
+
+  /** True while an attack / smash phase clip has the arms. */
+  get acting(): boolean {
+    return this.attached && this.viewmodel.acting;
+  }
+
+  /** True while the FP inspection plays. */
+  get isInspecting(): boolean {
+    return this.inspecting;
   }
 
   // ------------------------------------------------------------------
-  // GLB model loading (normalized to the old procedural hammer's size)
+  // Equip / unequip — REAL presentation changes decided by the Game
   // ------------------------------------------------------------------
 
-  private loadModel(): void {
-    const loader = new GLTFLoader();
-    loader.load(
-      hammerModelUrl,
-      (gltf) => {
-      const model = gltf.scene;
-
-      // Uniform scale so the model's height matches the old hammer exactly.
-      const box = new THREE.Box3().setFromObject(model);
-      const size = box.getSize(new THREE.Vector3());
-      const scale = HammerViewmodel.TARGET_HEIGHT / Math.max(size.y, 1e-6);
-      model.scale.setScalar(scale);
-
-      // Recenter: grip axis on x/z origin, pommel at the old bottom height
-      // (handle along +Y, head on top — same local space as before).
-      box.setFromObject(model);
-      const center = box.getCenter(new THREE.Vector3());
-      model.position.x -= center.x;
-      model.position.z -= center.z;
-      model.position.y += HammerViewmodel.BOTTOM_Y - box.min.y;
-
-      model.traverse((obj) => {
-        if (!(obj instanceof THREE.Mesh)) return;
-        obj.renderOrder = 150; // above the rifle (100..112)
-        obj.frustumCulled = false;
-        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-        for (const mat of mats) {
-          mat.depthTest = false; // view model never clips into walls
-          mat.transparent = true; // draw AFTER world transparents (dome…)
-          if (mat instanceof THREE.MeshStandardMaterial && mat.emissive.getHex() !== 0) {
-            this.pulseMats.push({ mat, base: mat.emissiveIntensity });
-          }
-        }
+  /**
+   * Attach the maul to the shared arms and make the FP pass visible.
+   * `withClip` plays the 0.65 s Equip transition (slot switch); a melee
+   * override from the primary skips it so the attack starts on its
+   * gameplay event, never delayed.
+   */
+  equip(withClip: boolean, onEquipped?: () => void): Promise<void> {
+    const token = ++this.equipToken;
+    const run = async () => {
+      await this.ready;
+      if (token !== this.equipToken || !this.weapon) return;
+      this.attached = true;
+      this.slamPhase = "none";
+      this.inspecting = false;
+      this.eyes?.reset();
+      await this.viewmodel.equip(BrickMaulProfile, this.weapon, {
+        playEquipClip: withClip,
+        onEquipped,
       });
-
-      this.hammer.add(model);
-      this.readyResolve();
-      },
-      undefined,
-      () => this.readyResolve(), // failed load must never hang the warm-up
-    );
+      if (token !== this.equipToken) return;
+      this.viewmodel.setVisible(true);
+    };
+    return run();
   }
 
-  // ------------------------------------------------------------------
-  // Animation triggers (called by HammerWeapon)
-  // ------------------------------------------------------------------
-
-  startSwing(dir: number): void {
-    this.mode = "SWING";
-    this.swingDir = dir >= 0 ? 1 : -1;
-    this.clock = 0;
-    this.root.visible = true;
+  /**
+   * Real UNEQUIP transition (0.30 s), then `onDone` — the Game detaches
+   * and restores the primary presentation from there.
+   */
+  unequip(onDone: () => void): void {
+    if (!this.attached) {
+      onDone();
+      return;
+    }
+    this.slamPhase = "none";
+    this.inspecting = false;
+    this.viewmodel.playUnequip(onDone);
   }
 
-  /** Slam start: raise the hammer overhead, then dive automatically. */
-  startSlam(): void {
-    this.mode = "SLAM_RAISE";
-    this.clock = 0;
-    this.root.visible = true;
-  }
-
-  /** Landing: play the impact + short recovery, then hide. */
-  startSlamImpact(): void {
-    this.diveFrom.copy(this.root.position);
-    this.diveFromRot.copy(this.root.rotation);
-    this.mode = "SLAM_IMPACT";
-    this.clock = 0;
-  }
-
+  /**
+   * Detach immediately (death / ragdoll / weapon switch / end of a melee
+   * override). Cancels actions, fades and stale callbacks. The shared arms
+   * stay cached; the Game decides what presentation comes next.
+   */
   hide(): void {
-    this.mode = "HIDDEN";
-    this.root.visible = false;
-  }
-
-  update(dt: number): void {
-    if (this.mode === "HIDDEN") return;
-    this.clock += dt;
-
-    switch (this.mode) {
-      case "SWING":
-        this.poseSwing();
-        break;
-      case "SLAM_RAISE":
-        this.poseSlamRaise();
-        break;
-      case "SLAM_DIVE":
-        this.poseSlamDive();
-        break;
-      case "SLAM_IMPACT":
-        this.poseSlamImpact();
-        break;
-    }
-
-    // Energy pulse (subtle life on the glowing parts).
-    const pulse = 0.85 + 0.15 * Math.sin(this.clock * 14);
-    for (const { mat, base } of this.pulseMats) mat.emissiveIntensity = base * pulse;
+    this.equipToken++; // a pending equip() resolves to nothing
+    this.slamPhase = "none";
+    this.inspecting = false;
+    this.pendingSwing = false; // deferred requests die with the presentation
+    this.pendingSlam = false;
+    if (!this.attached) return;
+    this.attached = false;
+    this.viewmodel.cancelAction(true);
+    this.viewmodel.cancelInspect();
+    this.viewmodel.unequip();
+    this.viewmodel.setVisible(false);
+    this.eyes?.reset();
   }
 
   // ------------------------------------------------------------------
-  // Poses
+  // Attack actions — start on their GAMEPLAY event (no Equip delay)
   // ------------------------------------------------------------------
 
   /**
-   * Horizontal sweep. dir = +1: wind-up on the RIGHT, head crosses the
-   * screen and finishes LEFT. dir = -1 mirrors everything — the alternation
-   * is fully visible, not just an internal variable.
+   * Whirlwind: 1.35 s — the FP clip holds the maul out while the render
+   * camera performs the three turns (BrickMaulWhirlwindCamera). Returns
+   * true when the clip really started. When the maul is not attached yet
+   * (attack launched from the primary slot: equip() still awaits the cached
+   * assets), the request is REMEMBERED and started once, at the attack's
+   * already-elapsed time, by the next update() — see resumePendingSwing.
    */
-  private poseSwing(): void {
-    const d = this.swingDir;
-    const T = hc.hammerSwingDuration;
-    const t = Math.min(this.clock / T, 1);
-    const w = hc.hammerHitStart / T; // wind-up ends when the hit window opens
-    const e = Math.min(0.85, (hc.hammerHitEnd + 0.06) / T); // sweep end (follow-through)
-
-    const p = this.root.position;
-    const r = this.root.rotation;
-
-    if (t < w) {
-      // Wind-up: pull the hammer to the starting side, head cocked back.
-      const k = easeOutCubic(t / w);
-      p.set(
-        lerp(HammerViewmodel.REST_POS.x * d, 0.62 * d, k),
-        lerp(HammerViewmodel.REST_POS.y, -0.14, k),
-        lerp(HammerViewmodel.REST_POS.z, -0.5, k),
-      );
-      r.set(
-        lerp(HammerViewmodel.REST_ROT.x, -0.55, k),
-        lerp(0.15 * d, 0.55 * d, k),
-        lerp(0, -1.0 * d, k),
-      );
-    } else if (t < e) {
-      // Swing: the head really crosses the screen, pushing forward mid-arc.
-      const k = easeOutCubic((t - w) / (e - w));
-      const arc = Math.sin(k * Math.PI);
-      p.set(lerp(0.62 * d, -0.62 * d, k), -0.14 - arc * 0.22, -0.5 - arc * 0.45);
-      r.set(
-        lerp(-0.55, -0.15, k),
-        lerp(0.55 * d, -0.55 * d, k),
-        lerp(-1.0 * d, 1.15 * d, k),
-      );
-    } else {
-      // Follow-through + recovery: settle back toward the rest pose.
-      const k = easeInOut((t - e) / (1 - e));
-      p.set(
-        lerp(-0.62 * d, HammerViewmodel.REST_POS.x * d, k),
-        lerp(-0.36, HammerViewmodel.REST_POS.y, k),
-        lerp(-0.5, HammerViewmodel.REST_POS.z, k),
-      );
-      r.set(
-        lerp(-0.15, HammerViewmodel.REST_ROT.x, k),
-        lerp(-0.55 * d, 0.15 * d, k),
-        lerp(1.15 * d, 0, k),
-      );
+  startSwing(): boolean {
+    this.inspecting = false;
+    this.slamPhase = "none";
+    if (!this.attached || !this.viewmodel.playAction("whirlwind", { fadeIn: 0.08, exitFade: 0.1 })) {
+      this.pendingSwing = true;
+      return false;
     }
-
-    if (t >= 1) this.hide();
+    this.pendingSwing = false;
+    this.eyes?.kick(1);
+    return true;
   }
 
-  /** Raise overhead (short): head up high above the view, then dive. */
-  private poseSlamRaise(): void {
-    const dur = Math.max(0.08, hc.groundSlamWindup);
-    const k = easeOutCubic(Math.min(this.clock / dur, 1));
+  /**
+   * Deferred whirlwind entry (clips attached after the attack started).
+   * `elapsed` = the attack clock as ALREADY advanced this frame; `dt` = the
+   * advance the mixer is about to apply — the clip enters at
+   * max(0, elapsed - dt) without fade so the single mixer.update(dt) brings
+   * the pose exactly to `elapsed`. Invalidated by hide(), cancelActions(),
+   * an ended attack or a stale equip token.
+   */
+  private pendingSwing = false;
+  /** Slam anticipation requested before the clips were attached. */
+  private pendingSlam = false;
 
-    this.root.position.set(
-      lerp(HammerViewmodel.REST_POS.x, 0.22, k),
-      lerp(HammerViewmodel.REST_POS.y, 0.28, k),
-      lerp(HammerViewmodel.REST_POS.z, -0.48, k),
-    );
-    this.root.rotation.set(
-      lerp(HammerViewmodel.REST_ROT.x, 0.5, k), // handle up, head cocked slightly back
-      lerp(HammerViewmodel.REST_ROT.y, 0, k),
-      lerp(0, 0.08, k),
-    );
-
-    if (this.clock >= dur) {
-      this.mode = "SLAM_DIVE";
-      this.clock = 0;
+  /**
+   * Call ONCE per frame from the owner BEFORE update(): `whirlwindElapsed`
+   * = HammerWeapon.whirlwindElapsedSeconds (already advanced this frame,
+   * -1 when no whirlwind runs), `slamDiving` = the slam is still waiting
+   * for its impact, `dt` = the mixer advance update() will apply.
+   */
+  resumePending(whirlwindElapsed: number, slamDiving: boolean, dt: number): void {
+    if (this.pendingSwing) {
+      if (whirlwindElapsed < 0) {
+        this.pendingSwing = false; // the attack ended while loading: never replay
+      } else if (this.attached) {
+        const startAt = Math.max(0, whirlwindElapsed - dt);
+        if (this.viewmodel.playAction("whirlwind", { startAt, fadeIn: 0, exitFade: 0.1 })) {
+          this.pendingSwing = false;
+          this.eyes?.kick(1);
+        }
+      }
+    }
+    if (this.pendingSlam) {
+      if (!slamDiving) this.pendingSlam = false; // landed / reset while loading
+      else if (this.attached) {
+        this.pendingSlam = false;
+        this.startSlam();
+      }
     }
   }
 
   /**
-   * Dive: the hammer whips OVER THE TOP — the head flips past vertical and
-   * ends pointing straight DOWN at the ground in front of the player
-   * (handle up, head low). Clearly a vertical smash, never a sideways pose.
+   * Smash anticipation: Slam_Start (0.20 s) then Slam_Dive LOOP while the
+   * physical descent lasts. The real contact (startSlamImpact) interrupts
+   * either phase immediately and invalidates the Start→Dive callback.
    */
-  private poseSlamDive(): void {
-    const k = easeOutCubic(Math.min(this.clock / 0.12, 1));
-    const vib = Math.min(this.clock * 4, 1) * 0.01;
-
-    this.root.position.set(
-      lerp(0.22, 0.2, k) + Math.sin(this.clock * 47) * vib,
-      lerp(0.28, 0.42, k) + Math.cos(this.clock * 53) * vib, // root high: the down-pointing head stays in view
-      lerp(-0.48, -0.55, k),
-    );
-    this.root.rotation.set(
-      lerp(0.5, -2.65, k), // full overhead flip: head ends aimed at the ground
-      0,
-      0.08,
-    );
+  startSlam(): void {
+    this.inspecting = false;
+    if (!this.attached) {
+      this.pendingSlam = true; // started once the clips are attached
+      return;
+    }
+    this.pendingSlam = false;
+    this.slamPhase = "start";
+    this.viewmodel.playAction("slamStart", {
+      fadeIn: 0.08,
+      onFinished: () => {
+        // The system nulls this callback when the impact replaces the
+        // action — this branch only runs while still descending.
+        if (this.slamPhase !== "start") return;
+        this.slamPhase = "dive";
+        this.viewmodel.playAction("slamDive", { fadeIn: 0.06 });
+      },
+    });
+    this.eyes?.kick(1);
   }
 
-  /** Impact: the head drives fully into the ground, then eases back up. */
-  private poseSlamImpact(): void {
-    const T = Math.max(0.2, hc.groundSlamRecovery);
-    const t = Math.min(this.clock / T, 1);
+  /** REAL ground contact: enter Slam_Land at 0.10 s (0.72 s of recovery). */
+  startSlamImpact(): void {
+    this.pendingSlam = false; // a very short fall: the impact wins outright
+    if (!this.attached) return;
+    this.slamPhase = "land";
+    this.viewmodel.playAction("slamLand", {
+      startAt: BRICKMAUL_TIMING.slam.enterLandAt,
+      fadeIn: 0.02, // never a floating strike
+      exitFade: 0.1,
+      onFinished: () => {
+        if (this.slamPhase === "land") this.slamPhase = "none";
+      },
+    });
+    this.eyes?.kick(1.5);
+  }
 
-    const p = this.root.position;
-    const r = this.root.rotation;
+  /** Death / switch / ragdoll: drop any action and return to Hold. */
+  cancelActions(): void {
+    this.slamPhase = "none";
+    this.pendingSwing = false;
+    this.pendingSlam = false;
+    if (this.attached) this.viewmodel.cancelAction();
+  }
 
-    if (t < 0.25) {
-      const k = easeOutCubic(t / 0.25);
-      p.set(
-        lerp(this.diveFrom.x, 0.16, k),
-        lerp(this.diveFrom.y, 0.02, k), // root drops → head plunges below the view
-        lerp(this.diveFrom.z, -0.6, k),
-      );
-      r.set(lerp(this.diveFromRot.x, -2.95, k), 0, lerp(this.diveFromRot.z, 0.06, k));
-    } else {
-      const k = easeInOut((t - 0.25) / 0.75);
-      p.set(
-        lerp(0.16, HammerViewmodel.REST_POS.x, k),
-        lerp(0.02, HammerViewmodel.REST_POS.y, k),
-        lerp(-0.6, HammerViewmodel.REST_POS.z, k),
-      );
-      r.set(lerp(-2.95, HammerViewmodel.REST_ROT.x, k), lerp(0, 0.15, k), lerp(0.06, 0, k));
+  // ------------------------------------------------------------------
+  // Inspection (F) — visual only, refused during an attack
+  // ------------------------------------------------------------------
+
+  /** Start FP_BrickMaul_Inspect (3.60 s). Returns false when refused. */
+  startInspect(onDone?: (cancelled: boolean) => void): boolean {
+    if (!this.attached || this.viewmodel.acting || this.inspecting) return false;
+    const started = this.viewmodel.startInspect((cancelled) => {
+      this.inspecting = false;
+      onDone?.(cancelled);
+    });
+    this.inspecting = started;
+    return started;
+  }
+
+  cancelInspect(): void {
+    if (!this.inspecting) return;
+    this.inspecting = false;
+    this.viewmodel.cancelInspect();
+  }
+
+  /** Elapsed inspection time (s) for late-join replication, or -1. */
+  get inspectTime(): number {
+    return this.inspecting ? this.viewmodel.inspectTime : -1;
+  }
+
+  // ------------------------------------------------------------------
+  // Per-frame
+  // ------------------------------------------------------------------
+
+  /**
+   * Advance the shared arms mixer ONCE (the Game guarantees the maul is
+   * the only owner calling it this frame), then the pupils AFTER the
+   * mixer + world matrices.
+   */
+  update(dt: number, motion: HammerViewmodelMotion): void {
+    if (!this.attached) return;
+    this.viewmodel.update(dt, {
+      straight: false, // no ADS on the maul
+      running: motion.grounded && !motion.sliding && motion.speed > 1.5,
+      sliding: motion.sliding,
+      speed: motion.speed,
+      grounded: motion.grounded,
+      verticalVelocity: motion.verticalVelocity,
+      jumpSequence: motion.jumpSequence,
+    });
+    if (this.eyes && this.weapon) {
+      this.weapon.updateWorldMatrix(true, true);
+      this.eyes.update(dt);
     }
-
-    if (t >= 1) this.hide();
   }
 }

@@ -12,6 +12,7 @@ import { KillMethod } from "../../combat/KillMethod";
 import { HitZone } from "../../combat/HitZone";
 import { HitFeedbackManager } from "../../combat/HitFeedbackManager";
 import { TrainingTarget } from "../../targets/TrainingTarget";
+import { NetworkWeaponConfig } from "../../../shared/combat/NetworkWeapons";
 
 /** Per-frame input snapshot handed by the Game (weapon owns no input code). */
 export interface HexSniperFrameInput {
@@ -34,6 +35,9 @@ export interface HexSniperFrameInput {
 
 /** The local player's Combatant id (PlayerCombatant.id) — the tongue owner. */
 const OWNER_ID = -1;
+/** Network mode: max flight/hold time without a server verdict (s) —
+ *  server pull cap + generous network margin. Safety net only. */
+const NET_BUSY_TIMEOUT = NetworkWeaponConfig.hexSniper.pullMaxSeconds + 1.5;
 
 /**
  * HEX SNIPER — the monster-head sniper (kit HexSniper).
@@ -78,6 +82,20 @@ export class HexSniperWeapon {
   readonly ready: Promise<void>;
   /** The five physics callbacks on the REAL Rapier world. */
   readonly adapter: HexSniperWorldAdapter;
+
+  /**
+   * MULTIPLAYER: the SERVER owns every gameplay result. The local state
+   * machine still runs for the tether visual (instant feedback: the
+   * tongue flies toward what the shooter sees) but applies NO damage and
+   * never arms the arrival bite itself — the server confirms drive the
+   * grab / miss / bite through onNetworkGrab / onNetworkRelease /
+   * onNetworkBite. Solo/bots keep the full local authority.
+   */
+  networkAuthority = false;
+  /** Remote victim currently latched (network mode), else null. */
+  private netVictimId: string | null = null;
+  /** Time spent flying/holding without a server verdict (network mode, s). */
+  private netBusyTimer = 0;
 
   private visuals: HexSniperController | null = null;
   private attacks: HexSniperAttacks | null = null;
@@ -135,8 +153,10 @@ export class HexSniperWeapon {
       // clone, no second mixer on the same bones. The Tongue_Tether was
       // already reparented into the WORLD scene by the controller — it
       // stays occluded by walls, never rendered in the FP pass.
-      await this.viewmodel.equip(HexSniperProfile, this.visuals.object);
-      this.viewmodel.setVisible(this.viewmodelVisible);
+      // The Game decides WHO owns the shared FP presentation: a late
+      // sniper load must never replace an active Brick Maul. Equip only if
+      // the Game already handed us the arms (otherwise wait for it).
+      if (this.presentationOwner) this.equipPresentation();
       this.attacks = new HexSniperAttacks({
         world: this.adapter,
         pose: {
@@ -217,6 +237,14 @@ export class HexSniperWeapon {
         this.onTongueStart?.();
         break;
       case "tongue-player":
+        if (this.networkAuthority) {
+          // PREDICTED latch on a remote avatar: visual hold only. The
+          // server decides the real grab (HEX_TONGUE_HIT → onNetworkGrab,
+          // HEX_TONGUE_MISS → onNetworkRelease retracts). Feedback waits
+          // for the confirm — never a grab sound on a shot the server refuses.
+          this.netVictimId = typeof event.playerId === "string" ? event.playerId : null;
+          break;
+        }
         // Sniper hit: flat damage the instant the tongue tags the player,
         // then the reel-in starts (kit state machine).
         if (event.playerId != null) this.applyTongueDamage(event.playerId, event.point ?? null);
@@ -225,9 +253,13 @@ export class HexSniperWeapon {
         break;
       case "tongue-world":
         // Sniper hit on a training target: flat damage, no pull.
-        this.applyTongueWorldDamage();
+        if (!this.networkAuthority) this.applyTongueWorldDamage();
         break;
       case "player-arrived":
+        // Network mode: the server's HEX_BITE decides the arrival — the
+        // local kit never reaches this (remote pulls return `{}`), but
+        // guard anyway so a local arrival can never arm a local bite.
+        if (this.networkAuthority) break;
         // A player was actually reeled in → ARM the instant arrival bite.
         // The kit retracts the last ~1.6 m and recovers in cfg.recoverDuration
         // (near-zero), so the `ready` below fires the bite the same instant.
@@ -253,14 +285,82 @@ export class HexSniperWeapon {
         // Kit guarantee: at most ONE event per target per contact window.
         // Extra weapon-level dedup: ONE damage application per target per
         // BITE (the two windows never double-hit the same victim).
-        if (event.hit) this.applyBiteDamage(event.hit);
+        // Network mode: the server already dealt the bite damage.
+        if (event.hit && !this.networkAuthority) this.applyBiteDamage(event.hit);
         break;
+      case "tongue-return":
       case "cancel":
-        // Death / unequip / knockdown: the pending arrival bite dies too.
-        this.bitePending = false;
-        this.biteDamaged.clear();
+        // Death / unequip / knockdown / empty return: the pending arrival
+        // bite dies too, and the network latch (if any) is forgotten.
+        if (event.type === "cancel") {
+          this.bitePending = false;
+          this.biteDamaged.clear();
+        }
+        this.netVictimId = null;
         break;
     }
+  }
+
+  // ------------------------------------------------------------------
+  // MULTIPLAYER — server-confirmed outcomes of OUR tongue shot
+  // ------------------------------------------------------------------
+
+  /**
+   * HEX_TONGUE_HIT: the server grabbed `victimId`. The predicted local
+   * latch usually already holds that avatar — if the prediction latched
+   * NOTHING (still flying / hit a wall first) or a DIFFERENT player, the
+   * visual is corrected: the tongue is re-anchored on the confirmed victim
+   * so the tether follows the body the server is really reeling in.
+   */
+  onNetworkGrab(victimId: string): void {
+    if (!this.attacks) return;
+    const state = this.attacks.state;
+    if (state === "Pulling" && this.netVictimId === victimId) {
+      // Prediction agreed — just the grab feedback.
+    } else {
+      this.attacks.latchOn(victimId);
+    }
+    this.netVictimId = victimId;
+    this.onTongueGrab?.();
+    this.onCameraShake?.(cfg.grabShake);
+  }
+
+  /**
+   * HEX_TONGUE_MISS / HEX_PULL_END: the server saw no grab (or released
+   * the pull without a bite) — retract now. A predicted hold on an avatar
+   * the server refused snaps back empty (server authority, no damage).
+   */
+  onNetworkRelease(): void {
+    this.netVictimId = null;
+    if (!this.attacks) return;
+    const state = this.attacks.state;
+    if (state === "Pulling" || state === "Extending") this.attacks.release("network");
+  }
+
+  /**
+   * HEX_BITE: the reeled-in victim arrived — the server dealt the bite.
+   * Locally: heavy arrival feedback, tongue snaps back, jaws play (visual
+   * Bite clip through the kit — bite-hit events deal nothing in network
+   * mode), then the weapon re-arms the moment the clip ends.
+   */
+  onNetworkBite(): void {
+    this.netVictimId = null;
+    this.onPlayerArrived?.();
+    this.onCameraShake?.(cfg.arriveShake);
+    if (!this.attacks) return;
+    const state = this.attacks.state;
+    if (state === "Pulling" || state === "Extending") this.attacks.release("network-bite");
+    if (this.attacks.state === "Idle") {
+      // Tongue already home (release raced the bite): snap the jaws now.
+      this.biteDamaged.clear();
+      this.attacks.tryBite();
+      return;
+    }
+    if (this.attacks.state === "Biting") return; // already snapping
+    // Retracting / Recovering: the retract finishes in a few frames
+    // (returnSpeed 440 m/s over ~1.6 m) and fires `ready` — the pending
+    // flag then triggers tryBite exactly like the local arrival path.
+    this.bitePending = true;
   }
 
   /** Flat tongue damage on the grabbed player (existing Health rules). */
@@ -361,10 +461,53 @@ export class HexSniperWeapon {
     return this.inspectionActive;
   }
 
+  /**
+   * PRESENTATION OWNERSHIP (arbitrated by the Game): true while the sniper
+   * is the weapon attached to the shared FP arms. While false the
+   * controller keeps its gameplay logic off-screen but never touches the
+   * shared system (visibility, poses, mixer) — the Brick Maul may own it.
+   */
+  private presentationOwner = false;
+
+  /** Guards a stale async equip after a fast release (token pattern). */
+  private presentationToken = 0;
+
+  /** Game → sniper: take the shared FP arms (equip the creature on them). */
+  takePresentation(): void {
+    if (this.presentationOwner) return;
+    this.presentationOwner = true;
+    this.equipPresentation();
+  }
+
+  /** Game → sniper: release the shared FP arms (another weapon takes them). */
+  releasePresentation(): void {
+    this.presentationToken++;
+    if (!this.presentationOwner) return;
+    this.presentationOwner = false;
+    this.cancelInspection();
+    this.viewmodel.unequip();
+    this.viewmodel.setVisible(false);
+  }
+
+  /** True while this weapon owns the shared FP presentation. */
+  get ownsPresentation(): boolean {
+    return this.presentationOwner;
+  }
+
+  private equipPresentation(): void {
+    if (!this.visuals) return; // load() equips once the GLB is mounted
+    const token = ++this.presentationToken;
+    void this.viewmodel.equip(HexSniperProfile, this.visuals.object).then(() => {
+      if (token !== this.presentationToken || !this.presentationOwner) return;
+      this.viewmodel.setVisible(this.viewmodelVisible);
+    });
+  }
+
   setViewmodelHidden(hidden: boolean): void {
     if (this.viewmodelVisible === !hidden) return;
     this.viewmodelVisible = !hidden;
-    this.viewmodel.setVisible(this.viewmodelVisible);
+    // Only the presentation owner may toggle the shared FP visibility.
+    if (this.presentationOwner) this.viewmodel.setVisible(this.viewmodelVisible);
     // Hiding the viewmodel (melee busy / weapon swap / mole strike)
     // interrupts a purely visual inspection — never an active attack.
     if (hidden) this.cancelInspection();
@@ -380,6 +523,23 @@ export class HexSniperWeapon {
     if (!this.attacks) return;
     this.adapter.setStepDt(dt);
     this.attacks.update(dt);
+
+    // NETWORK safety: a predicted hold / flight waits for the server's
+    // confirm (grab / miss / pull end / bite). Should that message ever be
+    // lost, the weapon must never stay busy forever — release after the
+    // server's own pull cap + margin (the server released long ago).
+    if (this.networkAuthority) {
+      const st = this.attacks.state;
+      if (st === "Pulling" || st === "Extending") {
+        this.netBusyTimer += dt;
+        if (this.netBusyTimer > NET_BUSY_TIMEOUT) {
+          this.netBusyTimer = 0;
+          this.onNetworkRelease();
+        }
+      } else {
+        this.netBusyTimer = 0;
+      }
+    }
   }
 
   /** VISUAL step + edge-triggered inputs — call once per render frame. */
@@ -399,7 +559,7 @@ export class HexSniperWeapon {
         // fallback fade-cancel must find the creature already at Idle.
         this.inspectionActive = false;
         this.visuals?.cancelInspect({ immediate: true });
-        this.viewmodel.restoreCombatPoseNow();
+        if (this.presentationOwner) this.viewmodel.restoreCombatPoseNow();
         this.visuals?.object.updateWorldMatrix(true, true);
       }
       this.attacks.tryTongue();
@@ -425,6 +585,7 @@ export class HexSniperWeapon {
       input.inspectPressed &&
       input.canAct &&
       this.viewmodelVisible &&
+      this.presentationOwner && // F never inspects the masked sniper
       !input.zoomHeld &&
       input.grounded &&
       input.speed <= 0.5 &&
@@ -449,17 +610,23 @@ export class HexSniperWeapon {
 
     // FP presentation: straight pose through the WHOLE attack cycle
     // (Extending/Pulling/Retracting/Recovering/Biting AND bitePending) —
-    // not just the Fire clip — plus ADS. Run/hold otherwise.
-    this.viewmodel.update(dt, {
-      straight: (input.zoomHeld && input.canAct) || this.isBusy,
-      running: input.grounded && !input.sliding && input.speed > 1.5,
-      sliding: input.sliding,
-      speed: input.speed,
-      grounded: input.grounded,
-      verticalVelocity: input.verticalVelocity,
-      jumpSequence: input.jumpSequence,
-    });
+    // not just the Fire clip — plus ADS. Run/hold otherwise. ONLY the
+    // presentation owner advances the shared arms mixer (one call per
+    // frame across all weapons — the Brick Maul advances it otherwise).
+    if (this.presentationOwner) {
+      this.viewmodel.update(dt, {
+        straight: (input.zoomHeld && input.canAct) || this.isBusy,
+        running: input.grounded && !input.sliding && input.speed > 1.5,
+        sliding: input.sliding,
+        speed: input.speed,
+        grounded: input.grounded,
+        verticalVelocity: input.verticalVelocity,
+        jumpSequence: input.jumpSequence,
+      });
+    }
 
+    // Creature mixer (its OWN mixer, not the arms) + world tether: keeps
+    // running off-screen so an active tongue is never frozen.
     this.visuals?.update(dt);
   }
 
@@ -467,6 +634,7 @@ export class HexSniperWeapon {
   reset(): void {
     this.bitePending = false;
     this.biteDamaged.clear();
+    this.netVictimId = null;
     this.cancelInspection();
     this.attacks?.cancel("unequipped");
   }
@@ -475,14 +643,15 @@ export class HexSniperWeapon {
   private cancelInspection(): void {
     if (!this.inspectionActive) return;
     this.inspectionActive = false;
-    this.viewmodel.cancelInspect();
+    if (this.presentationOwner) this.viewmodel.cancelInspect();
     this.visuals?.cancelInspect();
   }
 
   /** Free per-instance resources (mixer, skeleton clone, tether buffer). */
   dispose(): void {
     this.cancelInspection();
-    this.viewmodel.unequip();
+    if (this.presentationOwner) this.viewmodel.unequip();
+    this.presentationOwner = false;
     this.attacks?.dispose();
     this.visuals?.dispose();
   }

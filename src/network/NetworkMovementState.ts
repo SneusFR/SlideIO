@@ -42,6 +42,7 @@ export function toNetworkMovementState(
     case MoveState.AIRBORNE:
     case MoveState.WALL_SLIDING:
     case MoveState.GROUND_SLAMMING:
+    case MoveState.HEX_PULLED: // yanked through the air by the tongue
       return NetworkMovementState.AIRBORNE;
     case MoveState.UNDERGROUND: // burrowed: remote avatar hidden + dirt trail
       return NetworkMovementState.BURROWED;

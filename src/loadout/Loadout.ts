@@ -24,7 +24,7 @@ export type PrimaryWeaponId =
   | "HEX_SNIPER";
 export type KillstreakId = "NONE" | "MOLE_STRIKE" | "ORBITAL_SCAN" | "NOVA_STRIKE";
 
-/** Exactly three equippable killstreak slots (keys 1 / 2 / 3 in game). */
+/** Exactly three equippable killstreak slots (keys W / X / C in game). */
 export type KillstreakLoadout = [KillstreakId, KillstreakId, KillstreakId];
 
 export interface LoadoutSelection {
@@ -136,31 +136,31 @@ const pct = (f: number) => `${Math.round(f * 100)}% PV MAX`;
 export const MELEE_ITEMS: LoadoutItem[] = [
   {
     id: "HAMMER",
-    name: "MARTEAU VOID",
-    tagline: "Marteau à énergie lourde",
+    name: "BRICK MAUL",
+    tagline: "Masse de briques à une main",
     summary:
-      "Arme de mêlée polyvalente : balayages alternés au sol, et une charge verticale dévastatrice depuis les airs.",
+      "Arme de mêlée polyvalente (touche 2 ou molette pour la sortir, clic gauche pour frapper) : tourbillon à 360° au sol, et une charge verticale dévastatrice depuis les airs.",
     ratings: { power: 85, precision: 55, difficulty: 35 },
     abilities: [
       {
-        trigger: "AU SOL — TOUCHE A",
-        name: "BALAYAGE",
+        trigger: "AU SOL — CLIC GAUCHE",
+        name: "TOURBILLON",
         description:
-          "Grand coup horizontal alterné (droite/gauche) qui frappe tous les ennemis dans l'arc devant vous et les repousse.",
+          "Trois tours complets sur vous-même : chaque ennemi à portée est frappé une seule fois pour toute l'attaque et violemment repoussé.",
         stats: [
-          { label: "DÉGÂTS", value: pct(hc.hammerGroundDamageFraction) },
+          { label: "DÉGÂTS", value: `${hc.hammerGroundDamage} PV` },
           { label: "PORTÉE", value: `${hc.hammerSwingRange} m` },
-          { label: "ARC", value: `${hc.hammerSwingArcDegrees}°` },
+          { label: "ZONE", value: `${hc.hammerSwingArcDegrees}°` },
           { label: "DURÉE", value: `${hc.hammerSwingDuration}s` },
         ],
       },
       {
-        trigger: "EN L'AIR — TOUCHE A",
+        trigger: "EN L'AIR — CLIC GAUCHE",
         name: "GROUND SLAM",
         description:
-          "Charge verticale vers le sol : onde de choc de zone à l'impact, dégâts et projection sur tous les ennemis proches.",
+          "Charge verticale immédiate vers le sol : onde de choc de zone à l'impact, dégâts et projection sur tous les ennemis proches.",
         stats: [
-          { label: "DÉGÂTS", value: pct(hc.groundSlamDamageFraction) },
+          { label: "DÉGÂTS", value: `${hc.groundSlamDamage} PV` },
           { label: "RAYON", value: `${hc.groundSlamRadius} m` },
           { label: "VITESSE", value: `${hc.groundSlamSpeed} m/s` },
         ],
@@ -432,7 +432,7 @@ export const KILLSTREAK_ITEMS: LoadoutItem[] = [
     ratings: { power: 88, precision: 50, difficulty: 45 },
     abilities: [
       {
-        trigger: `${mole.moleStrikeRequiredKills} KILLS SANS MOURIR — TOUCHE 1/2/3`,
+        trigger: `${mole.moleStrikeRequiredKills} KILLS SANS MOURIR — TOUCHE W/X/C`,
         name: "PLONGÉE SOUTERRAINE",
         description:
           "Vous creusez sous la surface : invulnérable et non-ciblable, vous vous déplacez librement sous terre (les murs restent infranchissables). Durée maximale avant l'éruption automatique.",

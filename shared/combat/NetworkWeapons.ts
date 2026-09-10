@@ -67,6 +67,48 @@ export enum WeaponActionType {
   /** Lance-Poison continuous spray started / stopped (plasma-style). */
   POISON_START = "POISON_START",
   POISON_STOP = "POISON_STOP",
+  /** HEX SNIPER: the creature projects its tongue along the aim (one
+   *  shot — the server hitscans it; a grabbed player is reeled in by the
+   *  server pull loop and bitten on arrival). */
+  HEX_TONGUE_FIRE = "HEX_TONGUE_FIRE",
+  /** VISUAL ONLY — the melee weapon is HELD (slot 2) / stowed again. The
+   *  server-authoritative primary (WEAPON_EQUIP) never changes: this only
+   *  drives the remote avatar's presentation. */
+  MELEE_SHOW = "MELEE_SHOW",
+  MELEE_HIDE = "MELEE_HIDE",
+  /** VISUAL ONLY — weapon inspection started / cancelled (remote replay;
+   *  a late arrival resumes at the elapsed time from `ts`). */
+  INSPECT_START = "INSPECT_START",
+  INSPECT_CANCEL = "INSPECT_CANCEL",
+}
+
+// ---------------------------------------------------------------------
+// HEX SNIPER — server → clients action ids (NEVER sent by clients).
+// Broadcast as WEAPON_ACTION_CONFIRMED events so every client replays
+// the exact same tongue sequence the server decided.
+// ---------------------------------------------------------------------
+
+/** Tongue grabbed a player: `tid` = victim id, hx/hy/hz = grab point. */
+export const HEX_ACTION_TONGUE_HIT = "HEX_TONGUE_HIT";
+/** Tongue hit a wall / nothing: hx/hy/hz = tip end point (empty return). */
+export const HEX_ACTION_TONGUE_MISS = "HEX_TONGUE_MISS";
+/** Pull released WITHOUT a bite (blocked / timeout / death) — retract. */
+export const HEX_ACTION_PULL_END = "HEX_PULL_END";
+/** Victim arrived: the creature bites (`tid` = victim, hx/hy/hz = victim). */
+export const HEX_ACTION_BITE = "HEX_BITE";
+
+/**
+ * Server → the VICTIM only: start / stop being reeled toward the attacker.
+ * Movement is client-simulated (Phase 3 architecture), so the victim's
+ * own character controller performs the pull toward the attacker's
+ * displayed position — never a teleport, never through walls. The server
+ * validates the ARRIVAL (distance check on its own transforms) and owns
+ * every gameplay result (tongue damage, bite damage, knockback).
+ */
+export interface HexPullEvent {
+  /** Attacker to be pulled toward (null when the pull stops). */
+  attackerId: string | null;
+  active: boolean;
 }
 
 export function isWeaponActionType(raw: unknown): raw is WeaponActionType {
@@ -156,23 +198,34 @@ export const NetworkWeaponConfig = {
     explosionDamageFraction: 0.25,
     materializeDuration: 0.45,
   },
+  /** BRICK MAUL r5 (mirrors frontend HammerConfig — same result solo/multi). */
   hammer: {
-    /** Damage = fraction of the TARGET's max HP. */
-    sweepDamageFraction: 0.5,
+    /** WHIRLWIND: FLAT damage per victim for the WHOLE attack (max once). */
+    sweepDamage: 50,
     sweepRange: 3.4,
-    sweepArcDegrees: 120,
+    /** Full circle — three visual turns around the attacker. */
+    sweepArcDegrees: 360,
     sweepHeight: 1.9,
-    sweepDuration: 0.62,
-    sweepCooldown: 0.5, // server anti-spam floor between sweeps
+    /** Whole attack (server-side bounded attack state, advanced in tick). */
+    sweepDuration: 1.35,
+    /** Active damage phase inside the attack (s from the authoritative start). */
+    sweepActiveStart: 0.2,
+    sweepActiveEnd: 1.04,
     sweepKnockback: 17,
     sweepVerticalKnockback: 5.5,
-    slamDamageFraction: 0.5,
+    /** GROUND SLAM: FLAT damage per victim at the single impact. */
+    slamDamage: 50,
     slamRadius: 6,
     slamHeightTolerance: 3.0,
     slamKnockback: 13,
     slamVerticalKnockback: 7,
     /** Reported slam impact must be within this distance of the attacker. */
     slamMaxImpactDistance: 6,
+    /** Slam_Land recovery after the real contact (s) — attack still engaged. */
+    slamRecovery: 0.72,
+    /** Safety cap on a slam waiting for its impact (s) — a lost IMPACT
+     *  message can never lock the attacker's melee forever. */
+    slamMaxAirSeconds: 6,
   },
   spear: {
     sweepDamageFraction: 0.35,
@@ -232,6 +285,37 @@ export const NetworkWeaponConfig = {
     /** Full tank spray time (capacity / drainPerSecond, s) — the server
      *  force-stops a stream that outlives a full tank + margin. */
     maxContinuousSeconds: 8.5,
+  },
+  /** HEX SNIPER — monster-head sniper (mirrors frontend HexSniperConfig). */
+  hexSniper: {
+    /** Flat damage the instant the tongue grabs a player. */
+    tongueDamage: 50,
+    /** Swept tongue radius (m) — widens the server hitscan capsule test. */
+    tongueRadius: 0.16,
+    /** No weapon range by design: the map bounds stop the tongue. This is
+     *  the server ray length covering the whole map diagonal (m). */
+    maxRange: 400,
+    /** Anti-spam floor between two tongue shots (s) — the local weapon
+     *  itself is single-shot (busy until the tongue is back). */
+    fireCooldown: 0.25,
+    /** Reel-in speed of the grabbed player (m/s) — victim-side movement. */
+    pullSpeed: 60,
+    /** Arrival gap kept between the victim and the shooter (m). */
+    pullStopDistance: 1.6,
+    /** Extra arrival tolerance on the SERVER distance check (m): the two
+     *  transforms are client-reported at ~30 Hz — never exact. */
+    arrivalTolerance: 0.9,
+    /** Hard cap on one pull (s): a stuck / cheating victim is released. */
+    pullMaxSeconds: 4,
+    /** Release when the victim made no distance progress for this long (s)
+     *  — blocked by a wall / ledge (mirrors the local pull-blocked rule). */
+    pullStallSeconds: 0.6,
+    /** Progress threshold per stall window (m). */
+    pullStallMinProgress: 0.25,
+    /** Flat bite damage on the reeled-in victim (arrival bite only). */
+    biteDamage: 50,
+    biteKnockback: 9,
+    biteVerticalKnockback: 3,
   },
   /** MOLE STRIKE killstreak (mirrors frontend MoleStrikeConfig). */
   mole: {
@@ -296,6 +380,13 @@ export interface WeaponActionConfirmedEvent {
   weapon: string;
   action: string;
   seq: number;
+  /**
+   * SERVER clock (ms) at which the action was accepted = authoritative start
+   * of its phase. Remote clients reconstruct a late arrival's elapsed time
+   * from it (NetworkClock estimate): whirlwind / smash / inspection resume
+   * at the right frame instead of restarting. Absent on legacy events.
+   */
+  ts?: number;
   ox: number;
   oy: number;
   oz: number;
@@ -310,6 +401,8 @@ export interface WeaponActionConfirmedEvent {
   px?: number;
   py?: number;
   pz?: number;
+  /** HEX SNIPER: the grabbed / bitten victim id (remote tether anchor). */
+  tid?: string;
 }
 
 /** Server → attacker: your hit was CONFIRMED (hitmarker source of truth). */

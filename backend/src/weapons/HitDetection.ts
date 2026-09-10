@@ -158,6 +158,13 @@ export function hitscan(
   targets: Iterable<HitTarget>,
   excludeId: string | null,
   boxes: ColliderBox[] = MAP_COLLIDER_BOXES,
+  /**
+   * Extra radius added to every player volume (m). A SWEPT projectile
+   * (HexSniper tongue ball) touches a target as soon as its own radius
+   * reaches the hitbox — equivalent to a thin ray against inflated
+   * hitboxes. 0 for plain hitscan weapons.
+   */
+  radiusPad = 0,
 ): HitscanResult | null {
   const wallT = raycastMap(origin, dir, maxRange, boxes);
 
@@ -170,13 +177,13 @@ export function hitscan(
     const center = { x: target.x, y: target.y, z: target.z };
     const headCenter = { x: target.x, y: target.y + PLAYER_HEAD_OFFSET, z: target.z };
 
-    const headT = rayVsSphere(origin, dir, headCenter, PLAYER_HEAD_RADIUS);
+    const headT = rayVsSphere(origin, dir, headCenter, PLAYER_HEAD_RADIUS + radiusPad);
     const bodyT = rayVsVerticalCapsule(
       origin,
       dir,
       center,
       PLAYER_CAPSULE_HALF_HEIGHT,
-      PLAYER_CAPSULE_RADIUS,
+      PLAYER_CAPSULE_RADIUS + radiusPad,
     );
 
     // The head sphere overlaps the capsule top: any ray that passes

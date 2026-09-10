@@ -142,12 +142,53 @@ export class SpearViewmodel {
 
   hide(): void {
     this.mode = "HIDDEN";
+    this.held = false;
     this.rushGlow = 0;
     this.root.visible = false;
   }
 
+  /**
+   * HELD presentation (weapon slot 2 with the Lance equipped): the lance
+   * stays visible at its rest anchor between attacks instead of hiding
+   * once a sequence ends. `hide()` clears it (slot switch / death).
+   */
+  private held = false;
+
+  setHeld(held: boolean): void {
+    if (this.held === held) return;
+    this.held = held;
+    if (held && this.mode === "HIDDEN") {
+      this.root.position.copy(SpearViewmodel.REST_POS);
+      this.root.rotation.copy(SpearViewmodel.REST_ROT);
+      this.root.visible = true;
+    } else if (!held && this.mode === "HIDDEN") {
+      this.root.visible = false;
+    }
+  }
+
+  /** End of a pose sequence: hide, or settle at rest while held. */
+  private finishSequence(): void {
+    if (this.held) {
+      this.mode = "HIDDEN";
+      this.rushGlow = 0;
+      this.root.position.copy(SpearViewmodel.REST_POS);
+      this.root.rotation.copy(SpearViewmodel.REST_ROT);
+      this.root.visible = true;
+    } else {
+      this.hide();
+    }
+  }
+
   update(dt: number): void {
-    if (this.mode === "HIDDEN") return;
+    if (this.mode === "HIDDEN") {
+      if (this.held) {
+        // Gentle idle pulse while held at rest.
+        this.clock += dt;
+        const pulse = 0.85 + 0.15 * Math.sin(this.clock * 14);
+        for (const { mat, base } of this.pulseMats) mat.emissiveIntensity = base * pulse;
+      }
+      return;
+    }
     this.clock += dt;
 
     switch (this.mode) {
@@ -228,7 +269,7 @@ export class SpearViewmodel {
       );
     }
 
-    if (t >= 1) this.hide();
+    if (t >= 1) this.finishSequence();
   }
 
   /** Very fast alignment: the lance snaps straight, tip dead ahead. */
@@ -285,6 +326,6 @@ export class SpearViewmodel {
       lerp(0.18, SpearViewmodel.REST_ROT.z, k),
     );
 
-    if (t >= 1) this.hide();
+    if (t >= 1) this.finishSequence();
   }
 }

@@ -4,7 +4,12 @@ import { MovementConfig as moveCfg } from "../player/MovementConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import { CHARACTER_HITBOX_SCALE } from "../../shared/combat/NetworkWeapons";
 import { getQualitySettings } from "../game/GraphicsQuality";
-import type { RemoteCharacterClips } from "../network/remote/RemotePlayerAnimationController";
+import type {
+  RemoteCharacterClips,
+  ArmedProfileClips,
+} from "../network/remote/RemotePlayerAnimationController";
+import { loadBrickMaulTPClips } from "../weapons/brickmaul/BrickMaulModel";
+import { BrickMaulProfile } from "../weapons/brickmaul/BrickMaulProfile";
 // POTATO character pack (src/assets/potato) — the common third-person model
 // for remote players AND bots. One GLB carries mesh + skeleton + the four
 // locomotion clips (Run_Goofy / Jump / Dash / Slide, all in place — no root
@@ -160,7 +165,13 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
   cachedCharacter = Promise.all([
     loader.loadAsync(characterUrl),
     loader.loadAsync(tpPosesUrl),
-  ]).then(([gltf, posesGltf]: [GLTF, GLTF]) => {
+    // Brick Maul TP pose library (clips only). A failed load never blocks
+    // the character: the maul profile simply stays unavailable in TP.
+    loadBrickMaulTPClips().catch((err) => {
+      console.error("BrickMaul: TP pose library failed to load", err);
+      return [] as THREE.AnimationClip[];
+    }),
+  ]).then(([gltf, posesGltf, maulClips]: [GLTF, GLTF, THREE.AnimationClip[]]) => {
     const model = gltf.scene;
 
     // Normalize ONCE on the template, measured from the REST pose (the
@@ -274,6 +285,39 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
     const armedDash = buildArmedVariant(dash, armedHoldSrc);
     const armedSlide = stabilizeSlideGrip(buildArmedVariant(slide, armedHoldSrc), armedHoldSrc, template);
 
+    // ---- Brick Maul TP profile set (Potato_TP_BrickMaul.glb) ----
+    // Locomotion uses EXACTLY the authored upperBodyMask (right arm + right
+    // fingers + Weapon_R): body, legs, head, leaf, shoulders and the whole
+    // LEFT arm come from the unarmed clips. Run keeps the right-side tracks
+    // animated (TP_BrickMaul_Run, full clip); jump/dash/slide freeze the
+    // Hold grip at its first sample. No Spine_1 / slide grip corrections
+    // (those belong to the two-hand sniper hold).
+    let brickmaul: ArmedProfileClips | null = null;
+    const maulHold = byName(maulClips, BrickMaulProfile.tpClips!.hold);
+    const maulRun = byName(maulClips, BrickMaulProfile.tpClips!.run);
+    if (maulHold && maulRun && BrickMaulProfile.upperBodyMask) {
+      const mask = new Set<string>(BrickMaulProfile.upperBodyMask);
+      const masked = (base: THREE.AnimationClip) => buildMaskedVariant(base, maulHold, mask, "_BrickMaul");
+      const maulJumpVariants = jumpVariants.map(masked);
+      const actions: Record<string, THREE.AnimationClip> = {};
+      for (const [key, def] of Object.entries(BrickMaulProfile.tpClips!.actions ?? {})) {
+        const clip = byName(maulClips, def.clip);
+        if (clip) actions[key] = clip;
+      }
+      brickmaul = {
+        hold: maulHold,
+        run: buildMaskedVariant(run, maulRun, mask, "_BrickMaul", true),
+        jump: maulJumpVariants[0],
+        jumpVariants: maulJumpVariants,
+        dash: masked(dash),
+        slide: masked(slide),
+        equip: byName(maulClips, BrickMaulProfile.tpClips!.equip!) ?? null,
+        unequip: byName(maulClips, BrickMaulProfile.tpClips!.unequip!) ?? null,
+        inspect: byName(maulClips, BrickMaulProfile.tpClips!.inspect!) ?? null,
+        actions,
+      };
+    }
+
     const clips: RemoteCharacterClips = {
       idle,
       run,
@@ -290,10 +334,45 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       armedJumpVariants,
       armedDash,
       armedSlide,
+      profiles: brickmaul ? { brickmaul } : {},
     };
     return { template, clips };
   });
   return cachedCharacter;
+}
+
+/**
+ * Generic masked composite for a PROFILE hold layer: `mask` bones come
+ * from `layer` (first sample held — or the full animated tracks when
+ * `animatedLayer` is true, e.g. the maul Run), everything else from the
+ * base locomotion clip. Derived clips only — sources never mutate.
+ */
+function buildMaskedVariant(
+  base: THREE.AnimationClip,
+  layer: THREE.AnimationClip,
+  mask: Set<string>,
+  suffix: string,
+  animatedLayer = false,
+): THREE.AnimationClip {
+  const tracks: THREE.KeyframeTrack[] = [];
+  for (const track of base.tracks) {
+    if (!mask.has(trackBone(track.name))) tracks.push(track.clone());
+  }
+  for (const track of layer.tracks) {
+    if (!mask.has(trackBone(track.name))) continue;
+    tracks.push(animatedLayer ? track.clone() : constantTrack(track));
+  }
+  // An animated layer of a different length is time-scaled by the mixer
+  // through the base duration: keep the base duration as the clip length
+  // (the maul Run is 0.72 s vs Run_Goofy 0.8 s → the layer is retimed).
+  if (animatedLayer && Math.abs(layer.duration - base.duration) > 1e-4) {
+    const scale = base.duration / layer.duration;
+    for (const track of tracks) {
+      if (!mask.has(trackBone(track.name))) continue;
+      for (let i = 0; i < track.times.length; i++) track.times[i] *= scale;
+    }
+  }
+  return new THREE.AnimationClip(`${base.name}${suffix}`, base.duration, tracks);
 }
 
 /** Bounding-sphere inflation factor for skinned culling (see above). */

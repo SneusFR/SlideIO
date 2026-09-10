@@ -41,6 +41,8 @@ export class InputManager {
   mouseDX = 0;
   mouseDY = 0;
   pointerLocked = false;
+  /** Signed wheel notches this frame (+1 = down/away, -1 = up/toward). */
+  private wheelDelta = 0;
 
   constructor(private lockTarget: HTMLElement) {
     window.addEventListener("keydown", (e) => {
@@ -77,6 +79,18 @@ export class InputManager {
     window.addEventListener("mouseup", (e) => {
       this.mouseButtons.delete(e.button);
     });
+
+    // Mouse wheel: accumulated per frame (weapon slot cycling). Only while
+    // the pointer is locked — the menus keep their native scrolling.
+    window.addEventListener(
+      "wheel",
+      (e) => {
+        if (!this.pointerLocked) return;
+        e.preventDefault();
+        this.wheelDelta += Math.sign(e.deltaY);
+      },
+      { passive: false },
+    );
 
     document.addEventListener("mousemove", (e) => {
       if (!this.pointerLocked) return;
@@ -151,6 +165,11 @@ export class InputManager {
     return this.meleeHeldCode !== null;
   }
 
+  /** Wheel notches accumulated this frame (0 when the wheel did not move). */
+  wheelSteps(): number {
+    return this.wheelDelta;
+  }
+
   /** Call once at the end of every frame. */
   endFrame(): void {
     this.keysPressed.clear();
@@ -158,5 +177,6 @@ export class InputManager {
     this.meleePressed = false;
     this.mouseDX = 0;
     this.mouseDY = 0;
+    this.wheelDelta = 0;
   }
 }

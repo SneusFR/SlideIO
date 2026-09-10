@@ -4,6 +4,16 @@ import { KillstreakSlot } from "./KillstreakSlot";
 import { KillstreakState } from "./KillstreakState";
 
 /**
+ * Killstreak slot activation keys. Keys 1 / 2 are the WEAPON slots
+ * (primary / melee) so the streaks moved to the bottom-left letter row:
+ * PHYSICAL codes (the movement layer uses codes too) — on AZERTY these
+ * are the keys labelled W / X / C (KeyZ = "W" on AZERTY), on QWERTY Z / X / C.
+ */
+export const KILLSTREAK_SLOT_CODES = ["KeyZ", "KeyX", "KeyC"] as const;
+/** HUD labels for the three slots (AZERTY labels — the game's target layout). */
+export const KILLSTREAK_SLOT_LABELS = ["W", "X", "C"] as const;
+
+/**
  * Owns the three equipped killstreak slots and their per-life lifecycle.
  * Pure state machine — no rendering, no audio, no ability logic: the Game
  * wires HUD/SFX through the callbacks and drives the actual abilities.

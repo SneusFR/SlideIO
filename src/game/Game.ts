@@ -27,8 +27,9 @@ import { ParticleSystem } from "../effects/ParticleSystem";
 import { Shockwave } from "../effects/Shockwave";
 import { fxLights } from "../effects/FXLightPool";
 import { PlasmaRifle } from "../weapons/PlasmaRifle";
-import { HammerWeapon } from "../weapons/HammerWeapon";
+import { HammerWeapon, HammerState } from "../weapons/HammerWeapon";
 import { HammerViewmodel } from "../weapons/HammerViewmodel";
+import { sampleBrickMaulWhirlwindYaw } from "../weapons/brickmaul/BrickMaulWhirlwindCamera";
 import { SpearWeapon } from "../weapons/SpearWeapon";
 import { SpearViewmodel } from "../weapons/SpearViewmodel";
 import { SpearConfig as spearCfg } from "../weapons/SpearConfig";
@@ -47,7 +48,7 @@ import { HexSniperWorldAdapter } from "../weapons/hexsniper/HexSniperWorldAdapte
 import { HexSniperConfig as hexCfg } from "../weapons/hexsniper/HexSniperConfig";
 import { ViewmodelSystem } from "../weapons/viewmodel/ViewmodelSystem";
 import { MusicSelectorHUD } from "../ui/MusicSelectorHUD";
-import { KillstreakManager } from "../killstreaks/KillstreakManager";
+import { KillstreakManager, KILLSTREAK_SLOT_CODES } from "../killstreaks/KillstreakManager";
 import { MoleStrike } from "../killstreaks/mole/MoleStrike";
 import { MoleStrikeVFX } from "../killstreaks/mole/MoleStrikeVFX";
 import { KillstreakHUD } from "../ui/KillstreakHUD";
@@ -75,8 +76,17 @@ import { NetworkDebugHUD } from "../ui/NetworkDebugHUD";
 import { MultiplayerGameController } from "../network/MultiplayerGameController";
 import type { MultiplayerClient } from "../network/MultiplayerClient";
 import { KillMethod } from "../combat/KillMethod";
-import { WeaponActionType } from "../../shared/combat/NetworkWeapons";
-import type { HitConfirmedEvent } from "../../shared/combat/NetworkWeapons";
+import {
+  WeaponActionType,
+  HEX_ACTION_TONGUE_HIT,
+  HEX_ACTION_TONGUE_MISS,
+  HEX_ACTION_PULL_END,
+  HEX_ACTION_BITE,
+} from "../../shared/combat/NetworkWeapons";
+import type {
+  HitConfirmedEvent,
+  WeaponActionConfirmedEvent,
+} from "../../shared/combat/NetworkWeapons";
 import { getQualitySettings } from "./GraphicsQuality";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { loadCharacterAsset, stripEnemyOutline } from "../characters/PotatoCharacter";
@@ -122,12 +132,36 @@ export class Game {
   private interactNearby = false;
   private readonly feetPos = new THREE.Vector3();
 
-  // ---- Hammer melee ----
+  // ---- Hammer melee (Brick Maul r5 on the shared FP arms) ----
   private shockwave: Shockwave;
   private hammer: HammerWeapon;
   private hammerViewmodel: HammerViewmodel;
   private readonly eyePos = new THREE.Vector3();
   private readonly fwdFlat = new THREE.Vector3();
+
+  // ---- Weapon SLOTS (keys 1 / 2 + mouse wheel) ----
+  /**
+   * Which weapon the player HOLDS: the loadout primary (slot 1) or the
+   * loadout melee (slot 2). Distinct from "which melee is in the loadout":
+   * the melee key still triggers a temporary attack from slot 1.
+   */
+  private activeSlot: "PRIMARY" | "MELEE" = "PRIMARY";
+  /** Owner of the shared FP arms right now (exactly one advances the mixer). */
+  private fpOwner: "NONE" | "HAMMER" | "HEX_SNIPER" = "NONE";
+  /** True during the maul's Unequip transition back to the primary. */
+  private slotSwitchPending = false;
+  /** FP maul inspection running (slot 2, F key). */
+  private hammerInspecting = false;
+  /** Replicated melee-shown state (dedup — never sent per frame). */
+  private netMeleeShown = false;
+  /**
+   * Whirlwind RENDER-ONLY camera spin (r6): world-Y yaw sampled from the
+   * attack clock, applied around the world + FP passes only — never to
+   * FPSCamera.yaw, the movement, the network aim or the TP avatar.
+   */
+  private readonly spinBaseQuat = new THREE.Quaternion();
+  private readonly spinQuat = new THREE.Quaternion();
+  private readonly spinAxis = new THREE.Vector3(0, 1, 0);
 
   // ---- Astral Lance melee (equipped via the Loadout menu) ----
   private spear: SpearWeapon;
@@ -180,7 +214,7 @@ export class Game {
   private matchStats: MatchStatsManager;
   private leaderboardHud: LeaderboardHUD;
 
-  // ---- Killstreaks: 3 equippable slots (keys 1/2/3), reset on death ----
+  // ---- Killstreaks: 3 equippable slots (keys W/X/C), reset on death ----
   private killstreaks: KillstreakManager;
   private moleStrike: MoleStrike;
   private killstreakHud: KillstreakHUD;
@@ -411,7 +445,7 @@ export class Game {
     // stuck in SLAM_DIVE forever, waiting for a landing that never comes).
     this.playerCombatant.onKnockdown = (magnitude) => {
       this.fpsCamera.addShake(Math.min(0.4 + magnitude * 0.015, 0.9));
-      this.hammer.reset();
+      this.abortSlotTransition(); // maul actions / inspect / Unequip dropped
       this.spear.reset();
       this.hexSniper.reset(); // a downed shooter releases the tongue
       this.meleeHoldPending = false;
@@ -441,9 +475,14 @@ export class Game {
       this.leaderboardHud.refresh(this.matchStats.getSortedStats());
     this.matchStats.register(this.playerCombatant, "VALENTIN", true);
 
-    // ---- Combat hammer (melee): grounded sweep + airborne Ground Slam ----
+    // Common FP viewmodel system: shared Potato arms + dedicated FP scene
+    // rendered AFTER the world with ONE depth clear (see frame()). Owned by
+    // exactly ONE weapon at a time (fpOwner) — Brick Maul or HexSniper.
+    this.viewmodelSystem = new ViewmodelSystem(window.innerWidth / window.innerHeight);
+
+    // ---- Brick Maul (melee): grounded WHIRLWIND + airborne Ground Slam ----
     this.shockwave = new Shockwave(this.scene);
-    this.hammerViewmodel = new HammerViewmodel(this.fpsCamera.camera);
+    this.hammerViewmodel = new HammerViewmodel(this.viewmodelSystem);
     this.hammer = new HammerWeapon(
       this.combatants,
       this.particles,
@@ -542,9 +581,6 @@ export class Game {
       () => this.botManager.bots,
       () => this.targets.targets,
     );
-    // Common FP viewmodel system: shared Potato arms + dedicated FP scene
-    // rendered AFTER the world with ONE depth clear (see frame()).
-    this.viewmodelSystem = new ViewmodelSystem(window.innerWidth / window.innerHeight);
     this.hexSniper = new HexSniperWeapon(
       this.fpsCamera.camera,
       this.scene,
@@ -616,7 +652,7 @@ export class Game {
     this.combo.onComboEnd = () => this.medals.resetChain();
 
     // ---- Killstreaks: pure state machine + HUD + the MOLE STRIKE ability.
-    // Kills feed the slots, death resets everything, keys 1/2/3 activate.
+    // Kills feed the slots, death resets everything, keys W/X/C activate.
     this.killstreaks = new KillstreakManager();
     this.killstreakHud = new KillstreakHUD(this.killstreaks);
     this.killstreaks.onChanged = () => this.killstreakHud.render();
@@ -637,13 +673,16 @@ export class Game {
 
     this.playerCombatant.health.onDeath = () => {
       this.playerDeathTimer = cc.playerRespawnDelay;
-      this.hammer.reset(); // drop any melee attack in progress
+      // Drop any melee attack / inspection / slot transition BEFORE the
+      // ragdoll takes over; the FP owner is re-arbitrated next frame.
+      this.abortSlotTransition();
       this.spear.reset();
       this.obliterreur.reset(); // vortex off + anchors cleared on death
       this.revolver.reset(); // fan fire dropped, fresh 6/6 for the respawn
       this.bassBlaster.reset(); // reload cancelled, notes cleared, fresh 30/30
       this.poison.reset(); // spray stopped, tank refilled for the respawn
       this.hexSniper.reset(); // tongue released mid-flight/pull, clean Idle
+      this.movement.stopHexPull(); // dying while reeled: the grab is gone
       this.meleeHoldPending = false;
       // Death mid-burrow: instant cleanup WITHOUT the AoE, then every
       // killstreak slot (progress / ready / spent) resets to LOCKED.
@@ -870,6 +909,19 @@ export class Game {
     this.viewmodelSystem.setVisible(true);
     this.viewmodelSystem.syncCamera(this.fpsCamera.camera);
     for (let i = 0; i < 2; i++) this.viewmodelSystem.render(this.renderer);
+    // Brick Maul: when it is NOT the current FP owner, mount it for the
+    // warm frames too (its shaders/textures compile now, never on the first
+    // melee attack), then hand the arms back to the real owner.
+    if (this.fpOwner !== "HAMMER" && this.hammerViewmodel.loaded) {
+      const prevOwner = this.fpOwner;
+      if (prevOwner === "HEX_SNIPER") this.hexSniper.releasePresentation();
+      await this.hammerViewmodel.equip(false);
+      this.viewmodelSystem.setVisible(true);
+      this.viewmodelSystem.syncCamera(this.fpsCamera.camera);
+      for (let i = 0; i < 2; i++) this.viewmodelSystem.render(this.renderer);
+      this.hammerViewmodel.hide();
+      if (prevOwner === "HEX_SNIPER") this.hexSniper.takePresentation();
+    }
     this.viewmodelSystem.setVisible(fpWasVisible);
 
     // End the remote-VFX warm-up (multiplayer) and render again so the
@@ -916,9 +968,11 @@ export class Game {
     const selection = loadLoadout();
     // The manager skips unchanged slots, so in-flight progress survives.
     this.killstreaks.setEquipped(selection.killstreaks);
+    let weaponsChanged = false;
     // Primary swap: a clean slate — active vortex cancelled, anchors gone,
     // revolver back to a full ready cylinder.
     if (selection.primary !== this.primaryWeapon) {
+      weaponsChanged = true;
       this.primaryWeapon = selection.primary;
       this.obliterreur.reset();
       this.revolver.reset();
@@ -930,11 +984,129 @@ export class Game {
     // are IDENTICAL strings to NetworkWeaponId — no mapping table).
     this.sendNetworkEquip();
     const melee = selection.melee;
-    if (melee === this.meleeWeapon) return;
-    this.meleeWeapon = melee;
+    if (melee !== this.meleeWeapon) {
+      weaponsChanged = true;
+      this.meleeWeapon = melee;
+      this.hammer.reset();
+      this.spear.reset();
+      this.meleeHoldPending = false;
+    }
+    // A changed loadout (or the first application) restarts on the PRIMARY
+    // slot; a plain Escape-menu round trip keeps the held slot. The FP arms
+    // owner is re-arbitrated either way.
+    if (weaponsChanged || this.fpOwner === "NONE") {
+      if (weaponsChanged) {
+        this.activeSlot = "PRIMARY";
+        this.slotSwitchPending = false;
+      }
+      this.refreshFpOwner();
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // FP PRESENTATION OWNERSHIP (shared arms) + weapon slots
+  // ------------------------------------------------------------------
+
+  /**
+   * Who should own the shared FP arms right now:
+   *   - slot MELEE + HAMMER loadout        → the Brick Maul (Hold/Run/Inspect)
+   *   - slot PRIMARY + hammer attack busy   → the Brick Maul (melee override)
+   *   - slot PRIMARY + HEX_SNIPER primary   → the sniper
+   *   - otherwise                           → nobody (legacy viewmodels)
+   * Exactly one owner advances the arms mixer per frame.
+   */
+  private desiredFpOwner(): "NONE" | "HAMMER" | "HEX_SNIPER" {
+    if (this.meleeWeapon === "HAMMER") {
+      if (this.activeSlot === "MELEE" || this.slotSwitchPending) return "HAMMER";
+      if (this.hammer.isBusy) return "HAMMER"; // temporary melee override
+    }
+    if (this.primaryWeapon === "HEX_SNIPER" && this.activeSlot === "PRIMARY") return "HEX_SNIPER";
+    return "NONE";
+  }
+
+  /** Apply the ownership decision (idempotent — called when inputs change). */
+  private refreshFpOwner(): void {
+    const want = this.desiredFpOwner();
+    if (want === this.fpOwner) return;
+    // Release the previous owner (the sniper keeps its gameplay off-screen;
+    // the maul drops actions / inspect and detaches).
+    if (this.fpOwner === "HEX_SNIPER") this.hexSniper.releasePresentation();
+    if (this.fpOwner === "HAMMER") {
+      this.hammerInspecting = false;
+      this.hammerViewmodel.hide();
+    }
+    this.fpOwner = want;
+    if (want === "HAMMER") {
+      // Real slot equip plays the 0.65 s Equip clip; a melee override from
+      // the primary attaches instantly so the attack starts on its event.
+      this.hammerViewmodel.equip(this.activeSlot === "MELEE" && !this.hammer.isBusy);
+    } else if (want === "HEX_SNIPER") {
+      this.hexSniper.takePresentation();
+    }
+    this.syncNetworkMeleeShown();
+  }
+
+  /**
+   * Keys 1 / 2 + wheel. Slot 1 = loadout primary, slot 2 = loadout melee.
+   * Refused while dead, knocked down, mid-attack, mid-mole-strike or while
+   * an Unequip transition already runs (no stacking, no cancel).
+   */
+  private handleWeaponSlotInput(): void {
+    let target: "PRIMARY" | "MELEE" | null = null;
+    if (this.input.wasPressed("Digit1")) target = "PRIMARY";
+    else if (this.input.wasPressed("Digit2")) target = "MELEE";
+    else if (this.input.wheelSteps() !== 0) target = this.activeSlot === "PRIMARY" ? "MELEE" : "PRIMARY";
+    if (!target || target === this.activeSlot) return;
+    if (this.slotSwitchPending || this.hammer.isBusy || this.spear.isBusy) return;
+    if (this.moleStrike.blocksWeapons || this.movement.isKnockedDown) return;
+    this.switchSlot(target);
+  }
+
+  private switchSlot(target: "PRIMARY" | "MELEE"): void {
+    if (target === this.activeSlot) return;
+    if (target === "MELEE") {
+      this.activeSlot = "MELEE";
+      this.meleeHoldPending = false;
+      this.refreshFpOwner();
+      return;
+    }
+    // MELEE → PRIMARY: real Unequip transition (0.30 s) when the maul is
+    // the held weapon, then the primary presentation comes back.
+    if (this.meleeWeapon === "HAMMER" && this.fpOwner === "HAMMER") {
+      this.slotSwitchPending = true;
+      this.hammerInspecting = false;
+      this.hammerViewmodel.unequip(() => {
+        if (!this.slotSwitchPending) return;
+        this.slotSwitchPending = false;
+        this.activeSlot = "PRIMARY";
+        this.refreshFpOwner();
+      });
+      return;
+    }
+    this.activeSlot = "PRIMARY";
+    this.refreshFpOwner();
+  }
+
+  /** Death / ragdoll / disable: drop the transition and any maul action. */
+  private abortSlotTransition(): void {
+    this.slotSwitchPending = false;
+    this.hammerInspecting = false;
+    this.hammerViewmodel.cancelInspect();
     this.hammer.reset();
-    this.spear.reset();
-    this.meleeHoldPending = false;
+  }
+
+  /**
+   * MULTIPLAYER: replicate the melee VISUAL override (maul shown / hidden)
+   * separately from the server-authoritative primary — never through
+   * sendNetworkEquip. Attack phases are reconstructed from the confirmed
+   * HAMMER_* events; this only covers Hold/Run on slot 2.
+   */
+  private syncNetworkMeleeShown(): void {
+    if (!this.multiplayer || !this.multiplayerClient?.isConnected) return;
+    const shown = this.fpOwner === "HAMMER" && this.activeSlot === "MELEE";
+    if (shown === this.netMeleeShown) return;
+    this.netMeleeShown = shown;
+    this.netSendAimedAction(shown ? WeaponActionType.MELEE_SHOW : WeaponActionType.MELEE_HIDE);
   }
 
   /**
@@ -1054,10 +1226,47 @@ export class Game {
     this.multiplayer.onApplyImpulse = (x, y, z) =>
       this.playerCombatant.applyImpulse(this.netImpulse.set(x, y, z));
 
+    // ---- HEX SNIPER (server-authoritative tongue) ----
+    // Shooter side: the local kit only drives the tether visual (predicted
+    // latch on the interpolated avatars); damage / grab / bite outcomes
+    // come back as OUR confirms and steer the weapon.
+    this.hexSniper.networkAuthority = true;
+    const remotes = this.multiplayer.remotes;
+    this.hexSniper.adapter.setRemoteTargets({
+      forEach: (cb) => remotes.forEachVisible(cb),
+      getPosition: (id, out) => {
+        if (!remotes.getPose(id, this.netHitPose)) return false;
+        out.copy(this.netHitPose.pos);
+        return true;
+      },
+    });
+    this.multiplayer.onLocalActionConfirmed = (event) => this.handleLocalActionConfirmed(event);
+    // Victim side: reel toward the attacker's DISPLAYED position through
+    // our own character controller (server HEX_PULL start/stop).
+    this.multiplayer.onHexPull = (event) => {
+      if (!event.active || !event.attackerId) {
+        this.movement.stopHexPull();
+        return;
+      }
+      if (!this.playerCombatant.health.alive) return;
+      const attackerId = event.attackerId;
+      this.movement.startHexPull((out) => {
+        if (!remotes.getPose(attackerId, this.netHitPose)) return false;
+        out.copy(this.netHitPose.pos);
+        return true;
+      });
+    };
+    // A remote tongue latched on US: the spectator tether follows our capsule.
+    this.multiplayer.vfx.setLocalPosition((out) => this.player.getPosition(out));
+
     // Local weapon events → WEAPON_ACTION sends (wrap, never replace).
     this.wrapNetworkWeaponCallbacks();
     // Tell the server which primary we start with.
     this.sendNetworkEquip(true);
+    // Melee visual override state is replicated separately (never through
+    // the primary equip); re-announce it for this fresh session.
+    this.netMeleeShown = false;
+    this.syncNetworkMeleeShown();
 
     // F1 — Network Debug HUD (diagnostics for real Internet sessions).
     this.netDebugHud = new NetworkDebugHUD(() =>
@@ -1073,6 +1282,12 @@ export class Game {
     this.multiplayer = null;
     this.multiplayerClient = null;
     this.lastSentEquip = "";
+    this.netMeleeShown = false;
+    // HexSniper back to full LOCAL authority (solo / bots).
+    this.hexSniper.networkAuthority = false;
+    this.hexSniper.adapter.setRemoteTargets(null);
+    this.hexSniper.reset();
+    this.movement.stopHexPull();
     this.netPlasmaWasFiring = false;
     this.netPoisonWasSpraying = false;
     const botsMenuEl = document.getElementById("bots-menu");
@@ -1335,11 +1550,17 @@ export class Game {
       this.playerCombatant.health.update(dt);
 
       if (playerAlive) {
+        // Weapon slots (1 / 2 / wheel) BEFORE the melee key so a switch and
+        // an attack never race on the same frame.
+        if (this.input.pointerLocked) this.handleWeaponSlotInput();
         // Melee is blocked for the whole MOLE STRIKE (burrow → eruption)
         // and while KNOCKED DOWN (§ ragdoll — a downed bot can't attack).
         if (!this.moleStrike.blocksWeapons && !this.movement.isKnockedDown) {
           this.handleMeleeInput(dt);
         }
+        // Attack start / end may change who holds the shared FP arms
+        // (temporary melee override from the primary slot).
+        this.refreshFpOwner();
         this.movement.update(dt);
         // AFTER movement: E while burrowed emerges here instead of dashing
         // (the movement itself refuses to dash while UNDERGROUND).
@@ -1457,11 +1678,15 @@ export class Game {
       // Plasma Rifle is unavailable while a melee weapon is out (nothing is
       // reset — heat keeps cooling / overheat keeps ticking normally) or
       // when another primary (OBLITERREUR / REVOLVER) is equipped.
-      const obliEquipped = this.primaryWeapon === "OBLITERREUR";
-      const revolverEquipped = this.primaryWeapon === "REVOLVER";
-      const bassEquipped = this.primaryWeapon === "BASS_BLASTER";
-      const poisonEquipped = this.primaryWeapon === "POISON_SPRAYER";
-      const hexEquipped = this.primaryWeapon === "HEX_SNIPER";
+      // SLOT 2 (melee held): every primary is stowed — hidden AND unable to
+      // act — until the player switches back (1 / wheel). The maul then
+      // owns the FP arms (Hold / Run / Inspect), see fpOwner.
+      const primaryHeld = this.activeSlot === "PRIMARY" && !this.slotSwitchPending;
+      const obliEquipped = primaryHeld && this.primaryWeapon === "OBLITERREUR";
+      const revolverEquipped = primaryHeld && this.primaryWeapon === "REVOLVER";
+      const bassEquipped = primaryHeld && this.primaryWeapon === "BASS_BLASTER";
+      const poisonEquipped = primaryHeld && this.primaryWeapon === "POISON_SPRAYER";
+      const hexEquipped = primaryHeld && this.primaryWeapon === "HEX_SNIPER";
       // KNOCKED DOWN (§ ragdoll) blocks EVERY weapon — exactly like a
       // ragdolled bot never fires. In-flight projectiles / explosions of
       // course keep ticking; only NEW actions are gated.
@@ -1472,6 +1697,7 @@ export class Game {
         this.movement.isKnockedDown;
       const wantFire =
         playerAlive &&
+        primaryHeld &&
         this.input.pointerLocked &&
         this.input.isMouseDown(0) &&
         !meleeBlocked &&
@@ -1481,14 +1707,16 @@ export class Game {
         !poisonEquipped &&
         !hexEquipped;
       this.rifle.setViewmodelHidden(
-        this.hammer.isBusy ||
+        !primaryHeld ||
+          this.hammer.isBusy ||
           this.spear.isBusy ||
           this.moleStrike.active ||
           obliEquipped ||
           revolverEquipped ||
           bassEquipped ||
           poisonEquipped ||
-          hexEquipped,
+          hexEquipped ||
+          this.primaryWeapon !== "PLASMA_RIFLE",
       );
       this.rifle.update(dt, wantFire, this.hittables, this.elapsed);
       // MULTIPLAYER: plasma has no callbacks — edge-detect isFiring here
@@ -1602,6 +1830,16 @@ export class Game {
         speed: this.movement.horizontalSpeed,
       });
 
+      // BRICK MAUL FP presentation — only while it OWNS the shared arms
+      // (slot 2 held, Unequip transition, or a melee override from the
+      // primary). This is the single arms-mixer advance of the frame then
+      // (the sniper skips its own while not owner).
+      if (this.fpOwner === "HAMMER") this.updateHammerPresentation(dt, playerAlive);
+      // LANCE on slot 2: held at rest between attacks (legacy viewmodel).
+      this.spearViewmodel.setHeld(
+        this.meleeWeapon === "SPEAR" && this.activeSlot === "MELEE" && playerAlive && !this.moleStrike.active,
+      );
+
 
       this.botManager.updateWeapons(dt, this.hittables, this.elapsed);
       this.handlePhaseEffects();
@@ -1660,26 +1898,62 @@ export class Game {
     // after every VFX update and before the render.
     fxLights.commit();
 
-    // LOW preset: the shadow map is STATIC (baked once at load — see
-    // warmUpRendering). No per-frame refresh: the caster re-render was the
-    // single most expensive fixed pass AND its every-other-frame cadence
-    // created the short/long frame judder that felt like 30 FPS.
-    this.renderer.render(this.scene, this.fpsCamera.camera);
-    // Debug HUD GPU stats: renderer.info is reset by every render() call,
-    // so the WORLD pass numbers must be captured right here.
-    this.hud.sampleRenderInfo(this.renderer);
-    // FP pass (migrated viewmodel weapons — HexSniper): follows the FINAL
-    // game-camera pose, ONE depth clear, arms + weapon drawn together over
-    // the world color. Legacy camera-attached viewmodels already rendered
-    // inside the world pass above (no double draw — each weapon renders on
-    // exactly one path).
-    this.viewmodelSystem.syncCamera(this.fpsCamera.camera);
-    this.viewmodelSystem.render(this.renderer);
+    // ---- RENDER SCOPE: Brick Maul whirlwind camera spin (r6) ----
+    // Every simulation read and every network send happened ABOVE. The
+    // world-Y yaw sampled from the attack clock (0 → +6π → held) is applied
+    // to the world camera for the world + FP passes only, then restored in
+    // `finally`. FPSCamera.yaw/pitch (mouse, movement, network aim) are
+    // untouched; the FP arms follow through syncCamera (never a second
+    // spin on the FP camera / Root / swayGroup / socket).
+    const cam = this.fpsCamera.camera;
+    const spinYaw =
+      this.fpOwner === "HAMMER" && playerAlive
+        ? sampleBrickMaulWhirlwindYaw(this.hammer.whirlwindElapsedSeconds)
+        : 0;
+    const spinning = spinYaw !== 0;
+    if (spinning) {
+      this.spinBaseQuat.copy(cam.quaternion);
+      this.spinQuat.setFromAxisAngle(this.spinAxis, spinYaw);
+      cam.quaternion.copy(this.spinBaseQuat).premultiply(this.spinQuat);
+      cam.updateMatrixWorld(true);
+      cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
+      // View-dependent elements re-projected with the RENDERED camera —
+      // dt = 0 everywhere: nothing ages or advances a second time.
+      this.botManager.updateVisibility(cam);
+      this.botManager.rebillboard(cam.quaternion, this.elapsed);
+      this.damageNumbersHud.update(0, cam);
+    }
+    try {
+      // LOW preset: the shadow map is STATIC (baked once at load — see
+      // warmUpRendering). No per-frame refresh: the caster re-render was the
+      // single most expensive fixed pass AND its every-other-frame cadence
+      // created the short/long frame judder that felt like 30 FPS.
+      this.renderer.render(this.scene, cam);
+      // Debug HUD GPU stats: renderer.info is reset by every render() call,
+      // so the WORLD pass numbers must be captured right here.
+      this.hud.sampleRenderInfo(this.renderer);
+      // FP pass (migrated viewmodel weapons — HexSniper / Brick Maul):
+      // follows the FINAL game-camera pose (spin included), ONE depth clear,
+      // arms + weapon drawn together over the world color. Legacy
+      // camera-attached viewmodels already rendered inside the world pass
+      // above (no double draw — each weapon renders on exactly one path).
+      this.viewmodelSystem.syncCamera(cam);
+      this.viewmodelSystem.render(this.renderer);
+    } finally {
+      if (spinning) {
+        cam.quaternion.copy(this.spinBaseQuat);
+        cam.updateMatrixWorld(true);
+        cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
+        // The FP camera stays exposed to other systems (socket queries):
+        // put it back on the base pose too.
+        this.viewmodelSystem.syncCamera(cam);
+      }
+    }
     this.input.endFrame();
   }
 
   /**
-   * Killstreak activation (keys 1/2/3) + MOLE STRIKE emerge (E).
+   * Killstreak activation (keys W/X/C) + MOLE STRIKE emerge (E).
    * A refused activation (no ground below the feet) consumes NOTHING —
    * the slot stays READY. Only one killstreak can be ACTIVE at a time.
    */
@@ -1689,7 +1963,7 @@ export class Game {
       return;
     }
     for (let i = 0; i < 3; i++) {
-      if (!this.input.wasPressed(`Digit${i + 1}`)) continue;
+      if (!this.input.wasPressed(KILLSTREAK_SLOT_CODES[i])) continue;
       const def = this.killstreaks.peekReady(i);
       if (!def) continue;
       if (def.id === "MOLE_STRIKE" && this.moleStrike.canActivate()) {
@@ -1700,19 +1974,34 @@ export class Game {
     }
   }
 
-  /** Melee input dispatch: the equipped weapon owns the "A" key. */
+  /**
+   * Melee input dispatch. BRICK MAUL: the maul must be HELD (slot 2 — key 2
+   * / wheel) and attacks with LMB only — grounded = WHIRLWIND, airborne =
+   * GROUND SLAM. The "A" key no longer pulls the maul out of the primary
+   * slot. The Lance keeps its existing A-key tap/hold flow.
+   */
   private handleMeleeInput(dt: number): void {
     if (this.meleeWeapon === "SPEAR") {
       this.handleSpearInput(dt);
       return;
     }
 
-    // ---- Hammer (single press, edge-triggered) ----
+    // ---- Brick Maul (LMB, edge-triggered, slot 2 only) ----
     //   attack in progress   → nothing (no cancel, no spam, no stacking)
-    //   airborne             → Ground Slam (vertical charge + AoE on landing)
-    //   grounded             → alternating horizontal hammer sweep
-    if (!this.input.wasMeleePressed()) return;
+    //   airborne             → Ground Slam (immediate descent + AoE on landing)
+    //   grounded             → WHIRLWIND (360°, three turns)
+    const maulHeld = this.activeSlot === "MELEE" && !this.slotSwitchPending;
+    const pressed = maulHeld && this.input.pointerLocked && this.input.wasMousePressed(0);
+    if (!pressed) return;
     if (this.hammer.isBusy) return; // input cleanly ignored — no feedback needed
+    if (this.slotSwitchPending) return; // never mid-Unequip
+
+    // An attack always wins over a running inspection.
+    if (this.hammerInspecting) {
+      this.hammerInspecting = false;
+      this.hammerViewmodel.cancelInspect();
+      this.netSendAimedAction(WeaponActionType.INSPECT_CANCEL);
+    }
 
     if (this.movement.grounded) {
       this.hammer.startSwing();
@@ -1720,6 +2009,65 @@ export class Game {
       // Movement takes over the descent; the AoE fires on real ground contact.
       this.movement.startGroundSlam();
     }
+  }
+
+  /**
+   * Brick Maul FP frame (owner only): inspection gate (F — terminal wins,
+   * alive, grounded, stationary, no attack, no transition) + cancellations
+   * + the cosmetic locomotion input. Advances the shared arms mixer ONCE.
+   */
+  private updateHammerPresentation(dt: number, playerAlive: boolean): void {
+    const maulHeld = this.activeSlot === "MELEE" && !this.slotSwitchPending;
+    const moving = this.movement.horizontalSpeed > 0.5;
+    const sliding = this.movement.state === MoveState.SLIDING;
+    const blocked =
+      !playerAlive ||
+      !maulHeld ||
+      this.hammer.isBusy ||
+      this.moleStrike.blocksWeapons ||
+      this.movement.isKnockedDown ||
+      !this.movement.grounded ||
+      moving;
+
+    if (this.hammerInspecting && (blocked || !this.hammerViewmodel.isInspecting)) {
+      const wasRunning = this.hammerViewmodel.isInspecting;
+      this.hammerInspecting = false;
+      this.hammerViewmodel.cancelInspect();
+      if (wasRunning) this.netSendAimedAction(WeaponActionType.INSPECT_CANCEL);
+    }
+
+    if (
+      !blocked &&
+      !this.hammerInspecting &&
+      !this.interactNearby &&
+      this.input.pointerLocked &&
+      this.input.wasPressed("KeyF") &&
+      this.hammerViewmodel.startInspect(() => {
+        this.hammerInspecting = false;
+      })
+    ) {
+      this.hammerInspecting = true;
+      this.netSendAimedAction(WeaponActionType.INSPECT_START);
+    }
+
+    // Deferred attack clips (attack launched before the maul's clips were
+    // attached — equip() awaits even cached assets): enter the whirlwind at
+    // the attack clock already advanced by hammer.update() this frame,
+    // minus the dt the single mixer advance below will add. Nothing
+    // gameplay-side moves; an attack that ended meanwhile never replays.
+    this.hammerViewmodel.resumePending(
+      this.hammer.whirlwindElapsedSeconds,
+      this.hammer.state === HammerState.SLAM_DIVE,
+      dt,
+    );
+    this.hammerViewmodel.update(dt, {
+      running: this.movement.grounded && !sliding && this.movement.horizontalSpeed > 1.5,
+      speed: this.movement.horizontalSpeed,
+      grounded: this.movement.grounded,
+      verticalVelocity: this.movement.velocity.y,
+      jumpSequence: this.movement.jumpSequence,
+      sliding,
+    });
   }
 
   /**
@@ -1736,13 +2084,15 @@ export class Game {
       return;
     }
 
-    if (this.input.wasMeleePressed()) {
+    // Slot 2 (lance held): LMB doubles the melee key (tap = sweep, hold = rush).
+    const spearHeld = this.activeSlot === "MELEE" && this.input.pointerLocked;
+    if (this.input.wasMeleePressed() || (spearHeld && this.input.wasMousePressed(0))) {
       this.meleeHoldPending = true;
       this.meleeHoldTimer = 0;
     }
     if (!this.meleeHoldPending) return;
 
-    if (!this.input.isMeleeDown()) {
+    if (!this.input.isMeleeDown() && !(spearHeld && this.input.isMouseDown(0))) {
       // Released before the threshold → quick press → SWEEP.
       this.meleeHoldPending = false;
       this.spear.startSweep();
@@ -1958,6 +2308,37 @@ export class Game {
         this.netGrain.set(trackIndex, grainOffset, noteIndex),
       );
     };
+
+    // HEX SNIPER: the tongue shot is reported the instant the kit accepts
+    // it (origin = camera eye, direction = aim). The server hitscans it and
+    // answers with OUR confirm (grab / miss / pull end / bite) — see
+    // handleLocalActionConfirmed.
+    const prevTongue = this.hexSniper.onTongueStart;
+    this.hexSniper.onTongueStart = () => {
+      prevTongue?.();
+      this.netSendAimedAction(WeaponActionType.HEX_TONGUE_FIRE);
+    };
+  }
+
+  /**
+   * Server-confirmed outcome of OUR OWN action — only HexSniper confirms
+   * are echoed back to the shooter (every other weapon is fully predicted
+   * locally). The local tongue follows the server's decision.
+   */
+  private handleLocalActionConfirmed(event: WeaponActionConfirmedEvent): void {
+    if (event.weapon !== "HEX_SNIPER") return;
+    switch (event.action) {
+      case HEX_ACTION_TONGUE_HIT:
+        if (event.tid) this.hexSniper.onNetworkGrab(event.tid);
+        break;
+      case HEX_ACTION_TONGUE_MISS:
+      case HEX_ACTION_PULL_END:
+        this.hexSniper.onNetworkRelease();
+        break;
+      case HEX_ACTION_BITE:
+        this.hexSniper.onNetworkBite();
+        break;
+    }
   }
 
   /** Send one aimed WEAPON_ACTION (camera eye origin + facing direction). */
@@ -2135,6 +2516,8 @@ function networkKillMethod(damageType: string): KillMethod {
       return KillMethod.BASS_BLASTER;
     case "HEX_SNIPER":
       return KillMethod.HEX_SNIPER_BITE;
+    case "HEX_SNIPER_TONGUE":
+      return KillMethod.HEX_SNIPER_TONGUE;
     default:
       return KillMethod.PLASMA;
   }

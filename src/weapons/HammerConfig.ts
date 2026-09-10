@@ -4,23 +4,29 @@
  * Units: meters, seconds, radians (unless noted), fractions of max HP.
  */
 export const HammerConfig = {
-  // ---- Ground swing (A while grounded) ----
-  /** Damage = fraction of the TARGET's max HP (stays coherent if HP change). */
-  hammerGroundDamageFraction: 0.5,
+  // ---- WHIRLWIND (A while grounded) — Brick Maul r5 ----
+  /** FLAT damage per victim for the WHOLE attack (never a max-HP fraction). */
+  hammerGroundDamage: 50,
   hammerSwingRange: 3.4, // reach of the melee zone (m)
-  hammerSwingArcDegrees: 120, // total horizontal arc in front of the player
+  hammerSwingArcDegrees: 360, // full circle: three visual turns around the player
   hammerSwingHeight: 1.9, // vertical tolerance around eye height (m)
-  hammerSwingDuration: 0.62, // full animation: wind-up → swing → follow → recovery
-  hammerHitStart: 0.18, // hit window opens (s into the swing)
-  hammerHitEnd: 0.36, // hit window closes (s into the swing)
+  hammerSwingDuration: 1.35, // full Whirlwind clip: wind-up → 3 turns → recovery
+  hammerHitStart: 0.2, // active phase opens (s into the attack)
+  hammerHitEnd: 1.04, // active phase closes (s into the attack)
   hammerGroundKnockback: 17, // horizontal impulse on hit (m/s)
   hammerGroundVerticalKnockback: 5.5, // small pop-up so the knockback reads well
   hammerVelocityInheritance: 0.25, // fraction of attacker velocity added to the impulse
 
   // ---- Ground slam (A while airborne) ----
-  groundSlamDamageFraction: 0.5, // fraction of the TARGET's max HP per victim
+  /** FLAT damage per victim at the single AoE impact. */
+  groundSlamDamage: 50,
   groundSlamSpeed: 40, // downward charge speed (m/s) — fast but not a teleport
-  groundSlamWindup: 0.12, // brief hang before the dive starts
+  /**
+   * Physical hang before the dive (s). ZERO: the descent starts the very
+   * frame LMB is pressed — the 0.20 s Slam_Start clip is a purely visual
+   * anticipation played WHILE already diving (never a gameplay delay).
+   */
+  groundSlamWindup: 0,
   groundSlamHorizontalRetention: 0.25, // horizontal momentum kept when the dive starts
   groundSlamAirControl: 0.12, // air-control multiplier during the dive (mostly vertical)
   groundSlamLandingSpeedScale: 0.3, // horizontal speed kept on impact (weighty landing)
@@ -28,7 +34,7 @@ export const HammerConfig = {
   groundSlamHeightTolerance: 3.0, // vertical band around the impact considered inside
   groundSlamKnockback: 13, // radial impulse away from the impact (m/s)
   groundSlamVerticalKnockback: 7, // shockwave pop-up (m/s)
-  groundSlamRecovery: 0.35, // short lockout after the impact (melee + firing)
+  groundSlamRecovery: 0.72, // Slam_Land recovery after the REAL contact (melee + firing lockout)
 
   // ---- Camera feedback ----
   hammerSwingCameraShake: 0.12, // small shake when the swing starts

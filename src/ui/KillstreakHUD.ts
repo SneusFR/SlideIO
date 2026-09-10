@@ -1,8 +1,8 @@
-import { KillstreakManager } from "../killstreaks/KillstreakManager";
+import { KillstreakManager, KILLSTREAK_SLOT_LABELS } from "../killstreaks/KillstreakManager";
 import { KillstreakState } from "../killstreaks/KillstreakState";
 
 /**
- * Bottom-right killstreak panel: 3 rows (keys 1/2/3), each showing the
+ * Bottom-right killstreak panel: 3 rows (keys W/X/C), each showing the
  * equipped streak, kill progress and state (LOCKED / READY / ACTIVE / SPENT).
  * Self-contained: injects its own CSS, re-renders from manager callbacks
  * wired in Game (manager.onChanged → render, manager.onReady → notifyReady).
@@ -30,7 +30,7 @@ export class KillstreakHUD {
       const row = document.createElement("div");
       row.className = "ks-row";
       row.innerHTML = `
-        <span class="ks-key">${i + 1}</span>
+        <span class="ks-key">${KILLSTREAK_SLOT_LABELS[i]}</span>
         <span class="ks-name"></span>
         <span class="ks-progress"></span>
         <div class="ks-bar"><div class="ks-fill"></div></div>
@@ -80,7 +80,7 @@ export class KillstreakHUD {
           break;
         case KillstreakState.READY:
           row.classList.add("ready");
-          progress.textContent = `PRESS ${i + 1}`;
+          progress.textContent = `PRESS ${KILLSTREAK_SLOT_LABELS[i]}`;
           fill.style.width = "100%";
           break;
         case KillstreakState.ACTIVE:

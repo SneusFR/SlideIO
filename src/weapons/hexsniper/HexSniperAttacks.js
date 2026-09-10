@@ -132,6 +132,30 @@ export class HexSniperAttacks {
       if (this.elapsed >= this.biteDuration) { this.state = 'Idle'; this._event('ready'); }
     }
   }
+  /** NETWORK (SlideIO addition): an external authority confirmed a grab on
+   * `playerId` — latch the tongue on that player (from Extending or a
+   * Pulling on another target). The tip snaps to the target's position
+   * and the normal Pulling flow follows. Returns false when not possible. */
+  latchOn(playerId) {
+    if (this.disposed || playerId == null || playerId === this.ownerId) return false;
+    if (this.state !== 'Extending' && this.state !== 'Pulling') return false;
+    if (!this.world.getPlayerPosition(playerId, this.targetPosition)) return false;
+    this.hit = { point: this.tip.clone(), kind: 'player', playerId };
+    this.tip.copy(this.targetPosition); this.targetOffset.set(0, 0, 0);
+    const wasPulling = this.state === 'Pulling';
+    this.state = 'Pulling';
+    if (!wasPulling) this.visuals?.beginPull();
+    this.visuals?.setTongueEndpoint(this.tip);
+    this._event('tongue-player', { playerId, point: this.tip.clone() });
+    return true;
+  }
+  /** NETWORK (SlideIO addition): an external authority ended the flight /
+   * pull WITHOUT a bite — start the empty return from the current tip.
+   * No-op unless Extending or Pulling. */
+  release(reason = 'released') {
+    if (this.disposed || (this.state !== 'Extending' && this.state !== 'Pulling')) return false;
+    this._retract(reason); return true;
+  }
   /** Death, unequip, stun or disconnect: release without moving the target. */
   cancel(reason = 'cancelled') {
     if (this.disposed || this.state === 'Idle') return;

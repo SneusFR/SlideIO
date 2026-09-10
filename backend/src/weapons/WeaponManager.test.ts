@@ -16,12 +16,13 @@ interface Recorded {
   hits: { attackerId: string; ev: any }[];
   damages: { victimId: string; ev: any }[];
   impulses: { victimId: string; impulse: any }[];
+  pulls: { victimId: string; ev: any }[];
 }
 
 function makeWorld() {
   const state = new GameRoomState();
   const combat = new CombatManager(state);
-  const rec: Recorded = { actions: [], hits: [], damages: [], impulses: [] };
+  const rec: Recorded = { actions: [], hits: [], damages: [], impulses: [], pulls: [] };
   let now = 1_000_000;
   const wm = new WeaponManager({
     getPlayer: (id) => state.players.get(id),
@@ -31,6 +32,7 @@ function makeWorld() {
     sendHitConfirmed: (attackerId, ev) => rec.hits.push({ attackerId, ev }),
     sendDamageTaken: (victimId, ev) => rec.damages.push({ victimId, ev }),
     sendImpulse: (victimId, impulse) => rec.impulses.push({ victimId, impulse }),
+    sendHexPull: (victimId, ev) => rec.pulls.push({ victimId, ev }),
     now: () => now,
   });
   const addPlayer = (id: string, x: number, y: number, z: number): NetworkPlayer => {
@@ -227,28 +229,120 @@ test("poison: short-range DPS tick, NO headshot bonus, out-of-range refused", ()
 // NOTE: melee tests live on the open CENTER LANE of Ancient Jungle City
 // (x = 0, z 5..16 — no cover): the low "Crossing cover wall" occupies
 // x 0.45..7.55 at z ≈ 14 and would block capsule-center line of sight.
-test("hammer sweep: in-arc target damaged + knocked back, far target untouched", () => {
-  const { wm, rec, addPlayer } = makeWorld();
+test("brick maul whirlwind: bounded attack, 360°, FLAT 50 once per victim (200 max HP)", () => {
+  const { wm, rec, addPlayer, advance } = makeWorld();
   const a = addPlayer("A", 0, 0.9, 16);
-  const near = addPlayer("B", 0, 0.9, 14); // 2 m in front
+  const front = addPlayer("B", 0, 0.9, 14); // 2 m in front
+  const behind = addPlayer("D", 0, 0.9, 18.5); // 2.5 m BEHIND (360° zone)
   const far = addPlayer("C", 0, 0.9, 5); // 11 m — out of range
   fire(wm, a, WeaponActionType.HAMMER_SWEEP, eyeOf(a), { x: 0, y: 0, z: -1 });
-  assert.strictEqual(near.health, 200 - 200 * W.hammer.sweepDamageFraction);
+  // Confirmed with the authoritative start timestamp.
+  const confirm = rec.actions.find((ev) => ev.action === WeaponActionType.HAMMER_SWEEP);
+  assert.ok(confirm && typeof confirm.ts === "number", "HAMMER_SWEEP confirmed with ts");
+  // No damage at reception: the window opens at 0.20 s.
+  wm.tick(0.05);
+  assert.strictEqual(front.health, 200, "no damage before the active phase");
+  // Inside the active phase (0.20–1.04 s) → flat 50, both sides.
+  advance(300);
+  wm.tick(0.05);
+  assert.strictEqual(front.health, 150, "flat 50 (not 50% of 200 max HP)");
+  assert.strictEqual(behind.health, 150, "target behind the attacker hit (360°)");
   assert.strictEqual(far.health, 200, "out-of-range target untouched");
-  assert.strictEqual(rec.impulses.length, 1);
-  assert.strictEqual(rec.impulses[0].victimId, "B");
+  assert.strictEqual(rec.impulses.length, 2);
+  // The following turns never re-hit the same victims.
+  advance(300);
+  wm.tick(0.05);
+  advance(300);
+  wm.tick(0.05);
+  assert.strictEqual(front.health, 150, "one hit per victim for the whole attack");
+  assert.strictEqual(behind.health, 150);
+  assert.strictEqual(rec.impulses.length, 2);
 });
 
-test("hammer slam: AoE around impact, fraudulous far impact refused", () => {
-  const { wm, addPlayer } = makeWorld();
+test("brick maul whirlwind: target entering during the window is hit; long tick never skips the window", () => {
+  const { wm, addPlayer, advance } = makeWorld();
+  const a = addPlayer("A", 0, 0.9, 16);
+  const late = addPlayer("B", 0, 0.9, 40); // far away at the start
+  fire(wm, a, WeaponActionType.HAMMER_SWEEP, eyeOf(a), { x: 0, y: 0, z: -1 });
+  advance(250);
+  wm.tick(0.05); // active but B still far
+  assert.strictEqual(late.health, 200);
+  // B walks in during the active phase → hit on the next tick.
+  late.z = 14;
+  wm.recordTransform(late);
+  advance(300);
+  wm.tick(0.05);
+  assert.strictEqual(late.health, 150, "target entering the active window is hit");
+
+  // LONG FRAME: one single tick jumping from 0.05 s straight past the end
+  // of the window (1.04 s) must still resolve the sweep exactly once.
+  const w2 = makeWorld();
+  const a2 = w2.addPlayer("A", 0, 0.9, 16);
+  const b2 = w2.addPlayer("B", 0, 0.9, 14);
+  fire(w2.wm, a2, WeaponActionType.HAMMER_SWEEP, eyeOf(a2), { x: 0, y: 0, z: -1 });
+  w2.advance(50);
+  w2.wm.tick(0.05);
+  assert.strictEqual(b2.health, 200);
+  w2.advance(1200); // 1.25 s elapsed — the window is entirely inside the gap
+  w2.wm.tick(1.2);
+  assert.strictEqual(b2.health, 150, "window overlap test catches the long frame");
+});
+
+test("brick maul whirlwind: anti-spam = the engaged 1.35 s attack (0.5 s is not enough)", () => {
+  const { wm, rec, addPlayer, advance } = makeWorld();
+  const a = addPlayer("A", 0, 0.9, 16);
+  addPlayer("B", 0, 0.9, 14);
+  fire(wm, a, WeaponActionType.HAMMER_SWEEP, eyeOf(a), { x: 0, y: 0, z: -1 });
+  advance(600);
+  fire(wm, a, WeaponActionType.HAMMER_SWEEP, eyeOf(a), { x: 0, y: 0, z: -1 });
+  assert.strictEqual(
+    rec.actions.filter((ev) => ev.action === WeaponActionType.HAMMER_SWEEP).length,
+    1,
+    "second sweep at 0.6 s refused (attack still engaged)",
+  );
+  advance(800); // 1.4 s → the first attack ended
+  wm.tick(0.05);
+  fire(wm, a, WeaponActionType.HAMMER_SWEEP, eyeOf(a), { x: 0, y: 0, z: -1 });
+  assert.strictEqual(
+    rec.actions.filter((ev) => ev.action === WeaponActionType.HAMMER_SWEEP).length,
+    2,
+    "new sweep accepted once the attack is over",
+  );
+});
+
+test("brick maul slam: start + single impact (flat 50), duplicates and fraud refused", () => {
+  const { wm, rec, addPlayer, advance } = makeWorld();
   const a = addPlayer("A", 0, 0.9, 16);
   const b = addPlayer("B", 2, 0.9, 16);
-  // Fraud: impact reported 50 m away → refused.
+  // Impact WITHOUT a start → refused (no attack engaged).
+  wm.handleAction(a, { action: WeaponActionType.HAMMER_SLAM_IMPACT, seq: ++seq, px: 0, py: 0.9, pz: 16 });
+  assert.strictEqual(b.health, 200, "impact without a slam start refused");
+  // Start the slam.
+  fire(wm, a, WeaponActionType.HAMMER_SLAM_START, eyeOf(a), { x: 0, y: -1, z: 0 });
+  assert.ok(rec.actions.some((ev) => ev.action === WeaponActionType.HAMMER_SLAM_START));
+  // Fraud: impact reported 50 m away → refused (attack stays engaged).
   wm.handleAction(a, { action: WeaponActionType.HAMMER_SLAM_IMPACT, seq: ++seq, px: 0, py: 0, pz: -40 });
   assert.strictEqual(b.health, 200);
-  // Legit impact at the attacker's feet.
+  // Legit impact at the attacker's feet → flat 50.
   wm.handleAction(a, { action: WeaponActionType.HAMMER_SLAM_IMPACT, seq: ++seq, px: 0, py: 0.9, pz: 16 });
-  assert.strictEqual(b.health, 200 - 200 * W.hammer.slamDamageFraction);
+  assert.strictEqual(b.health, 150, "flat 50 slam damage");
+  // Duplicate impact of the SAME attack with a fresh seq → refused.
+  wm.handleAction(a, { action: WeaponActionType.HAMMER_SLAM_IMPACT, seq: ++seq, px: 0, py: 0.9, pz: 16 });
+  assert.strictEqual(b.health, 150, "second impact of the same slam refused");
+  assert.strictEqual(
+    rec.actions.filter((ev) => ev.action === WeaponActionType.HAMMER_SLAM_IMPACT).length,
+    1,
+  );
+  // Recovery (0.72 s) keeps the attack engaged: a sweep is refused…
+  advance(300);
+  wm.tick(0.05);
+  fire(wm, a, WeaponActionType.HAMMER_SWEEP, eyeOf(a), { x: 0, y: 0, z: -1 });
+  assert.ok(!rec.actions.some((ev) => ev.action === WeaponActionType.HAMMER_SWEEP), "sweep refused during recovery");
+  // …and accepted once the recovery is over.
+  advance(500);
+  wm.tick(0.05);
+  fire(wm, a, WeaponActionType.HAMMER_SWEEP, eyeOf(a), { x: 0, y: 0, z: -1 });
+  assert.ok(rec.actions.some((ev) => ev.action === WeaponActionType.HAMMER_SWEEP), "sweep accepted after recovery");
 });
 
 test("spear rush: cooldown enforced + single hit per target", () => {
@@ -421,6 +515,98 @@ test("lag comp: idle-suppression gaps HOLD the older position (no lerp)", () => 
     vt: w.nowMs() - 200,
   });
   assert.strictEqual(w.rec.hits.length, 1, "idle gap must hold the older position");
+});
+
+// ---------------------------------------------------------------------
+// HEX SNIPER — tongue grab → server pull → arrival bite
+// ---------------------------------------------------------------------
+
+test("hex sniper: tongue grab = flat damage + HEX_TONGUE_HIT + HEX_PULL start", () => {
+  const { wm, rec, addPlayer } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  const b = addPlayer("B", 3, 0.9, 10);
+  wm.handleEquip(a, NetworkWeaponId.HEX_SNIPER);
+  fire(wm, a, WeaponActionType.HEX_TONGUE_FIRE, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 0.9, z: 10 }));
+  assert.strictEqual(b.health, 200 - W.hexSniper.tongueDamage, "tongue deals flat damage");
+  assert.strictEqual(rec.hits.length, 1, "attacker gets HIT_CONFIRMED");
+  const hit = rec.actions.find((e) => e.action === "HEX_TONGUE_HIT");
+  assert.ok(hit, "HEX_TONGUE_HIT broadcast");
+  assert.strictEqual(hit.tid, "B", "victim id travels with the confirm");
+  assert.strictEqual(rec.pulls.length, 1, "victim told to start the pull");
+  assert.deepStrictEqual(rec.pulls[0], { victimId: "B", ev: { attackerId: "A", active: true } });
+  // A second shot while pulling is refused (one attack at a time).
+  const before = rec.actions.length;
+  fire(wm, a, WeaponActionType.HEX_TONGUE_FIRE, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 0.9, z: 10 }));
+  assert.strictEqual(rec.actions.length, before, "no second tongue while pulling");
+});
+
+test("hex sniper: arrival = bite damage + knockback + HEX_BITE + pull stop", () => {
+  const { wm, rec, addPlayer, advance } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  const b = addPlayer("B", 3, 0.9, 10);
+  wm.handleEquip(a, NetworkWeaponId.HEX_SNIPER);
+  fire(wm, a, WeaponActionType.HEX_TONGUE_FIRE, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 0.9, z: 10 }));
+  // Still far: no bite yet.
+  advance(50);
+  wm.tick(0.05);
+  assert.ok(!rec.actions.some((e) => e.action === "HEX_BITE"), "no bite while far");
+  // The victim's client reeled it in next to the shooter.
+  b.z = 16 - W.hexSniper.pullStopDistance;
+  advance(50);
+  wm.tick(0.05);
+  assert.ok(rec.actions.some((e) => e.action === "HEX_BITE" && e.tid === "B"), "HEX_BITE broadcast");
+  assert.strictEqual(
+    b.health,
+    200 - W.hexSniper.tongueDamage - W.hexSniper.biteDamage,
+    "bite deals flat damage once",
+  );
+  assert.strictEqual(rec.impulses.length, 1, "bite knockback sent to the victim");
+  assert.ok(rec.impulses[0].impulse.z < 0, "knocked AWAY from the shooter");
+  assert.strictEqual(rec.pulls.length, 2, "pull start + stop");
+  assert.deepStrictEqual(rec.pulls[1].ev, { attackerId: null, active: false });
+  // The tongue is free again → a new shot is accepted after the cooldown.
+  advance(W.hexSniper.fireCooldown * 1000 + 10);
+  const before = rec.actions.length;
+  fire(wm, a, WeaponActionType.HEX_TONGUE_FIRE, eyeOf(a), { x: 0, y: 0, z: 1 });
+  assert.ok(rec.actions.length > before, "re-armed after the bite");
+});
+
+test("hex sniper: wall in the way → HEX_TONGUE_MISS, no damage, no pull", () => {
+  const { wm, rec, addPlayer } = makeWorld();
+  // Shooter inside the east terrace ruins mass, target behind it (+z).
+  const a = addPlayer("A", 19, 0.9, 33);
+  const b = addPlayer("B", 19, 0.9, 39);
+  wm.handleEquip(a, NetworkWeaponId.HEX_SNIPER);
+  fire(wm, a, WeaponActionType.HEX_TONGUE_FIRE, eyeOf(a), { x: 0, y: 0, z: 1 });
+  assert.strictEqual(b.health, 200, "wall blocks the tongue");
+  const miss = rec.actions.find((e) => e.action === "HEX_TONGUE_MISS");
+  assert.ok(miss && typeof miss.hx === "number", "miss confirm carries the tip end point");
+  assert.strictEqual(rec.pulls.length, 0, "no pull on a miss");
+});
+
+test("hex sniper: stall / attacker death release the victim (HEX_PULL_END)", () => {
+  const { wm, rec, addPlayer, advance } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  addPlayer("B", 3, 0.9, 10);
+  wm.handleEquip(a, NetworkWeaponId.HEX_SNIPER);
+  fire(wm, a, WeaponActionType.HEX_TONGUE_FIRE, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 0.9, z: 10 }));
+  // Victim never moves (blocked by a wall) → stall release.
+  for (let i = 0; i < 20; i++) {
+    advance(50);
+    wm.tick(0.05);
+  }
+  assert.ok(rec.actions.some((e) => e.action === "HEX_PULL_END"), "stall → HEX_PULL_END");
+  assert.deepStrictEqual(rec.pulls[rec.pulls.length - 1].ev, { attackerId: null, active: false });
+  assert.ok(!rec.actions.some((e) => e.action === "HEX_BITE"), "no bite on a stalled pull");
+
+  // New grab, then the attacker dies mid-pull → victim released.
+  advance(W.hexSniper.fireCooldown * 1000 + 10);
+  fire(wm, a, WeaponActionType.HEX_TONGUE_FIRE, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 0.9, z: 10 }));
+  const pullsBefore = rec.pulls.length;
+  assert.deepStrictEqual(rec.pulls[pullsBefore - 1].ev, { attackerId: "A", active: true });
+  wm.onPlayerDeath("A");
+  assert.strictEqual(rec.pulls.length, pullsBefore + 1, "death releases the victim");
+  assert.deepStrictEqual(rec.pulls[pullsBefore].ev, { attackerId: null, active: false });
 });
 
 console.log(`\n${passed} weapon tests passed`);

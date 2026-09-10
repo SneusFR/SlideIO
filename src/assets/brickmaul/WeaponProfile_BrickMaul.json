@@ -1,0 +1,301 @@
+{
+  "id": "brickmaul",
+  "version": "original4-onehand-r6-2026-09-10",
+  "sourceRig": {
+    "bones": 37,
+    "digitsPerHand": 4,
+    "replaceCharacter": false,
+    "replaceCommonArms": false,
+    "characterHeightInGame": 2.25
+  },
+  "assets": {
+    "weapon": "BrickMaul_Weapon.glb",
+    "fpPoses": "Potato_FP_BrickMaul.glb",
+    "tpPoses": "Potato_TP_BrickMaul.glb"
+  },
+  "camera": {
+    "verticalFovDegrees": 65,
+    "near": 0.01,
+    "far": 100
+  },
+  "mounts": {
+    "fp": {
+      "bone": "Weapon_R",
+      "matrixColumnMajor": [
+        -0.06346737439957387,
+        0.055654764912696636,
+        0.2982858770797435,
+        0.0,
+        -0.004725160564530008,
+        0.3045226706842506,
+        -0.05782387240401763,
+        0.0,
+        -0.30339672633136383,
+        -0.016385080972852697,
+        -0.061497644378426725,
+        0.0,
+        -0.034219933763052435,
+        -0.0386056005390526,
+        0.029186126358399622,
+        1.0
+      ]
+    },
+    "tp": {
+      "bone": "Weapon_R",
+      "matrixColumnMajor": [
+        -0.2484059379258936,
+        -0.029222833282832265,
+        -0.18314072343081364,
+        0.0,
+        -0.012522267962536169,
+        0.308071588599536,
+        -0.032172567474373505,
+        0.0,
+        0.1850343518587263,
+        -0.018382279853698977,
+        -0.24804116938077256,
+        0.0,
+        -0.0353606197965628,
+        -0.03868701719296719,
+        0.028850652395916776,
+        1.0
+      ]
+    }
+  },
+  "clips": {
+    "fp": [
+      {
+        "kind": "Hold",
+        "clip": "FP_BrickMaul_Hold",
+        "duration": 2.4,
+        "loop": true,
+        "channels": 74
+      },
+      {
+        "kind": "Run",
+        "clip": "FP_BrickMaul_Run",
+        "duration": 0.72,
+        "loop": true,
+        "channels": 74
+      },
+      {
+        "kind": "Equip",
+        "clip": "FP_BrickMaul_Equip",
+        "duration": 0.65,
+        "loop": false,
+        "channels": 74
+      },
+      {
+        "kind": "Unequip",
+        "clip": "FP_BrickMaul_Unequip",
+        "duration": 0.3,
+        "loop": false,
+        "channels": 74
+      },
+      {
+        "kind": "Inspect",
+        "clip": "FP_BrickMaul_Inspect",
+        "duration": 3.6,
+        "loop": false,
+        "channels": 74
+      },
+      {
+        "kind": "Whirlwind",
+        "clip": "FP_BrickMaul_Whirlwind",
+        "duration": 1.35,
+        "loop": false,
+        "channels": 74
+      },
+      {
+        "kind": "Slam_Start",
+        "clip": "FP_BrickMaul_Slam_Start",
+        "duration": 0.2,
+        "loop": false,
+        "channels": 74
+      },
+      {
+        "kind": "Slam_Dive",
+        "clip": "FP_BrickMaul_Slam_Dive",
+        "duration": 0.4,
+        "loop": true,
+        "channels": 74
+      },
+      {
+        "kind": "Slam_Land",
+        "clip": "FP_BrickMaul_Slam_Land",
+        "duration": 0.82,
+        "loop": false,
+        "channels": 74
+      }
+    ],
+    "tp": [
+      {
+        "kind": "Hold",
+        "clip": "TP_BrickMaul_Hold",
+        "duration": 2.4,
+        "loop": true,
+        "channels": 74
+      },
+      {
+        "kind": "Run",
+        "clip": "TP_BrickMaul_Run",
+        "duration": 0.72,
+        "loop": true,
+        "channels": 74
+      },
+      {
+        "kind": "Equip",
+        "clip": "TP_BrickMaul_Equip",
+        "duration": 0.65,
+        "loop": false,
+        "channels": 74
+      },
+      {
+        "kind": "Unequip",
+        "clip": "TP_BrickMaul_Unequip",
+        "duration": 0.3,
+        "loop": false,
+        "channels": 74
+      },
+      {
+        "kind": "Inspect",
+        "clip": "TP_BrickMaul_Inspect",
+        "duration": 3.6,
+        "loop": false,
+        "channels": 74
+      },
+      {
+        "kind": "Whirlwind",
+        "clip": "TP_BrickMaul_Whirlwind",
+        "duration": 1.35,
+        "loop": false,
+        "channels": 74
+      },
+      {
+        "kind": "Slam_Start",
+        "clip": "TP_BrickMaul_Slam_Start",
+        "duration": 0.2,
+        "loop": false,
+        "channels": 74
+      },
+      {
+        "kind": "Slam_Dive",
+        "clip": "TP_BrickMaul_Slam_Dive",
+        "duration": 0.4,
+        "loop": true,
+        "channels": 74
+      },
+      {
+        "kind": "Slam_Land",
+        "clip": "TP_BrickMaul_Slam_Land",
+        "duration": 0.82,
+        "loop": false,
+        "channels": 74
+      }
+    ]
+  },
+  "upperBodyMask": [
+    "UpperArm_R",
+    "LowerArm_R",
+    "Hand_R",
+    "Index_R_1",
+    "Middle_R_1",
+    "Ring_R_1",
+    "Thumb_R_1",
+    "Weapon_R"
+  ],
+  "actions": {
+    "whirlwind": {
+      "duration": 1.35,
+      "activeStart": 0.2,
+      "activeEnd": 1.04,
+      "turns": 3,
+      "damagePerVictim": 50,
+      "maxHitsPerVictimPerAttack": 1,
+      "preserveAttackerHorizontalVelocity": true,
+      "cameraSpin": {
+        "enabled": true,
+        "axis": "worldY",
+        "sign": 1,
+        "turns": 3,
+        "start": 0.2,
+        "end": 1.04,
+        "attackDuration": 1.35,
+        "rampFraction": 0.08,
+        "progressCurve": "symmetricPiecewiseQuadraticRamps",
+        "angleMode": "unwrapped",
+        "holdFullAngleThroughRecovery": true,
+        "renderOnly": true,
+        "fpRootTurns": 0,
+        "preserveMouseYawPitch": true,
+        "preserveWorldVelocity": true,
+        "sampler": "sampleBrickMaulWhirlwindYaw"
+      }
+    },
+    "slam": {
+      "startDuration": 0.2,
+      "diveLoopDuration": 0.4,
+      "landClipDuration": 0.82,
+      "enterLandAt": 0.1,
+      "recoveryAfterGroundContact": 0.72,
+      "damagePerVictim": 50,
+      "trigger": "onSlamLanded from actual movement collision; no timed ground prediction",
+      "contactFaceWeaponLocal": "TP: +X silver end cap flat on ground. FP: -X silver end cap down, with eyes facing camera.",
+      "fpContactOrientation": "Head left of the right hand, eyes toward camera throughout strike and recovery; only a 90 degree tilt back to upright, without yaw reversal. The FP pose is cosmetic and does not place FP geometry on the physical world floor."
+    },
+    "inspect": {
+      "fpClip": "FP_BrickMaul_Inspect",
+      "tpClip": "TP_BrickMaul_Inspect",
+      "duration": 3.6,
+      "tpLayer": "full-body while stationary; do not replace with hold mask",
+      "replicateStartAndCancel": true
+    }
+  },
+  "eyes": {
+    "L": {
+      "bone": "Pupil_L",
+      "whiteCenterWeaponLocal": [
+        -0.23899999260902405,
+        0.8810000419616699,
+        0.1785000041127205
+      ],
+      "pupilCenterWeaponLocal": [
+        -0.2239999994635582,
+        0.8550000190734863,
+        0.19673985242843628
+      ],
+      "restOffset2D": [
+        0.01499999314546585,
+        -0.026000022888183594
+      ],
+      "radius": 0.037999988257884976
+    },
+    "R": {
+      "bone": "Pupil_R",
+      "whiteCenterWeaponLocal": [
+        0.23900000005960464,
+        0.8810000419616699,
+        0.1785000041127205
+      ],
+      "pupilCenterWeaponLocal": [
+        0.22899999469518661,
+        0.8619999885559082,
+        0.19876684248447418
+      ],
+      "restOffset2D": [
+        -0.01000000536441803,
+        -0.01900005340576172
+      ],
+      "radius": 0.03699999368190765
+    }
+  },
+  "notes": [
+    "One right-hand grip throughout; no offhand constraint.",
+    "Mounts include the complete weapon scale: apply exactly once to the whole GLB scene.",
+    "FP uses the existing common arms and their camera-space conversion.",
+    "TP Root yaw and FP world render camera yaw share the same three-turn curve. Never add this yaw to the FP Root or movement/input yaw.",
+    "FP sleeve correction requires all FP animation tracks, including Shoulder_R. The TP locomotion mask is not an FP track filter.",
+    "r5: compact FP slam framing and refined right-finger rotations in both views; original four-digit geometry and constant mounts preserved.",
+    "r6: camera follows the three TP turns during Whirlwind; the FP clip holds the hammer out relative to the spinning camera, with no repeated swipes or double yaw."
+  ]
+}

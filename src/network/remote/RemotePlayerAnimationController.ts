@@ -45,7 +45,36 @@ export interface RemoteCharacterClips {
   armedJump: THREE.AnimationClip;
   armedDash: THREE.AnimationClip;
   armedSlide: THREE.AnimationClip;
+  /**
+   * PROFILE-keyed armed pose sets (WeaponViewProfile.id → clips) for
+   * weapons migrated to the shared presentation system with their own TP
+   * library (Brick Maul: "brickmaul"). The HexSniper keeps the dedicated
+   * `armed*` fields above (selected through the "hexsniper" id).
+   */
+  profiles?: Record<string, ArmedProfileClips>;
 }
+
+/** One weapon profile's TP pose set (locomotion composites + actions). */
+export interface ArmedProfileClips {
+  /** Looping hold (full clip). */
+  hold: THREE.AnimationClip;
+  /** Masked run composite (body from locomotion, weapon layer animated). */
+  run: THREE.AnimationClip;
+  /** Masked composites with the hold grip frozen at its first sample. */
+  jump: THREE.AnimationClip;
+  jumpVariants: THREE.AnimationClip[];
+  dash: THREE.AnimationClip;
+  slide: THREE.AnimationClip;
+  /** Full-body one-shots (played through the override API). */
+  equip: THREE.AnimationClip | null;
+  unequip: THREE.AnimationClip | null;
+  inspect: THREE.AnimationClip | null;
+  /** Attack / phase clips by profile action key (whirlwind, slamStart…). */
+  actions: Record<string, THREE.AnimationClip>;
+}
+
+/** Profile id of the HexSniper's dedicated TP set (RemoteCharacterClips.armed*). */
+export const HEXSNIPER_PROFILE_ID = "hexsniper";
 
 /** Blend durations (seconds) — short: SlideIO is a fast FPS. */
 const FADE = { idle: 0.18, run: 0.12, jump: 0.08, slide: 0.08, dash: 0.06 };
@@ -119,7 +148,8 @@ export class RemotePlayerAnimationController {
   private current: THREE.AnimationAction;
   private currentSlot: Slot = "idle";
   private currentState = NetworkMovementState.IDLE;
-  private armed = false;
+  /** Active armed PROFILE id (null = unarmed locomotion). */
+  private armedProfile: string | null = null;
   private aiming = false;
   private readonly jumpPose = new JumpPresentation();
   private readonly slidePose = new SlidePresentation();
@@ -128,6 +158,21 @@ export class RemotePlayerAnimationController {
   private readonly landingsUnarmed: THREE.AnimationAction[];
   private readonly landingsArmed: THREE.AnimationAction[];
   private jumpVariant = -1;
+
+  /** Per-profile action sets (built once per avatar from the cached clips). */
+  private readonly profileSets = new Map<string, ProfileActionSet>();
+  /**
+   * FULL-BODY OVERRIDE (attack / smash phase / inspection / equip): the
+   * clip owns every bone it animates with priority over the locomotion
+   * slot; procedural spine offsets are suspended meanwhile. Movement keeps
+   * driving the world position. Cleared explicitly or when a one-shot
+   * ends (then the locomotion matching the real state comes back).
+   */
+  private override: {
+    action: THREE.AnimationAction;
+    onFinished: (() => void) | null;
+    exitFade: number;
+  } | null = null;
 
   // Bones for procedural pitch look + lean + strafe twist (found by name).
   private readonly spineBones: THREE.Bone[] = [];
@@ -218,6 +263,36 @@ export class RemotePlayerAnimationController {
     this.landingsUnarmed = unarmedJumps.map(c => oneShot(landingClip(c)));
     this.landingsArmed = armedJumps.map(c => oneShot(landingClip(c)));
     this.armedAim = loop(clips.armedAim);
+
+    // Profile-keyed sets (Brick Maul…): locomotion composites + one action
+    // per clip (LoopOnce+clamp for one-shots, LoopRepeat for loops such as
+    // Slam_Dive). Each clip gets ITS OWN action — never shared.
+    for (const [id, p] of Object.entries(clips.profiles ?? {})) {
+      const jumps = p.jumpVariants.length ? p.jumpVariants : [p.jump];
+      const actions = new Map<string, THREE.AnimationAction>();
+      for (const [key, clip] of Object.entries(p.actions)) {
+        const isLoop = /dive/i.test(key); // Slam_Dive loops during the descent
+        actions.set(key, isLoop ? loop(clip) : oneShot(clip));
+      }
+      this.profileSets.set(id, {
+        slots: {
+          idle: loop(p.hold),
+          run: loop(p.run),
+          jump: oneShot(p.jump),
+          land: oneShot(landingClip(p.jump)),
+          dash: oneShot(p.dash),
+          slide: oneShot(p.slide),
+          slideExit: oneShot(landingClip(p.slide)),
+        },
+        jumps: jumps.map(oneShot),
+        landings: jumps.map((c) => oneShot(landingClip(c))),
+        equip: p.equip ? oneShot(p.equip) : null,
+        unequip: p.unequip ? oneShot(p.unequip) : null,
+        inspect: p.inspect ? oneShot(p.inspect) : null,
+        actions,
+      });
+    }
+
     this.current = this.unarmed.idle;
     this.current.play();
 
@@ -250,9 +325,30 @@ export class RemotePlayerAnimationController {
    * the current pose without waiting for the next state change.
    */
   setArmed(armed: boolean): void {
-    if (this.armed === armed) return;
-    this.armed = armed;
+    this.setArmedProfile(armed ? HEXSNIPER_PROFILE_ID : null);
+  }
+
+  /**
+   * Select the armed pose set BY PROFILE (HexSniper two-hand set, Brick
+   * Maul one-hand masked set…) or null for the unarmed locomotion. Any
+   * running full-body override is dropped (a weapon change cancels it).
+   */
+  setArmedProfile(id: string | null): void {
+    if (id !== null && id !== HEXSNIPER_PROFILE_ID && !this.profileSets.has(id)) id = null;
+    if (this.armedProfile === id) return;
+    this.armedProfile = id;
+    this.clearOverride(0.1);
     this.refreshCurrentSlot();
+  }
+
+  /** Active armed profile id (null = unarmed). */
+  get armedProfileId(): string | null {
+    return this.armedProfile;
+  }
+
+  /** True while a full-body override (attack / inspect / equip) plays. */
+  get overriding(): boolean {
+    return this.override !== null;
   }
 
   /**
@@ -263,7 +359,69 @@ export class RemotePlayerAnimationController {
   setAiming(aiming: boolean): void {
     if (this.aiming === aiming) return;
     this.aiming = aiming;
-    if (this.armed && this.currentSlot === "idle") this.refreshCurrentSlot();
+    if (this.armedProfile === HEXSNIPER_PROFILE_ID && this.currentSlot === "idle") {
+      this.refreshCurrentSlot();
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // FULL-BODY OVERRIDE API (profile actions / inspect / equip)
+  // ------------------------------------------------------------------
+
+  /**
+   * Play a profile clip with priority over the locomotion: `kind` selects
+   * an action key ("whirlwind", "slamStart"…) or one of "equip" /
+   * "unequip" / "inspect". `startAt` = entry time (late arrivals resume at
+   * the elapsed phase). One-shots fire `onFinished` once at their end (never
+   * after a cancel / replacement). Returns false if the clip is unknown.
+   */
+  playOverride(
+    kind: string,
+    options: { startAt?: number; fadeIn?: number; exitFade?: number; onFinished?: () => void } = {},
+  ): boolean {
+    if (!this.armedProfile) return false;
+    const set = this.profileSets.get(this.armedProfile);
+    if (!set) return false;
+    const action =
+      kind === "equip" ? set.equip : kind === "unequip" ? set.unequip : kind === "inspect" ? set.inspect : set.actions.get(kind) ?? null;
+    if (!action) return false;
+    if (this.override) this.override.onFinished = null; // invalidate stale end
+    const fade = options.fadeIn ?? 0.1;
+    action.reset();
+    action.time = Math.max(0, Math.min(options.startAt ?? 0, action.getClip().duration - 1e-3));
+    action.setEffectiveTimeScale(1).setEffectiveWeight(1);
+    action.paused = false;
+    if (this.current !== action) {
+      if (fade > 0) this.current.fadeOut(fade);
+      else this.current.stop();
+    }
+    if (fade > 0) action.fadeIn(fade);
+    action.play();
+    this.current = action;
+    this.override = { action, onFinished: options.onFinished ?? null, exitFade: options.exitFade ?? 0.12 };
+    // Reset the procedural spine offsets right away — the clip owns the
+    // torso for its whole duration.
+    this.revertSpineOffsets();
+    return true;
+  }
+
+  /** Drop the override and return to the locomotion of the real state. */
+  clearOverride(fade = 0.12): void {
+    if (!this.override) return;
+    this.override.onFinished = null;
+    this.override = null;
+    const next = this.actionFor(this.currentSlot);
+    next.reset();
+    this.seekEntry(next);
+    next.play();
+    if (fade > 0) this.current.crossFadeTo(next, fade, false);
+    else this.current.stop();
+    this.current = next;
+  }
+
+  /** Elapsed time of the running override (s), or -1. */
+  get overrideTime(): number {
+    return this.override ? this.override.action.time : -1;
   }
 
   /**
@@ -286,6 +444,38 @@ export class RemotePlayerAnimationController {
       this.jumpPose.start(verticalVelocity);
     }
     if (state === NetworkMovementState.SLIDING && state !== this.currentState) this.slidePose.start();
+
+    // ---- FULL-BODY OVERRIDE: the clip has priority over the locomotion.
+    // The real state keeps being tracked (slot bookkeeping only, no
+    // crossfade) so the exit lands on the locomotion of the ACTUAL state.
+    if (this.override) {
+      if (state !== this.currentState) this.currentSlot = slotForState(state);
+      this.currentState = state;
+      if (this.currentSlot === "jump") this.jumpPose.update(dt, verticalVelocity);
+      else if (this.currentSlot === "slide") this.slidePose.update(dt, horizontalSpeed);
+      const ov = this.override;
+      const clip = ov.action.getClip();
+      const oneShot = ov.action.loop === THREE.LoopOnce;
+      if (oneShot && ov.action.time >= clip.duration - 1e-4) {
+        const cb = ov.onFinished;
+        this.clearOverride(ov.exitFade);
+        cb?.();
+      }
+      // Procedural spine offsets are SUSPENDED (the clip owns the torso);
+      // the strafe leg-yaw eases back to 0 (the Root rotates visually in
+      // Whirlwind — never rotated a second time here).
+      this.revertSpineOffsets();
+      const lk = 1 - Math.exp(-LEG_YAW_SMOOTHING * dt);
+      this.smoothedLegYaw += (0 - this.smoothedLegYaw) * lk;
+      this.model.rotation.y = this.smoothedLegYaw;
+      this.mixer.update(dt);
+      const k = 1 - Math.exp(-POSE_SMOOTHING * dt);
+      const targetRaise = state === NetworkMovementState.SLIDING ? this.slideRaise : 0;
+      this.smoothedRaise += (targetRaise - this.smoothedRaise) * k;
+      this.model.position.y = this.modelRestY + this.smoothedRaise;
+      return;
+    }
+
     if (state !== this.currentState) this.transitionTo(state);
     this.currentState = state;
     if (this.currentSlot === "jump") {
@@ -352,13 +542,7 @@ export class RemotePlayerAnimationController {
     // forever (the continuous-roll bug). Reverting first makes the offsets
     // truly per-frame for tracked AND untracked bones alike (tracked bones
     // simply get overwritten by the mixer right after — harmless).
-    for (let i = 0; i < this.spineBones.length; i++) {
-      const bone = this.spineBones[i];
-      bone.rotation.x -= this.appliedSpineX[i];
-      bone.rotation.y -= this.appliedSpineY[i];
-      this.appliedSpineX[i] = 0;
-      this.appliedSpineY[i] = 0;
-    }
+    this.revertSpineOffsets();
 
     this.mixer.update(dt);
 
@@ -423,27 +607,44 @@ export class RemotePlayerAnimationController {
   }
 
   dispose(): void {
+    if (this.override) this.override.onFinished = null;
+    this.override = null;
     this.mixer.stopAllAction();
     this.mixer.uncacheRoot(this.model);
   }
 
   // ------------------------------------------------------------------
 
-  /** Action for a slot under the CURRENT armed/aiming presentation. */
+  /** Undo the procedural spine offsets applied last frame (see fields). */
+  private revertSpineOffsets(): void {
+    for (let i = 0; i < this.spineBones.length; i++) {
+      const bone = this.spineBones[i];
+      bone.rotation.x -= this.appliedSpineX[i];
+      bone.rotation.y -= this.appliedSpineY[i];
+      this.appliedSpineX[i] = 0;
+      this.appliedSpineY[i] = 0;
+    }
+  }
+
+  /** Action for a slot under the CURRENT armed profile / aiming presentation. */
   private actionFor(slot: Slot): THREE.AnimationAction {
+    const profile = this.armedProfile ? this.profileSets.get(this.armedProfile) ?? null : null;
+    const hex = this.armedProfile === HEXSNIPER_PROFILE_ID;
     if (slot === "jump" || slot === "land") {
       const list = slot === "jump"
-        ? (this.armed ? this.jumpsArmed : this.jumpsUnarmed)
-        : (this.armed ? this.landingsArmed : this.landingsUnarmed);
+        ? (profile ? profile.jumps : hex ? this.jumpsArmed : this.jumpsUnarmed)
+        : (profile ? profile.landings : hex ? this.landingsArmed : this.landingsUnarmed);
       return list[Math.max(0, this.jumpVariant) % list.length];
     }
-    if (!this.armed) return this.unarmed[slot];
+    if (profile) return profile.slots[slot];
+    if (!hex) return this.unarmed[slot];
     if (slot === "idle" && this.aiming) return this.armedAim;
     return this.armedSet[slot];
   }
 
   /** Re-resolve the current slot's action after an armed/aiming change. */
   private refreshCurrentSlot(fade = FADE.idle): void {
+    if (this.override) return; // the override keeps the body until it ends
     const next = this.actionFor(this.currentSlot);
     if (next === this.current) return;
     next.reset();
@@ -471,29 +672,24 @@ export class RemotePlayerAnimationController {
   }
 
   private transitionTo(state: NetworkMovementState): void {
-    let slot: Slot;
+    let slot: Slot = slotForState(state);
     let fade: number;
-    switch (state) {
-      case NetworkMovementState.RUNNING:
-        slot = "run";
+    switch (slot) {
+      case "run":
         fade = FADE.run;
         break;
-      case NetworkMovementState.DASHING:
+      case "dash":
         // Real Dash clip — even when the dash starts mid-air (the sender's
         // state machine already prioritizes DASHING over !grounded).
-        slot = "dash";
         fade = FADE.dash;
         break;
-      case NetworkMovementState.AIRBORNE:
-        slot = "jump";
+      case "jump":
         fade = FADE.jump;
         break;
-      case NetworkMovementState.SLIDING:
-        slot = "slide";
+      case "slide":
         fade = FADE.slide;
         break;
       default:
-        slot = "idle";
         fade = FADE.idle;
         break;
     }
@@ -525,6 +721,33 @@ export class RemotePlayerAnimationController {
     this.current.crossFadeTo(next, fade, false);
     this.current = next;
   }
+}
+
+/** Base locomotion slot of a network movement state. */
+function slotForState(state: NetworkMovementState): Slot {
+  switch (state) {
+    case NetworkMovementState.RUNNING:
+      return "run";
+    case NetworkMovementState.DASHING:
+      return "dash";
+    case NetworkMovementState.AIRBORNE:
+      return "jump";
+    case NetworkMovementState.SLIDING:
+      return "slide";
+    default:
+      return "idle";
+  }
+}
+
+/** Per-avatar actions of one armed profile (built once in the constructor). */
+interface ProfileActionSet {
+  slots: Record<Slot, THREE.AnimationAction>;
+  jumps: THREE.AnimationAction[];
+  landings: THREE.AnimationAction[];
+  equip: THREE.AnimationAction | null;
+  unequip: THREE.AnimationAction | null;
+  inspect: THREE.AnimationAction | null;
+  actions: Map<string, THREE.AnimationAction>;
 }
 
 /** Wrap an unbounded angle into [-PI, PI]. */

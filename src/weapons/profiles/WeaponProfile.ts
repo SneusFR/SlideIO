@@ -27,19 +27,54 @@ export interface WeaponViewProfile {
   weaponUrl: string;
   /** FP pose library GLB (clips only, no meshes) for the common arms. */
   fpPosesUrl: string;
+  /**
+   * OPTIONAL TP pose library GLB (clips only) for the third-person
+   * character. Profiles without it (HexSniper) keep their dedicated TP
+   * library loaded by PotatoCharacter.
+   */
+  tpPosesUrl?: string;
   /** Column-major mount matrix under the FP rig's Weapon_R socket. */
   fpMount: number[];
   /** Column-major mount matrix under the TP character's Weapon_R socket. */
   tpMount: number[];
-  /** FP arm clip names (resolved on the shared FP arms rig). */
+  /**
+   * FP arm clip names (resolved on the shared FP arms rig).
+   * `aim`/`raise`/`lower` are the authored ADS transitions — OPTIONAL: a
+   * weapon without ADS (the hammer) simply never enters the straight pose.
+   */
   fpClips: {
     hold: string;
     run: string;
-    aim: string;
-    raise: string;
-    lower: string;
+    aim?: string;
+    raise?: string;
+    lower?: string;
     inspect?: string;
+    /** Real equip transition (one-shot, then Hold/Run). */
+    equip?: string;
+    /** Real unequip transition (one-shot, then detachment). */
+    unequip?: string;
   };
+  /**
+   * OPTIONAL priority ACTION clips (attacks) played through the
+   * ViewmodelSystem action API — each gets its own AnimationAction (never a
+   * shared one with contradictory loop modes). Keys are weapon-specific.
+   */
+  fpActions?: Record<string, { clip: string; loop: boolean }>;
+  /** TP clip names (same keys as fpClips / fpActions, TP prefix). */
+  tpClips?: {
+    hold: string;
+    run: string;
+    equip?: string;
+    unequip?: string;
+    inspect?: string;
+    actions?: Record<string, { clip: string; loop: boolean }>;
+  };
+  /**
+   * OPTIONAL TP locomotion mask: bones owned by the weapon-hold layer while
+   * the body/legs/head come from the unarmed locomotion clips. Taken
+   * VERBATIM from the authored profile JSON (`upperBodyMask`).
+   */
+  upperBodyMask?: readonly string[];
   /** Weapon-internal inspection clip (played on the weapon's own mixer). */
   weaponInspectClip?: string;
   /** Inspection duration (seconds) — arms + weapon clips are equal. */
