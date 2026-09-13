@@ -119,7 +119,8 @@ export class HammerViewmodel {
 
   /**
    * Attach the maul to the shared arms and make the FP pass visible.
-   * `withClip` plays the 0.65 s Equip transition (slot switch); a melee
+   * `withClip` plays the Equip transition (slot switch; 0.65 s clip at
+   * BRICKMAUL_TIMING.equipTimeScale ≈ 0.36 s effective); a melee
    * override from the primary skips it so the attack starts on its
    * gameplay event, never delayed.
    */
@@ -134,6 +135,7 @@ export class HammerViewmodel {
       this.eyes?.reset();
       await this.viewmodel.equip(BrickMaulProfile, this.weapon, {
         playEquipClip: withClip,
+        equipTimeScale: BRICKMAUL_TIMING.equipTimeScale,
         onEquipped,
       });
       if (token !== this.equipToken) return;

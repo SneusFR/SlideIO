@@ -263,27 +263,39 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
 
     // ---- HexSniper TP pose library (no meshes — clips only) ----
     const armedHoldSrc = byName(posesGltf.animations, "TP_Hold_HexSniper");
-    const armedRun = byName(posesGltf.animations, "TP_Run_HexSniper");
+    const armedRunSrc = byName(posesGltf.animations, "TP_Run_HexSniper");
     const armedAim = byName(posesGltf.animations, "TP_Aim_HexSniper");
     const armedRaise = byName(posesGltf.animations, "TP_Raise_HexSniper");
     const armedLower = byName(posesGltf.animations, "TP_Lower_HexSniper");
-    if (!armedHoldSrc || !armedRun || !armedAim || !armedRaise || !armedLower) {
+    if (!armedHoldSrc || !armedRunSrc || !armedAim || !armedRaise || !armedLower) {
       throw new Error("HexSniper TP pose clips missing");
     }
 
-    // Armed jump/dash/slide: MASKED composites cached once on the shared
-    // asset. Track ownership (explicit, per the integration contract):
+    // The TP grip the other players see is TP_Aim (weapon held STRAIGHT,
+    // barrel along the aim direction) — the FP viewmodel never shows the
+    // lowered TP_Hold carry, so the remote avatar must not either (a hit
+    // must come from where the gun visibly points). TP_Hold stays loaded
+    // as the Raise/Lower transition endpoint only. TP_Aim is a static pose
+    // (Weapon_R world orientation drifts 0° over its 2 s; 55° away from
+    // TP_Hold) — its first sample is the constant grip for every composite.
+    const armedGrip = armedAim;
+
+    // Armed run/jump/dash/slide: MASKED composites cached once on the
+    // shared asset. Track ownership (explicit, per the integration
+    // contract):
     //   - BODY (base locomotion clip): Hips, Spine, Spine_1, Chest, Neck,
-    //     Head, Plant_Root/Tip, legs + feet — the full-body motion.
-    //   - ARMS (TP_Hold pose, first frame, constant): shoulders, arms,
+    //     Head, Plant_Root/Tip, legs + feet — the full-body motion. The run
+    //     body is TP_Run_HexSniper (hips/legs calibrated for the carry).
+    //   - ARMS (TP_Aim pose, first frame, constant): shoulders, arms,
     //     hands, fingers and the animated Weapon_R socket correction —
-    //     the two-hand grip survives every airborne/dash/slide state.
+    //     the straight two-hand grip survives every locomotion state.
     const jumpVariants = [jump, ...gltf.animations.filter(c =>
       c.name === "Jump_LeftLead" || c.name === "Jump_RightLead")];
-    const armedJumpVariants = jumpVariants.map(c => buildArmedVariant(c, armedHoldSrc));
+    const armedRun = buildArmedVariant(armedRunSrc, armedGrip);
+    const armedJumpVariants = jumpVariants.map(c => buildArmedVariant(c, armedGrip));
     const armedJump = armedJumpVariants[0];
-    const armedDash = buildArmedVariant(dash, armedHoldSrc);
-    const armedSlide = stabilizeSlideGrip(buildArmedVariant(slide, armedHoldSrc), armedHoldSrc, template);
+    const armedDash = buildArmedVariant(dash, armedGrip);
+    const armedSlide = stabilizeSlideGrip(buildArmedVariant(slide, armedGrip), armedGrip, template);
 
     // ---- Brick Maul TP profile set (Potato_TP_BrickMaul.glb) ----
     // Locomotion uses EXACTLY the authored upperBodyMask (right arm + right
@@ -299,21 +311,43 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       const mask = new Set<string>(BrickMaulProfile.upperBodyMask);
       const masked = (base: THREE.AnimationClip) => buildMaskedVariant(base, maulHold, mask, "_BrickMaul");
       const maulJumpVariants = jumpVariants.map(masked);
+      const maulRunComposite = buildMaskedVariant(run, maulRun, mask, "_BrickMaul", true);
+      const maulDash = masked(dash);
+      const maulSlide = masked(slide);
       const actions: Record<string, THREE.AnimationClip> = {};
       for (const [key, def] of Object.entries(BrickMaulProfile.tpClips!.actions ?? {})) {
         const clip = byName(maulClips, def.clip);
         if (clip) actions[key] = clip;
       }
+      const maulInspect = byName(maulClips, BrickMaulProfile.tpClips!.inspect!) ?? null;
+      // Inspection that survives movement: the Inspect clip only animates
+      // the arms + head (its body chain is the Hold body, verified 0° on
+      // every body bone), so it is split into an UPPER layer played on top
+      // of LOWER-body locomotion variants (the same composites minus the
+      // layer bones). Disjoint track sets → both actions at weight 1 with
+      // no mixer renormalisation, each clip on its own clock.
+      const lowerBody = maulInspect
+        ? {
+            hold: stripBones(maulHold, INSPECT_UPPER_BONES, "_Lower"),
+            run: stripBones(maulRunComposite, INSPECT_UPPER_BONES, "_Lower"),
+            jump: stripBones(maulJumpVariants[0], INSPECT_UPPER_BONES, "_Lower"),
+            jumpVariants: maulJumpVariants.map((c) => stripBones(c, INSPECT_UPPER_BONES, "_Lower")),
+            dash: stripBones(maulDash, INSPECT_UPPER_BONES, "_Lower"),
+            slide: stripBones(maulSlide, INSPECT_UPPER_BONES, "_Lower"),
+          }
+        : null;
       brickmaul = {
         hold: maulHold,
-        run: buildMaskedVariant(run, maulRun, mask, "_BrickMaul", true),
+        run: maulRunComposite,
         jump: maulJumpVariants[0],
         jumpVariants: maulJumpVariants,
-        dash: masked(dash),
-        slide: masked(slide),
+        dash: maulDash,
+        slide: maulSlide,
         equip: byName(maulClips, BrickMaulProfile.tpClips!.equip!) ?? null,
         unequip: byName(maulClips, BrickMaulProfile.tpClips!.unequip!) ?? null,
-        inspect: byName(maulClips, BrickMaulProfile.tpClips!.inspect!) ?? null,
+        inspect: maulInspect,
+        inspectUpper: maulInspect ? keepBones(maulInspect, INSPECT_UPPER_BONES, "_Upper") : null,
+        lowerBody,
         actions,
       };
     }
@@ -324,7 +358,7 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       jump,
       dash,
       slide,
-      armedHold: armedHoldSrc,
+      armedHold: armedGrip, // TP_Aim — straight grip, FP parity (see above)
       armedRun,
       armedAim,
       armedRaise,
@@ -415,6 +449,45 @@ const ARMED_LAYER_BONES = new Set<string>([
   "Weapon_R",
   "Weapon_L",
 ]);
+
+/**
+ * Bones owned by the UPPER layer of a moving maul inspection: both arms
+ * (the maul is flipped/rotated with both hands), fingers, the weapon
+ * sockets and the head (the character looks at the maul). Everything
+ * below (hips, spine chain, legs, plant) keeps the locomotion. The
+ * shoulders stay with the body: the Inspect clip never rotates them.
+ */
+const INSPECT_UPPER_BONES = new Set<string>([
+  "UpperArm_L",
+  "LowerArm_L",
+  "Hand_L",
+  "Index_L_1",
+  "Middle_L_1",
+  "Ring_L_1",
+  "Thumb_L_1",
+  "Weapon_L",
+  "UpperArm_R",
+  "LowerArm_R",
+  "Hand_R",
+  "Index_R_1",
+  "Middle_R_1",
+  "Ring_R_1",
+  "Thumb_R_1",
+  "Weapon_R",
+  "Head",
+]);
+
+/** Derived clip keeping ONLY the tracks of `bones` (same duration). */
+function keepBones(clip: THREE.AnimationClip, bones: Set<string>, suffix: string): THREE.AnimationClip {
+  const tracks = clip.tracks.filter((t) => bones.has(trackBone(t.name))).map((t) => t.clone());
+  return new THREE.AnimationClip(`${clip.name}${suffix}`, clip.duration, tracks);
+}
+
+/** Derived clip WITHOUT the tracks of `bones` (same duration). */
+function stripBones(clip: THREE.AnimationClip, bones: Set<string>, suffix: string): THREE.AnimationClip {
+  const tracks = clip.tracks.filter((t) => !bones.has(trackBone(t.name))).map((t) => t.clone());
+  return new THREE.AnimationClip(`${clip.name}${suffix}`, clip.duration, tracks);
+}
 
 /** Bone name of a "NodeName.property" track. */
 function trackBone(trackName: string): string {

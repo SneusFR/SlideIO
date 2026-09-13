@@ -1,0 +1,449 @@
+{
+  "schemaVersion": 1,
+  "id": "goofybasket",
+  "version": "original4-onehand-r4-flexible-wrist-2026-09-13",
+  "compatibleRig": "Potato_Master_Clean_v1",
+  "hand": "R",
+  "digitsPerHand": 4,
+  "assets": {
+    "weapon": "GoofyBasket.glb",
+    "lod1": "GoofyBasket_LOD1.glb",
+    "fpPoses": "Potato_FP_GoofyBasket.glb",
+    "tpPoses": "Potato_TP_GoofyBasket.glb",
+    "ballMotion": "GoofyBasket_BallMotion.json"
+  },
+  "camera": {
+    "verticalFovDegrees": 65,
+    "near": 0.01,
+    "far": 100
+  },
+  "mounts": {
+    "fp": {
+      "bone": "Weapon_R",
+      "matrixColumnMajor": [
+        0.8362620592283462,
+        0.01746353148639647,
+        0.27342470070595926,
+        0.0,
+        -0.05005157999522092,
+        0.8731696062203259,
+        0.09731240514822095,
+        0.0,
+        -0.2693710776769351,
+        -0.108027508493425,
+        0.8307644663963368,
+        0.0,
+        -0.1207305771790339,
+        -0.01573602268940344,
+        -0.006533931496539747,
+        1.0
+      ],
+      "includesBallScale": true
+    },
+    "tp": {
+      "bone": "Weapon_R",
+      "matrixColumnMajor": [
+        0.8362620125907566,
+        0.017463842294801135,
+        0.2734248519830135,
+        0.0,
+        -0.05005149679063259,
+        0.8731696541732623,
+        0.09731257834152691,
+        0.0,
+        -0.26937119326123643,
+        -0.1080274436628665,
+        0.8307646394807277,
+        0.0,
+        -0.12073054965598112,
+        -0.015736031837621345,
+        -0.006533925382270406,
+        1.0
+      ],
+      "includesBallScale": true
+    }
+  },
+  "ball": {
+    "sourceRadiusMeters": 0.125,
+    "authoredRadius": 0.11,
+    "sourceGeometryUnchanged": true,
+    "freePresentationScale": 0.88,
+    "sourceCharacterHeight": 0.8354492246138475,
+    "referenceCharacterHeight": 2.25,
+    "characterWorldScale": 2.693161874726703,
+    "projectileWorldRadius": 0.29624780621993735,
+    "projectileRootScale": 2.369982449759499,
+    "collider": "sphere",
+    "sizeApprovedByUser": true,
+    "note": "Large stylized proportion approved visually. FP radius is camera-space; physical world radius matches the TP ball after character normalization, not the FP camera ball."
+  },
+  "clips": {
+    "FP": [
+      {
+        "kind": "Hold",
+        "clip": "FP_GoofyBasket_Hold",
+        "duration": 2.4,
+        "loop": true,
+        "samples": 145
+      },
+      {
+        "kind": "Run",
+        "clip": "FP_GoofyBasket_Run",
+        "duration": 0.72,
+        "loop": true,
+        "samples": 47
+      },
+      {
+        "kind": "Equip",
+        "clip": "FP_GoofyBasket_Equip",
+        "duration": 0.45,
+        "loop": false,
+        "samples": 28
+      },
+      {
+        "kind": "Unequip",
+        "clip": "FP_GoofyBasket_Unequip",
+        "duration": 0.3,
+        "loop": false,
+        "samples": 19
+      },
+      {
+        "kind": "Charge_L1",
+        "clip": "FP_GoofyBasket_Charge_L1",
+        "duration": 0.22,
+        "loop": false,
+        "samples": 14
+      },
+      {
+        "kind": "Charge_L2",
+        "clip": "FP_GoofyBasket_Charge_L2",
+        "duration": 0.36,
+        "loop": false,
+        "samples": 23
+      },
+      {
+        "kind": "Charge_L3",
+        "clip": "FP_GoofyBasket_Charge_L3",
+        "duration": 0.42,
+        "loop": false,
+        "samples": 26
+      },
+      {
+        "kind": "Charge_Hold_L1",
+        "clip": "FP_GoofyBasket_Charge_Hold_L1",
+        "duration": 0.72,
+        "loop": true,
+        "samples": 44
+      },
+      {
+        "kind": "Charge_Hold_L2",
+        "clip": "FP_GoofyBasket_Charge_Hold_L2",
+        "duration": 0.72,
+        "loop": true,
+        "samples": 44
+      },
+      {
+        "kind": "Charge_Hold_L3",
+        "clip": "FP_GoofyBasket_Charge_Hold_L3",
+        "duration": 0.72,
+        "loop": true,
+        "samples": 44
+      },
+      {
+        "kind": "Throw_L1",
+        "clip": "FP_GoofyBasket_Throw_L1",
+        "duration": 0.5,
+        "loop": false,
+        "samples": 32
+      },
+      {
+        "kind": "Throw_L2",
+        "clip": "FP_GoofyBasket_Throw_L2",
+        "duration": 0.56,
+        "loop": false,
+        "samples": 36
+      },
+      {
+        "kind": "Throw_L3",
+        "clip": "FP_GoofyBasket_Throw_L3",
+        "duration": 0.62,
+        "loop": false,
+        "samples": 39
+      },
+      {
+        "kind": "Catch",
+        "clip": "FP_GoofyBasket_Catch",
+        "duration": 0.58,
+        "loop": false,
+        "samples": 37
+      },
+      {
+        "kind": "Dribble_Start",
+        "clip": "FP_GoofyBasket_Dribble_Start",
+        "duration": 0.32,
+        "loop": false,
+        "samples": 20
+      },
+      {
+        "kind": "Dribble",
+        "clip": "FP_GoofyBasket_Dribble",
+        "duration": 0.72,
+        "loop": true,
+        "samples": 47
+      },
+      {
+        "kind": "Dribble_Catch",
+        "clip": "FP_GoofyBasket_Dribble_Catch",
+        "duration": 0.26,
+        "loop": false,
+        "samples": 17
+      },
+      {
+        "kind": "Inspect",
+        "clip": "FP_GoofyBasket_Inspect",
+        "duration": 2.74,
+        "loop": false,
+        "samples": 176
+      }
+    ],
+    "TP": [
+      {
+        "kind": "Hold",
+        "clip": "TP_GoofyBasket_Hold",
+        "duration": 2.4,
+        "loop": true,
+        "samples": 145
+      },
+      {
+        "kind": "Run",
+        "clip": "TP_GoofyBasket_Run",
+        "duration": 0.72,
+        "loop": true,
+        "samples": 47
+      },
+      {
+        "kind": "Equip",
+        "clip": "TP_GoofyBasket_Equip",
+        "duration": 0.45,
+        "loop": false,
+        "samples": 28
+      },
+      {
+        "kind": "Unequip",
+        "clip": "TP_GoofyBasket_Unequip",
+        "duration": 0.3,
+        "loop": false,
+        "samples": 19
+      },
+      {
+        "kind": "Charge_L1",
+        "clip": "TP_GoofyBasket_Charge_L1",
+        "duration": 0.22,
+        "loop": false,
+        "samples": 14
+      },
+      {
+        "kind": "Charge_L2",
+        "clip": "TP_GoofyBasket_Charge_L2",
+        "duration": 0.36,
+        "loop": false,
+        "samples": 23
+      },
+      {
+        "kind": "Charge_L3",
+        "clip": "TP_GoofyBasket_Charge_L3",
+        "duration": 0.42,
+        "loop": false,
+        "samples": 26
+      },
+      {
+        "kind": "Charge_Hold_L1",
+        "clip": "TP_GoofyBasket_Charge_Hold_L1",
+        "duration": 0.72,
+        "loop": true,
+        "samples": 44
+      },
+      {
+        "kind": "Charge_Hold_L2",
+        "clip": "TP_GoofyBasket_Charge_Hold_L2",
+        "duration": 0.72,
+        "loop": true,
+        "samples": 44
+      },
+      {
+        "kind": "Charge_Hold_L3",
+        "clip": "TP_GoofyBasket_Charge_Hold_L3",
+        "duration": 0.72,
+        "loop": true,
+        "samples": 44
+      },
+      {
+        "kind": "Throw_L1",
+        "clip": "TP_GoofyBasket_Throw_L1",
+        "duration": 0.5,
+        "loop": false,
+        "samples": 32
+      },
+      {
+        "kind": "Throw_L2",
+        "clip": "TP_GoofyBasket_Throw_L2",
+        "duration": 0.56,
+        "loop": false,
+        "samples": 36
+      },
+      {
+        "kind": "Throw_L3",
+        "clip": "TP_GoofyBasket_Throw_L3",
+        "duration": 0.62,
+        "loop": false,
+        "samples": 39
+      },
+      {
+        "kind": "Catch",
+        "clip": "TP_GoofyBasket_Catch",
+        "duration": 0.58,
+        "loop": false,
+        "samples": 37
+      },
+      {
+        "kind": "Dribble_Start",
+        "clip": "TP_GoofyBasket_Dribble_Start",
+        "duration": 0.32,
+        "loop": false,
+        "samples": 20
+      },
+      {
+        "kind": "Dribble",
+        "clip": "TP_GoofyBasket_Dribble",
+        "duration": 0.72,
+        "loop": true,
+        "samples": 47
+      },
+      {
+        "kind": "Dribble_Catch",
+        "clip": "TP_GoofyBasket_Dribble_Catch",
+        "duration": 0.26,
+        "loop": false,
+        "samples": 17
+      },
+      {
+        "kind": "Inspect",
+        "clip": "TP_GoofyBasket_Inspect",
+        "duration": 2.74,
+        "loop": false,
+        "samples": 176
+      }
+    ]
+  },
+  "rightArmMask": [
+    "Shoulder_R",
+    "UpperArm_R",
+    "LowerArm_R",
+    "Hand_R",
+    "Thumb_R_1",
+    "Index_R_1",
+    "Middle_R_1",
+    "Ring_R_1",
+    "Weapon_R"
+  ],
+  "charge": {
+    "levelThresholdsSeconds": [
+      0,
+      0.58,
+      1.0
+    ],
+    "maxChargeSeconds": 1.0,
+    "sequence": [
+      "Charge_L1",
+      "Charge_L2",
+      "Charge_L3"
+    ],
+    "maxLoop": "Charge_Hold_L3",
+    "note": "No mandatory wait at intermediate paliers. Level1 is available immediately; release while gathering locks the level before the visual gather completes."
+  },
+  "throws": [
+    {
+      "level": 1,
+      "clip": "Throw_L1",
+      "releaseAt": 0.14,
+      "damage": 25,
+      "speedMetersPerSecond": 11,
+      "restitution": 0.4,
+      "maximumWorldBounces": 1
+    },
+    {
+      "level": 2,
+      "clip": "Throw_L2",
+      "releaseAt": 0.16,
+      "damage": 25,
+      "speedMetersPerSecond": 17,
+      "restitution": 0.6,
+      "maximumWorldBounces": 3
+    },
+    {
+      "level": 3,
+      "clip": "Throw_L3",
+      "releaseAt": 0.18,
+      "damage": 25,
+      "speedMetersPerSecond": 24,
+      "restitution": 0.78,
+      "maximumWorldBounces": 5
+    }
+  ],
+  "projectile": {
+    "damage": 25,
+    "firstPlayerHitConsumesProjectile": true,
+    "maximumLifetimeSeconds": 6,
+    "continuousSphereCollision": true,
+    "ignoreOwner": true,
+    "launchDirection": "validatedAimDirection",
+    "addedVerticalVelocity": 0,
+    "forcedLob": false,
+    "chargeAnimation": "Palm behind ball facing enemy, progressive backward retraction L1 to L3, direct forward push on release.",
+    "settingsStatus": "Initial adjustable gameplay defaults; not balanced or tested in the game. Server remains authoritative."
+  },
+  "catch": {
+    "clip": "Catch",
+    "duration": 0.58,
+    "newBallAppearsAt": 0,
+    "handContactAt": 0.34,
+    "readyAt": 0.58,
+    "newInstanceAfterThrow": true
+  },
+  "dribble": {
+    "automaticWhen": "grounded and moving",
+    "inspectionClip": "Inspect",
+    "startClip": "Dribble_Start",
+    "loopClip": "Dribble",
+    "movingClip": "Run",
+    "catchClip": "Dribble_Catch",
+    "loopDuration": 0.72,
+    "groundContactAt": 0.36,
+    "inspectionDuration": 2.74,
+    "gatherDuration": 0.18,
+    "stopOn": [
+      "airborne",
+      "sliding",
+      "dashing",
+      "charge",
+      "throw",
+      "unequip",
+      "death"
+    ],
+    "gatherFromCurrentVisualPose": true,
+    "doNotDelayMovement": true,
+    "cosmeticOnly": true
+  },
+  "spaces": {
+    "FP": "camera; already converted, do not apply FP_Viewmodel twice",
+    "TP": "normalized GLTF character scene, including its scale and yaw; NOT RemotePlayer.model unscaled wrapper"
+  },
+  "presentation": {
+    "oneCosmeticBallPerView": true,
+    "heldBallUsesCurrentHandSocket": true,
+    "freeBallUsesMotionLibrary": true,
+    "projectileIsSeparateFromHandBall": true,
+    "loopFlagsAreExplicit": true,
+    "gameAlreadyModified": false
+  }
+}

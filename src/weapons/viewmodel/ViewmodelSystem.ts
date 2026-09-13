@@ -156,6 +156,8 @@ export class ViewmodelSystem {
     options: {
       /** Play the authored Equip clip first (REAL equip transition only). */
       playEquipClip?: boolean;
+      /** Playback rate of the Equip clip (default 1 = authored speed). */
+      equipTimeScale?: number;
       /** Fired when the Equip clip ends (or immediately without one). */
       onEquipped?: () => void;
     } = {},
@@ -213,13 +215,17 @@ export class ViewmodelSystem {
         this.state = "equip";
         this.current = this.actions.equip;
         this.onEquipDone = options.onEquipped ?? null;
+        // Sped-up equip (the clip is authored slower than the wanted
+        // transition); the end test in update() reads the clip's local
+        // time, so it stays exact at any rate.
+        this.current.reset().setEffectiveTimeScale(Math.max(0.05, options.equipTimeScale ?? 1)).play();
       } else {
         this.state = "hold";
         this.current = this.actions.hold;
         this.onEquipDone = null;
         options.onEquipped?.();
+        this.current.reset().play();
       }
-      this.current.reset().play();
       mixer.update(0);
     };
 

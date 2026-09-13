@@ -112,7 +112,11 @@ interface RemoteTongue {
   victimId: string | null;
   /** Offset kept between the avatar center and the grab point. */
   victimOffset: THREE.Vector3;
-  /** Play the Bite clip once the tip is home (arrival bite). */
+  /**
+   * Play the Bite clip once the tip is home. ALWAYS true (local parity:
+   * every tongue shot — hit, miss or released pull — ends with the jaws
+   * snapping once the tongue is back in the mouth).
+   */
   biteOnReturn: boolean;
 }
 
@@ -1284,7 +1288,7 @@ export class RemoteCombatVFXController {
       tip: this.originScratch.clone(),
       victimId: grabbed && ev.tid ? ev.tid : null,
       victimOffset: new THREE.Vector3(),
-      biteOnReturn: false,
+      biteOnReturn: true, // every shot bites when the tongue is home
     };
     // Grab point relative to the victim's DISPLAYED center at confirm time
     // — the tip then follows the avatar with this offset while it is reeled.
@@ -1309,17 +1313,18 @@ export class RemoteCombatVFXController {
     audio.playAt("dash_whoosh", this.originScratch, { bus: "weapons", volume: 0.3, rate: 1.5 });
   }
 
-  /** HEX_PULL_END (no bite) / HEX_BITE (bite when home): start the return. */
+  /**
+   * HEX_PULL_END / HEX_BITE: start the return. The bite-when-home flag is
+   * only ever raised here (a tongue always bites once it is back; `bite`
+   * is kept for call-site readability / future audio differentiation).
+   */
   private hexTongueRelease(playerId: string, bite: boolean): void {
     const t = this.tongues.get(playerId);
     if (!t) return;
-    if (t.phase === "retracting") {
-      t.biteOnReturn = t.biteOnReturn || bite;
-      return;
-    }
+    t.biteOnReturn = t.biteOnReturn || bite;
+    if (t.phase === "retracting") return;
     t.phase = "retracting";
     t.victimId = null;
-    t.biteOnReturn = bite;
   }
 
   /** HEX_BITE: the victim arrived — heavy arrival thud, then the jaws. */

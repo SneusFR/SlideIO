@@ -46,7 +46,14 @@ export const BRICKMAUL_TIMING = {
     enterLandAt: profileJson.actions.slam.enterLandAt, // 0.10
     recoveryAfterGroundContact: profileJson.actions.slam.recoveryAfterGroundContact, // 0.72
   },
-  equip: 0.65,
+  /**
+   * Equip clip playback rate (FP + TP alike). The Equip clip is authored at
+   * 0.65 s — too slow for a slot switch; both mixers play it at this rate
+   * so the local arms and the remote avatar stay in lockstep.
+   */
+  equipTimeScale: 1.8,
+  /** EFFECTIVE equip duration (s) = 0.65 / equipTimeScale ≈ 0.36. */
+  equip: 0.65 / 1.8,
   unequip: 0.3,
   inspect: profileJson.actions.inspect.duration, // 3.6
 } as const;

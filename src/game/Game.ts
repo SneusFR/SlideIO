@@ -1075,6 +1075,10 @@ export class Game {
     if (this.meleeWeapon === "HAMMER" && this.fpOwner === "HAMMER") {
       this.slotSwitchPending = true;
       this.hammerInspecting = false;
+      // Replicate the stow the moment OUR Unequip starts (not when it
+      // ends): the remote avatar plays its own 0.30 s Unequip in parallel
+      // instead of 0.30 s + latency behind us.
+      this.syncNetworkMeleeShown();
       this.hammerViewmodel.unequip(() => {
         if (!this.slotSwitchPending) return;
         this.slotSwitchPending = false;
@@ -1089,10 +1093,14 @@ export class Game {
 
   /** Death / ragdoll / disable: drop the transition and any maul action. */
   private abortSlotTransition(): void {
+    const wasSwitching = this.slotSwitchPending;
     this.slotSwitchPending = false;
     this.hammerInspecting = false;
     this.hammerViewmodel.cancelInspect();
     this.hammer.reset();
+    // An aborted Unequip leaves the maul held on slot 2: re-announce it
+    // (MELEE_HIDE was already sent when the transition started).
+    if (wasSwitching) this.syncNetworkMeleeShown();
   }
 
   /**
@@ -1103,7 +1111,9 @@ export class Game {
    */
   private syncNetworkMeleeShown(): void {
     if (!this.multiplayer || !this.multiplayerClient?.isConnected) return;
-    const shown = this.fpOwner === "HAMMER" && this.activeSlot === "MELEE";
+    // A running Unequip transition already counts as "stowed" (the remote
+    // Unequip clip starts together with ours).
+    const shown = this.fpOwner === "HAMMER" && this.activeSlot === "MELEE" && !this.slotSwitchPending;
     if (shown === this.netMeleeShown) return;
     this.netMeleeShown = shown;
     this.netSendAimedAction(shown ? WeaponActionType.MELEE_SHOW : WeaponActionType.MELEE_HIDE);
@@ -2013,21 +2023,20 @@ export class Game {
 
   /**
    * Brick Maul FP frame (owner only): inspection gate (F — terminal wins,
-   * alive, grounded, stationary, no attack, no transition) + cancellations
+   * alive, no attack, no transition; moving is allowed) + cancellations
    * + the cosmetic locomotion input. Advances the shared arms mixer ONCE.
    */
   private updateHammerPresentation(dt: number, playerAlive: boolean): void {
     const maulHeld = this.activeSlot === "MELEE" && !this.slotSwitchPending;
-    const moving = this.movement.horizontalSpeed > 0.5;
     const sliding = this.movement.state === MoveState.SLIDING;
+    // Moving / jumping never interrupts an inspection: only an attack, a
+    // weapon switch, death / knockdown or the mole strike do.
     const blocked =
       !playerAlive ||
       !maulHeld ||
       this.hammer.isBusy ||
       this.moleStrike.blocksWeapons ||
-      this.movement.isKnockedDown ||
-      !this.movement.grounded ||
-      moving;
+      this.movement.isKnockedDown;
 
     if (this.hammerInspecting && (blocked || !this.hammerViewmodel.isInspecting)) {
       const wasRunning = this.hammerViewmodel.isInspecting;

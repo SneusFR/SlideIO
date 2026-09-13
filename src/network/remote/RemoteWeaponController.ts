@@ -253,7 +253,10 @@ export class RemoteWeaponController {
    * "unequip"; null = clear the override (back to the real locomotion).
    */
   onProfileAction:
-    | ((kind: string | null, options: { startAt?: number; fadeIn?: number; onFinished?: () => void }) => void)
+    | ((
+        kind: string | null,
+        options: { startAt?: number; fadeIn?: number; timeScale?: number; onFinished?: () => void },
+      ) => void)
     | null = null;
 
   // ---- BRICK MAUL dedicated state (profile mount + moving pupils) ----
@@ -651,7 +654,8 @@ export class RemoteWeaponController {
       // Late attach during an attack / inspection: resume at the elapsed time.
       this.playMaulPhaseClip(this.maulPhase, this.maulPhaseTimer);
     } else if (this.pendingMaulEquipClip) {
-      this.onProfileAction?.("equip", { fadeIn: 0.06 });
+      // Same sped-up rate as the local FP arms (≈0.36 s effective).
+      this.onProfileAction?.("equip", { fadeIn: 0.06, timeScale: BRICKMAUL_TIMING.equipTimeScale });
     }
     this.pendingMaulEquipClip = false;
   }

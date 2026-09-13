@@ -99,9 +99,13 @@ export class HexSniperWeapon {
 
   private visuals: HexSniperController | null = null;
   private attacks: HexSniperAttacks | null = null;
-  /** Armed on `player-arrived` (a player was reeled in): the next `ready`
-   *  triggers the INSTANT arrival bite. Never set on a missed tongue. */
+  /** Armed on every `tongue-start` (and re-armed on `player-arrived` /
+   *  the server's HEX_BITE): the `ready` that follows the tongue's return
+   *  triggers the bite clip. Cleared by the bite itself and by cancel(). */
   private bitePending = false;
+  /** True once the CURRENT shot's bite started (a late HEX_BITE never
+   *  snaps the jaws a second time after the return bite already played). */
+  private shotBitten = false;
   /** Targets already damaged by the CURRENT bite (dedup across windows). */
   private readonly biteDamaged = new Set<number | string>();
   /** True while the viewmodel should render (equipped, no melee busy…). */
@@ -234,6 +238,13 @@ export class HexSniperWeapon {
   private handleEvent(event: HexSniperEvent): void {
     switch (event.type) {
       case "tongue-start":
+        // EVERY tongue shot ends with the jaws snapping once the tongue is
+        // home (clip `Bite`): the weapon stays busy through that clip, so
+        // LMB is refused until the bite finished. Bite DAMAGE is unchanged
+        // (arrival bite only — a missed tongue's bite is purely visual;
+        // in multiplayer the server decides every bite hit anyway).
+        this.bitePending = true;
+        this.shotBitten = false;
         this.onTongueStart?.();
         break;
       case "tongue-player":
@@ -268,11 +279,12 @@ export class HexSniperWeapon {
         this.onCameraShake?.(cfg.arriveShake);
         break;
       case "ready":
-        // Tongue fully recovered (or bite ended). Arrival bite only: a
-        // MISSED tongue never set bitePending, so the weapon is instantly
-        // ready to fire again (isBusy false right here).
+        // Tongue fully recovered → the bite armed by the shot plays now
+        // (isBusy stays true through the Bite clip). The `ready` that ends
+        // the bite finds bitePending false and re-arms the shot.
         if (this.bitePending) {
           this.bitePending = false;
+          this.shotBitten = true;
           this.biteDamaged.clear();
           this.attacks?.tryBite();
         }
@@ -351,7 +363,11 @@ export class HexSniperWeapon {
     const state = this.attacks.state;
     if (state === "Pulling" || state === "Extending") this.attacks.release("network-bite");
     if (this.attacks.state === "Idle") {
-      // Tongue already home (release raced the bite): snap the jaws now.
+      // Tongue already home (release raced the bite). The return bite
+      // armed by the shot normally already snapped the jaws — never bite
+      // twice for one shot; only a shot whose bite never played bites now.
+      if (this.shotBitten) return;
+      this.shotBitten = true;
       this.biteDamaged.clear();
       this.attacks.tryBite();
       return;
@@ -565,30 +581,28 @@ export class HexSniperWeapon {
       this.attacks.tryTongue();
     }
 
-    // ---- ADS / movement interrupt a running inspection immediately.
+    // ---- ADS / an attack / losing control interrupt a running inspection
+    // immediately. Moving or jumping never does (the clip keeps playing
+    // while the player runs; the shot above already handles fire).
     if (
       this.inspectionActive &&
       (input.zoomHeld ||
         !input.canAct ||
-        !input.grounded ||
-        input.speed > 0.5 ||
         this.isBusy)
     ) {
       this.cancelInspection();
     }
 
-    // ---- Inspection start (F edge) — visual only, heavily gated:
-    // weapon active+loaded, player can act, grounded and stationary, no
-    // ADS, no attack / tongue return / bitePending, visual controller at
-    // rest. No gameplay events, ever.
+    // ---- Inspection start (F edge) — visual only, gated: weapon
+    // active+loaded, player can act, no ADS, no attack / tongue return /
+    // bitePending, visual controller at rest. Moving is allowed. No
+    // gameplay events, ever.
     if (
       input.inspectPressed &&
       input.canAct &&
       this.viewmodelVisible &&
       this.presentationOwner && // F never inspects the masked sniper
       !input.zoomHeld &&
-      input.grounded &&
-      input.speed <= 0.5 &&
       !this.isBusy &&
       !this.inspectionActive &&
       this.visuals &&

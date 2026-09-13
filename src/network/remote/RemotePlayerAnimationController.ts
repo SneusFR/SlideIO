@@ -31,9 +31,9 @@ export interface RemoteCharacterClips {
   dash: THREE.AnimationClip;
   slide: THREE.AnimationClip;
   // ---- HexSniper TP presentation (armed avatars) ----
-  /** TP_Hold_HexSniper — looping two-hand hold (armed idle). */
+  /** Armed idle grip — TP_Aim_HexSniper (weapon straight, FP parity). */
   armedHold: THREE.AnimationClip;
-  /** TP_Run_HexSniper — calibrated armed run (full-body, used directly). */
+  /** Armed run — TP_Run_HexSniper body + the constant straight grip. */
   armedRun: THREE.AnimationClip;
   /** TP_Aim_HexSniper — weapon held straight (ADS / active attack). */
   armedAim: THREE.AnimationClip;
@@ -69,6 +69,22 @@ export interface ArmedProfileClips {
   equip: THREE.AnimationClip | null;
   unequip: THREE.AnimationClip | null;
   inspect: THREE.AnimationClip | null;
+  /**
+   * OPTIONAL layered inspection (inspection that survives movement): the
+   * Inspect clip reduced to its upper-body tracks + the locomotion
+   * composites WITHOUT those tracks. Both present → "inspect" plays the
+   * upper layer on top of the lower-body locomotion of the real state
+   * instead of a full-body override. Absent → full-body inspect.
+   */
+  inspectUpper?: THREE.AnimationClip | null;
+  lowerBody?: {
+    hold: THREE.AnimationClip;
+    run: THREE.AnimationClip;
+    jump: THREE.AnimationClip;
+    jumpVariants: THREE.AnimationClip[];
+    dash: THREE.AnimationClip;
+    slide: THREE.AnimationClip;
+  } | null;
   /** Attack / phase clips by profile action key (whirlwind, slamStart…). */
   actions: Record<string, THREE.AnimationClip>;
 }
@@ -169,6 +185,20 @@ export class RemotePlayerAnimationController {
    * ends (then the locomotion matching the real state comes back).
    */
   private override: {
+    action: THREE.AnimationAction;
+    onFinished: (() => void) | null;
+    exitFade: number;
+  } | null = null;
+  /**
+   * LAYERED INSPECTION (profile sets shipping `inspectUpper` + `lowerBody`):
+   * the upper-body inspect clip plays on top of the LOWER-body variant of
+   * the real locomotion — the avatar keeps running / jumping / sliding
+   * while it flips the weapon, exactly like the local FP arms do. Track
+   * sets are disjoint, so both actions run at full weight. The layer ends
+   * with its one-shot (then the full locomotion variant comes back) or is
+   * cleared by clearOverride / a full-body override / a profile change.
+   */
+  private inspectLayer: {
     action: THREE.AnimationAction;
     onFinished: (() => void) | null;
     exitFade: number;
@@ -274,6 +304,8 @@ export class RemotePlayerAnimationController {
         const isLoop = /dive/i.test(key); // Slam_Dive loops during the descent
         actions.set(key, isLoop ? loop(clip) : oneShot(clip));
       }
+      const lb = p.lowerBody ?? null;
+      const lbJumps = lb ? (lb.jumpVariants.length ? lb.jumpVariants : [lb.jump]) : [];
       this.profileSets.set(id, {
         slots: {
           idle: loop(p.hold),
@@ -289,6 +321,20 @@ export class RemotePlayerAnimationController {
         equip: p.equip ? oneShot(p.equip) : null,
         unequip: p.unequip ? oneShot(p.unequip) : null,
         inspect: p.inspect ? oneShot(p.inspect) : null,
+        inspectUpper: p.inspectUpper && lb ? oneShot(p.inspectUpper) : null,
+        lowerSlots: lb
+          ? {
+              idle: loop(lb.hold),
+              run: loop(lb.run),
+              jump: oneShot(lb.jump),
+              land: oneShot(landingClip(lb.jump)),
+              dash: oneShot(lb.dash),
+              slide: oneShot(lb.slide),
+              slideExit: oneShot(landingClip(lb.slide)),
+            }
+          : null,
+        lowerJumps: lbJumps.map(oneShot),
+        lowerLandings: lbJumps.map((c) => oneShot(landingClip(c))),
         actions,
       });
     }
@@ -346,9 +392,9 @@ export class RemotePlayerAnimationController {
     return this.armedProfile;
   }
 
-  /** True while a full-body override (attack / inspect / equip) plays. */
+  /** True while a full-body override (attack / equip) or a layered inspection plays. */
   get overriding(): boolean {
-    return this.override !== null;
+    return this.override !== null || this.inspectLayer !== null;
   }
 
   /**
@@ -377,19 +423,34 @@ export class RemotePlayerAnimationController {
    */
   playOverride(
     kind: string,
-    options: { startAt?: number; fadeIn?: number; exitFade?: number; onFinished?: () => void } = {},
+    options: {
+      startAt?: number;
+      fadeIn?: number;
+      exitFade?: number;
+      /** Playback rate (default 1) — e.g. the sped-up Equip clip. */
+      timeScale?: number;
+      onFinished?: () => void;
+    } = {},
   ): boolean {
     if (!this.armedProfile) return false;
     const set = this.profileSets.get(this.armedProfile);
     if (!set) return false;
+    // Layered inspection when the profile ships the split clips: the
+    // upper-body layer goes over the lower-body locomotion of the real
+    // state (idle included — the split pose equals the full clip there).
+    if (kind === "inspect" && set.inspectUpper && set.lowerSlots) {
+      return this.playInspectLayer(set.inspectUpper, options);
+    }
     const action =
       kind === "equip" ? set.equip : kind === "unequip" ? set.unequip : kind === "inspect" ? set.inspect : set.actions.get(kind) ?? null;
     if (!action) return false;
     if (this.override) this.override.onFinished = null; // invalidate stale end
+    // A full-body override replaces a layered inspection (attack wins).
+    this.dropInspectLayer(0);
     const fade = options.fadeIn ?? 0.1;
     action.reset();
     action.time = Math.max(0, Math.min(options.startAt ?? 0, action.getClip().duration - 1e-3));
-    action.setEffectiveTimeScale(1).setEffectiveWeight(1);
+    action.setEffectiveTimeScale(Math.max(0.05, options.timeScale ?? 1)).setEffectiveWeight(1);
     action.paused = false;
     if (this.current !== action) {
       if (fade > 0) this.current.fadeOut(fade);
@@ -407,6 +468,7 @@ export class RemotePlayerAnimationController {
 
   /** Drop the override and return to the locomotion of the real state. */
   clearOverride(fade = 0.12): void {
+    if (this.inspectLayer) this.dropInspectLayer(fade);
     if (!this.override) return;
     this.override.onFinished = null;
     this.override = null;
@@ -419,9 +481,74 @@ export class RemotePlayerAnimationController {
     this.current = next;
   }
 
-  /** Elapsed time of the running override (s), or -1. */
+  /** Elapsed time of the running override / inspection layer (s), or -1. */
   get overrideTime(): number {
-    return this.override ? this.override.action.time : -1;
+    if (this.override) return this.override.action.time;
+    if (this.inspectLayer) return this.inspectLayer.action.time;
+    return -1;
+  }
+
+  /**
+   * Start the upper-body inspection layer: the layer clip plays on its own
+   * clock while the locomotion slot swaps to its lower-body variant (same
+   * phase — the run keeps its stride, the jump/slide keep their sampled
+   * time through seekEntry / the per-frame pose holds).
+   */
+  private playInspectLayer(
+    layer: THREE.AnimationAction,
+    options: { startAt?: number; fadeIn?: number; exitFade?: number; onFinished?: () => void },
+  ): boolean {
+    if (this.override) {
+      // An attack / equip in progress keeps the body (mirror of the
+      // sender: an inspection never interrupts an attack).
+      return false;
+    }
+    if (this.inspectLayer) this.inspectLayer.onFinished = null;
+    const fade = options.fadeIn ?? 0.1;
+    const wasLayered = this.inspectLayer !== null;
+    this.inspectLayer = { action: layer, onFinished: options.onFinished ?? null, exitFade: options.exitFade ?? 0.12 };
+    layer.reset();
+    layer.time = Math.max(0, Math.min(options.startAt ?? 0, layer.getClip().duration - 1e-3));
+    layer.setEffectiveTimeScale(1).setEffectiveWeight(1);
+    layer.paused = false;
+    if (fade > 0) layer.fadeIn(fade);
+    layer.play();
+    // Swap the locomotion to its lower-body variant, keeping the phase.
+    if (!wasLayered) this.swapLocomotion(this.actionFor(this.currentSlot), fade);
+    return true;
+  }
+
+  /**
+   * End the inspection layer (one-shot finished / cancel / replaced): the
+   * full locomotion variant of the current slot comes back at the same
+   * phase and the layer fades out.
+   */
+  private dropInspectLayer(fade: number): void {
+    const layer = this.inspectLayer;
+    if (!layer) return;
+    layer.onFinished = null;
+    this.inspectLayer = null;
+    if (fade > 0) layer.action.fadeOut(fade);
+    else layer.action.stop();
+    if (!this.override) this.swapLocomotion(this.actionFor(this.currentSlot), fade);
+  }
+
+  /**
+   * Replace the running locomotion action by `next` at the SAME phase
+   * (used by the layered inspection: full ↔ lower-body variants of one
+   * slot share their duration, so the time carries over 1:1).
+   */
+  private swapLocomotion(next: THREE.AnimationAction, fade: number): void {
+    if (next === this.current) return;
+    const prev = this.current;
+    next.reset();
+    next.time = Math.min(prev.time, Math.max(0, next.getClip().duration - 1e-4));
+    next.timeScale = prev.timeScale;
+    next.paused = prev.paused;
+    next.play();
+    if (fade > 0) prev.crossFadeTo(next, fade, false);
+    else prev.stop();
+    this.current = next;
   }
 
   /**
@@ -474,6 +601,17 @@ export class RemotePlayerAnimationController {
       this.smoothedRaise += (targetRaise - this.smoothedRaise) * k;
       this.model.position.y = this.modelRestY + this.smoothedRaise;
       return;
+    }
+
+    // ---- LAYERED INSPECTION end: the upper one-shot ran out → the full
+    // locomotion variant comes back (the real state is untouched).
+    if (this.inspectLayer) {
+      const layer = this.inspectLayer;
+      if (layer.action.time >= layer.action.getClip().duration - 1e-4) {
+        const cb = layer.onFinished;
+        this.dropInspectLayer(layer.exitFade);
+        cb?.();
+      }
     }
 
     if (state !== this.currentState) this.transitionTo(state);
@@ -609,6 +747,8 @@ export class RemotePlayerAnimationController {
   dispose(): void {
     if (this.override) this.override.onFinished = null;
     this.override = null;
+    if (this.inspectLayer) this.inspectLayer.onFinished = null;
+    this.inspectLayer = null;
     this.mixer.stopAllAction();
     this.mixer.uncacheRoot(this.model);
   }
@@ -630,12 +770,15 @@ export class RemotePlayerAnimationController {
   private actionFor(slot: Slot): THREE.AnimationAction {
     const profile = this.armedProfile ? this.profileSets.get(this.armedProfile) ?? null : null;
     const hex = this.armedProfile === HEXSNIPER_PROFILE_ID;
+    // Layered inspection running → lower-body variants of the profile set.
+    const lower = this.inspectLayer && profile?.lowerSlots ? profile : null;
     if (slot === "jump" || slot === "land") {
       const list = slot === "jump"
-        ? (profile ? profile.jumps : hex ? this.jumpsArmed : this.jumpsUnarmed)
-        : (profile ? profile.landings : hex ? this.landingsArmed : this.landingsUnarmed);
+        ? (lower ? lower.lowerJumps : profile ? profile.jumps : hex ? this.jumpsArmed : this.jumpsUnarmed)
+        : (lower ? lower.lowerLandings : profile ? profile.landings : hex ? this.landingsArmed : this.landingsUnarmed);
       return list[Math.max(0, this.jumpVariant) % list.length];
     }
+    if (lower) return lower.lowerSlots![slot];
     if (profile) return profile.slots[slot];
     if (!hex) return this.unarmed[slot];
     if (slot === "idle" && this.aiming) return this.armedAim;
@@ -747,6 +890,12 @@ interface ProfileActionSet {
   equip: THREE.AnimationAction | null;
   unequip: THREE.AnimationAction | null;
   inspect: THREE.AnimationAction | null;
+  /** Layered inspection (null → full-body `inspect` override). */
+  inspectUpper: THREE.AnimationAction | null;
+  /** Lower-body locomotion variants played under `inspectUpper`. */
+  lowerSlots: Record<Slot, THREE.AnimationAction> | null;
+  lowerJumps: THREE.AnimationAction[];
+  lowerLandings: THREE.AnimationAction[];
   actions: Map<string, THREE.AnimationAction>;
 }
 
