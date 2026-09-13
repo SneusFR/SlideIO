@@ -18,6 +18,7 @@ export enum NetworkWeaponId {
   BASS_BLASTER = "BASS_BLASTER",
   POISON_SPRAYER = "POISON_SPRAYER",
   HEX_SNIPER = "HEX_SNIPER",
+  GOOFY_BASKET = "GOOFY_BASKET",
 }
 
 export function isNetworkWeaponId(raw: unknown): raw is NetworkWeaponId {
@@ -71,6 +72,16 @@ export enum WeaponActionType {
    *  shot — the server hitscans it; a grabbed player is reeled in by the
    *  server pull loop and bitten on arrival). */
   HEX_TONGUE_FIRE = "HEX_TONGUE_FIRE",
+  /** GOOFY BASKET: the player starts holding the throw input (server
+   *  records the authoritative charge start). */
+  BASKET_CHARGE_START = "BASKET_CHARGE_START",
+  /** GOOFY BASKET: the charge is dropped without a throw (weapon swap…). */
+  BASKET_CHARGE_CANCEL = "BASKET_CHARGE_CANCEL",
+  /** GOOFY BASKET: the input was released — the SERVER computes the level
+   *  from its own charge clock, engages the Throw phase and creates the
+   *  projectile at the authored release marker (never at this message).
+   *  `pi` = gather delay flag (1 = a dribble gather precedes the throw). */
+  BASKET_THROW_REQUEST = "BASKET_THROW_REQUEST",
   /** VISUAL ONLY — the melee weapon is HELD (slot 2) / stowed again. The
    *  server-authoritative primary (WEAPON_EQUIP) never changes: this only
    *  drives the remote avatar's presentation. */
@@ -96,6 +107,25 @@ export const HEX_ACTION_TONGUE_MISS = "HEX_TONGUE_MISS";
 export const HEX_ACTION_PULL_END = "HEX_PULL_END";
 /** Victim arrived: the creature bites (`tid` = victim, hx/hy/hz = victim). */
 export const HEX_ACTION_BITE = "HEX_BITE";
+
+// ---------------------------------------------------------------------
+// GOOFY BASKET — server → clients action ids (NEVER sent by clients).
+// ---------------------------------------------------------------------
+
+/** Throw phase engaged: `ts` = authoritative Throw start, `lv` = locked
+ *  level, `pid` = id of the projectile that WILL be created at the marker
+ *  (client prediction reconciles on it). ox/oy/oz + dx/dy/dz = validated
+ *  aim. */
+export const BASKET_ACTION_THROW = "BASKET_THROW";
+/** Projectile created at the release marker: ox/oy/oz = start position,
+ *  dx/dy/dz = INITIAL VELOCITY (m/s, not normalized), `pid`, `lv`. */
+export const BASKET_ACTION_LAUNCH = "BASKET_LAUNCH";
+/** World bounce #`bn` of projectile `pid`: ox/oy/oz = position AFTER the
+ *  bounce, dx/dy/dz = velocity after the bounce, hx/hy/hz = contact normal. */
+export const BASKET_ACTION_BOUNCE = "BASKET_BOUNCE";
+/** Projectile `pid` ended: hx/hy/hz = final point; `tid` = hit victim
+ *  (absent on a world / expiry end). */
+export const BASKET_ACTION_END = "BASKET_END";
 
 /**
  * Server → the VICTIM only: start / stop being reeled toward the attacker.
@@ -332,6 +362,52 @@ export const NetworkWeaponConfig = {
     /** Max legal burrow time (underground + transitions + margin, s). */
     maxBurrowSeconds: 6.5,
   },
+  /**
+   * GOOFY BASKET — charged basketball throw. INITIAL adjustable gameplay
+   * defaults (NOT balanced in game). Mirrors the authored profile
+   * (src/assets/goofybasket/WeaponProfile_GoofyBasket.json — `charge`,
+   * `throws`, `projectile`, `catch`, `dribble`, `ball`); the frontend
+   * profile module asserts both stay coherent at load.
+   */
+  goofyBasket: {
+    /** Hold time (s) at which each level becomes available: L1 = tap. */
+    levelThresholdsSeconds: [0, 0.58, 1.0],
+    /** Charge time beyond which the level no longer grows (s). */
+    maxChargeSeconds: 1.0,
+    /** Per level (index = level − 1): authored release marker inside the
+     *  Throw clip, initial speed, world restitution, world bounce budget. */
+    throws: [
+      { releaseAt: 0.14, speed: 11, restitution: 0.4, maxWorldBounces: 1, clipDuration: 0.5 },
+      { releaseAt: 0.16, speed: 17, restitution: 0.6, maxWorldBounces: 3, clipDuration: 0.56 },
+      { releaseAt: 0.18, speed: 24, restitution: 0.78, maxWorldBounces: 5, clipDuration: 0.62 },
+    ],
+    /** FLAT damage on a player hit — every level, no head bonus. */
+    damage: 25,
+    /** The first accepted player hit consumes the projectile. */
+    firstPlayerHitConsumesProjectile: true,
+    maxLifetimeSeconds: 6,
+    /** Canonical WORLD collision radius (m) = authoredRadius 0.110 ×
+     *  TP character normalization 2.693161874726703 (profile
+     *  `ball.projectileWorldRadius`). Diameter ≈ 59.25 cm — intentional. */
+    projectileRadius: 0.29624780621993735,
+    /** Downward acceleration (m/s²) — same readable arc as the thrown revolver. */
+    gravity: 16,
+    /** Max contacts resolved inside ONE simulation step (corners). */
+    maxContactsPerStep: 4,
+    /** Pushed off a surface after a bounce (m) — never rests inside it. */
+    surfaceClearance: 0.002,
+    /** Speed below which a bounce ends the projectile (m/s) — no jitter rest. */
+    minBounceSpeed: 0.6,
+    /** Catch clip (new ball from above): hand contact + ready markers (s). */
+    catchDuration: 0.58,
+    catchHandContactAt: 0.34,
+    /** Dribble interruption gather duration (s). */
+    gatherDuration: 0.18,
+    /** Charge start older than this without a release is dropped (s). */
+    maxChargeHoldSeconds: 30,
+    /** A THROW_REQUEST may claim at most this gather delay (s). */
+    maxGatherDelaySeconds: 0.2,
+  },
 } as const;
 
 // ---------------------------------------------------------------------
@@ -401,8 +477,26 @@ export interface WeaponActionConfirmedEvent {
   px?: number;
   py?: number;
   pz?: number;
-  /** HEX SNIPER: the grabbed / bitten victim id (remote tether anchor). */
+  /** HEX SNIPER: the grabbed / bitten victim id (remote tether anchor).
+   *  GOOFY BASKET: victim consumed by the projectile (BASKET_END). */
   tid?: string;
+  /** GOOFY BASKET: server projectile id (THROW / LAUNCH / BOUNCE / END). */
+  pid?: number;
+  /** GOOFY BASKET: locked charge level 1–3 (THROW / LAUNCH). */
+  lv?: number;
+  /** GOOFY BASKET: bounce number (1-based) — dedup of duplicated confirms. */
+  bn?: number;
+}
+
+/**
+ * Level index (1–3) reached after `heldSeconds` of charge — SHARED rule
+ * between the local prediction and the server. A tap is level 1.
+ */
+export function goofyBasketLevelForHold(heldSeconds: number): 1 | 2 | 3 {
+  const t = NetworkWeaponConfig.goofyBasket.levelThresholdsSeconds;
+  if (heldSeconds >= t[2]) return 3;
+  if (heldSeconds >= t[1]) return 2;
+  return 1;
 }
 
 /** Server → attacker: your hit was CONFIRMED (hitmarker source of truth). */

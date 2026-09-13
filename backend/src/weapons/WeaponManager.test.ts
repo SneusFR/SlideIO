@@ -609,4 +609,177 @@ test("hex sniper: stall / attacker death release the victim (HEX_PULL_END)", () 
   assert.deepStrictEqual(rec.pulls[pullsBefore].ev, { attackerId: null, active: false });
 });
 
+// ---------------------------------------------------------------------
+// GOOFY BASKET — server-owned charge, marker launch, bouncing projectile
+// ---------------------------------------------------------------------
+
+const GB = W.goofyBasket;
+/** Run the combat tick for `ms` in 50 ms steps (20 Hz like GameRoom). */
+function tickFor(wm: WeaponManager, advance: (ms: number) => void, ms: number, step = 50) {
+  let left = ms;
+  while (left > 0) {
+    const s = Math.min(step, left);
+    advance(s);
+    wm.tick(s / 1000);
+    left -= s;
+  }
+}
+const basketActions = (rec: Recorded, action: string) => rec.actions.filter((a) => a.action === action);
+
+test("basket: tap without charge = level 1, projectile created at the 0.14 s marker only", () => {
+  const { wm, rec, addPlayer, advance } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
+  fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 });
+  const throws = basketActions(rec, "BASKET_THROW");
+  assert.strictEqual(throws.length, 1);
+  assert.strictEqual(throws[0].lv, 1);
+  assert.strictEqual(typeof throws[0].pid, "number");
+  assert.strictEqual(wm.basketProjectileCount, 0, "no projectile at the request");
+  tickFor(wm, advance, 100);
+  assert.strictEqual(wm.basketProjectileCount, 0, "still in hand before the marker");
+  tickFor(wm, advance, 50);
+  assert.strictEqual(wm.basketProjectileCount, 1, "launched at the marker");
+  const launch = basketActions(rec, "BASKET_LAUNCH");
+  assert.strictEqual(launch.length, 1);
+  assert.strictEqual(launch[0].pid, throws[0].pid);
+  const speed = Math.hypot(launch[0].dx, launch[0].dy, launch[0].dz);
+  assert.ok(Math.abs(speed - GB.throws[0].speed) < 1e-6, "L1 speed, no added lift");
+  assert.ok(Math.abs(launch[0].dy) < 1e-9, "flat aim → zero vertical velocity");
+});
+
+test("basket: level thresholds 0.58 / 1.00 s are decided by the SERVER clock", () => {
+  const cases: [number, number][] = [
+    [570, 1],
+    [580, 2],
+    [990, 2],
+    [1000, 3],
+    [4000, 3], // prolonged max charge keeps level 3
+  ];
+  for (const [ms, expected] of cases) {
+    const { wm, rec, addPlayer, advance } = makeWorld();
+    const a = addPlayer("A", 3, 0.9, 16);
+    wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
+    fire(wm, a, WeaponActionType.BASKET_CHARGE_START, eyeOf(a), { x: 0, y: 0, z: -1 });
+    advance(ms);
+    // A forged `lv` / extra data is ignored: only the server clock counts.
+    fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 }, { lv: 3 });
+    const t = basketActions(rec, "BASKET_THROW");
+    assert.strictEqual(t.length, 1, `held ${ms} ms → one throw`);
+    assert.strictEqual(t[0].lv, expected, `held ${ms} ms → level ${expected}`);
+  }
+});
+
+test("basket: repeated release / charge during the engaged sequence is refused; free after Catch", () => {
+  const { wm, rec, addPlayer, advance } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
+  fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 });
+  fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 });
+  assert.strictEqual(basketActions(rec, "BASKET_THROW").length, 1, "duplicate release refused");
+  // Throw_L1 0.50 s + Catch 0.58 s = 1.08 s busy.
+  tickFor(wm, advance, 1000);
+  fire(wm, a, WeaponActionType.BASKET_CHARGE_START, eyeOf(a), { x: 0, y: 0, z: -1 });
+  advance(50);
+  fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 });
+  assert.strictEqual(basketActions(rec, "BASKET_THROW").length, 1, "release before readyAt refused");
+  tickFor(wm, advance, 200);
+  fire(wm, a, WeaponActionType.BASKET_CHARGE_START, eyeOf(a), { x: 0, y: 0, z: -1 });
+  advance(600);
+  fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 });
+  const t = basketActions(rec, "BASKET_THROW");
+  assert.strictEqual(t.length, 2, "new sequence after the catch");
+  assert.strictEqual(t[1].lv, 2, "the refused charge did not leak into the new one");
+});
+
+test("basket: flat 25 damage on the first player contact, projectile consumed, hit confirmed", () => {
+  for (const maxHealth of [100, 200]) {
+    const { wm, rec, addPlayer, advance } = makeWorld();
+    // Open lane at x = −3 (the x = 3 lane has a low cover wall whose top the
+    // 0.3 m ball would clip, unlike a thin revolver ray).
+    const a = addPlayer("A", -3, 0.9, 16);
+    const b = addPlayer("B", -3, 0.9, 10);
+    b.maxHealth = maxHealth;
+    b.health = maxHealth;
+    wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
+    fire(wm, a, WeaponActionType.BASKET_CHARGE_START, eyeOf(a), { x: 0, y: 0, z: -1 });
+    advance(1000);
+    fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), dirTo(eyeOf(a), { x: -3, y: 1.0, z: 10 }));
+    tickFor(wm, advance, 1500);
+    assert.strictEqual(b.health, maxHealth - GB.damage, `25 flat on ${maxHealth} max HP`);
+    assert.strictEqual(wm.basketProjectileCount, 0, "consumed by the first player hit");
+    const ends = basketActions(rec, "BASKET_END");
+    assert.strictEqual(ends.length, 1);
+    assert.strictEqual(ends[0].tid, "B");
+    const hit = rec.hits.find((h) => h.attackerId === "A");
+    assert.ok(hit && hit.ev.weapon === NetworkWeaponId.GOOFY_BASKET && hit.ev.damageDealt === GB.damage);
+    assert.strictEqual(rec.hits.length, 1, "no second hit at the same contact");
+  }
+});
+
+test("basket: world bounce budget per level, then the next world contact ends the ball", () => {
+  for (const level of [1, 2, 3] as const) {
+    const { wm, rec, addPlayer, advance } = makeWorld();
+    const a = addPlayer("A", 0, 0.9, 20);
+    wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
+    fire(wm, a, WeaponActionType.BASKET_CHARGE_START, eyeOf(a), { x: 0, y: 0, z: -1 });
+    advance(GB.levelThresholdsSeconds[level - 1] * 1000 + 5);
+    // Straight down onto the open ground slab: pure vertical bounces.
+    fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: -1, z: 0 });
+    tickFor(wm, advance, GB.maxLifetimeSeconds * 1000 + 1500);
+    const bounces = basketActions(rec, "BASKET_BOUNCE");
+    // L3 at 24 m/s straight down: 0.78 restitution → the 5th ground contact
+    // would come at ≈6.75 s, past the 6 s lifetime → 4 bounces then expiry.
+    const expected = level === 3 ? 4 : GB.throws[level - 1].maxWorldBounces;
+    assert.strictEqual(bounces.length, expected, `L${level} bounce budget / lifetime`);
+    for (let i = 0; i < bounces.length; i++) {
+      assert.strictEqual(bounces[i].bn, i + 1, "bounce numbering");
+      assert.ok(bounces[i].dy > 0, "reflected upward");
+      assert.ok(Math.abs(bounces[i].hy - 1) < 1e-9, "ground normal");
+    }
+    assert.strictEqual(basketActions(rec, "BASKET_END").length, 1, "exactly one end event");
+    assert.strictEqual(wm.basketProjectileCount, 0);
+  }
+});
+
+test("basket: a ball always ends within its lifetime (no immortal projectile)", () => {
+  const { wm, rec, addPlayer, advance } = makeWorld();
+  const a = addPlayer("A", 0, 0.9, 20);
+  wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
+  fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 1, z: 0 });
+  tickFor(wm, advance, GB.maxLifetimeSeconds * 1000 + 1500);
+  assert.strictEqual(wm.basketProjectileCount, 0);
+  assert.strictEqual(basketActions(rec, "BASKET_END").length, 1);
+});
+
+test("basket: weapon swap cancels the charge; death drops a planned launch", () => {
+  const { wm, rec, addPlayer, advance } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
+  fire(wm, a, WeaponActionType.BASKET_CHARGE_START, eyeOf(a), { x: 0, y: 0, z: -1 });
+  advance(1200);
+  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
+  fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 });
+  assert.strictEqual(basketActions(rec, "BASKET_THROW")[0].lv, 1, "swap dropped the charge → tap");
+  // Death right after the release, before the marker: no projectile.
+  wm.onPlayerDeath("A");
+  a.isAlive = false;
+  tickFor(wm, advance, 500);
+  assert.strictEqual(basketActions(rec, "BASKET_LAUNCH").length, 0, "a corpse never launches");
+  assert.strictEqual(wm.basketProjectileCount, 0);
+});
+
+test("basket: wrong weapon / dead player requests are ignored", () => {
+  const { wm, rec, addPlayer } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 });
+  assert.strictEqual(basketActions(rec, "BASKET_THROW").length, 0);
+  wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
+  a.isAlive = false;
+  fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 });
+  assert.strictEqual(basketActions(rec, "BASKET_THROW").length, 0);
+});
+
 console.log(`\n${passed} weapon tests passed`);

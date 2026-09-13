@@ -32,5 +32,7 @@ export enum KillMethod {
   HEX_SNIPER_TONGUE = "HEX_SNIPER_TONGUE",
   /** HEX SNIPER monster-head bite (automatic after every tongue shot). */
   HEX_SNIPER_BITE = "HEX_SNIPER_BITE",
+  /** GOOFY BASKET bouncing basketball (flat hit, no special medal). */
+  GOOFY_BASKET = "GOOFY_BASKET",
   ENVIRONMENT = "ENVIRONMENT",
 }

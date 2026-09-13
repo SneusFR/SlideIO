@@ -519,6 +519,10 @@ export class MultiplayerClient {
           ? { px: message.px, py: num(message.py), pz: num(message.pz) }
           : {}),
         ...(typeof message.tid === "string" ? { tid: message.tid } : {}),
+        // GoofyBasket: projectile id / locked level / bounce number.
+        ...(typeof message.pid === "number" ? { pid: message.pid } : {}),
+        ...(typeof message.lv === "number" ? { lv: message.lv } : {}),
+        ...(typeof message.bn === "number" ? { bn: message.bn } : {}),
       });
     });
     room.onMessage("HIT_CONFIRMED", (message: Partial<HitConfirmedEvent>) => {

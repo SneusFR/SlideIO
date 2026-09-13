@@ -238,6 +238,44 @@ export class ViewmodelSystem {
     return !!this.actions?.aim;
   }
 
+  /**
+   * CURRENT weapon mount (Weapon_R × profile fpMount) of the equipped
+   * weapon, or null. Read-only accessor for adapters that drive a
+   * presentation object from the REAL animated socket (GoofyBasket held
+   * ball) — never re-parent or re-scale it.
+   */
+  get mountObject(): THREE.Object3D | null {
+    return this.mount;
+  }
+
+  /**
+   * Camera-space presentation root (arms + weapon hang under it; bob /
+   * recoil / jump / slide offsets move it as a whole). Cosmetic objects
+   * that must move TOGETHER with the hands (the FP basketball) are
+   * parented here — the authored FP curves are expressed in this space.
+   */
+  get swayRoot(): THREE.Object3D {
+    return this.swayGroup;
+  }
+
+  /**
+   * Phase clock of the arms presentation: the clip driving the arms right
+   * now (name, local time, effective time scale, loop flag). The SAME clock
+   * drives any cosmetic object synchronized with the arms (ball curves) —
+   * there is never a second mixer advance.
+   */
+  presentationClock(): { clip: string | null; time: number; timeScale: number; loop: boolean; state: string } {
+    const cur = this.current;
+    if (!cur) return { clip: null, time: 0, timeScale: 1, loop: false, state: this.state };
+    return {
+      clip: cur.getClip().name,
+      time: cur.time,
+      timeScale: cur.getEffectiveTimeScale(),
+      loop: cur.loop !== THREE.LoopOnce,
+      state: this.state,
+    };
+  }
+
   /** True while a priority action (attack) is playing. */
   get acting(): boolean {
     return this.state === "action";
@@ -476,9 +514,17 @@ export class ViewmodelSystem {
             if (oneShot && act.action.time >= clip.duration - 1e-4) {
               const cb = act.onFinished;
               this.activeAction = null;
-              this.state = input.running ? "run" : "hold";
-              this.transition(input.running ? a.run : a.hold, act.exitFade);
+              // The callback may CHAIN the next action (Charge_L1 → its
+              // Charge_Hold loop, Slam_Start → Slam_Dive, Throw → Catch): it
+              // runs FIRST so the chain blends directly from the finished
+              // pose. Only when nothing was chained does the pose return to
+              // the real locomotion state — a Hold fade-in/out in between
+              // would pop the arms toward Hold for a few frames.
               cb?.();
+              if (this.activeAction === null && this.state === "action") {
+                this.state = input.running ? "run" : "hold";
+                this.transition(input.running ? a.run : a.hold, act.exitFade);
+              }
             }
           } else {
             this.state = "hold";

@@ -148,6 +148,8 @@ class RemotePlayer {
   /** Latest INTERPOLATED aim (drives remote beams; never raw packets). */
   lastYaw = 0;
   lastPitch = 0;
+  /** Latest sampled movement state is grounded (idle / running) — TP dribble floor fit. */
+  private lastGrounded = true;
 
   // ---- Network instrumentation (per remote — fed on snapshot arrival) ----
   lastSeq = -1;
@@ -233,6 +235,10 @@ class RemotePlayer {
       if (kind === null) this.anim.clearOverride();
       else this.anim.playOverride(kind, options);
     };
+    // GoofyBasket TP ball: driven from the avatar's arm clock (the SAME
+    // mixer — read after anim.update) + grounded state for the floor fit.
+    this.weapons.presentationClock = () => this.anim.presentationClock();
+    this.weapons.isGrounded = () => this.lastGrounded;
     this.group.add(this.createNametag(name));
     this.createHealthBar();
 
@@ -316,6 +322,7 @@ class RemotePlayer {
       // over (stale callbacks dropped, pupils reset; the corpse is an
       // independent clone of the current pose).
       this.weapons.maulReset();
+      this.weapons.basketReset();
       if (this.group.visible) this.onDied?.(this);
       this.alive = false;
       this.group.visible = false;
@@ -340,6 +347,7 @@ class RemotePlayer {
     this.healthRatioShown = 1; // full bar instantly — no dead→full easing
     this.healthRatioTarget = 1;
     this.weapons.maulReset(); // respawn = teleport: phases dropped, pupils reset
+    this.weapons.basketReset();
   }
 
   /** Sample the buffer at renderTime (server ms) and drive visuals. */
@@ -458,6 +466,8 @@ class RemotePlayer {
     // sampled yaw is already shortest-arc interpolated (359°→1° = 2°).
     this.group.rotation.y = s.yaw;
     this.lastYaw = s.yaw;
+    this.lastGrounded =
+      s.movementState === NetworkMovementState.IDLE || s.movementState === NetworkMovementState.RUNNING;
     this.lastPitch = s.pitch;
 
     const horizontalSpeed = Math.hypot(s.velocityX, s.velocityZ);
@@ -867,6 +877,22 @@ export class RemotePlayerManager {
 
   maulInspectCancel(sessionId: string): void {
     this.remotes.get(sessionId)?.weapons.maulInspectCancel();
+  }
+
+  // ---- GOOFY BASKET remote phases (server-confirmed replay) ----
+
+  /** BASKET_THROW → Throw_Ln (then Catch) resumed at `elapsed`. */
+  basketThrow(sessionId: string, level: 1 | 2 | 3, elapsed: number): void {
+    this.remotes.get(sessionId)?.weapons.basketThrow(level, elapsed);
+  }
+
+  /** INSPECT_START (weapon GOOFY_BASKET) → TP inspection layer resumed at `elapsed`. */
+  basketInspectStart(sessionId: string, elapsed: number): void {
+    this.remotes.get(sessionId)?.weapons.basketInspectStart(elapsed);
+  }
+
+  basketInspectCancel(sessionId: string): void {
+    this.remotes.get(sessionId)?.weapons.basketInspectCancel();
   }
 
   // ---- HEX SNIPER remote tongue (creature clips + world tether) ----

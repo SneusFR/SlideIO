@@ -6,6 +6,12 @@ import {
   PLAYER_HEAD_OFFSET,
   PLAYER_HEAD_RADIUS,
 } from "../../../shared/combat/NetworkWeapons";
+import {
+  type BasketSweepHit,
+  sweepSphereAabb,
+  sweepSphereSphere,
+  sweepSphereVerticalCapsule,
+} from "../../../shared/combat/BasketProjectileSim";
 
 export interface Vec3 {
   x: number;
@@ -225,6 +231,56 @@ export function hitscan(
     };
   }
   return null;
+}
+
+/**
+ * SWEPT SPHERE query for the GoofyBasket projectile (shared integration
+ * rule in shared/combat/BasketProjectileSim): nearest contact of a ball
+ * of `radius` moving from `origin` along `dir` for `maxDist` against the
+ * map boxes (kind "world", face normal) and the player volumes (kind
+ * "player", normal = radial from the capsule axis). The owner is excluded.
+ */
+export function sweepBasketSphere(
+  origin: Vec3,
+  dir: Vec3,
+  maxDist: number,
+  radius: number,
+  targets: Iterable<HitTarget>,
+  excludeId: string | null,
+  boxes: ColliderBox[] = MAP_COLLIDER_BOXES,
+): BasketSweepHit | null {
+  let best: BasketSweepHit | null = null;
+  for (const b of boxes) {
+    const hit = sweepSphereAabb(origin, dir, radius, b[0], b[1], b[2], b[3] / 2, b[4] / 2, b[5] / 2, maxDist);
+    if (hit && hit.distance <= maxDist && (best === null || hit.distance < best.distance)) {
+      best = { distance: hit.distance, normal: hit.normal, kind: "world" };
+    }
+  }
+  for (const target of targets) {
+    if (excludeId !== null && target.id === excludeId) continue;
+    const center = { x: target.x, y: target.y, z: target.z };
+    const headCenter = { x: target.x, y: target.y + PLAYER_HEAD_OFFSET, z: target.z };
+    const headT = sweepSphereSphere(origin, dir, radius, headCenter, PLAYER_HEAD_RADIUS);
+    const bodyT = sweepSphereVerticalCapsule(
+      origin,
+      dir,
+      radius,
+      center,
+      PLAYER_CAPSULE_HALF_HEIGHT,
+      PLAYER_CAPSULE_RADIUS,
+    );
+    let t: number | null = null;
+    if (headT !== null) t = bodyT !== null ? Math.min(headT, bodyT) : headT;
+    else if (bodyT !== null) t = bodyT;
+    if (t === null || t > maxDist) continue;
+    if (best !== null && t >= best.distance) continue;
+    // Contact normal: from the capsule axis (clamped in Y) toward the ball.
+    const c = pointAt(origin, dir, t);
+    const cy = Math.max(center.y - PLAYER_CAPSULE_HALF_HEIGHT, Math.min(center.y + PLAYER_CAPSULE_HALF_HEIGHT, c.y));
+    const n = normalize({ x: c.x - center.x, y: c.y - cy, z: c.z - center.z }) ?? { x: -dir.x, y: -dir.y, z: -dir.z };
+    best = { distance: t, normal: n, kind: "player", targetId: target.id };
+  }
+  return best;
 }
 
 /** True when no map geometry blocks the segment a → b. */

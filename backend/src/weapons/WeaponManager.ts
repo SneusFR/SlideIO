@@ -13,7 +13,18 @@ import {
   HEX_ACTION_TONGUE_MISS,
   HEX_ACTION_PULL_END,
   HEX_ACTION_BITE,
+  BASKET_ACTION_THROW,
+  BASKET_ACTION_LAUNCH,
+  BASKET_ACTION_BOUNCE,
+  BASKET_ACTION_END,
+  goofyBasketLevelForHold,
 } from "../../../shared/combat/NetworkWeapons";
+import {
+  type BasketProjectileState,
+  basketLaunchVelocity,
+  createBasketProjectileState,
+  stepBasketProjectile,
+} from "../../../shared/combat/BasketProjectileSim";
 import { DamageType, HitZone } from "../combat/DamageTypes";
 import { DamageResult } from "../combat/DamageResult";
 import { NetworkPlayer } from "../schemas/NetworkPlayer";
@@ -23,6 +34,7 @@ import {
   HitTarget,
   hitscan,
   raycastMap,
+  sweepBasketSphere,
   hasLineOfSight,
   pointAt,
   normalize,
@@ -89,6 +101,34 @@ interface BassNoteProjectile {
   age: number;
   /** Shooter view delay (now − viewTime) captured at fire time — every
    *  flight tick rewinds the targets by this amount (already clamped). */
+  viewDelayMs: number;
+}
+
+/**
+ * One GOOFY BASKET throw sequence engaged by a validated release. The
+ * projectile is created in tick() when the server clock reaches
+ * `launchAt` (authored release marker, + an accepted gather delay) — never
+ * at the request itself. The player is busy until `readyAt` (Throw
+ * recovery + the full 0.58 s Catch), then may charge again.
+ */
+interface BasketThrowState {
+  id: number;
+  level: 1 | 2 | 3;
+  /** Server clock (ms) of the Throw phase start (sent as `ts`). */
+  startedAt: number;
+  launchAt: number;
+  readyAt: number;
+  origin: Vec3;
+  dir: Vec3;
+  launched: boolean;
+  viewDelayMs: number;
+}
+
+/** One in-flight GOOFY BASKET ball (server-simulated, shared integration). */
+interface BasketProjectile {
+  id: number;
+  ownerId: string;
+  state: BasketProjectileState;
   viewDelayMs: number;
 }
 
@@ -176,6 +216,11 @@ class PlayerWeaponState {
   /** Stall detection: best (smallest) distance so far + when it improved. */
   hexBestDist = Infinity;
   hexLastProgressAt = 0;
+  // Goofy Basket (server-owned charge clock + engaged throw sequence)
+  /** Server clock (ms) of the accepted BASKET_CHARGE_START, or 0. */
+  basketChargeStart = 0;
+  /** Engaged throw (Throw phase + Catch) — null = free to charge / throw. */
+  basketThrow: BasketThrowState | null = null;
 }
 
 /** IO the room provides — WeaponManager stays free of Colyseus types. */
@@ -217,6 +262,9 @@ export class WeaponManager {
   private readonly history = new Map<string, HistoryEntry[]>();
   private readonly projectiles: RevolverProjectile[] = [];
   private readonly bassProjectiles: BassNoteProjectile[] = [];
+  private readonly basketProjectiles: BasketProjectile[] = [];
+  /** Monotonic GoofyBasket projectile / throw id (room-wide). */
+  private nextBasketId = 1;
 
   /**
    * @param mapBoxes the room's map collision world (shared MapRegistry) —
@@ -338,6 +386,10 @@ export class WeaponManager {
     s.oblitB = null;
     s.oblitNextIndex = 0;
     s.inspecting = false; // a weapon swap always ends an inspection
+    // A weapon swap cancels a basket charge / a throw whose ball has NOT
+    // left the hand yet; an already launched projectile keeps flying.
+    s.basketChargeStart = 0;
+    if (s.basketThrow && !s.basketThrow.launched) s.basketThrow = null;
     s.weapon = rawWeapon;
     player.weapon = rawWeapon; // synced schema state → all clients
   }
@@ -454,6 +506,16 @@ export class WeaponManager {
       case WeaponActionType.HEX_TONGUE_FIRE:
         this.handleHexTongueFire(player, s, seq, origin, dir, this.resolveRewindTime(msg));
         return;
+      case WeaponActionType.BASKET_CHARGE_START:
+        this.handleBasketChargeStart(player, s);
+        return;
+      case WeaponActionType.BASKET_CHARGE_CANCEL:
+        if (s.weapon !== NetworkWeaponId.GOOFY_BASKET) return;
+        s.basketChargeStart = 0; // silent: remotes only replay validated throws
+        return;
+      case WeaponActionType.BASKET_THROW_REQUEST:
+        this.handleBasketThrowRequest(player, s, seq, origin, dir, msg);
+        return;
       default:
         return; // unknown action — silently refused
     }
@@ -477,9 +539,203 @@ export class WeaponManager {
       // Burrow safety: never invulnerable forever if MOLE_EMERGE is lost.
       if (s.burrowed && now >= s.burrowedUntil) s.burrowed = false;
       if (s.hexVictimId !== null) this.tickHexPull(player, s, now);
+      if (s.basketThrow) this.tickBasketThrow(player, s, now);
     }
     this.tickProjectiles(dt);
     this.tickBassProjectiles(dt);
+    this.tickBasketProjectiles(dt);
+  }
+
+  // ------------------------------------------------------------------
+  // GOOFY BASKET — charge clock, throw sequence, bouncing projectile
+  // ------------------------------------------------------------------
+
+  /** BASKET_CHARGE_START: record the authoritative charge start (silent). */
+  private handleBasketChargeStart(_player: NetworkPlayer, s: PlayerWeaponState): void {
+    if (s.weapon !== NetworkWeaponId.GOOFY_BASKET) return;
+    const now = this.host.now();
+    // Busy (throw / catch engaged) → the charge cannot start; the client
+    // predicts the same refusal from the same timings.
+    if (s.basketThrow && now < s.basketThrow.readyAt) return;
+    if (s.basketThrow) s.basketThrow = null;
+    if (s.basketChargeStart !== 0) return; // already charging (duplicate)
+    if (s.inspecting) s.inspecting = false; // a charge interrupts an inspection
+    s.basketChargeStart = now;
+  }
+
+  /**
+   * BASKET_THROW_REQUEST: the release. The level comes from the SERVER
+   * charge clock (a request without a prior START is a tap = level 1); the
+   * Throw phase starts now, the projectile is created at the authored
+   * release marker (+ an accepted short gather delay, `pi` = 1).
+   */
+  private handleBasketThrowRequest(
+    player: NetworkPlayer,
+    s: PlayerWeaponState,
+    seq: number,
+    origin: Vec3 | null,
+    dir: Vec3 | null,
+    msg: WeaponActionMessage,
+  ): void {
+    if (s.weapon !== NetworkWeaponId.GOOFY_BASKET || !origin || !dir) return;
+    const now = this.host.now();
+    const B = W.goofyBasket;
+    // Sequence engaged (throw recovery + catch) → repeated / early release refused.
+    if (s.basketThrow && now < s.basketThrow.readyAt) return;
+    let held = 0;
+    if (s.basketChargeStart !== 0) {
+      held = (now - s.basketChargeStart) / 1000;
+      // A stale charge (lost release, absurd window) is dropped: tap level.
+      if (held < 0 || held > B.maxChargeHoldSeconds) held = 0;
+    }
+    s.basketChargeStart = 0;
+    const level = goofyBasketLevelForHold(held);
+    const def = B.throws[level - 1];
+    const gather = msg.pi === 1 ? B.maxGatherDelaySeconds : 0;
+    const startedAt = now + gather * 1000;
+    const id = this.nextBasketId++;
+    s.basketThrow = {
+      id,
+      level,
+      startedAt,
+      launchAt: startedAt + def.releaseAt * 1000,
+      readyAt: startedAt + (def.clipDuration + B.catchDuration) * 1000,
+      origin,
+      dir,
+      launched: false,
+      viewDelayMs: now - this.resolveRewindTime(msg),
+    };
+    s.inspecting = false;
+    this.host.broadcastAction({
+      playerId: player.id,
+      weapon: NetworkWeaponId.GOOFY_BASKET,
+      action: BASKET_ACTION_THROW,
+      seq,
+      ts: startedAt,
+      ox: origin.x,
+      oy: origin.y,
+      oz: origin.z,
+      dx: dir.x,
+      dy: dir.y,
+      dz: dir.z,
+      pid: id,
+      lv: level,
+    });
+  }
+
+  /** Throw phase clock: create the projectile at the release marker, then free the player. */
+  private tickBasketThrow(player: NetworkPlayer, s: PlayerWeaponState, now: number): void {
+    const t = s.basketThrow!;
+    if (!t.launched && now >= t.launchAt) {
+      t.launched = true;
+      this.launchBasket(player, t);
+    }
+    if (t.launched && now >= t.readyAt) s.basketThrow = null;
+  }
+
+  /**
+   * Create the ball at the marker. Origin = the VALIDATED eye origin of the
+   * release (already within MAX_ORIGIN_DRIFT of the transform), pushed
+   * forward by the ball radius; a wall closer than that blocks the exit
+   * and the ball starts at the eye instead (never inside geometry).
+   */
+  private launchBasket(player: NetworkPlayer, t: BasketThrowState): void {
+    const r = W.goofyBasket.projectileRadius;
+    let start = t.origin;
+    const exitBlocked = raycastMap(t.origin, t.dir, r * 1.5, this.mapBoxes);
+    if (exitBlocked === null) start = pointAt(t.origin, t.dir, r);
+    const vel = basketLaunchVelocity(t.dir, t.level);
+    this.basketProjectiles.push({
+      id: t.id,
+      ownerId: player.id,
+      state: createBasketProjectileState(start, vel, t.level),
+      viewDelayMs: t.viewDelayMs,
+    });
+    this.basketEvent(player.id, BASKET_ACTION_LAUNCH, start, vel, { pid: t.id, lv: t.level });
+  }
+
+  private tickBasketProjectiles(dt: number): void {
+    const B = W.goofyBasket;
+    for (let i = this.basketProjectiles.length - 1; i >= 0; i--) {
+      const p = this.basketProjectiles[i];
+      const targets = this.rewindTargets(p.ownerId, this.host.now() - p.viewDelayMs);
+      const events = stepBasketProjectile(
+        p.state,
+        dt,
+        {
+          sweep: (from, dir, maxDist, radius, excludeId) =>
+            sweepBasketSphere(from, dir, maxDist, radius, targets, excludeId, this.mapBoxes),
+        },
+        p.ownerId,
+        B.projectileRadius,
+      );
+      let ended = false;
+      for (const ev of events) {
+        if (ev.type === "bounce") {
+          this.basketEvent(p.ownerId, BASKET_ACTION_BOUNCE, ev.pos, ev.vel, {
+            pid: p.id,
+            bn: ev.index,
+            hx: ev.normal.x,
+            hy: ev.normal.y,
+            hz: ev.normal.z,
+          });
+          continue;
+        }
+        ended = true;
+        if (ev.type === "hit") {
+          const owner = this.host.getPlayer(p.ownerId);
+          // FLAT 25 on every level, BODY zone, first accepted hit consumes.
+          if (owner && owner.isAlive) {
+            this.dealDamage(owner, ev.targetId, B.damage, DamageType.GOOFY_BASKET, HitZone.BODY, NetworkWeaponId.GOOFY_BASKET);
+          }
+          this.basketEvent(p.ownerId, BASKET_ACTION_END, p.state.pos, UP, {
+            pid: p.id,
+            hx: ev.point.x,
+            hy: ev.point.y,
+            hz: ev.point.z,
+            tid: ev.targetId,
+          });
+        } else {
+          this.basketEvent(p.ownerId, BASKET_ACTION_END, p.state.pos, UP, {
+            pid: p.id,
+            hx: ev.point.x,
+            hy: ev.point.y,
+            hz: ev.point.z,
+          });
+        }
+        break;
+      }
+      if (ended) this.basketProjectiles.splice(i, 1);
+    }
+  }
+
+  /** Server-only GoofyBasket broadcast (dx/dy/dz carry a VELOCITY, not a unit dir). */
+  private basketEvent(
+    ownerId: string,
+    action: string,
+    pos: Vec3,
+    vel: Vec3,
+    extra: Partial<Pick<WeaponActionConfirmedEvent, "pid" | "lv" | "bn" | "hx" | "hy" | "hz" | "tid">>,
+  ): void {
+    this.host.broadcastAction({
+      playerId: ownerId,
+      weapon: NetworkWeaponId.GOOFY_BASKET,
+      action,
+      seq: 0,
+      ts: this.host.now(),
+      ox: pos.x,
+      oy: pos.y,
+      oz: pos.z,
+      dx: vel.x,
+      dy: vel.y,
+      dz: vel.z,
+      ...extra,
+    });
+  }
+
+  /** Live GoofyBasket projectiles (tests / diagnostics). */
+  get basketProjectileCount(): number {
+    return this.basketProjectiles.length;
   }
 
   private tickPlasma(player: NetworkPlayer, s: PlayerWeaponState, dt: number, now: number): void {
@@ -1391,6 +1647,10 @@ export class WeaponManager {
     s.oblitNextIndex = 0;
     s.burrowed = false;
     s.hexVictimId = null;
+    // A corpse never releases a ball: the planned launch is dropped. An
+    // already flying ball keeps its lifecycle (owner alive check at hit).
+    s.basketChargeStart = 0;
+    s.basketThrow = null;
   }
 
   /** Whoever is pulling `victimId` drops the grab (victim died / left). */
@@ -1421,6 +1681,8 @@ export class WeaponManager {
     s.hexVictimId = null;
     s.revolverAmmo = W.revolver.capacity;
     s.revolverUnavailableUntil = 0;
+    s.basketChargeStart = 0;
+    s.basketThrow = null;
   }
 
   removePlayer(playerId: string): void {

@@ -26,7 +26,7 @@ THREE.ImageBitmapLoader.prototype.load=function(u,done){queueMicrotask(()=>done?
 const read=async file=>{const b=fs.readFileSync(file);return new GLTFLoader().parseAsync(b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength),'');};
 const server=await createServer({root:project,configFile:false,server:{middlewareMode:true},appType:'custom'});
 try{
- GLTFLoader.prototype.loadAsync=async function(url){const name=url.split('/').pop().split('?')[0];const dir=/BrickMaul/.test(name)?'src/assets/brickmaul/':'src/assets/potato/';return read(project+'/'+dir+name);};
+ GLTFLoader.prototype.loadAsync=async function(url){const name=url.split('/').pop().split('?')[0];const dir=/BrickMaul/.test(name)?'src/assets/brickmaul/':/GoofyBasket/.test(name)?'src/assets/goofybasket/':'src/assets/potato/';return read(project+'/'+dir+name);};
  const {loadCharacterAsset}=await server.ssrLoadModule('/src/characters/PotatoCharacter.ts');
  const {RemotePlayerAnimationController}=await server.ssrLoadModule('/src/network/remote/RemotePlayerAnimationController.ts');
  const {BrickMaulProfile,BRICKMAUL_TIMING}=await server.ssrLoadModule('/src/weapons/brickmaul/BrickMaulProfile.ts');
@@ -53,7 +53,7 @@ try{
  for(const b of ['Shoulder_L','Shoulder_R','UpperArm_L','LowerArm_L','Hand_L','Spine_1','Head'])assert.ok(!mask.has(b),`${b} outside the mask`);
  // Every action clip resolves with the authored duration.
  const dur={whirlwind:1.35,slamStart:0.2,slamDive:0.4,slamLand:0.82};
- for(const [k,d] of Object.entries(dur)){assert.ok(set.actions[k],`action ${k}`);assert.ok(Math.abs(set.actions[k].duration-d)<0.02,`${k} duration ${set.actions[k].duration}`);}
+ for(const [k,d] of Object.entries(dur)){assert.ok(set.actions[k],`action ${k}`);assert.ok(Math.abs(set.actions[k].clip.duration-d)<0.02,`${k} duration ${set.actions[k].clip.duration}`);}
  assert.ok(Math.abs(set.inspect.duration-3.6)<0.02&&Math.abs(set.equip.duration-0.65)<0.02&&Math.abs(set.unequip.duration-0.3)<0.02,'inspect/equip/unequip durations');
  assert.equal(BRICKMAUL_TIMING.slam.recoveryAfterGroundContact,0.72);
  assert.equal(BrickMaulProfile.id,'brickmaul');

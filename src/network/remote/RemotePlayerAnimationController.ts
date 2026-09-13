@@ -85,8 +85,14 @@ export interface ArmedProfileClips {
     dash: THREE.AnimationClip;
     slide: THREE.AnimationClip;
   } | null;
-  /** Attack / phase clips by profile action key (whirlwind, slamStart…). */
-  actions: Record<string, THREE.AnimationClip>;
+  /**
+   * Attack / phase clips by profile action key (whirlwind, slamStart…).
+   * `loop` comes EXPLICITLY from the profile (never inferred from the key).
+   * `layered` = the clip is an UPPER-BODY layer (tracks reduced to the
+   * profile mask) played over the lower-body locomotion of the real state
+   * — GoofyBasket charge / throw / catch / dribble keep the legs running.
+   */
+  actions: Record<string, { clip: THREE.AnimationClip; loop: boolean; layered?: boolean }>;
 }
 
 /** Profile id of the HexSniper's dedicated TP set (RemoteCharacterClips.armed*). */
@@ -300,9 +306,12 @@ export class RemotePlayerAnimationController {
     for (const [id, p] of Object.entries(clips.profiles ?? {})) {
       const jumps = p.jumpVariants.length ? p.jumpVariants : [p.jump];
       const actions = new Map<string, THREE.AnimationAction>();
-      for (const [key, clip] of Object.entries(p.actions)) {
-        const isLoop = /dive/i.test(key); // Slam_Dive loops during the descent
-        actions.set(key, isLoop ? loop(clip) : oneShot(clip));
+      const layeredActions = new Set<string>();
+      for (const [key, def] of Object.entries(p.actions)) {
+        // EXPLICIT loop flag from the profile (Slam_Dive, Charge_Hold_Ln,
+        // Dribble loop; Whirlwind / Throw / Catch are one-shots).
+        actions.set(key, def.loop ? loop(def.clip) : oneShot(def.clip));
+        if (def.layered) layeredActions.add(key);
       }
       const lb = p.lowerBody ?? null;
       const lbJumps = lb ? (lb.jumpVariants.length ? lb.jumpVariants : [lb.jump]) : [];
@@ -336,6 +345,7 @@ export class RemotePlayerAnimationController {
         lowerJumps: lbJumps.map(oneShot),
         lowerLandings: lbJumps.map((c) => oneShot(landingClip(c))),
         actions,
+        layeredActions,
       });
     }
 
@@ -439,7 +449,15 @@ export class RemotePlayerAnimationController {
     // upper-body layer goes over the lower-body locomotion of the real
     // state (idle included — the split pose equals the full clip there).
     if (kind === "inspect" && set.inspectUpper && set.lowerSlots) {
-      return this.playInspectLayer(set.inspectUpper, options);
+      return this.playInspectLayer(set.inspectUpper, options, false);
+    }
+    // Layered profile ACTIONS (GoofyBasket charge / throw / catch / dribble):
+    // the masked upper clip plays over the lower-body locomotion — the legs
+    // keep running / jumping / sliding. Loops stay until cleared / replaced.
+    if (set.layeredActions.has(kind) && set.lowerSlots) {
+      const layer = set.actions.get(kind);
+      if (!layer) return false;
+      return this.playInspectLayer(layer, options, true);
     }
     const action =
       kind === "equip" ? set.equip : kind === "unequip" ? set.unequip : kind === "inspect" ? set.inspect : set.actions.get(kind) ?? null;
@@ -481,6 +499,18 @@ export class RemotePlayerAnimationController {
     this.current = next;
   }
 
+  /**
+   * Presentation clock of the arm-owning clip: the running override or
+   * layer (priority) else the locomotion slot action. Cosmetic objects
+   * synchronized with the arms (GoofyBasket TP ball) read it AFTER
+   * update() — never a second mixer advance.
+   */
+  presentationClock(): { clip: string | null; time: number } {
+    if (this.override) return { clip: this.override.action.getClip().name, time: this.override.action.time };
+    if (this.inspectLayer) return { clip: this.inspectLayer.action.getClip().name, time: this.inspectLayer.action.time };
+    return { clip: this.current.getClip().name, time: this.current.time };
+  }
+
   /** Elapsed time of the running override / inspection layer (s), or -1. */
   get overrideTime(): number {
     if (this.override) return this.override.action.time;
@@ -497,18 +527,36 @@ export class RemotePlayerAnimationController {
   private playInspectLayer(
     layer: THREE.AnimationAction,
     options: { startAt?: number; fadeIn?: number; exitFade?: number; onFinished?: () => void },
+    /** Priority action layer: replaces a running layer / full override (an attack wins). */
+    priority: boolean,
   ): boolean {
     if (this.override) {
       // An attack / equip in progress keeps the body (mirror of the
-      // sender: an inspection never interrupts an attack).
-      return false;
+      // sender: an inspection never interrupts an attack) — a priority
+      // layer (charge / throw) does replace the full-body override.
+      if (!priority) return false;
+      this.override.onFinished = null;
+      this.override = null;
+      const back = this.actionFor(this.currentSlot);
+      back.reset();
+      this.seekEntry(back);
+      back.play();
+      this.current.crossFadeTo(back, 0.08, false);
+      this.current = back;
     }
-    if (this.inspectLayer) this.inspectLayer.onFinished = null;
+    const prev = this.inspectLayer;
+    if (prev) prev.onFinished = null;
     const fade = options.fadeIn ?? 0.1;
-    const wasLayered = this.inspectLayer !== null;
+    const wasLayered = prev !== null;
     this.inspectLayer = { action: layer, onFinished: options.onFinished ?? null, exitFade: options.exitFade ?? 0.12 };
+    if (prev && prev.action !== layer) {
+      if (fade > 0) prev.action.fadeOut(fade);
+      else prev.action.stop();
+    }
     layer.reset();
-    layer.time = Math.max(0, Math.min(options.startAt ?? 0, layer.getClip().duration - 1e-3));
+    const isLoop = layer.loop !== THREE.LoopOnce;
+    const start = Math.max(0, options.startAt ?? 0);
+    layer.time = isLoop ? start % layer.getClip().duration : Math.min(start, layer.getClip().duration - 1e-3);
     layer.setEffectiveTimeScale(1).setEffectiveWeight(1);
     layer.paused = false;
     if (fade > 0) layer.fadeIn(fade);
@@ -607,7 +655,8 @@ export class RemotePlayerAnimationController {
     // locomotion variant comes back (the real state is untouched).
     if (this.inspectLayer) {
       const layer = this.inspectLayer;
-      if (layer.action.time >= layer.action.getClip().duration - 1e-4) {
+      const oneShot = layer.action.loop === THREE.LoopOnce;
+      if (oneShot && layer.action.time >= layer.action.getClip().duration - 1e-4) {
         const cb = layer.onFinished;
         this.dropInspectLayer(layer.exitFade);
         cb?.();
@@ -897,6 +946,8 @@ interface ProfileActionSet {
   lowerJumps: THREE.AnimationAction[];
   lowerLandings: THREE.AnimationAction[];
   actions: Map<string, THREE.AnimationAction>;
+  /** Action keys played as an UPPER layer over the lower-body locomotion. */
+  layeredActions: Set<string>;
 }
 
 /** Wrap an unbounded angle into [-PI, PI]. */

@@ -7,6 +7,10 @@ import { RevolverConfig as rc } from "../weapons/revolver/RevolverConfig";
 import { BassBlasterConfig as bb } from "../weapons/bassblaster/BassBlasterConfig";
 import { PoisonConfig as pz } from "../weapons/poison/PoisonConfig";
 import { HexSniperConfig as hx } from "../weapons/hexsniper/HexSniperConfig";
+import { NetworkWeaponConfig } from "../../shared/combat/NetworkWeapons";
+
+/** GoofyBasket gameplay numbers come from the SHARED client/server config. */
+const gb = NetworkWeaponConfig.goofyBasket;
 
 /**
  * Player loadout: the single source of truth for what is equipped.
@@ -21,7 +25,8 @@ export type PrimaryWeaponId =
   | "REVOLVER"
   | "BASS_BLASTER"
   | "POISON_SPRAYER"
-  | "HEX_SNIPER";
+  | "HEX_SNIPER"
+  | "GOOFY_BASKET";
 export type KillstreakId = "NONE" | "MOLE_STRIKE" | "ORBITAL_SCAN" | "NOVA_STRIKE";
 
 /** Exactly three equippable killstreak slots (keys W / X / C in game). */
@@ -83,7 +88,8 @@ export function loadLoadout(): LoadoutSelection {
         parsed.primary === "REVOLVER" ||
         parsed.primary === "BASS_BLASTER" ||
         parsed.primary === "POISON_SPRAYER" ||
-        parsed.primary === "HEX_SNIPER"
+        parsed.primary === "HEX_SNIPER" ||
+        parsed.primary === "GOOFY_BASKET"
           ? parsed.primary
           : "PLASMA_RIFLE",
       killstreaks,
@@ -409,6 +415,38 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
         stats: [
           { label: "ZOOM", value: `×${hx.zoomFactor}` },
           { label: "PORTÉE", value: "ILLIMITÉE" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "GOOFY_BASKET",
+    name: "GOOFY BASKET",
+    tagline: "Ballon de basket géant à charger",
+    summary:
+      "Un énorme ballon de basket tenu à une main. Dribblez en courant, chargez le lancer en maintenant le tir, relâchez pour une poussée directe vers l'avant : plus la charge est longue, plus le ballon part vite et rebondit sur le décor. Un joueur touché prend des dégâts fixes et le ballon est consommé ; une nouvelle balle vous tombe dans la main juste après. (Réglages initiaux, non équilibrés.)",
+    ratings: { power: 55, precision: 45, difficulty: 50 },
+    abilities: [
+      {
+        trigger: "CLIC GAUCHE — TAP / MAINTENIR / RELÂCHER",
+        name: "LANCER CHARGÉ",
+        description:
+          "Un tap lance immédiatement au niveau 1. Maintenir prépare le niveau 2 puis 3 ; relâcher verrouille le niveau et engage le lancer dans la direction visée (aucun angle de cloche ajouté). Le ballon rebondit sur murs et sols selon son niveau, puis s'arrête ; le premier joueur touché est le seul.",
+        stats: [
+          { label: "DÉGÂTS", value: `${gb.damage} PV` },
+          { label: "NIVEAU 2 / 3", value: `${gb.levelThresholdsSeconds[1]} s / ${gb.levelThresholdsSeconds[2]} s` },
+          { label: "VITESSE", value: gb.throws.map((t) => t.speed).join(" / ") + " m/s" },
+          { label: "REBONDS DÉCOR", value: gb.throws.map((t) => t.maxWorldBounces).join(" / ") },
+        ],
+      },
+      {
+        trigger: "COURIR — TOUCHE F",
+        name: "DRIBBLE & INSPECTION",
+        description:
+          "En déplacement au sol, le ballon dribble à côté de vous ; sauter, glisser ou dasher le ramène en main. F joue une inspection avec trois dribbles (visuel uniquement).",
+        stats: [
+          { label: "DURÉE DE VIE", value: `${gb.maxLifetimeSeconds} s` },
+          { label: "DIAMÈTRE", value: `${Math.round(gb.projectileRadius * 200)} cm` },
         ],
       },
     ],

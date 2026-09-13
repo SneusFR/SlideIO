@@ -168,8 +168,12 @@ export class GameRoom extends Room<GameRoomState> {
         // EXCEPTION — HEX SNIPER: the tongue's outcome (grab / miss / pull
         // end / bite) is decided HERE, so the shooter needs its own confirm
         // to drive its local weapon. Every other weapon stays shooter-excluded.
+        // GOOFY BASKET: the throw level / projectile id / bounces / end are
+        // decided here too — the shooter reconciles its predicted ball.
         const shooter =
-          event.weapon === NetworkWeaponId.HEX_SNIPER ? undefined : this.clientById(event.playerId);
+          event.weapon === NetworkWeaponId.HEX_SNIPER || event.weapon === NetworkWeaponId.GOOFY_BASKET
+            ? undefined
+            : this.clientById(event.playerId);
         this.broadcast(
           "WEAPON_ACTION_CONFIRMED",
           event,

@@ -10,6 +10,8 @@ import type {
 } from "../network/remote/RemotePlayerAnimationController";
 import { loadBrickMaulTPClips } from "../weapons/brickmaul/BrickMaulModel";
 import { BrickMaulProfile } from "../weapons/brickmaul/BrickMaulProfile";
+import { loadGoofyBasketTPClips } from "../weapons/goofybasket/GoofyBasketModel";
+import { GoofyBasketProfile } from "../weapons/goofybasket/GoofyBasketProfile";
 // POTATO character pack (src/assets/potato) — the common third-person model
 // for remote players AND bots. One GLB carries mesh + skeleton + the four
 // locomotion clips (Run_Goofy / Jump / Dash / Slide, all in place — no root
@@ -171,7 +173,12 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       console.error("BrickMaul: TP pose library failed to load", err);
       return [] as THREE.AnimationClip[];
     }),
-  ]).then(([gltf, posesGltf, maulClips]: [GLTF, GLTF, THREE.AnimationClip[]]) => {
+    // GoofyBasket TP pose library (clips only) — same failure policy.
+    loadGoofyBasketTPClips().catch((err) => {
+      console.error("GoofyBasket: TP pose library failed to load", err);
+      return [] as THREE.AnimationClip[];
+    }),
+  ]).then(([gltf, posesGltf, maulClips, basketClips]: [GLTF, GLTF, THREE.AnimationClip[], THREE.AnimationClip[]]) => {
     const model = gltf.scene;
 
     // Normalize ONCE on the template, measured from the REST pose (the
@@ -314,10 +321,10 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       const maulRunComposite = buildMaskedVariant(run, maulRun, mask, "_BrickMaul", true);
       const maulDash = masked(dash);
       const maulSlide = masked(slide);
-      const actions: Record<string, THREE.AnimationClip> = {};
+      const actions: ArmedProfileClips["actions"] = {};
       for (const [key, def] of Object.entries(BrickMaulProfile.tpClips!.actions ?? {})) {
         const clip = byName(maulClips, def.clip);
-        if (clip) actions[key] = clip;
+        if (clip) actions[key] = { clip, loop: def.loop }; // explicit profile flag (Slam_Dive loops)
       }
       const maulInspect = byName(maulClips, BrickMaulProfile.tpClips!.inspect!) ?? null;
       // Inspection that survives movement: the Inspect clip only animates
@@ -352,6 +359,59 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       };
     }
 
+    // ---- GoofyBasket TP profile set (Potato_TP_GoofyBasket.glb) ----
+    // ONE-HAND right grip: the authored rightArmMask (right arm + right
+    // fingers + Weapon_R) is the hold layer; body, legs, head, leaf and the
+    // whole LEFT arm keep the unarmed locomotion. Run keeps the right side
+    // ANIMATED (TP_GoofyBasket_Run, the dribble — retimed to Run_Goofy);
+    // jump / dash / slide freeze the Hold grip (ball held). Every phase
+    // clip (charge / throw / catch / dribble) is a LAYER reduced to the
+    // mask and played over the lower-body locomotion — the legs never stop.
+    let goofybasket: ArmedProfileClips | null = null;
+    const gbHold = byName(basketClips, GoofyBasketProfile.tpClips!.hold);
+    const gbRun = byName(basketClips, GoofyBasketProfile.tpClips!.run);
+    if (gbHold && gbRun && GoofyBasketProfile.upperBodyMask) {
+      const mask = new Set<string>(GoofyBasketProfile.upperBodyMask);
+      const masked = (base: THREE.AnimationClip) => buildMaskedVariant(base, gbHold, mask, "_GoofyBasket");
+      const gbJumpVariants = jumpVariants.map(masked);
+      const gbRunComposite = buildMaskedVariant(run, gbRun, mask, "_GoofyBasket", true);
+      const gbDash = masked(dash);
+      const gbSlide = masked(slide);
+      const actions: ArmedProfileClips["actions"] = {};
+      for (const [key, def] of Object.entries(GoofyBasketProfile.tpClips!.actions ?? {})) {
+        const clip = byName(basketClips, def.clip);
+        if (clip) actions[key] = { clip: keepBones(clip, mask, "_Layer"), loop: def.loop, layered: true };
+      }
+      const gbInspect = byName(basketClips, GoofyBasketProfile.tpClips!.inspect!) ?? null;
+      // The idle "hold" of this set is the FULL Hold clip (animated breathing
+      // grip); its lower-body variant drops the mask so a layer can sit on it.
+      goofybasket = {
+        hold: gbHold,
+        run: gbRunComposite,
+        jump: gbJumpVariants[0],
+        jumpVariants: gbJumpVariants,
+        dash: gbDash,
+        slide: gbSlide,
+        equip: byName(basketClips, GoofyBasketProfile.tpClips!.equip!) ?? null,
+        unequip: byName(basketClips, GoofyBasketProfile.tpClips!.unequip!) ?? null,
+        inspect: gbInspect,
+        inspectUpper: gbInspect ? keepBones(gbInspect, mask, "_Layer") : null,
+        lowerBody: {
+          hold: stripBones(gbHold, mask, "_Lower"),
+          run: stripBones(gbRunComposite, mask, "_Lower"),
+          jump: stripBones(gbJumpVariants[0], mask, "_Lower"),
+          jumpVariants: gbJumpVariants.map((c) => stripBones(c, mask, "_Lower")),
+          dash: stripBones(gbDash, mask, "_Lower"),
+          slide: stripBones(gbSlide, mask, "_Lower"),
+        },
+        actions,
+      };
+    }
+
+    const profiles: Record<string, ArmedProfileClips> = {};
+    if (brickmaul) profiles.brickmaul = brickmaul;
+    if (goofybasket) profiles[GoofyBasketProfile.id] = goofybasket;
+
     const clips: RemoteCharacterClips = {
       idle,
       run,
@@ -368,7 +428,7 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       armedJumpVariants,
       armedDash,
       armedSlide,
-      profiles: brickmaul ? { brickmaul } : {},
+      profiles,
     };
     return { template, clips };
   });

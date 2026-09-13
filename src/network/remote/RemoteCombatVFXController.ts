@@ -24,6 +24,10 @@ import {
   HEX_ACTION_TONGUE_MISS,
   HEX_ACTION_PULL_END,
   HEX_ACTION_BITE,
+  BASKET_ACTION_THROW,
+  BASKET_ACTION_LAUNCH,
+  BASKET_ACTION_BOUNCE,
+  BASKET_ACTION_END,
 } from "../../../shared/combat/NetworkWeapons";
 import { HexSniperConfig as hexCfg } from "../../weapons/hexsniper/HexSniperConfig";
 import { loadRemoteWeaponTemplate } from "./RemoteWeaponController";
@@ -167,6 +171,13 @@ export class RemoteCombatVFXController {
   private particles: ParticleSystem | null = null;
   /** LOCAL player capsule center (a remote tongue can be reeling US in). */
   private localPosition: ((out: THREE.Vector3) => THREE.Vector3) | null = null;
+  /**
+   * GOOFY BASKET remote projectiles live in the Game's physics-aware
+   * projectile system (shared integration rule + Rapier sweeps): LAUNCH /
+   * BOUNCE / END confirms of OTHER players are forwarded here. The
+   * avatar's Throw / Catch phases are replayed through `remotes`.
+   */
+  onBasketProjectile: ((ev: WeaponActionConfirmedEvent) => void) | null = null;
 
   private elapsed = 0;
   private disposed = false;
@@ -365,16 +376,28 @@ export class RemoteCombatVFXController {
         this.remotes.setMeleeHeld(ev.playerId, false);
         return;
       case WeaponActionType.INSPECT_START:
-        // Only the Brick Maul has a replicated TP inspection today: the
-        // local player can only inspect it while HOLDING it (slot 2), which
-        // the MELEE_SHOW state already mirrors here. The event's weapon is
-        // the server primary (unchanged by the melee slot) — not a filter.
+        // Brick Maul: the local player can only inspect it while HOLDING it
+        // (slot 2), which the MELEE_SHOW state already mirrors here. The
+        // event's weapon is the server primary (unchanged by the melee
+        // slot): a GoofyBasket primary NOT stowed inspects the ball.
         if (this.remotes.isMeleeHeld(ev.playerId)) {
           this.remotes.maulInspectStart(ev.playerId, this.remotes.elapsedSince(ev.ts));
+        } else if (ev.weapon === NetworkWeaponId.GOOFY_BASKET) {
+          this.remotes.basketInspectStart(ev.playerId, this.remotes.elapsedSince(ev.ts));
         }
         return;
       case WeaponActionType.INSPECT_CANCEL:
         this.remotes.maulInspectCancel(ev.playerId);
+        this.remotes.basketInspectCancel(ev.playerId);
+        return;
+      case BASKET_ACTION_THROW:
+        // Throw_Ln resumed at the server start (then Catch) — layer over the legs.
+        this.remotes.basketThrow(ev.playerId, (ev.lv === 2 || ev.lv === 3 ? ev.lv : 1) as 1 | 2 | 3, this.remotes.elapsedSince(ev.ts));
+        return;
+      case BASKET_ACTION_LAUNCH:
+      case BASKET_ACTION_BOUNCE:
+      case BASKET_ACTION_END:
+        this.onBasketProjectile?.(ev);
         return;
       case WeaponActionType.SPEAR_SWEEP:
         this.remotes.triggerMeleeSwing(ev.playerId, NetworkWeaponId.SPEAR, "sweep");

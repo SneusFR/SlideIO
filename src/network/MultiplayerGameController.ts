@@ -94,6 +94,11 @@ export class MultiplayerGameController {
   /** HEX SNIPER: the LOCAL player is being reeled in by `attackerId`. */
   onHexPull: ((event: HexPullEvent) => void) | null = null;
 
+  /** GOOFY BASKET: remote players' projectile confirms (LAUNCH / BOUNCE / END). */
+  set onRemoteBasketProjectile(fn: ((event: WeaponActionConfirmedEvent) => void) | null) {
+    this.vfx.onBasketProjectile = fn;
+  }
+
   private readonly statsSource = new NetworkStatsSource();
   /** Local alive state as told BY THE SERVER (never by local HP math). */
   private localAlive = true;

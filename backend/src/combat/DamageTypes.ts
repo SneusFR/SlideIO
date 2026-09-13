@@ -23,6 +23,8 @@ export enum DamageType {
   HEX_SNIPER_TONGUE = "HEX_SNIPER_TONGUE",
   /** HEX SNIPER arrival bite (mirrors the frontend KillMethod mapping). */
   HEX_SNIPER = "HEX_SNIPER",
+  /** GOOFY BASKET bouncing ball (flat 25 on the first player contact). */
+  GOOFY_BASKET = "GOOFY_BASKET",
   MOLE_STRIKE = "MOLE_STRIKE",
   ENVIRONMENT = "ENVIRONMENT",
 }

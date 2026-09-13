@@ -46,6 +46,7 @@ import { PoisonHUD } from "../ui/PoisonHUD";
 import { HexSniperWeapon } from "../weapons/hexsniper/HexSniperWeapon";
 import { HexSniperWorldAdapter } from "../weapons/hexsniper/HexSniperWorldAdapter";
 import { HexSniperConfig as hexCfg } from "../weapons/hexsniper/HexSniperConfig";
+import { GoofyBasketWeapon } from "../weapons/goofybasket/GoofyBasketWeapon";
 import { ViewmodelSystem } from "../weapons/viewmodel/ViewmodelSystem";
 import { MusicSelectorHUD } from "../ui/MusicSelectorHUD";
 import { KillstreakManager, KILLSTREAK_SLOT_CODES } from "../killstreaks/KillstreakManager";
@@ -82,6 +83,10 @@ import {
   HEX_ACTION_TONGUE_MISS,
   HEX_ACTION_PULL_END,
   HEX_ACTION_BITE,
+  BASKET_ACTION_THROW,
+  BASKET_ACTION_LAUNCH,
+  BASKET_ACTION_BOUNCE,
+  BASKET_ACTION_END,
 } from "../../shared/combat/NetworkWeapons";
 import type {
   HitConfirmedEvent,
@@ -147,7 +152,7 @@ export class Game {
    */
   private activeSlot: "PRIMARY" | "MELEE" = "PRIMARY";
   /** Owner of the shared FP arms right now (exactly one advances the mixer). */
-  private fpOwner: "NONE" | "HAMMER" | "HEX_SNIPER" = "NONE";
+  private fpOwner: "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" = "NONE";
   /** True during the maul's Unequip transition back to the primary. */
   private slotSwitchPending = false;
   /** FP maul inspection running (slot 2, F key). */
@@ -195,6 +200,12 @@ export class Game {
 
   // ---- HEX SNIPER (monster-head sniper: tongue grapple + bite) ----
   private hexSniper: HexSniperWeapon;
+
+  // ---- GOOFY BASKET (charged bouncing basketball — shared FP arms) ----
+  private goofyBasket: GoofyBasketWeapon;
+  private readonly basketVec = new THREE.Vector3();
+  private readonly basketVec2 = new THREE.Vector3();
+  private readonly basketVec3 = new THREE.Vector3();
 
   // ---- Common FP viewmodel system (shared arms rig + dedicated FP pass;
   // HexSniper is the first migrated weapon — legacy viewmodels keep their
@@ -448,6 +459,7 @@ export class Game {
       this.abortSlotTransition(); // maul actions / inspect / Unequip dropped
       this.spear.reset();
       this.hexSniper.reset(); // a downed shooter releases the tongue
+      this.goofyBasket.reset(); // a downed shooter drops its charge / unreleased throw
       this.meleeHoldPending = false;
     };
 
@@ -590,6 +602,31 @@ export class Game {
     this.hexSniper.owner = this.playerCombatant;
     this.hexSniper.feedback = this.hitFeedback;
     this.hexSniper.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
+
+    // ---- GOOFY BASKET (primary alternative — equipped from the Loadout
+    // menu): LMB tap / hold / release = charged throw (levels 1–3), the
+    // ball bounces on the world and is consumed by the first player hit.
+    // Presentation = shared FP arms + one cosmetic ball; projectiles use the
+    // SHARED integration rule with Rapier world sweeps + capsule targets.
+    this.goofyBasket = new GoofyBasketWeapon(
+      this.fpsCamera.camera,
+      this.scene,
+      this.physics,
+      this.viewmodelSystem,
+    );
+    this.goofyBasket.setOwner(this.playerCombatant, "local");
+    this.goofyBasket.setFeedback(this.hitFeedback);
+    this.goofyBasket.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
+    // SOLO targets: every alive bot as the shared server capsule (the local
+    // player is the owner — never a target of its own ball).
+    this.goofyBasket.setTargets({
+      forEach: (cb) => {
+        for (const bot of this.botManager.bots) {
+          if (!bot.health.alive) continue;
+          cb(`bot:${bot.id}`, bot.getPosition(this.basketVec), bot);
+        }
+      },
+    });
     // Arrows → weapon track cycle → UI mirrors the new active index.
     this.musicSelector.onCycle = (delta) => {
       this.bassBlaster.cycleTrack(delta);
@@ -682,6 +719,7 @@ export class Game {
       this.bassBlaster.reset(); // reload cancelled, notes cleared, fresh 30/30
       this.poison.reset(); // spray stopped, tank refilled for the respawn
       this.hexSniper.reset(); // tongue released mid-flight/pull, clean Idle
+      this.goofyBasket.reset(); // charge / unreleased throw dropped, ball hidden (flying balls keep going)
       this.movement.stopHexPull(); // dying while reeled: the grab is gone
       this.meleeHoldPending = false;
       // Death mid-burrow: instant cleanup WITHOUT the AoE, then every
@@ -915,12 +953,14 @@ export class Game {
     if (this.fpOwner !== "HAMMER" && this.hammerViewmodel.loaded) {
       const prevOwner = this.fpOwner;
       if (prevOwner === "HEX_SNIPER") this.hexSniper.releasePresentation();
+      if (prevOwner === "GOOFY_BASKET") this.goofyBasket.releasePresentation();
       await this.hammerViewmodel.equip(false);
       this.viewmodelSystem.setVisible(true);
       this.viewmodelSystem.syncCamera(this.fpsCamera.camera);
       for (let i = 0; i < 2; i++) this.viewmodelSystem.render(this.renderer);
       this.hammerViewmodel.hide();
       if (prevOwner === "HEX_SNIPER") this.hexSniper.takePresentation();
+      if (prevOwner === "GOOFY_BASKET") this.goofyBasket.takePresentation();
     }
     this.viewmodelSystem.setVisible(fpWasVisible);
 
@@ -979,6 +1019,7 @@ export class Game {
       this.bassBlaster.reset();
       this.poison.reset(); // fresh full tank + liquid motion memory cleared
       this.hexSniper.reset(); // unequip cancels any tongue/bite in progress
+      this.goofyBasket.reset(); // charge dropped; flying balls keep their lifecycle
     }
     // MULTIPLAYER: the server must know the equipped primary (loadout ids
     // are IDENTICAL strings to NetworkWeaponId — no mapping table).
@@ -1015,12 +1056,13 @@ export class Game {
    *   - otherwise                           → nobody (legacy viewmodels)
    * Exactly one owner advances the arms mixer per frame.
    */
-  private desiredFpOwner(): "NONE" | "HAMMER" | "HEX_SNIPER" {
+  private desiredFpOwner(): "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" {
     if (this.meleeWeapon === "HAMMER") {
       if (this.activeSlot === "MELEE" || this.slotSwitchPending) return "HAMMER";
       if (this.hammer.isBusy) return "HAMMER"; // temporary melee override
     }
     if (this.primaryWeapon === "HEX_SNIPER" && this.activeSlot === "PRIMARY") return "HEX_SNIPER";
+    if (this.primaryWeapon === "GOOFY_BASKET" && this.activeSlot === "PRIMARY") return "GOOFY_BASKET";
     return "NONE";
   }
 
@@ -1031,6 +1073,7 @@ export class Game {
     // Release the previous owner (the sniper keeps its gameplay off-screen;
     // the maul drops actions / inspect and detaches).
     if (this.fpOwner === "HEX_SNIPER") this.hexSniper.releasePresentation();
+    if (this.fpOwner === "GOOFY_BASKET") this.goofyBasket.releasePresentation();
     if (this.fpOwner === "HAMMER") {
       this.hammerInspecting = false;
       this.hammerViewmodel.hide();
@@ -1042,6 +1085,8 @@ export class Game {
       this.hammerViewmodel.equip(this.activeSlot === "MELEE" && !this.hammer.isBusy);
     } else if (want === "HEX_SNIPER") {
       this.hexSniper.takePresentation();
+    } else if (want === "GOOFY_BASKET") {
+      this.goofyBasket.takePresentation();
     }
     this.syncNetworkMeleeShown();
   }
@@ -1251,6 +1296,18 @@ export class Game {
       },
     });
     this.multiplayer.onLocalActionConfirmed = (event) => this.handleLocalActionConfirmed(event);
+
+    // ---- GOOFY BASKET (server-authoritative charge / launch / bounces) ----
+    // Shooter side: the local ball is a PREDICTION (no damage, no
+    // hitmarker); remote avatars are the predicted contact volumes (the
+    // shared server capsule) so the predicted ball stops where the server
+    // ball will. Other players' balls are replayed from LAUNCH/BOUNCE/END.
+    this.goofyBasket.networkAuthority = true;
+    this.goofyBasket.projectiles.networkAuthority = true;
+    this.goofyBasket.setTargets({
+      forEach: (cb) => remotes.forEachVisible((id, center) => cb(id, center, null)),
+    });
+    this.multiplayer.onRemoteBasketProjectile = (event) => this.handleRemoteBasketProjectile(event);
     // Victim side: reel toward the attacker's DISPLAYED position through
     // our own character controller (server HEX_PULL start/stop).
     this.multiplayer.onHexPull = (event) => {
@@ -1298,6 +1355,20 @@ export class Game {
     this.hexSniper.adapter.setRemoteTargets(null);
     this.hexSniper.reset();
     this.movement.stopHexPull();
+    // GoofyBasket back to LOCAL authority: server-owned balls are dropped,
+    // bot capsules become the targets again.
+    this.goofyBasket.networkAuthority = false;
+    this.goofyBasket.projectiles.networkAuthority = false;
+    this.goofyBasket.reset();
+    this.goofyBasket.clearProjectiles();
+    this.goofyBasket.setTargets({
+      forEach: (cb) => {
+        for (const bot of this.botManager.bots) {
+          if (!bot.health.alive) continue;
+          cb(`bot:${bot.id}`, bot.getPosition(this.basketVec), bot);
+        }
+      },
+    });
     this.netPlasmaWasFiring = false;
     this.netPoisonWasSpraying = false;
     const botsMenuEl = document.getElementById("bots-menu");
@@ -1697,6 +1768,7 @@ export class Game {
       const bassEquipped = primaryHeld && this.primaryWeapon === "BASS_BLASTER";
       const poisonEquipped = primaryHeld && this.primaryWeapon === "POISON_SPRAYER";
       const hexEquipped = primaryHeld && this.primaryWeapon === "HEX_SNIPER";
+      const basketEquipped = primaryHeld && this.primaryWeapon === "GOOFY_BASKET";
       // KNOCKED DOWN (§ ragdoll) blocks EVERY weapon — exactly like a
       // ragdolled bot never fires. In-flight projectiles / explosions of
       // course keep ticking; only NEW actions are gated.
@@ -1715,7 +1787,8 @@ export class Game {
         !revolverEquipped &&
         !bassEquipped &&
         !poisonEquipped &&
-        !hexEquipped;
+        !hexEquipped &&
+        !basketEquipped;
       this.rifle.setViewmodelHidden(
         !primaryHeld ||
           this.hammer.isBusy ||
@@ -1845,6 +1918,32 @@ export class Game {
       // primary). This is the single arms-mixer advance of the frame then
       // (the sniper skips its own while not owner).
       if (this.fpOwner === "HAMMER") this.updateHammerPresentation(dt, playerAlive);
+
+      // GOOFY BASKET: LMB tap / hold / release = charged throw; F = the
+      // dribbling inspection (terminal interaction keeps priority on F).
+      // Gameplay (sequence clock, marker launch, flying balls) runs every
+      // frame; the FP arms mixer advances ONLY while it owns the arms.
+      this.goofyBasket.setViewmodelHidden(
+        !basketEquipped || this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
+      );
+      this.goofyBasket.update(
+        dt,
+        {
+          fireHeld: basketEquipped && this.input.pointerLocked && this.input.isMouseDown(0),
+          inspectPressed: basketEquipped && !this.interactNearby && this.input.wasPressed("KeyF"),
+          canAct: basketEquipped && playerAlive && !meleeBlocked && this.input.pointerLocked,
+          motion: {
+            speed: this.movement.horizontalSpeed,
+            grounded: this.movement.grounded,
+            verticalVelocity: this.movement.velocity.y,
+            jumpSequence: this.movement.jumpSequence,
+            sliding: this.movement.state === MoveState.SLIDING,
+            dashing: this.movement.isDashing,
+            floorWorldY: null,
+          },
+        },
+        this.fpOwner === "GOOFY_BASKET",
+      );
       // LANCE on slot 2: held at rest between attacks (legacy viewmodel).
       this.spearViewmodel.setHeld(
         this.meleeWeapon === "SPEAR" && this.activeSlot === "MELEE" && playerAlive && !this.moleStrike.active,
@@ -2327,6 +2426,85 @@ export class Game {
       prevTongue?.();
       this.netSendAimedAction(WeaponActionType.HEX_TONGUE_FIRE);
     };
+
+    // GOOFY BASKET: the server owns the charge clock (START / CANCEL) and
+    // decides the level at the release (THROW_REQUEST, `pi` = 1 when a
+    // dribble gather delays the throw). Our confirms (THROW / LAUNCH /
+    // BOUNCE / END) come back through handleLocalActionConfirmed.
+    this.goofyBasket.onNetChargeStart = () => this.netSendAimedAction(WeaponActionType.BASKET_CHARGE_START);
+    this.goofyBasket.onNetChargeCancel = () => this.netSendAimedAction(WeaponActionType.BASKET_CHARGE_CANCEL);
+    this.goofyBasket.onNetThrowRequest = (gatherDelayed) =>
+      this.netSendAimedAction(WeaponActionType.BASKET_THROW_REQUEST, undefined, gatherDelayed ? 1 : 0);
+  }
+
+  /**
+   * Our OWN GoofyBasket confirms: the server-locked level + projectile id
+   * (THROW), the authoritative launch (LAUNCH → reconcile the predicted
+   * ball), bounces and the end. Hitmarkers come ONLY from HIT_CONFIRMED.
+   */
+  private handleLocalBasketConfirmed(event: WeaponActionConfirmedEvent): void {
+    if (typeof event.pid !== "number") return;
+    const level = (event.lv === 2 || event.lv === 3 ? event.lv : 1) as 1 | 2 | 3;
+    switch (event.action) {
+      case BASKET_ACTION_THROW:
+        this.goofyBasket.onNetworkThrow(level, event.pid, this.multiplayer?.remotes.elapsedSince(event.ts) ?? 0);
+        return;
+      case BASKET_ACTION_LAUNCH:
+        this.goofyBasket.onNetworkLaunch(
+          event.pid,
+          level,
+          this.basketVec.set(event.ox, event.oy, event.oz),
+          this.basketVec2.set(event.dx, event.dy, event.dz),
+        );
+        return;
+      case BASKET_ACTION_BOUNCE:
+        this.goofyBasket.onNetworkBounce(
+          event.pid,
+          event.bn ?? 1,
+          this.basketVec.set(event.ox, event.oy, event.oz),
+          this.basketVec2.set(event.dx, event.dy, event.dz),
+          this.basketVec3.set(event.hx ?? 0, event.hy ?? 1, event.hz ?? 0),
+        );
+        return;
+      case BASKET_ACTION_END:
+        this.goofyBasket.onNetworkEnd(
+          event.pid,
+          this.basketVec.set(event.hx ?? event.ox, event.hy ?? event.oy, event.hz ?? event.oz),
+        );
+        return;
+    }
+  }
+
+  /** Server confirms about GoofyBasket balls of OTHER players (visual replay). */
+  private handleRemoteBasketProjectile(event: WeaponActionConfirmedEvent): void {
+    if (typeof event.pid !== "number") return;
+    switch (event.action) {
+      case BASKET_ACTION_LAUNCH: {
+        const level = (event.lv === 2 || event.lv === 3 ? event.lv : 1) as 1 | 2 | 3;
+        this.goofyBasket.projectiles.launchRemote(
+          this.basketVec.set(event.ox, event.oy, event.oz),
+          this.basketVec2.set(event.dx, event.dy, event.dz),
+          level,
+          event.pid,
+        );
+        return;
+      }
+      case BASKET_ACTION_BOUNCE:
+        this.goofyBasket.projectiles.applyServerBounce(
+          event.pid,
+          event.bn ?? 1,
+          this.basketVec.set(event.ox, event.oy, event.oz),
+          this.basketVec2.set(event.dx, event.dy, event.dz),
+          this.basketVec3.set(event.hx ?? 0, event.hy ?? 1, event.hz ?? 0),
+        );
+        return;
+      case BASKET_ACTION_END:
+        this.goofyBasket.projectiles.applyServerEnd(
+          event.pid,
+          this.basketVec.set(event.hx ?? event.ox, event.hy ?? event.oy, event.hz ?? event.oz),
+        );
+        return;
+    }
   }
 
   /**
@@ -2335,6 +2513,10 @@ export class Game {
    * locally). The local tongue follows the server's decision.
    */
   private handleLocalActionConfirmed(event: WeaponActionConfirmedEvent): void {
+    if (event.weapon === "GOOFY_BASKET") {
+      this.handleLocalBasketConfirmed(event);
+      return;
+    }
     if (event.weapon !== "HEX_SNIPER") return;
     switch (event.action) {
       case HEX_ACTION_TONGUE_HIT:
@@ -2527,6 +2709,8 @@ function networkKillMethod(damageType: string): KillMethod {
       return KillMethod.HEX_SNIPER_BITE;
     case "HEX_SNIPER_TONGUE":
       return KillMethod.HEX_SNIPER_TONGUE;
+    case "GOOFY_BASKET":
+      return KillMethod.GOOFY_BASKET;
     default:
       return KillMethod.PLASMA;
   }

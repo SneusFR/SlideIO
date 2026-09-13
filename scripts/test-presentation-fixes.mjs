@@ -25,7 +25,7 @@ THREE.ImageBitmapLoader.prototype.load=function(u,done){queueMicrotask(()=>done?
 const read=async file=>{const b=fs.readFileSync(file);return new GLTFLoader().parseAsync(b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength),'');};
 const server=await createServer({root:project,configFile:false,server:{middlewareMode:true},appType:'custom'});
 try{
- GLTFLoader.prototype.loadAsync=async function(url){const name=url.split('/').pop().split('?')[0];const dir=/BrickMaul/.test(name)?'src/assets/brickmaul/':'src/assets/potato/';return read(project+'/'+dir+name);};
+ GLTFLoader.prototype.loadAsync=async function(url){const name=url.split('/').pop().split('?')[0];const dir=/BrickMaul/.test(name)?'src/assets/brickmaul/':/GoofyBasket/.test(name)?'src/assets/goofybasket/':'src/assets/potato/';return read(project+'/'+dir+name);};
  const {loadCharacterAsset}=await server.ssrLoadModule('/src/characters/PotatoCharacter.ts');
  const {RemotePlayerAnimationController}=await server.ssrLoadModule('/src/network/remote/RemotePlayerAnimationController.ts');
  const {BRICKMAUL_TIMING}=await server.ssrLoadModule('/src/weapons/brickmaul/BrickMaulProfile.ts');

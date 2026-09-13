@@ -11,6 +11,9 @@ import { BrickMaulProfile, BRICKMAUL_EYES, BRICKMAUL_TIMING } from "../../weapon
 import { loadBrickMaulGltf, instantiateBrickMaul } from "../../weapons/brickmaul/BrickMaulModel";
 import { BrickMaulEyes } from "../../weapons/brickmaul/BrickMaulEyes";
 import { HEXSNIPER_PROFILE_ID } from "./RemotePlayerAnimationController";
+import { GoofyBasketProfile, GOOFY_TIMING, type GoofyActionKey } from "../../weapons/goofybasket/GoofyBasketProfile";
+import { loadGoofyBasketGltf } from "../../weapons/goofybasket/GoofyBasketModel";
+import { GoofyBasketRemotePresentation } from "../../weapons/goofybasket/GoofyBasketRemotePresentation";
 // Real weapon GLBs (same optimized assets as the local viewmodels/menu).
 import rifleUrl from "../../assets/voidrifle_opt.glb?url";
 import spearUrl from "../../assets/lance_opt.glb?url";
@@ -273,6 +276,16 @@ export class RemoteWeaponController {
   /** True while the avatar is hidden/far: cosmetic eye work suspended. */
   private cosmeticSuspended = false;
 
+  // ---- GOOFY BASKET dedicated state (profile mount + cosmetic TP ball) ----
+  private basket: GoofyBasketRemotePresentation | null = null;
+  /** Replayed basket phase (server-confirmed) + its elapsed clock (s). */
+  private basketPhase: { kind: "throw"; level: 1 | 2 | 3 } | { kind: "catch" } | { kind: "inspect" } | null = null;
+  private basketPhaseTimer = 0;
+  /** Arms clock reader (wired by RemotePlayer: the avatar animation controller). */
+  presentationClock: (() => { clip: string | null; time: number }) | null = null;
+  /** Grounded state reader for the TP dribble floor fit (wired by RemotePlayer). */
+  isGrounded: (() => boolean) | null = null;
+
   // Procedural swing state (SPEAR legacy path only)
   private swingTimer = -1;
   private swingKind: "sweep" | "slam" = "sweep";
@@ -391,6 +404,69 @@ export class RemoteWeaponController {
     this.refreshDisplayed();
   }
 
+  // ---- GOOFY BASKET visual replication (server-confirmed events) ----
+
+  /**
+   * BASKET_THROW: Throw_Ln resumed at `elapsed` (server `ts`), then the
+   * Catch (new ball from above) — both as UPPER layers over the real legs.
+   * A phase arriving late past the whole Throw lands straight in the Catch.
+   */
+  basketThrow(level: 1 | 2 | 3, elapsed: number): void {
+    const def = GOOFY_TIMING.throws[level - 1];
+    const t = Math.max(0, elapsed);
+    if (t >= def.duration + GOOFY_TIMING.catch) return; // already over
+    if (t >= def.duration) {
+      this.basketPhaseStart({ kind: "catch" }, t - def.duration);
+      return;
+    }
+    this.basketPhaseStart({ kind: "throw", level }, t);
+  }
+
+  /** INSPECT_START (weapon GOOFY_BASKET) → TP inspection layer resumed at `elapsed`. */
+  basketInspectStart(elapsed: number): void {
+    if (this.basketPhase !== null && this.basketPhase.kind !== "inspect") return; // a throw wins
+    this.basketPhaseStart({ kind: "inspect" }, Math.max(0, elapsed));
+  }
+
+  basketInspectCancel(): void {
+    if (this.basketPhase?.kind !== "inspect") return;
+    this.basketPhase = null;
+    this.onProfileAction?.(null, {});
+  }
+
+  /** Death / respawn: drop the replayed phase, hide the TP ball. */
+  basketReset(): void {
+    if (this.basketPhase !== null) this.onProfileAction?.(null, {});
+    this.basketPhase = null;
+    this.basketPhaseTimer = 0;
+    this.basket?.reset();
+  }
+
+  private basketPhaseStart(phase: Exclude<typeof this.basketPhase, null>, elapsed: number): void {
+    this.basketPhase = phase;
+    this.basketPhaseTimer = elapsed;
+    this.playBasketPhaseClip(phase, elapsed);
+  }
+
+  private playBasketPhaseClip(phase: Exclude<typeof this.basketPhase, null>, startAt: number): void {
+    if (!this.basket) return; // replayed once attached (attachGoofyBasket)
+    const kind: GoofyActionKey | "inspect" =
+      phase.kind === "throw" ? GOOFY_TIMING.throws[phase.level - 1].kind : phase.kind === "catch" ? "Catch" : "inspect";
+    this.onProfileAction?.(kind, {
+      startAt,
+      fadeIn: phase.kind === "catch" ? 0.03 : 0.06,
+      onFinished: () => {
+        if (this.basketPhase !== phase) return; // stale (replaced)
+        if (phase.kind === "throw") {
+          // Recovery done → the new ball comes from above (same cosmetic instance).
+          this.basketPhaseStart({ kind: "catch" }, 0);
+          return;
+        }
+        this.basketPhase = null;
+      },
+    });
+  }
+
   /** Far / invisible avatars: suspend the cosmetic pupils, reset on resume. */
   setCosmeticSuspended(suspended: boolean): void {
     if (this.cosmeticSuspended === suspended) return;
@@ -447,6 +523,7 @@ export class RemoteWeaponController {
 
     // Brick Maul: phase clock + override expiry (real recovery, not 0.9 s).
     if (this.maulPhase !== null) this.maulPhaseTimer += dt;
+    if (this.basketPhase !== null) this.basketPhaseTimer += dt;
     if (this.maulOverrideTimer > 0) {
       this.maulOverrideTimer -= dt;
       if (this.maulOverrideTimer <= 0) {
@@ -487,9 +564,15 @@ export class RemoteWeaponController {
    * / far (see setCosmeticSuspended) — reset on resume.
    */
   updateCosmetics(dt: number): void {
-    if (!this.maulEyes || !this.maulWeapon || this.cosmeticSuspended) return;
-    this.maulWeapon.updateWorldMatrix(true, true);
-    this.maulEyes.update(dt);
+    if (this.cosmeticSuspended) return;
+    if (this.maulEyes && this.maulWeapon) {
+      this.maulWeapon.updateWorldMatrix(true, true);
+      this.maulEyes.update(dt);
+    }
+    // GoofyBasket TP ball: driven from the avatar's arm clock (same mixer).
+    if (this.basket && this.presentationClock) {
+      this.basket.update(dt, this.presentationClock(), this.isGrounded?.() ?? true);
+    }
   }
 
   /**
@@ -505,6 +588,10 @@ export class RemoteWeaponController {
     }
     if (this.maulWeapon) {
       this.maulWeapon.getWorldPosition(out);
+      return true;
+    }
+    if (this.basket) {
+      this.basket.mount.getWorldPosition(out);
       return true;
     }
     if (!this.grip) return false;
@@ -536,6 +623,19 @@ export class RemoteWeaponController {
         })
         .catch((err) => {
           if (import.meta.env.DEV) console.warn("[RemoteWeapon] BrickMaul load failed", err);
+        });
+      return;
+    }
+    if (target === NetworkWeaponId.GOOFY_BASKET) {
+      // GoofyBasket profile path: cosmetic TP ball + authored TP mount.
+      void loadGoofyBasketGltf()
+        .then((gltf) => {
+          if (this.disposed || token !== this.loadToken) return;
+          this.detach();
+          this.attachGoofyBasket(gltf);
+        })
+        .catch((err) => {
+          if (import.meta.env.DEV) console.warn("[RemoteWeapon] GoofyBasket load failed", err);
         });
       return;
     }
@@ -660,6 +760,30 @@ export class RemoteWeaponController {
     this.pendingMaulEquipClip = false;
   }
 
+  /**
+   * GOOFY BASKET remote attach: an empty mount under Weapon_R (authored TP
+   * matrix, ball scale included) + ONE cosmetic ball under the NORMALIZED
+   * glTF scene — resolved as the ancestor of Weapon_R that is a direct
+   * child of the wrapper `characterModel` (scale 2.693…, yaw π), never the
+   * wrapper itself. The avatar switches to the "goofybasket" TP pose set; a
+   * phase in flight (late attach) resumes at its elapsed time.
+   */
+  private attachGoofyBasket(gltf: GLTF): void {
+    const socket = this.characterModel.getObjectByName("Weapon_R");
+    if (!socket) {
+      if (import.meta.env.DEV) console.warn("[RemoteWeapon] Weapon_R socket not found — cannot attach GOOFY_BASKET");
+      return;
+    }
+    let gltfScene: THREE.Object3D = socket;
+    while (gltfScene.parent && gltfScene.parent !== this.characterModel) gltfScene = gltfScene.parent;
+    if (gltfScene.parent !== this.characterModel) gltfScene = this.characterModel; // flat test hierarchies
+    this.basket = new GoofyBasketRemotePresentation(gltf, socket, gltfScene);
+    this.displayed = NetworkWeaponId.GOOFY_BASKET;
+    this.onArmedChanged?.(GoofyBasketProfile.id);
+    if (this.basketPhase !== null) this.playBasketPhaseClip(this.basketPhase, this.basketPhaseTimer);
+    else this.onProfileAction?.("equip", { fadeIn: 0.06 });
+  }
+
   // ---- HEX SNIPER remote tongue visuals (server-confirmed replay) ----
 
   hexTongueBegin(tip: THREE.Vector3): void {
@@ -749,6 +873,16 @@ export class RemoteWeaponController {
       this.maulMount?.removeFromParent();
       this.maulMount = null;
       this.maulEyes = null;
+      this.displayed = null;
+      this.onProfileAction?.(null, {});
+      this.onArmedChanged?.(null);
+    }
+    // GoofyBasket profile path cleanup: mount + cosmetic ball go (shared
+    // geometry / materials stay cached); replayed phase dropped.
+    if (this.basket) {
+      this.basket.dispose();
+      this.basket = null;
+      this.basketPhase = null;
       this.displayed = null;
       this.onProfileAction?.(null, {});
       this.onArmedChanged?.(null);

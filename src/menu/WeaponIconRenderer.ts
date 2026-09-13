@@ -11,6 +11,8 @@ import poisonUrl from "../assets/Lance_poison_jeu.glb?url";
 // Hex Sniper = the integration pack's canonical weapon GLB (no LOD exists
 // for the new pack yet — a 384px icon renders it once, then disposes).
 import hexSniperUrl from "../assets/potato/HexSniper_Weapon.glb?url";
+// Goofy Basket = the ball LOD1 (light — plenty for a 384px icon).
+import goofyBasketUrl from "../assets/goofybasket/GoofyBasket_LOD1.glb?url";
 
 /**
  * Offscreen 3D icon factory for the Loadout menu.
@@ -31,6 +33,7 @@ const MODEL_URLS: Record<string, string> = {
   BASS_BLASTER: bassBlasterUrl,
   POISON_SPRAYER: poisonUrl,
   HEX_SNIPER: hexSniperUrl,
+  GOOFY_BASKET: goofyBasketUrl,
 };
 
 const ICON_SIZE = 384;
