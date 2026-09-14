@@ -734,7 +734,7 @@ test("basket: repeated release / charge during the engaged sequence is refused; 
   assert.strictEqual(t[1].lv, 2, "the refused charge did not leak into the new one");
 });
 
-test("basket: flat 25 damage on the first player contact, projectile consumed, hit confirmed", () => {
+test("basket: flat 75 damage on the first player contact, projectile consumed, hit confirmed", () => {
   for (const maxHealth of [100, 200]) {
     const { wm, rec, addPlayer, advance } = makeWorld();
     // Open lane at x = −3 (the x = 3 lane has a low cover wall whose top the
@@ -780,7 +780,7 @@ test("basket: MAX charge = sniper ball — crosshair on a player 100 m away hits
   }
   const launch = basketActions(rec, "BASKET_LAUNCH")[0];
   assert.ok(Math.abs(Math.hypot(launch.dx, launch.dy, launch.dz) - GB.throws[2].speed) < 1e-6, "sniper speed");
-  assert.strictEqual(b.health, 200 - GB.damage, "the 100 m target is HIT (flat 25)");
+  assert.strictEqual(b.health, 200 - GB.damage, "the 100 m target is HIT (flat 75)");
   assert.strictEqual(basketActions(rec, "BASKET_BOUNCE").length, 0, "no ground / wall contact on the way (straight flight)");
   const ends = basketActions(rec, "BASKET_END");
   assert.strictEqual(ends.length, 1);

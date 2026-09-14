@@ -414,7 +414,7 @@ export const NetworkWeaponConfig = {
      */
     maxSpeedAfterBounce: 30,
     /** FLAT damage on a player hit — every level, no head bonus. */
-    damage: 25,
+    damage: 75,
     /** The first accepted player hit consumes the projectile. */
     firstPlayerHitConsumesProjectile: true,
     /** Every ball lives EXACTLY this long (s): a ball whose bounce budget

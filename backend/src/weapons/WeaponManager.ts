@@ -731,7 +731,7 @@ export class WeaponManager {
         ended = true;
         if (ev.type === "hit") {
           const owner = this.host.getPlayer(p.ownerId);
-          // FLAT 25 on every level, BODY zone, first accepted hit consumes.
+          // FLAT 75 on every level, BODY zone, first accepted hit consumes.
           if (owner && owner.isAlive) {
             this.dealDamage(owner, ev.targetId, B.damage, DamageType.GOOFY_BASKET, HitZone.BODY, NetworkWeaponId.GOOFY_BASKET);
           }

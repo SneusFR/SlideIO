@@ -65,7 +65,7 @@ interface FlyingBall {
  *   - static world: Rapier `castShape(Ball)` on the world bit only;
  *   - combatants: analytic swept sphere vs the SHARED server capsule / head
  *     sphere (bots, local player proxy, remote avatars).
- * SOLO: the first player hit applies the flat 25 damage through Health.
+ * SOLO: the first player hit applies the flat 75 damage through Health.
  * MULTIPLAYER: `networkAuthority` → NO damage, the server confirms; the
  * predicted ball is reconciled on its server id.
  */
