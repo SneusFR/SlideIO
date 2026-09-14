@@ -28,6 +28,13 @@ export const MultiplayerConfig = {
   /** localStorage key for the player's display name. */
   displayNameStorageKey: "slideio.displayName",
 
+  /**
+   * sessionStorage key of a PENDING lobby creation: the host picked a map
+   * that is not the one this page has loaded → the map is persisted, the
+   * page reloads (single boot loading phase) and the create flow resumes.
+   */
+  pendingCreateStorageKey: "slideio.pendingCreateLobby",
+
   /** Max length for display names (mirrors backend sanitization). */
   maxNameLength: 20,
 

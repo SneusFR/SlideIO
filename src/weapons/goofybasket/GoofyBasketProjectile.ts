@@ -233,7 +233,12 @@ export class GoofyBasketProjectileSystem {
     this.snap(ball, pos, vel);
     ball.state.resting = false;
     ball.state.bounceCount = index;
-    ball.state.bouncesLeft = B.throws[ball.state.level - 1].maxWorldBounces - index;
+    ball.state.bouncesLeft = Math.max(0, B.throws[ball.state.level - 1].maxWorldBounces - index);
+    // A floor contact the server left with no rebound along the normal is a
+    // ROLL contact: mirror the rolling state so the local friction /
+    // glue-to-floor rule continues from the corrected pose.
+    const vn = vel.x * normal.x + vel.y * normal.y + vel.z * normal.z;
+    ball.state.rolling = normal.y >= B.rollingSurfaceMinNormalY && vn < B.minBounceSpeed;
     // The server ended the straight (gravity-free) flight at its first world
     // bounce — mirror it so the local ball drops from here like the server's.
     ball.state.straightLeft = 0;
@@ -293,11 +298,14 @@ export class GoofyBasketProjectileSystem {
       let ended = false;
       for (const ev of events) {
         if (ev.type === "bounce") {
-          if (!ball.remote) {
-            this.tmp.set(ev.pos.x, ev.pos.y, ev.pos.z);
-            this.nrm.set(ev.normal.x, ev.normal.y, ev.normal.z);
-            this.onBounce?.(this.tmp, this.nrm, false);
-          }
+          // Cosmetic bounce (audio / dust) for EVERY displayed ball — local
+          // AND remote: the local sim predicts the contact the instant it
+          // happens. A later server BOUNCE with the same index is a pure
+          // correction (applyServerBounce never re-signals it), so a bounce
+          // is heard exactly once.
+          this.tmp.set(ev.pos.x, ev.pos.y, ev.pos.z);
+          this.nrm.set(ev.normal.x, ev.normal.y, ev.normal.z);
+          this.onBounce?.(this.tmp, this.nrm, ball.remote);
           continue;
         }
         if (ev.type === "rest") {

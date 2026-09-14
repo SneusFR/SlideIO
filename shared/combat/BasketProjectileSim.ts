@@ -56,11 +56,18 @@ export interface BasketProjectileState {
   /** Bounces already performed (event numbering, dedup). */
   bounceCount: number;
   /**
-   * True once the ball stopped on the world (budget spent / too slow /
+   * True once the ball stopped on the world (rolled out of speed /
    * degenerate corner): it stays where it is, INERT (no more contacts, no
    * damage), until the lifetime expires.
    */
   resting: boolean;
+  /**
+   * True while the ball ROLLS on a floor-like surface (bounce budget spent
+   * or rebound too weak to bounce): the normal component of every floor
+   * contact is killed, the tangential speed is kept and decays with
+   * `rollingDeceleration`. Cleared by a real reflection (wall bounce).
+   */
+  rolling: boolean;
   /**
    * Gravity-FREE flight distance still available (m). While > 0 the ball
    * flies dead straight along its velocity (hit-tag: the crosshair is the
@@ -92,6 +99,7 @@ export function createBasketProjectileState(
     bouncesLeft: cfg.throws[level - 1].maxWorldBounces,
     bounceCount: 0,
     resting: false,
+    rolling: false,
     straightLeft: cfg.throws[level - 1].straightFlightMeters,
   };
 }
@@ -249,10 +257,15 @@ export function resolveBasketLaunch(
  * further contact in the same step puts the ball to rest (safety against
  * a degenerate corner).
  *
- * A world contact with no bounce budget left (or a too-slow rebound) does
- * NOT end the ball: it comes to REST at the contact (`rest` event, velocity
- * zeroed) and stays visible until `maxLifetimeSeconds` — the only terminal
- * events are a player `hit` and the lifetime `expired`.
+ * A FLOOR contact with no bounce budget left (or a rebound too weak to
+ * bounce) does NOT stop the ball: it starts ROLLING — the normal velocity
+ * component is killed, the tangential speed is kept and decays with
+ * `rollingDeceleration` every step. Wall contacts keep reflecting a rolling
+ * ball (it never stops dead against a wall). The ball only comes to REST
+ * (`rest` event, velocity zeroed, inert until expiry) once its rolling
+ * speed really drops under `minBounceSpeed` — or on a degenerate corner
+ * (contact cap). It stays visible until `maxLifetimeSeconds` — the only
+ * terminal events are a player `hit` and the lifetime `expired`.
  *
  * STRAIGHT FLIGHT (max charge): while `straightLeft` > 0 the step is flown
  * WITHOUT gravity along the current velocity (hit-tag: the ball goes where
@@ -316,6 +329,20 @@ export function stepBasketProjectile(
 
   // ---- Phase 2: ballistic (semi-implicit gravity on the time actually
   // spent under it, then the swept displacement) ----
+  if (p.rolling) {
+    // Rolling friction on the horizontal speed only (gravity keeps the ball
+    // glued to the floor through the next contact). Once the roll is spent
+    // the ball comes to rest right where it is — never before.
+    const h = Math.hypot(p.vel.x, p.vel.z);
+    const next = Math.max(0, h - cfg.rollingDeceleration * remaining);
+    if (next < cfg.minBounceSpeed) {
+      rest({ x: 0, y: 1, z: 0 }, { x: p.pos.x, y: p.pos.y - radius, z: p.pos.z });
+      return events;
+    }
+    const k = next / h;
+    p.vel.x *= k;
+    p.vel.z *= k;
+  }
   p.vel.y -= cfg.gravity * remaining;
   sweepAndBounce(p, remaining, caster, ownerId, radius, cfg, events, rest, contacts);
   return events;
@@ -382,18 +409,49 @@ function sweepAndBounce(
       z: p.pos.z - n.z * radius,
     };
     contacts.n++;
-    if (p.bouncesLeft <= 0 || contacts.n > cfg.maxContactsPerStep) {
-      rest(n, contactPoint);
+    if (contacts.n > cfg.maxContactsPerStep) {
+      rest(n, contactPoint); // degenerate corner — safety stop
       return -1;
     }
-    // Reflect: v' = v − (1 + e)(v·n)n on the normal component only, so the
-    // tangential slide keeps its full speed (rolling feel on shallow hits).
     const e = cfg.throws[p.level - 1].restitution;
     const vn = p.vel.x * n.x + p.vel.y * n.y + p.vel.z * n.z;
-    if (vn < 0) {
-      p.vel.x -= (1 + e) * vn * n.x;
-      p.vel.y -= (1 + e) * vn * n.y;
-      p.vel.z -= (1 + e) * vn * n.z;
+    // Normal rebound speed a reflection WOULD give (0 if moving away).
+    const rebound = vn < 0 ? -vn * e : 0;
+    const floorLike = n.y >= cfg.rollingSurfaceMinNormalY;
+    let signal = true; // emit a bounce event (audio / network correction)
+
+    if (floorLike && (p.bouncesLeft <= 0 || rebound < cfg.minBounceSpeed)) {
+      // ---- ROLL: no budget left (or too weak to bounce) on a floor-like
+      // surface → kill the normal component only, keep the tangential
+      // speed. The ball keeps rolling; friction is applied per step in the
+      // ballistic phase. It only rests once its rolling speed is spent.
+      if (vn < 0) {
+        p.vel.x -= vn * n.x;
+        p.vel.y -= vn * n.y;
+        p.vel.z -= vn * n.z;
+      }
+      if (Math.hypot(p.vel.x, p.vel.y, p.vel.z) < cfg.minBounceSpeed) {
+        rest(n, contactPoint); // really out of speed — stops here
+        return -1;
+      }
+      const wasRolling = p.rolling;
+      p.rolling = true;
+      // The first roll contact and any LANDING (rolled off a ledge, arrived
+      // fast along the normal) are audible / correctable; the per-step
+      // gravity nudge that keeps a flat roll glued to the floor is silent.
+      signal = !wasRolling || -vn >= cfg.rollingLandingMinNormalSpeed;
+    } else {
+      // ---- BOUNCE: reflect v' = v − (1 + e)(v·n)n on the normal component
+      // only, so the tangential slide keeps its full speed. A wall / ceiling
+      // reflects even a budget-less rolling ball — it never stops dead
+      // against a wall, it comes back and keeps rolling.
+      if (vn < 0) {
+        p.vel.x -= (1 + e) * vn * n.x;
+        p.vel.y -= (1 + e) * vn * n.y;
+        p.vel.z -= (1 + e) * vn * n.z;
+      }
+      if (floorLike) p.rolling = false; // real floor rebound: airborne again
+      if (p.bouncesLeft > 0) p.bouncesLeft--;
     }
     // A sniper-speed ball dumps its excess energy on the wall: capped to a
     // readable basketball rebound (direction preserved, magnitude clamped).
@@ -408,15 +466,16 @@ function sweepAndBounce(
     p.pos.x += n.x * cfg.surfaceClearance;
     p.pos.y += n.y * cfg.surfaceClearance;
     p.pos.z += n.z * cfg.surfaceClearance;
-    p.bouncesLeft--;
-    p.bounceCount++;
-    events.push({
-      type: "bounce",
-      index: p.bounceCount,
-      pos: { ...p.pos },
-      vel: { ...p.vel },
-      normal: { ...n },
-    });
+    if (signal) {
+      p.bounceCount++;
+      events.push({
+        type: "bounce",
+        index: p.bounceCount,
+        pos: { ...p.pos },
+        vel: { ...p.vel },
+        normal: { ...n },
+      });
+    }
     if (Math.hypot(p.vel.x, p.vel.y, p.vel.z) < cfg.minBounceSpeed) {
       rest(n, contactPoint);
       return -1;

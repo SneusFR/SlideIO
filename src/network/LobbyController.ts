@@ -10,10 +10,16 @@ import {
   MultiplayerConfig,
   saveDisplayName,
 } from "./MultiplayerConfig";
-import { loadMapSelection, saveMapSelection, mapDisplayName } from "../world/MapSelection";
-import { isMapId } from "../../shared/map/MapRegistry";
+import { loadMapSelection, saveMapSelection, mapDisplayName, listMaps } from "../world/MapSelection";
+import { isMapId, type MapId } from "../../shared/map/MapRegistry";
 
 type Screen = "menu" | "join" | "lobby" | "busy" | "error";
+
+/** Persisted across the reload triggered by a create-with-other-map. */
+interface PendingCreate {
+  name: string;
+  map: string;
+}
 
 /**
  * Multiplayer lobby UI (Phase 1) — a self-contained DOM overlay shown above
@@ -30,6 +36,8 @@ export class LobbyController {
   private readonly root: HTMLDivElement;
   private readonly panel: HTMLDivElement;
   private defaultName: string;
+  /** Map picked in the CREATE menu (defaults to the map this page loaded). */
+  private selectedMap: MapId = loadMapSelection();
 
   constructor(
     private readonly client: MultiplayerClient,
@@ -66,6 +74,25 @@ export class LobbyController {
     this.showNamePrompt(roomId);
   }
 
+  /**
+   * Resume a lobby creation interrupted by a map reload: the host picked a
+   * map the page had not loaded → we persisted the choice, reloaded with
+   * that map, and now create the room right away. Returns true when a
+   * pending creation was found (the caller then skips other boot flows).
+   */
+  resumePendingCreate(): boolean {
+    const pending = takePendingCreate();
+    if (!pending) return false;
+    // Only resume if the boot phase really loaded the requested map —
+    // otherwise the host would end up in a room on a map it has not loaded.
+    if (!isMapId(pending.map) || pending.map !== loadMapSelection()) return false;
+    this.defaultName = pending.name || this.defaultName;
+    this.selectedMap = pending.map;
+    this.root.classList.remove("hidden");
+    void this.create(pending.name);
+    return true;
+  }
+
   close(): void {
     this.root.classList.add("hidden");
   }
@@ -74,15 +101,36 @@ export class LobbyController {
 
   private showMenu(): void {
     this.setScreen("menu");
+    // The map picker lists every registered map; the room's map is FIXED
+    // at creation and every joining client is forced onto it (see join()).
+    const mapButtons = listMaps()
+      .map(
+        (m) => `
+        <button class="mp-map${m.id === this.selectedMap ? " mp-map-active" : ""}"
+                type="button" data-mp-map="${escapeHtml(m.id)}">${escapeHtml(m.name)}</button>`,
+      )
+      .join("");
     this.panel.innerHTML = `
       <div class="mp-title">MULTIPLAYER</div>
       <label class="mp-label" for="mp-name">DISPLAY NAME</label>
       <input id="mp-name" class="mp-input" maxlength="${MultiplayerConfig.maxNameLength}"
              spellcheck="false" autocomplete="off" value="${escapeHtml(this.defaultName)}" />
+      <div class="mp-label">LOBBY MAP</div>
+      <div class="mp-maps">${mapButtons}</div>
       <button class="mp-btn mp-btn-primary" data-mp="create">CREATE LOBBY</button>
       <button class="mp-btn" data-mp="join">JOIN LOBBY</button>
       <button class="mp-btn mp-btn-ghost" data-mp="back">BACK</button>
     `;
+    this.panel.querySelectorAll<HTMLButtonElement>("[data-mp-map]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.mpMap;
+        if (!isMapId(id)) return;
+        this.selectedMap = id;
+        this.panel
+          .querySelectorAll<HTMLButtonElement>("[data-mp-map]")
+          .forEach((b) => b.classList.toggle("mp-map-active", b === btn));
+      });
+    });
     this.bind("create", () => void this.create());
     this.bind("join", () => this.showJoin());
     this.bind("back", () => this.close());
@@ -191,13 +239,29 @@ export class LobbyController {
 
   // ---------------------------------------------------------------- actions
 
-  private async create(): Promise<void> {
-    const name = this.readName();
+  private async create(explicitName?: string): Promise<void> {
+    const name = explicitName || this.readName();
+    const map = this.selectedMap;
+
+    // MAP CHECK (host side): the map is loaded ONCE during the boot phase.
+    // A pick that differs from the loaded map persists the selection and
+    // reloads — the creation resumes automatically after the boot
+    // (resumePendingCreate) so the host lands in a lobby on the map it
+    // actually has loaded. Same reload pattern as joining a foreign-map room.
+    if (map !== loadMapSelection()) {
+      savePendingCreate({ name, map });
+      saveMapSelection(map);
+      this.showBusy(`LOADING ${mapDisplayName(map)}`);
+      window.location.assign("/");
+      return;
+    }
+
     this.showBusy("CREATING LOBBY");
     try {
-      // The lobby plays the map THIS client already has loaded (persisted
-      // selection — the assets are warm, the match can start instantly).
-      await this.client.createLobby(name, loadMapSelection());
+      // The room's map is FIXED at creation (server-validated). Every
+      // joining client compares it with its loaded map and reloads onto it
+      // if needed — everybody plays the SAME map.
+      await this.client.createLobby(name, map);
       this.showLobby();
     } catch (err) {
       this.showError(errorTitle(err));
@@ -344,6 +408,29 @@ function errorTitle(err: unknown): string {
   return "CONNECTION FAILED";
 }
 
+/** Persist a lobby creation that must survive the map reload (sessionStorage: tab-scoped, one-shot). */
+function savePendingCreate(pending: PendingCreate): void {
+  try {
+    sessionStorage.setItem(MultiplayerConfig.pendingCreateStorageKey, JSON.stringify(pending));
+  } catch {
+    /* private browsing — the host simply lands on the menu after the reload */
+  }
+}
+
+/** Read AND clear the pending creation (never resumes twice). */
+function takePendingCreate(): PendingCreate | null {
+  try {
+    const raw = sessionStorage.getItem(MultiplayerConfig.pendingCreateStorageKey);
+    if (!raw) return null;
+    sessionStorage.removeItem(MultiplayerConfig.pendingCreateStorageKey);
+    const parsed = JSON.parse(raw) as Partial<PendingCreate>;
+    if (typeof parsed.map !== "string") return null;
+    return { name: typeof parsed.name === "string" ? parsed.name : "", map: parsed.map };
+  } catch {
+    return null;
+  }
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -408,6 +495,21 @@ function injectStyles(): void {
   opacity: 0.4; cursor: not-allowed; box-shadow: none;
 }
 .mp-btn.mp-copied { background: rgba(250, 204, 21, 0.25); border-color: rgba(250, 204, 21, 0.6); color: #fef9c3; }
+.mp-maps { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.mp-map {
+  padding: 10px 8px; cursor: pointer;
+  font-family: "Luckiest Guy", cursive; font-size: 12px;
+  font-weight: 400; letter-spacing: 2px;
+  color: #86bd94; background: rgba(22, 163, 74, 0.08);
+  border: 1px solid rgba(22, 163, 74, 0.35); border-radius: 12px;
+  transition: background 0.15s, box-shadow 0.15s, color 0.15s, transform 0.06s;
+}
+.mp-map:hover { background: rgba(22, 163, 74, 0.22); color: #dcfce7; }
+.mp-map:active { transform: scale(0.98); }
+.mp-map.mp-map-active {
+  color: #06140b; background: #4ade80; border-color: #4ade80;
+  box-shadow: 0 0 14px rgba(74, 222, 128, 0.45);
+}
 .mp-room-row { text-align: center; font-size: 15px; color: #bbf7d0; letter-spacing: 1.5px; }
 .mp-room-id {
   font-family: "Luckiest Guy", cursive; color: #f0fdf4; font-weight: 400;

@@ -693,11 +693,17 @@ export class Game {
     this.poison.onSprayStop = () => this.gameAudio.obliterreurBeamEnd(true);
     this.poison.onReloadStart = () => this.gameAudio.bassBlasterReloadStart();
     this.poison.onReloadEnd = () => this.gameAudio.bassBlasterReloadEnd();
-    // Hex Sniper: reuse the existing energy/impact palette (pure observers).
-    this.hexSniper.onTongueStart = () => this.gameAudio.revolverThrow(); // whip cast
-    this.hexSniper.onTongueGrab = () => this.gameAudio.phaseTraversal(); // energy latch
-    this.hexSniper.onPlayerArrived = () => this.gameAudio.slamImpact(1); // heavy arrival
-    this.hexSniper.onBiteStart = () => this.gameAudio.hammerSwing(); // jaw whoosh
+    // Hex Sniper: dedicated creature samples (tongue whip, wet grab, chomp
+    // when the victim arrives, jaws on every bite) — pure observers.
+    this.hexSniper.onTongueStart = () => this.gameAudio.hexTongueShot();
+    this.hexSniper.onTongueGrab = () => this.gameAudio.hexTongueGrab();
+    this.hexSniper.onPlayerArrived = () => this.gameAudio.hexPlayerArrived();
+    this.hexSniper.onBiteStart = () => this.gameAudio.hexBite();
+    // Goofy Basket: release whoosh scaled by the charge level + real
+    // basketball bounces spatialized at every world contact (local AND
+    // remote balls — the projectile system is shared). Pure observers.
+    this.goofyBasket.onRelease = (level) => this.gameAudio.basketThrow(level);
+    this.goofyBasket.projectiles.onBounce = (pos) => this.gameAudio.basketBounce(pos);
 
     this.playerCombatant.health.onDamaged = (amount, attacker) => {
       this.combatHud.notifyDamage(amount, this.damageAngleFrom(attacker));

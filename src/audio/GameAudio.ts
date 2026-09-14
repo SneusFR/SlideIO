@@ -37,6 +37,18 @@ export const AUDIO_MANIFEST: Record<string, string> = {
   hit_head: `${A}/hits/hit_head_01.mp3`,
   // Revolver (arcade ballistic revolver — CC0, see ATTRIBUTION.md)
   revolver_shot: `${A}/revolver/revolver_shot_01.mp3`,
+  // Goofy Basket (real basketball bounces — CC0, see ATTRIBUTION.md)
+  basket_bounce_01: `${A}/basket/basket_bounce_01.mp3`,
+  basket_bounce_02: `${A}/basket/basket_bounce_02.mp3`,
+  basket_bounce_03: `${A}/basket/basket_bounce_03.mp3`,
+  // Hex Sniper (tongue whip / wet grab / jaws / eating — CC0, see ATTRIBUTION.md)
+  hex_tongue_whip: `${A}/hexsniper/hex_tongue_whip_01.mp3`,
+  hex_tongue_out: `${A}/hexsniper/hex_tongue_out_01.mp3`,
+  hex_tongue_grab: `${A}/hexsniper/hex_tongue_grab_01.mp3`,
+  hex_bite_01: `${A}/hexsniper/hex_bite_01.mp3`,
+  hex_bite_02: `${A}/hexsniper/hex_bite_02.mp3`,
+  hex_chomp: `${A}/hexsniper/hex_chomp_01.mp3`,
+  hex_gulp: `${A}/hexsniper/hex_gulp_01.mp3`,
   // Hammer
   hammer_swing_01: `${A}/hammer/hammer_swing_01.mp3`,
   hammer_swing_02: `${A}/hammer/hammer_swing_02.mp3`,
@@ -495,6 +507,141 @@ export class GameAudio {
     audio.play("phase_warp", { bus: "weapons", volume: 0.4, rate: 1.7, throttleMs: 80 });
     audio.play("dash_energy", { bus: "weapons", volume: 0.4, rate: 1.4, delay: 0.05 });
     audio.play("ready_ping", { bus: "ui", volume: 0.3, rate: 1.5, delay: 0.3 });
+  }
+
+  // ------------------------------------------------------------------
+  // HEX SNIPER (dedicated samples: tongue whip / wet grab / jaws / gulp)
+  // ------------------------------------------------------------------
+
+  /**
+   * Tongue shot: a sharp whip crack (the tongue leaves the mouth at sniper
+   * speed) layered with a short wet "tongue out" smack so it reads as a
+   * creature, never as a gun.
+   */
+  hexTongueShot(): void {
+    audio.play("hex_tongue_whip", {
+      bus: "weapons",
+      volume: 0.7,
+      volumeVar: 0.05,
+      rate: 1.15,
+      rateVar: 0.05,
+      throttleMs: 80,
+    });
+    audio.play("hex_tongue_out", {
+      bus: "weapons",
+      volume: 0.45,
+      rate: 1.3,
+      rateVar: 0.06,
+      throttleMs: 80,
+    });
+  }
+
+  /** Tongue tagged a player: wet splat + the existing energy latch. */
+  hexTongueGrab(): void {
+    audio.play("hex_tongue_grab", {
+      bus: "impacts",
+      volume: 0.8,
+      volumeVar: 0.05,
+      rate: 1,
+      rateVar: 0.08,
+      throttleMs: 80,
+    });
+    audio.play("phase_warp", {
+      bus: "weapons",
+      volume: 0.35,
+      rate: 1.2,
+      throttleMs: 80,
+    });
+  }
+
+  /**
+   * Reeled-in victim ARRIVED at the creature's mouth: heavy thud then the
+   * big open-mouth chomp — this is the "it eats you" moment.
+   */
+  hexPlayerArrived(): void {
+    audio.play("hammer_slam_impact", {
+      bus: "impacts",
+      volume: 0.7,
+      rate: 1.05,
+      rateVar: 0.03,
+      throttleMs: 100,
+    });
+    audio.play("hex_chomp", {
+      bus: "impacts",
+      volume: 0.9,
+      rate: 1.1,
+      rateVar: 0.04,
+      delay: 0.04,
+      throttleMs: 100,
+    });
+    audio.play("hex_gulp", {
+      bus: "weapons",
+      volume: 0.6,
+      rate: 1,
+      rateVar: 0.05,
+      delay: 0.42,
+      throttleMs: 100,
+    });
+  }
+
+  /** Jaws snapping (every tongue return bites): quick crunchy bite. */
+  hexBite(): void {
+    const key = Math.random() < 0.5 ? "hex_bite_01" : "hex_bite_02";
+    audio.play(key, {
+      bus: "weapons",
+      volume: 0.75,
+      volumeVar: 0.06,
+      rate: 1,
+      rateVar: 0.08,
+      throttleMs: 90,
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // GOOFY BASKET (real basketball bounce samples)
+  // ------------------------------------------------------------------
+
+  /**
+   * Ball left the hand: airy release whoosh — louder and slightly lower
+   * for a stronger charge level (1 → 3).
+   */
+  basketThrow(level: 1 | 2 | 3): void {
+    audio.play("jump", {
+      bus: "weapons",
+      volume: 0.35 + 0.12 * level,
+      rate: 1.25 - 0.08 * level,
+      rateVar: 0.05,
+      throttleMs: 80,
+    });
+    if (level >= 2) {
+      audio.play("dash_whoosh", {
+        bus: "weapons",
+        volume: 0.18 * (level - 1),
+        rate: 1.4,
+        delay: 0.02,
+        throttleMs: 80,
+      });
+    }
+  }
+
+  /**
+   * Basketball bounce on the world, spatialized at the contact. Three
+   * rotating samples + small pitch wobble so a dribbling sequence never
+   * sounds machine-gunned; polyphony-capped for multiple balls in flight.
+   */
+  basketBounce(pos: THREE.Vector3): void {
+    const keys = ["basket_bounce_01", "basket_bounce_02", "basket_bounce_03"];
+    audio.playAt(keys[Math.floor(Math.random() * keys.length)], pos, {
+      bus: "impacts",
+      volume: 0.8,
+      volumeVar: 0.08,
+      rate: 1,
+      rateVar: 0.07,
+      throttleMs: 40,
+      maxInstances: 6,
+      refDistance: 6,
+      maxDistance: 70,
+    });
   }
 
   // ------------------------------------------------------------------

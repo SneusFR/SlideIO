@@ -840,16 +840,24 @@ test("basket: world bounce budget per level, then the ball RESTS (BASKET_REST) a
       if (!endAt && basketActions(rec, "BASKET_END").length) endAt = nowMs();
     }
     const bounces = basketActions(rec, "BASKET_BOUNCE");
-    // L3 at 24 m/s straight down: 0.78 restitution → bounces at ≈0.03 /
-    // 2.4 / 4.2 s, the 4th ground contact would come at ≈5.7 s, past the
-    // 5 s lifetime → 3 bounces then expiry in flight (no rest). L1 / L2
-    // spend their budget and come to rest.
-    const expected = level === 3 ? 3 : GB.throws[level - 1].maxWorldBounces;
-    assert.strictEqual(bounces.length, expected, `L${level} bounce budget / lifetime`);
+    // L3 at 200 m/s straight down: the rebound is capped to 30 m/s
+    // (0.03 s), climbs ~28 m and lands again at ≈3.75 s (23 m/s up); the
+    // 3rd ground contact would come at ≈6.7 s, past the 5 s lifetime →
+    // 2 bounces then expiry in flight (no rest). L1 / L2 spend their
+    // budget and come to rest.
+    // Budget spent → the next floor contact is a ROLL start (signalled as a
+    // bounce with NO upward rebound) when the residual horizontal speed is
+    // still ≥ minBounceSpeed, otherwise the ball rests right there.
+    const expected = level === 3 ? 2 : GB.throws[level - 1].maxWorldBounces;
+    assert.ok(
+      bounces.length === expected || bounces.length === expected + 1,
+      `L${level} bounce budget / lifetime (${bounces.length} vs ${expected}[+1 roll start])`,
+    );
     for (let i = 0; i < bounces.length; i++) {
       assert.strictEqual(bounces[i].bn, i + 1, "bounce numbering");
-      assert.ok(bounces[i].dy > 0, "reflected upward");
       assert.ok(Math.abs(bounces[i].hy - 1) < 1e-9, "ground normal");
+      if (i < expected) assert.ok(bounces[i].dy > 0, "reflected upward");
+      else assert.ok(Math.abs(bounces[i].dy) < 1e-9 && Math.hypot(bounces[i].dx, bounces[i].dz) >= GB.minBounceSpeed - 1e-9, "roll start: no rebound, tangential speed kept");
     }
     const rests = basketActions(rec, "BASKET_REST");
     if (level < 3) {

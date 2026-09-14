@@ -37,3 +37,8 @@ export function nextMapId(current: MapId): MapId {
   const ids = Object.values(MapId);
   return ids[(ids.indexOf(current) + 1) % ids.length];
 }
+
+/** Every playable map, in registry order (lobby creation map picker). */
+export function listMaps(): { id: MapId; name: string }[] {
+  return Object.values(MapId).map((id) => ({ id, name: MAP_REGISTRY[id].name }));
+}

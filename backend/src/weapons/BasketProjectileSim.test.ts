@@ -214,7 +214,10 @@ test("max charge (L3): sniper ball — 200 m/s, gravity-free straight flight alo
   // Straight: the ball never dipped below its aim line (no gravity sag).
   const aimYAtHit = eye.y + dir.y * ((hit.point.z - eye.z) / dir.z);
   assert.ok(hit.point.y >= aimYAtHit - 0.6, `no gravity sag: hit y ${hit.point.y.toFixed(2)} vs aim ${aimYAtHit.toFixed(2)}`);
-  assert.ok(p.pos.y < startY, "the aim itself was slightly downward");
+  // The ball leaves the HAND (below the eye) and converges toward the eye
+  // aim line, so it may end slightly higher than its start: the straight
+  // flight is checked against the aim line above, not against the start.
+  assert.ok(Math.abs(p.pos.y - startY) < 1.5, "flat flight: no ballistic drop of several meters over 100 m");
 
   // Lower levels are unchanged: no straight budget, gravity from the first step.
   for (const level of [1, 2] as const) {
@@ -269,6 +272,52 @@ test("lifetime: expired event once the age passes the maximum", () => {
   assert.ok(expired);
   assert.ok(p.age >= B.maxLifetimeSeconds && p.age < B.maxLifetimeSeconds + 0.06);
   assert.ok(len(p.vel) > 0, "gravity accumulated meanwhile");
+});
+
+test("rolling: budget spent with horizontal speed → the ball ROLLS on the floor (no dead stop), slows with friction, rests only once out of speed", () => {
+  const ground: ColliderBox[] = [[0, -0.5, 0, 400, 1, 400]];
+  // Level 1 (budget 1), thrown flat and fast: first floor contact bounces,
+  // the second one (budget spent) must start a roll, never a rest.
+  const p = createBasketProjectileState({ x: 0, y: 1, z: 0 }, { x: 8, y: 0, z: 0 }, 1);
+  let restAt = -1;
+  let firstRollX = -1;
+  let rollSpeedSample = -1;
+  for (let i = 0; i < 600 && restAt < 0; i++) {
+    const ev = stepBasketProjectile(p, 1 / 60, casterFor(ground), null);
+    if (p.rolling && firstRollX < 0) {
+      firstRollX = p.pos.x;
+      rollSpeedSample = Math.hypot(p.vel.x, p.vel.z);
+    }
+    if (ev.some((e) => e.type === "rest")) restAt = p.age;
+  }
+  assert.ok(firstRollX > 0, "the ball entered the rolling state");
+  assert.ok(rollSpeedSample > 5, `roll starts with the tangential speed kept (${rollSpeedSample.toFixed(1)} m/s)`);
+  assert.ok(p.resting ? p.pos.x - firstRollX > 3 : true, "rolled several meters before resting");
+  if (restAt > 0) {
+    // 8 m/s of roll at 4 m/s² takes ~1.85 s to fade under minBounceSpeed.
+    assert.ok(restAt > 1.5, `rested only after the roll faded (t=${restAt.toFixed(2)} s)`);
+  } else {
+    assert.ok(p.age >= B.maxLifetimeSeconds - 0.05 || Math.hypot(p.vel.x, p.vel.z) >= B.minBounceSpeed, "still rolling with speed at the end");
+  }
+  assert.ok(p.pos.y >= R - 1e-6, "never sinks into the floor while rolling");
+});
+
+test("rolling: a wall still reflects a budget-less rolling ball (never stops dead against it)", () => {
+  const boxes: ColliderBox[] = [
+    [0, -0.5, 0, 400, 1, 400], // floor
+    [10.5, 5, 0, 1, 10, 200], // wall face at x = 10
+  ];
+  const p = createBasketProjectileState({ x: 0, y: R + 0.001, z: 0 }, { x: 12, y: 0, z: 0 }, 1);
+  p.bouncesLeft = 0; // budget already spent → rolling regime from the first floor touch
+  let wallBounce = false;
+  for (let i = 0; i < 120 && !wallBounce; i++) {
+    const ev = stepBasketProjectile(p, 1 / 60, casterFor(boxes), null);
+    assert.ok(!ev.some((e) => e.type === "rest"), "no rest while it still has speed");
+    wallBounce = ev.some((e) => e.type === "bounce" && Math.abs(e.normal.x + 1) < 1e-9);
+  }
+  assert.ok(wallBounce, "bounced off the wall");
+  assert.ok(p.vel.x < 0, "comes back from the wall");
+  assert.ok(Math.hypot(p.vel.x, p.vel.z) > B.minBounceSpeed, "keeps rolling speed after the wall");
 });
 
 console.log(`\n${passed} basket sim tests passed`);

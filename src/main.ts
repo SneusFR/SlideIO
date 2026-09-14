@@ -77,6 +77,10 @@ async function main(): Promise<void> {
     // Clean the URL so a refresh doesn't re-trigger the join.
     window.history.replaceState(null, "", "/");
     lobby.openWithInvite(inviteRoomId);
+  } else {
+    // CREATE LOBBY on another map: the host's page reloaded with that map
+    // (single boot loading phase) → finish the creation now.
+    lobby.resumePendingCreate();
   }
 
   let inGame = false;

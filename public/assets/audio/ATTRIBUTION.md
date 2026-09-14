@@ -117,6 +117,29 @@ sont des **layers de sons CC0 déjà présents** dans ce projet (jump/dash whoos
 hammer slam impact/sub, dash energy, phase warp, ready ping) — voir les
 sections correspondantes ci-dessus.
 
+## Goofy Basket
+
+| Fichier local | Titre original | Freesound ID | Licence | Source |
+|---|---|---|---|---|
+| `basket/basket_bounce_01.mp3` | Basketball 1 | 319763 | CC0 | https://freesound.org/s/319763/ |
+| `basket/basket_bounce_02.mp3` | Basketball 5 | 319784 | CC0 | https://freesound.org/s/319784/ |
+| `basket/basket_bounce_03.mp3` | Basketball 8 | 319783 | CC0 | https://freesound.org/s/319783/ |
+
+Le whoosh de lancer du Goofy Basket est un **layer de sons CC0 déjà présents**
+(jump whoosh soft + dash whoosh).
+
+## Hex Sniper
+
+| Fichier local | Titre original | Freesound ID | Licence | Source |
+|---|---|---|---|---|
+| `hexsniper/hex_tongue_whip_01.mp3` | whip and crack sound | 615761 | CC0 | https://freesound.org/s/615761/ |
+| `hexsniper/hex_tongue_out_01.mp3` | Sticking Tongue Out | 784925 | CC0 | https://freesound.org/s/784925/ |
+| `hexsniper/hex_tongue_grab_01.mp3` | Mud Splat | 445109 | CC0 | https://freesound.org/s/445109/ |
+| `hexsniper/hex_bite_01.mp3` | Bite1 | 760559 | CC0 | https://freesound.org/s/760559/ |
+| `hexsniper/hex_bite_02.mp3` | Bite2 | 760560 | CC0 | https://freesound.org/s/760560/ |
+| `hexsniper/hex_chomp_01.mp3` | Open Mouth Chomp.wav | 457475 | CC0 | https://freesound.org/s/457475/ |
+| `hexsniper/hex_gulp_01.mp3` | Big Gulp | 721604 | CC0 | https://freesound.org/s/721604/ |
+
 ## Hits (confirmation de dégâts)
 
 | Fichier local | Titre original | Freesound ID | Licence | Source |

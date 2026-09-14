@@ -450,8 +450,34 @@ export const NetworkWeaponConfig = {
     maxContactsPerStep: 4,
     /** Pushed off a surface after a bounce (m) — never rests inside it. */
     surfaceClearance: 0.002,
-    /** Speed below which a bounce ends the projectile (m/s) — no jitter rest. */
+    /**
+     * Normal rebound speed (m/s) below which a world contact no longer
+     * BOUNCES: the ball starts ROLLING instead (normal component killed,
+     * tangential speed kept). Also the rolling speed below which the ball
+     * finally comes to REST — no jitter rest.
+     */
     minBounceSpeed: 0.6,
+    /**
+     * Rolling deceleration (m/s²) applied while the ball rolls on the world
+     * (bounce budget spent or rebound too weak). A 12 m/s roll fades over
+     * ~3 s; a capped 30 m/s roll keeps going until the lifetime. The ball
+     * never stops dead while it still has speed.
+     */
+    rollingDeceleration: 4,
+    /**
+     * Contact normal Y above which a surface is "floor-like": with the
+     * bounce budget spent the ball ROLLS on it. Steeper surfaces (walls,
+     * ceilings) keep reflecting the ball — a rolling ball never stops dead
+     * against a wall, it bounces back and keeps rolling.
+     */
+    rollingSurfaceMinNormalY: 0.5,
+    /**
+     * While rolling, a floor contact arriving faster than this along the
+     * normal (m/s) is a LANDING (rolled off a ledge) → a bounce event
+     * (audio + network correction). The per-step gravity nudge that keeps
+     * a flat roll glued to the floor (g·dt ≈ 0.3–0.8 m/s) stays silent.
+     */
+    rollingLandingMinNormalSpeed: 1.5,
     /** Catch clip (new ball from above): hand contact + ready markers (s). */
     catchDuration: 0.58,
     catchHandContactAt: 0.34,

@@ -396,6 +396,13 @@ export class RemoteCombatVFXController {
         this.remotes.basketThrow(ev.playerId, (ev.lv === 2 || ev.lv === 3 ? ev.lv : 1) as 1 | 2 | 3, this.remotes.elapsedSince(ev.ts));
         return;
       case BASKET_ACTION_LAUNCH:
+        // Remote ball left the hand: release whoosh at the launch point,
+        // scaled by the server-locked level (same feel as the local
+        // basketThrow). Bounces are heard through the shared projectile
+        // system's onBounce (the remote ball is simulated locally too).
+        this.basketLaunchSound(ev);
+        this.onBasketProjectile?.(ev);
+        return;
       case BASKET_ACTION_BOUNCE:
       case BASKET_ACTION_REST:
       case BASKET_ACTION_END:
@@ -1089,6 +1096,28 @@ export class RemoteCombatVFXController {
   // Melee
   // ------------------------------------------------------------------
 
+  /** GOOFY BASKET remote release: airy whoosh at the launch point, level-scaled. */
+  private basketLaunchSound(ev: WeaponActionConfirmedEvent): void {
+    const level = ev.lv === 2 || ev.lv === 3 ? ev.lv : 1;
+    const at = { x: ev.ox, y: ev.oy, z: ev.oz };
+    audio.playAt("jump", at, {
+      bus: "weapons",
+      volume: 0.35 + 0.12 * level,
+      rate: 1.25 - 0.08 * level,
+      rateVar: 0.05,
+      refDistance: 7,
+    });
+    if (level >= 2) {
+      audio.playAt("dash_whoosh", at, {
+        bus: "weapons",
+        volume: 0.18 * (level - 1),
+        rate: 1.4,
+        delay: 0.02,
+        refDistance: 7,
+      });
+    }
+  }
+
   private playSwingSound(ev: WeaponActionConfirmedEvent): void {
     const keys = ["hammer_swing_01", "hammer_swing_02", "hammer_swing_03"];
     audio.playAt(keys[Math.floor(Math.random() * keys.length)], { x: ev.ox, y: ev.oy, z: ev.oz }, {
@@ -1333,9 +1362,22 @@ export class RemoteCombatVFXController {
     }
     this.tongues.set(ev.playerId, tongue);
     this.remotes.hexTongueBegin(ev.playerId, tongue.tip);
-    // Whip cast (same palette as the local onTongueStart → revolverThrow).
-    audio.playAt("jump", this.originScratch, { bus: "weapons", volume: 0.55, rate: 1.35 });
-    audio.playAt("dash_whoosh", this.originScratch, { bus: "weapons", volume: 0.3, rate: 1.5 });
+    // Whip crack + wet tongue smack (same samples as the local hexTongueShot).
+    audio.playAt("hex_tongue_whip", this.originScratch, {
+      bus: "weapons",
+      volume: 0.7,
+      rate: 1.15,
+      rateVar: 0.05,
+      refDistance: 8,
+      maxDistance: 90,
+    });
+    audio.playAt("hex_tongue_out", this.originScratch, {
+      bus: "weapons",
+      volume: 0.45,
+      rate: 1.3,
+      rateVar: 0.06,
+      refDistance: 8,
+    });
   }
 
   /**
@@ -1352,10 +1394,12 @@ export class RemoteCombatVFXController {
     t.victimId = null;
   }
 
-  /** HEX_BITE: the victim arrived — heavy arrival thud, then the jaws. */
+  /** HEX_BITE: the victim arrived — heavy arrival thud, big chomp + gulp, then the jaws. */
   private hexBite(ev: WeaponActionConfirmedEvent): void {
     const at = { x: ev.hx ?? ev.ox, y: ev.hy ?? ev.oy, z: ev.hz ?? ev.oz };
-    audio.playAt("hammer_slam_impact", at, { bus: "impacts", volume: 0.7, rateVar: 0.03 });
+    audio.playAt("hammer_slam_impact", at, { bus: "impacts", volume: 0.7, rate: 1.05, rateVar: 0.03, refDistance: 8 });
+    audio.playAt("hex_chomp", at, { bus: "impacts", volume: 0.9, rate: 1.1, rateVar: 0.04, delay: 0.04, refDistance: 8, maxDistance: 90 });
+    audio.playAt("hex_gulp", at, { bus: "weapons", volume: 0.6, rateVar: 0.05, delay: 0.42, refDistance: 8 });
     const t = this.tongues.get(ev.playerId);
     if (t) {
       this.hexTongueRelease(ev.playerId, true);
@@ -1368,11 +1412,15 @@ export class RemoteCombatVFXController {
   private hexPlayBite(playerId: string): void {
     this.remotes.hexBite(playerId);
     if (this.remotes.getMuzzleWorldPosition(playerId, this.originScratch)) {
-      const keys = ["hammer_swing_01", "hammer_swing_02", "hammer_swing_03"];
-      audio.playAt(keys[Math.floor(Math.random() * keys.length)], this.originScratch, {
+      // Jaws snapping — same crunchy bite samples as the local hexBite.
+      const key = Math.random() < 0.5 ? "hex_bite_01" : "hex_bite_02";
+      audio.playAt(key, this.originScratch, {
         bus: "weapons",
-        volume: 0.7,
-        rate: 1.1,
+        volume: 0.75,
+        volumeVar: 0.06,
+        rate: 1,
+        rateVar: 0.08,
+        refDistance: 8,
       });
     }
   }
@@ -1401,7 +1449,9 @@ export class RemoteCombatVFXController {
           if (t.victimId) {
             t.phase = "holding";
             this.remotes.hexTonguePull(id);
-            audio.playAt("phase_warp", t.tip, { bus: "weapons", volume: 0.5, rate: 1.2 });
+            // Wet grab splat + energy latch (same layers as the local hexTongueGrab).
+            audio.playAt("hex_tongue_grab", t.tip, { bus: "impacts", volume: 0.8, rateVar: 0.08, refDistance: 8 });
+            audio.playAt("phase_warp", t.tip, { bus: "weapons", volume: 0.35, rate: 1.2 });
           } else {
             t.phase = "retracting";
           }
