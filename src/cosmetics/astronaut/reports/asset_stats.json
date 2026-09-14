@@ -1,0 +1,68 @@
+[
+  {
+    "file": "Astronaut_TP_Clothing.glb",
+    "bytes": 699796,
+    "meshes": [
+      {
+        "mesh": "Astro_Top",
+        "vertices": 3417,
+        "triangles": 3218,
+        "drawCalls": 1
+      },
+      {
+        "mesh": "Astro_Pants",
+        "vertices": 1799,
+        "triangles": 1821,
+        "drawCalls": 1
+      },
+      {
+        "mesh": "Astro_Boots",
+        "vertices": 4032,
+        "triangles": 2880,
+        "drawCalls": 1
+      },
+      {
+        "mesh": "Astro_HelmetSeal",
+        "vertices": 1152,
+        "triangles": 2048,
+        "drawCalls": 1
+      }
+    ]
+  },
+  {
+    "file": "Astronaut_FP_Clothing.glb",
+    "bytes": 71056,
+    "meshes": [
+      {
+        "mesh": "Astro_Sleeves",
+        "vertices": 851,
+        "triangles": 1201,
+        "drawCalls": 1
+      }
+    ]
+  },
+  {
+    "file": "Astronaut_Helmet.glb",
+    "bytes": 148212,
+    "meshes": [
+      {
+        "mesh": "Astro_Helmet",
+        "vertices": 2947,
+        "triangles": 4736,
+        "drawCalls": 2
+      }
+    ]
+  },
+  {
+    "file": "Astronaut_Backpack.glb",
+    "bytes": 89832,
+    "meshes": [
+      {
+        "mesh": "Astro_Backpack",
+        "vertices": 1944,
+        "triangles": 1728,
+        "drawCalls": 1
+      }
+    ]
+  }
+]

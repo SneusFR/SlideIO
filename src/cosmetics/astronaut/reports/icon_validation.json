@@ -1,0 +1,60 @@
+{
+  "status": "PASS",
+  "icons": [
+    {
+      "file": "apercus/icones/Bottes.png",
+      "size": [
+        512,
+        512
+      ],
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "file": "apercus/icones/Casque.png",
+      "size": [
+        512,
+        512
+      ],
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "file": "apercus/icones/Haut.png",
+      "size": [
+        512,
+        512
+      ],
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "file": "apercus/icones/Pantalon.png",
+      "size": [
+        512,
+        512
+      ],
+      "alphaRange": [
+        0,
+        255
+      ]
+    },
+    {
+      "file": "apercus/icones/Sac.png",
+      "size": [
+        512,
+        512
+      ],
+      "alphaRange": [
+        0,
+        255
+      ]
+    }
+  ]
+}

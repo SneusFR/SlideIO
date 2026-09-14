@@ -61,6 +61,14 @@ export interface BasketProjectileState {
    * damage), until the lifetime expires.
    */
   resting: boolean;
+  /**
+   * Gravity-FREE flight distance still available (m). While > 0 the ball
+   * flies dead straight along its velocity (hit-tag: the crosshair is the
+   * impact point). Spent by the travelled distance and ZEROED at the first
+   * world bounce — after that the ball falls and bounces like any
+   * basketball. Levels without a straight budget start at 0.
+   */
+  straightLeft: number;
 }
 
 export type BasketStepEvent =
@@ -84,6 +92,7 @@ export function createBasketProjectileState(
     bouncesLeft: cfg.throws[level - 1].maxWorldBounces,
     bounceCount: 0,
     resting: false,
+    straightLeft: cfg.throws[level - 1].straightFlightMeters,
   };
 }
 
@@ -125,7 +134,9 @@ export function basketLaunchOrigin(eye: BasketVec3, dir: BasketVec3): BasketVec3
 /**
  * Initial velocity of the ball (m/s), SHARED rule:
  *   1. direction = from the hand launch point toward the eye aim line at
- *      `launchConvergeDistance` (the ball rejoins the crosshair, no lift);
+ *      the level's `convergeDistance` (the ball rejoins the crosshair, no
+ *      lift) — the max charge converges far out so it stays on the
+ *      crosshair at sniper range;
  *   2. magnitude = level speed + the shooter's momentum along that line
  *      (forward factor; never negative — a backpedalling shooter throws at
  *      the plain level speed) — "the faster the player, the faster the ball";
@@ -140,16 +151,17 @@ export function basketLaunchVelocity(
   eye: BasketVec3 | null = null,
 ): BasketVec3 {
   const cfg = NetworkWeaponConfig.goofyBasket;
-  const speed = cfg.throws[level - 1].speed;
+  const def = cfg.throws[level - 1];
+  const speed = def.speed;
   const fwd = normalizeOrZero(dir);
   let d = fwd;
   if (eye) {
     // Converge from the hand toward the point the eye aims at.
     const origin = basketLaunchOrigin(eye, fwd);
     const target = {
-      x: eye.x + fwd.x * cfg.launchConvergeDistance,
-      y: eye.y + fwd.y * cfg.launchConvergeDistance,
-      z: eye.z + fwd.z * cfg.launchConvergeDistance,
+      x: eye.x + fwd.x * def.convergeDistance,
+      y: eye.y + fwd.y * def.convergeDistance,
+      z: eye.z + fwd.z * def.convergeDistance,
     };
     const conv = normalizeOrZero({ x: target.x - origin.x, y: target.y - origin.y, z: target.z - origin.z });
     if (conv.x !== 0 || conv.y !== 0 || conv.z !== 0) d = conv;
@@ -241,6 +253,14 @@ export function resolveBasketLaunch(
  * NOT end the ball: it comes to REST at the contact (`rest` event, velocity
  * zeroed) and stays visible until `maxLifetimeSeconds` — the only terminal
  * events are a player `hit` and the lifetime `expired`.
+ *
+ * STRAIGHT FLIGHT (max charge): while `straightLeft` > 0 the step is flown
+ * WITHOUT gravity along the current velocity (hit-tag: the ball goes where
+ * the crosshair points, at sniper speed). The budget is spent by the
+ * travelled distance and ends at the FIRST world bounce; the rest of the
+ * step — and every later one — is the normal ballistic basketball. Every
+ * bounce also clamps the outgoing speed to `maxSpeedAfterBounce` so a
+ * 200 m/s arrival never becomes a 150 m/s ricochet.
  */
 export function stepBasketProjectile(
   p: BasketProjectileState,
@@ -271,14 +291,60 @@ export function stepBasketProjectile(
     return events;
   };
 
-  // Semi-implicit gravity (velocity first, then the swept displacement).
-  p.vel.y -= cfg.gravity * dt;
-
+  // ---- Phase 1: STRAIGHT flight (max charge "sniper ball") ----
+  // Gravity is SUSPENDED while the straight-flight budget lasts: the ball
+  // flies dead straight along its velocity (hit-tag — the crosshair is the
+  // impact point) until the budget is spent by distance or the ball
+  // bounces ONCE on the world. A step that crosses the budget end is
+  // split: straight part first, the leftover time under gravity below.
   let remaining = dt;
-  let contacts = 0;
+  const contacts = { n: 0 };
+  if (p.straightLeft > 0) {
+    const speed0 = Math.hypot(p.vel.x, p.vel.y, p.vel.z);
+    if (speed0 > 1e-6) {
+      const straightTime = Math.min(remaining, p.straightLeft / speed0);
+      if (straightTime <= 1e-7) {
+        p.straightLeft = 0; // floating-point crumbs: the budget is spent
+      } else {
+        const leftover = sweepAndBounce(p, straightTime, caster, ownerId, radius, cfg, events, rest, contacts);
+        if (leftover < 0) return events; // terminal (player hit / rest)
+        remaining = remaining - straightTime + leftover;
+        if (remaining <= 1e-7) return events; // the whole step flew straight
+      }
+    }
+  }
+
+  // ---- Phase 2: ballistic (semi-implicit gravity on the time actually
+  // spent under it, then the swept displacement) ----
+  p.vel.y -= cfg.gravity * remaining;
+  sweepAndBounce(p, remaining, caster, ownerId, radius, cfg, events, rest, contacts);
+  return events;
+}
+
+/**
+ * Resolve up to `time` seconds of swept motion at the CURRENT velocity (no
+ * gravity applied here — the caller owns it). Returns:
+ *   -1  → terminal outcome (player hit / rest): stop the step;
+ *   ≥0  → time NOT consumed. 0 when the whole time was flown; > 0 when the
+ *         straight-flight budget ENDED inside this call (first world
+ *         bounce) so the caller finishes the step under gravity.
+ * `contacts` is shared across the two phases of one step (corner cap).
+ */
+function sweepAndBounce(
+  p: BasketProjectileState,
+  time: number,
+  caster: BasketSweepCaster,
+  ownerId: string | null,
+  radius: number,
+  cfg: typeof NetworkWeaponConfig.goofyBasket,
+  events: BasketStepEvent[],
+  rest: (n: BasketVec3, contactPoint: BasketVec3) => BasketStepEvent[],
+  contacts: { n: number },
+): number {
+  let remaining = time;
   while (remaining > 1e-7) {
     const speed = Math.hypot(p.vel.x, p.vel.y, p.vel.z);
-    if (speed < 1e-6) break;
+    if (speed < 1e-6) return 0;
     const dir = { x: p.vel.x / speed, y: p.vel.y / speed, z: p.vel.z / speed };
     const stepLen = speed * remaining;
     const hit = caster.sweep(p.pos, dir, stepLen, radius, ownerId);
@@ -286,7 +352,8 @@ export function stepBasketProjectile(
       p.pos.x += dir.x * stepLen;
       p.pos.y += dir.y * stepLen;
       p.pos.z += dir.z * stepLen;
-      break;
+      if (p.straightLeft > 0) p.straightLeft = Math.max(0, p.straightLeft - stepLen);
+      return 0;
     }
 
     const travelled = Math.max(0, hit.distance);
@@ -294,6 +361,8 @@ export function stepBasketProjectile(
     p.pos.y += dir.y * travelled;
     p.pos.z += dir.z * travelled;
     remaining -= travelled / speed;
+    const wasStraight = p.straightLeft > 0;
+    if (wasStraight) p.straightLeft = Math.max(0, p.straightLeft - travelled);
 
     if (hit.kind === "player") {
       const point = {
@@ -302,7 +371,7 @@ export function stepBasketProjectile(
         z: p.pos.z - hit.normal.z * radius,
       };
       events.push({ type: "hit", targetId: hit.targetId ?? "", point });
-      return events; // first accepted player contact consumes the ball
+      return -1; // first accepted player contact consumes the ball
     }
 
     // ---- World contact ----
@@ -312,9 +381,10 @@ export function stepBasketProjectile(
       y: p.pos.y - n.y * radius,
       z: p.pos.z - n.z * radius,
     };
-    contacts++;
-    if (p.bouncesLeft <= 0 || contacts > cfg.maxContactsPerStep) {
-      return rest(n, contactPoint);
+    contacts.n++;
+    if (p.bouncesLeft <= 0 || contacts.n > cfg.maxContactsPerStep) {
+      rest(n, contactPoint);
+      return -1;
     }
     // Reflect: v' = v − (1 + e)(v·n)n on the normal component only, so the
     // tangential slide keeps its full speed (rolling feel on shallow hits).
@@ -324,6 +394,15 @@ export function stepBasketProjectile(
       p.vel.x -= (1 + e) * vn * n.x;
       p.vel.y -= (1 + e) * vn * n.y;
       p.vel.z -= (1 + e) * vn * n.z;
+    }
+    // A sniper-speed ball dumps its excess energy on the wall: capped to a
+    // readable basketball rebound (direction preserved, magnitude clamped).
+    const outSpeed = Math.hypot(p.vel.x, p.vel.y, p.vel.z);
+    if (outSpeed > cfg.maxSpeedAfterBounce) {
+      const k = cfg.maxSpeedAfterBounce / outSpeed;
+      p.vel.x *= k;
+      p.vel.y *= k;
+      p.vel.z *= k;
     }
     // Small clearance off the surface: the next sweep never starts inside it.
     p.pos.x += n.x * cfg.surfaceClearance;
@@ -339,10 +418,18 @@ export function stepBasketProjectile(
       normal: { ...n },
     });
     if (Math.hypot(p.vel.x, p.vel.y, p.vel.z) < cfg.minBounceSpeed) {
-      return rest(n, contactPoint);
+      rest(n, contactPoint);
+      return -1;
+    }
+    if (wasStraight) {
+      // The FIRST world bounce ends the straight flight: the ball is a
+      // plain basketball from here on. Hand the unspent time back so the
+      // caller finishes this step under gravity.
+      p.straightLeft = 0;
+      return Math.max(0, remaining);
     }
   }
-  return events;
+  return 0;
 }
 
 

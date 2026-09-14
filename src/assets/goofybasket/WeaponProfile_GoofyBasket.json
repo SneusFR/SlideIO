@@ -369,7 +369,9 @@
       "damage": 25,
       "speedMetersPerSecond": 11,
       "restitution": 0.4,
-      "maximumWorldBounces": 1
+      "maximumWorldBounces": 1,
+      "convergeDistanceMeters": 12,
+      "straightFlightMeters": 0
     },
     {
       "level": 2,
@@ -378,16 +380,20 @@
       "damage": 25,
       "speedMetersPerSecond": 17,
       "restitution": 0.6,
-      "maximumWorldBounces": 3
+      "maximumWorldBounces": 3,
+      "convergeDistanceMeters": 12,
+      "straightFlightMeters": 0
     },
     {
       "level": 3,
       "clip": "Throw_L3",
       "releaseAt": 0.18,
       "damage": 25,
-      "speedMetersPerSecond": 24,
+      "speedMetersPerSecond": 200,
       "restitution": 0.78,
-      "maximumWorldBounces": 5
+      "maximumWorldBounces": 5,
+      "convergeDistanceMeters": 80,
+      "straightFlightMeters": 250
     }
   ],
   "projectile": {
@@ -398,10 +404,12 @@
     "continuousSphereCollision": true,
     "ignoreOwner": true,
     "launchOrigin": "rightHand (eye + right 0.42 / down 0.32 / forward 0.55 m, aim frame)",
-    "launchDirection": "validatedAimDirection (hand converges on the eye aim line at 12 m)",
+    "launchDirection": "validatedAimDirection (hand converges on the eye aim line at the level convergeDistanceMeters: 12 m for L1/L2, 80 m for L3)",
     "inheritsShooterMomentum": "forward component x1.0, horizontal lateral x0.35, never against the aim",
     "addedVerticalVelocity": 0,
     "forcedLob": false,
+    "maxChargeSniperBall": "L3 leaves at 200 m/s and flies gravity-free along the aim for straightFlightMeters (250 m) or until its first world bounce (hit-tag: the crosshair is the impact point); then it falls and bounces like a basketball.",
+    "maxSpeedAfterBounceMetersPerSecond": 30,
     "chargeAnimation": "Palm behind ball facing enemy, progressive backward retraction L1 to L3, direct forward push on release.",
     "settingsStatus": "Initial adjustable gameplay defaults; not balanced or tested in the game. Server remains authoritative."
   },

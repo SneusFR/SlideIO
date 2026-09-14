@@ -19,6 +19,9 @@ interface CorpseMaterialEntry {
   baseOpacity: number;
 }
 
+/** Cap of parked fade clones from evicted ephemeral sources (see orphanClones). */
+const MAX_ORPHAN_CLONES = 16;
+
 interface Corpse {
   visual: THREE.Object3D;
   ragdoll: RagdollController;
@@ -60,6 +63,13 @@ export class CorpseManager {
   private readonly tmp = new THREE.Vector3();
   /** Reusable fade clones keyed by their SOURCE (living) material. */
   private readonly materialPool = new Map<THREE.Material, THREE.Material[]>();
+  /**
+   * Fade clones of EVICTED ephemeral sources (per-instance outfit
+   * materials): kept alive in a bounded ring purely so three.js keeps their
+   * compiled programs referenced; never handed out again (their source is
+   * gone). Oldest entries are disposed past MAX_ORPHAN_CLONES.
+   */
+  private readonly orphanClones: THREE.Material[] = [];
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -146,6 +156,8 @@ export class CorpseManager {
       for (const mat of pool) mat.dispose();
     }
     this.materialPool.clear();
+    for (const mat of this.orphanClones) mat.dispose();
+    this.orphanClones.length = 0;
   }
 
   // ------------------------------------------------------------------
@@ -166,8 +178,21 @@ export class CorpseManager {
     // NEVER disposed (that would destroy the compiled shader program and
     // force a recompile hitch on the next corpse) — reset + pool instead.
     // Geometries are SHARED with the living templates: never touched.
-    for (const entry of corpse.materials) this.releaseMaterial(entry);
+    // Unregister BEFORE releasing so the ephemeral-source eviction check
+    // (sourceInUse) no longer counts this corpse.
     this.corpses.splice(index, 1);
+    for (const entry of corpse.materials) this.releaseMaterial(entry);
+  }
+
+  /**
+   * True while at least one existing corpse still uses a clone of `source`
+   * (eviction guard for EPHEMERAL sources — see releaseMaterial).
+   */
+  private sourceInUse(source: THREE.Material): boolean {
+    for (const corpse of this.corpses) {
+      for (const entry of corpse.materials) if (entry.source === source) return true;
+    }
+    return false;
   }
 
   /**
@@ -205,16 +230,22 @@ export class CorpseManager {
     const pool = this.materialPool.get(source);
     const pooled = pool?.pop();
     if (pooled) {
-      // Fresh corpse: fully opaque again, depth-writing until its fade.
+      // Fresh corpse: opacity back to the SOURCE's (a glass visor keeps its
+      // authored translucency, an opaque piece starts fully opaque) and the
+      // source's depth rule (transparent glass never writes depth, or it
+      // would hide the face behind it) until the fade flips it off.
       pooled.opacity = source.opacity;
-      pooled.depthWrite = true;
+      pooled.depthWrite = source.depthWrite;
       return pooled;
     }
     const clone = source.clone();
     // Transparent FROM CREATION: the program is compiled once with the
     // final cache key — starting the fade later never recompiles anything.
     clone.transparent = true;
-    clone.depthWrite = true;
+    // Depth rule inherited from the source: opaque body pieces write depth
+    // until their fade; already-transparent sources (helmet glass) keep
+    // depthWrite=false so the eyes and smile stay readable through them.
+    clone.depthWrite = source.depthWrite;
     // Corpses are NOT threats: never write the enemy-outline stencil mask
     // (inherited from living enemy materials via clone) — a corpse behind
     // a living enemy must not punch holes in that enemy's red contour.
@@ -222,8 +253,29 @@ export class CorpseManager {
     return clone;
   }
 
-  /** Return a clone to its source's pool (reset happens on acquire). */
+  /**
+   * Return a clone to its source's pool (reset happens on acquire).
+   *
+   * BOUNDED lifecycle for PRIVATE sources (`userData.corpsePoolEphemeral`,
+   * e.g. per-instance outfit materials that die with their avatar): once
+   * no corpse uses that source any more, its clones are disposed and the
+   * pool entry evicted — otherwise every outfit change of every player
+   * would leave a permanent pool entry behind. Shared living materials
+   * (character templates, weapons) keep the warm-forever policy.
+   */
   private releaseMaterial(entry: CorpseMaterialEntry): void {
+    if (entry.source.userData.corpsePoolEphemeral && !this.sourceInUse(entry.source)) {
+      // Evict the per-source entry; park its clones in the bounded ORPHAN
+      // ring so their compiled programs stay warm for the next outfit corpse
+      // (same program signature) — the oldest beyond the cap are disposed.
+      const stale = this.materialPool.get(entry.source) ?? [];
+      this.materialPool.delete(entry.source);
+      for (const mat of [entry.mat, ...stale]) {
+        this.orphanClones.push(mat);
+        if (this.orphanClones.length > MAX_ORPHAN_CLONES) this.orphanClones.shift()!.dispose();
+      }
+      return;
+    }
     let pool = this.materialPool.get(entry.source);
     if (!pool) {
       pool = [];

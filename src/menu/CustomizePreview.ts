@@ -1,6 +1,14 @@
 import * as THREE from "three";
+import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { loadGoofyBasketGltf, instantiateGoofyBasket } from "../weapons/goofybasket/GoofyBasketModel";
 import { GoofyBasketSkinSlot } from "../weapons/goofybasket/GoofyBasketSkinRuntime";
+import { loadCharacterAsset, stripEnemyOutline, CHARACTER_HEIGHT } from "../characters/PotatoCharacter";
+import { RemotePlayerAnimationController } from "../network/remote/RemotePlayerAnimationController";
+import { NetworkMovementState } from "../network/NetworkMovementState";
+import { CharacterOutfitSlot } from "../cosmetics/astronaut/AstronautRuntime";
+import type { CharacterCosmeticsSelection } from "../../shared/combat/CharacterCosmetics";
+
+type PreviewSubject = "ball" | "character";
 
 /**
  * 3D preview of the CUSTOMIZE menu (left "APERÇU" panel): a real ball
@@ -21,6 +29,21 @@ export class CustomizePreview {
   private readonly turntable = new THREE.Group();
   private ball: THREE.Object3D | null = null;
   private readonly skin = new GoofyBasketSkinSlot({ context: "fp", quality: "high", seed: 17 });
+  // ---- Character subject: a REAL Potato TP clone (same GLB, same clips,
+  // same outfit runtime as the in-game avatars) on the same turntable. ----
+  private readonly characterRoot = new THREE.Group();
+  private character: THREE.Object3D | null = null;
+  private characterAnim: RemotePlayerAnimationController | null = null;
+  private readonly outfit = new CharacterOutfitSlot({ context: "tp" });
+  private characterLoading = false;
+  private subject: PreviewSubject = "ball";
+  /** Camera pose per subject (the ball sits at the origin, the character stands on it). */
+  private static readonly BALL_CAMERA = { pos: new THREE.Vector3(0, 0.18, 2.6), look: new THREE.Vector3(0, 0, 0) };
+  private static readonly CHARACTER_CAMERA = {
+    // Frames the whole 2.25 m character + helmet / backpack margins.
+    pos: new THREE.Vector3(0, CHARACTER_HEIGHT * 0.58, CHARACTER_HEIGHT * 2.05),
+    look: new THREE.Vector3(0, CHARACTER_HEIGHT * 0.5, 0),
+  };
   private raf: number | null = null;
   private running = false;
   private lastTime = 0;
@@ -63,6 +86,10 @@ export class CustomizePreview {
 
     this.turntable.rotation.x = 0.18;
     this.scene.add(this.turntable);
+    // The character stands on the turntable origin (feet at y = 0); hidden
+    // until the PERSONNAGE tab asks for it (lazy load on first request).
+    this.characterRoot.visible = false;
+    this.turntable.add(this.characterRoot);
 
     // Drag to rotate (pointer), auto-rotation resumes when idle.
     let dragging = false;
@@ -96,12 +123,74 @@ export class CustomizePreview {
       // Instance clone (shared geometry + base materials). Local radius
       // 0.125 × 3.6 ≈ 0.45 m, framed with generous margin by the camera at 2.6 m.
       this.ball = instantiateGoofyBasket(gltf, 3.6);
+      this.ball.visible = this.subject === "ball";
       this.turntable.add(this.ball);
       this.skin.setTarget(this.ball);
       this.loaded = true;
     } catch (err) {
       console.error("Customize preview: ball load failed", err);
     }
+  }
+
+  /**
+   * Lazy character subject: SkeletonUtils clone of the REAL TP template
+   * (already normalized to CHARACTER_HEIGHT — never rescaled here), driven
+   * by the same animation controller as the avatars (idle pose). The enemy
+   * contour hulls are stripped with the existing mechanism: the menu shows
+   * the player's OWN bean, not an enemy.
+   */
+  private async loadCharacter(): Promise<void> {
+    if (this.character || this.characterLoading) return;
+    this.characterLoading = true;
+    try {
+      const asset = await loadCharacterAsset();
+      if (this.disposed) return;
+      const model = skeletonClone(asset.template);
+      stripEnemyOutline(model);
+      model.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (mesh.isMesh) {
+          mesh.castShadow = false;
+          mesh.frustumCulled = false;
+        }
+      });
+      // Face the camera (+Z) at rest: the template faces -Z at yaw 0.
+      model.rotation.y += Math.PI;
+      this.character = model;
+      this.characterRoot.add(model);
+      // modelRestY = 0: the model root is the feet, on the turntable origin.
+      this.characterAnim = new RemotePlayerAnimationController(model, 0, asset.clips);
+      this.characterAnim.update(0, NetworkMovementState.IDLE, 0, 0, 0, 0);
+      // Outfit handle on THIS clone; the wanted selection (if any) applies now.
+      this.outfit.setTarget(model);
+    } catch (err) {
+      console.error("Customize preview: character load failed", err);
+    } finally {
+      this.characterLoading = false;
+    }
+  }
+
+  /** Which subject the stage shows: the ball (weapon skins) or the character. */
+  setSubject(subject: PreviewSubject): void {
+    if (subject === this.subject && (subject !== "character" || this.character || this.characterLoading)) return;
+    this.subject = subject;
+    const cam = subject === "ball" ? CustomizePreview.BALL_CAMERA : CustomizePreview.CHARACTER_CAMERA;
+    this.camera.position.copy(cam.pos);
+    this.camera.lookAt(cam.look);
+    // Flat turntable for the standing character (the tilt suits the ball).
+    this.turntable.rotation.x = subject === "ball" ? 0.18 : 0.0;
+    this.characterRoot.visible = subject === "character";
+    if (this.ball) this.ball.visible = subject === "ball";
+    if (subject === "character") void this.loadCharacter();
+  }
+
+  /**
+   * Preview a character outfit selection (validated ids per slot). The
+   * runtime replaces the previous handle atomically; an invalid / failed
+   * outfit keeps the previous look (logged by the runtime).
+   */
+  setCharacterOutfit(selection: CharacterCosmeticsSelection): void {
+    this.outfit.setSelection(selection);
   }
 
   /** Preview a skin id ("default" = base ball). */
@@ -156,12 +245,16 @@ export class CustomizePreview {
         this.autoRotate = true;
       }
     }
-    // Gentle float like the in-game hold pose.
-    this.turntable.position.y = Math.sin(this.clock * 1.6) * 0.012;
+    // Gentle float like the in-game hold pose (the character stays grounded).
+    this.turntable.position.y = this.subject === "ball" ? Math.sin(this.clock * 1.6) * 0.012 : 0;
 
-    if (this.loaded) {
+    if (this.loaded && this.subject === "ball") {
       // Idle hold pose (no charge): the skin's ambient effects only.
       this.skin.update(this.clock, { charge: 0, visible: true, effectsEnabled: this.effectsEnabled });
+    }
+    if (this.subject === "character" && this.characterAnim) {
+      // Same idle clip as the in-game avatars (real skeleton, real clocks).
+      this.characterAnim.update(dt, NetworkMovementState.IDLE, 0, 0, 0, 0);
     }
     this.renderer.render(this.scene, this.camera);
   }
@@ -186,6 +279,14 @@ export class CustomizePreview {
     this.skin.dispose();
     this.ball?.removeFromParent();
     this.ball = null;
+    // Outfit handle first (restores the clone's base geometry, frees its
+    // private materials), then the mixer, then the clone itself. The shared
+    // character template / library assets are never disposed here.
+    this.outfit.dispose();
+    this.characterAnim?.dispose();
+    this.characterAnim = null;
+    this.character?.removeFromParent();
+    this.character = null;
     this.renderer.dispose();
   }
 }

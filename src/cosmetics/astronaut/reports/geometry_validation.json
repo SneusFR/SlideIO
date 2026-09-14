@@ -1,0 +1,124 @@
+{
+  "status": "PASS",
+  "assets": [
+    {
+      "file": "Astronaut_Backpack.glb",
+      "sha256": "9afeb373deeacdc6ed0e3414a1d31be8a37b6458163e126eceb569716368beda",
+      "bytes": 89832,
+      "meshes": [
+        {
+          "name": "Astro_Backpack",
+          "triangles": 1728,
+          "vertices": 1944,
+          "minimumTriangleArea": 7.071076879583416e-07,
+          "errors": []
+        }
+      ]
+    },
+    {
+      "file": "Astronaut_FP_Clothing.glb",
+      "sha256": "97c5c01539ea1dc14698d7665279cee76356885e05ac14bdf2c891fbb083076f",
+      "bytes": 71056,
+      "meshes": [
+        {
+          "name": "Astro_Sleeves",
+          "triangles": 1201,
+          "vertices": 851,
+          "minimumTriangleArea": 4.3804082583420723e-10,
+          "errors": []
+        }
+      ]
+    },
+    {
+      "file": "Astronaut_Helmet.glb",
+      "sha256": "60fbc5e02b2b9603c486bd912821df498a3651a490c1734129c6d03fb8c72958",
+      "bytes": 148212,
+      "meshes": [
+        {
+          "name": "Astro_Helmet",
+          "triangles": 3808,
+          "vertices": 2947,
+          "minimumTriangleArea": 5.4598717724729795e-06,
+          "errors": []
+        },
+        {
+          "name": "Astro_Helmet",
+          "triangles": 928,
+          "vertices": 2947,
+          "minimumTriangleArea": 7.243435538839549e-05,
+          "errors": []
+        }
+      ]
+    },
+    {
+      "file": "Astronaut_TP_Clothing.glb",
+      "sha256": "174c58d68c7c9460bab7424f0ba06bf4f52fca497a13c252712d452b4293e70d",
+      "bytes": 699796,
+      "meshes": [
+        {
+          "name": "Astro_Top",
+          "triangles": 3218,
+          "vertices": 3417,
+          "minimumTriangleArea": 4.3804082583420723e-10,
+          "errors": []
+        },
+        {
+          "name": "Astro_Pants",
+          "triangles": 1821,
+          "vertices": 1799,
+          "minimumTriangleArea": 6.948803132900139e-08,
+          "errors": []
+        },
+        {
+          "name": "Astro_Boots",
+          "triangles": 2880,
+          "vertices": 4032,
+          "minimumTriangleArea": 9.210747862198332e-07,
+          "errors": []
+        },
+        {
+          "name": "Astro_HelmetSeal",
+          "triangles": 2048,
+          "vertices": 1152,
+          "minimumTriangleArea": 2.2217569494387135e-05,
+          "errors": []
+        }
+      ]
+    }
+  ],
+  "sourceChecks": [
+    {
+      "source": "Potato_TP_Character.glb",
+      "currentGameMatches": true,
+      "fingerPreservation": [
+        {
+          "slot": "tops",
+          "maskedFingerTriangles": 0
+        },
+        {
+          "slot": "pants",
+          "maskedFingerTriangles": 0
+        },
+        {
+          "slot": "shoes",
+          "maskedFingerTriangles": 0
+        },
+        {
+          "slot": "hats",
+          "maskedFingerTriangles": 0
+        }
+      ]
+    },
+    {
+      "source": "Potato_FP_CommonArms.glb",
+      "currentGameMatches": true,
+      "fingerPreservation": [
+        {
+          "slot": "tops",
+          "maskedFingerTriangles": 0
+        }
+      ]
+    }
+  ],
+  "errors": []
+}

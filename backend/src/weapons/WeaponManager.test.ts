@@ -759,6 +759,67 @@ test("basket: flat 25 damage on the first player contact, projectile consumed, h
   }
 });
 
+test("basket: MAX charge = sniper ball — crosshair on a player 100 m away hits him within ~0.5 s, no gravity sag", () => {
+  // Open lane of the Jungle map at x = 27 (no obstacle above the ground
+  // between z = −52 and z = 60): shooter at z = 55, target at z = −45.
+  const { wm, rec, addPlayer, advance, nowMs } = makeWorld();
+  const a = addPlayer("A", 27, 0.9, 55);
+  const b = addPlayer("B", 27, 0.9, -45);
+  wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
+  fire(wm, a, WeaponActionType.BASKET_CHARGE_START, eyeOf(a), { x: 0, y: 0, z: -1 });
+  advance(GB.levelThresholdsSeconds[2] * 1000 + 50); // L3
+  // Crosshair on the target's chest (capsule center), 100 m away.
+  fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), dirTo(eyeOf(a), { x: b.x, y: b.y + 0.2, z: b.z }));
+  assert.strictEqual(basketActions(rec, "BASKET_THROW")[0].lv, 3);
+  let launchedAt = 0;
+  let endAt = 0;
+  for (let i = 0; i < 60 && !endAt; i++) {
+    tickFor(wm, advance, 50);
+    if (!launchedAt && basketActions(rec, "BASKET_LAUNCH").length) launchedAt = nowMs();
+    if (basketActions(rec, "BASKET_END").length) endAt = nowMs();
+  }
+  const launch = basketActions(rec, "BASKET_LAUNCH")[0];
+  assert.ok(Math.abs(Math.hypot(launch.dx, launch.dy, launch.dz) - GB.throws[2].speed) < 1e-6, "sniper speed");
+  assert.strictEqual(b.health, 200 - GB.damage, "the 100 m target is HIT (flat 25)");
+  assert.strictEqual(basketActions(rec, "BASKET_BOUNCE").length, 0, "no ground / wall contact on the way (straight flight)");
+  const ends = basketActions(rec, "BASKET_END");
+  assert.strictEqual(ends.length, 1);
+  assert.strictEqual(ends[0].tid, "B");
+  const flight = (endAt - launchedAt) / 1000;
+  assert.ok(flight <= 0.6, `100 m crossed in ${flight.toFixed(2)} s (≤ 0.6 s, sniper-like)`);
+  assert.strictEqual(wm.basketProjectileCount, 0);
+
+  // Same shot at level 1 (tap): the slow lob never reaches a 100 m target.
+  const w2 = makeWorld();
+  const a2 = w2.addPlayer("A", 27, 0.9, 55);
+  const b2 = w2.addPlayer("B", 27, 0.9, -45);
+  w2.wm.handleEquip(a2, NetworkWeaponId.GOOFY_BASKET);
+  fire(w2.wm, a2, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a2), dirTo(eyeOf(a2), { x: b2.x, y: b2.y + 0.2, z: b2.z }));
+  tickFor(w2.wm, w2.advance, GB.maxLifetimeSeconds * 1000 + 1500);
+  assert.strictEqual(b2.health, 200, "L1 lob falls short — the max charge is what makes the sniper ball");
+});
+
+test("basket: a MAX charge ball that hits a wall comes back as a plain basketball (speed capped, then falls & bounces)", () => {
+  // Shooter at x = 27 firing at the big −z terrace mass (front face around
+  // z ≈ −44 on this lane) — a world bounce, then a normal falling ball.
+  const { wm, rec, addPlayer, advance } = makeWorld();
+  const a = addPlayer("A", 27, 0.9, 20);
+  wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
+  fire(wm, a, WeaponActionType.BASKET_CHARGE_START, eyeOf(a), { x: 0, y: 0, z: -1 });
+  advance(GB.levelThresholdsSeconds[2] * 1000 + 50);
+  fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 });
+  tickFor(wm, advance, GB.maxLifetimeSeconds * 1000 + 1500);
+  const bounces = basketActions(rec, "BASKET_BOUNCE");
+  assert.ok(bounces.length >= 2, `bounces on the wall then on the ground (${bounces.length})`);
+  assert.ok(bounces[0].dz > 0 && Math.abs(bounces[0].hz - 1) < 1e-9, "first contact: the wall, ball comes back (+z)");
+  for (const bn of bounces) {
+    assert.ok(Math.hypot(bn.dx, bn.dy, bn.dz) <= GB.maxSpeedAfterBounce + 1e-6, "every rebound is capped to a readable basketball speed");
+  }
+  assert.ok(bounces.slice(1).some((bn) => Math.abs(bn.hy - 1) < 1e-9 && bn.dy > 0), "then it drops and bounces on the ground");
+  assert.strictEqual(basketActions(rec, "BASKET_END").length, 1);
+  assert.strictEqual(wm.basketProjectileCount, 0);
+});
+
 test("basket: world bounce budget per level, then the ball RESTS (BASKET_REST) and ends only at the 5 s lifetime", () => {
   for (const level of [1, 2, 3] as const) {
     const { wm, rec, addPlayer, advance, nowMs } = makeWorld();

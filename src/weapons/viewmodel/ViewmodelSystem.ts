@@ -136,10 +136,24 @@ export class ViewmodelSystem {
     // A weapon equip may already be waiting for the socket.
     this.pendingAttach?.();
     this.pendingAttach = null;
+    // Cosmetic outfit hook: dress THIS unique instance (never the template).
+    this.onArmsReady?.(arms);
   }
 
   /** Deferred attach when equip resolves before the arms GLB does. */
   private pendingAttach: (() => void) | null = null;
+
+  /**
+   * Fired once with the unique arms INSTANCE once it is attached (or
+   * immediately when already available) — the clean seam for cosmetics that
+   * dress the common arms (sleeves), without a second rig or a second
+   * mixer. The instance holds the FP_Arms mesh and its live bones.
+   */
+  private onArmsReady: ((arms: THREE.Object3D) => void) | null = null;
+  setArmsReadyHook(hook: ((arms: THREE.Object3D) => void) | null): void {
+    this.onArmsReady = hook;
+    if (hook && this.armsRoot) hook(this.armsRoot);
+  }
 
   /**
    * Equip a weapon: attach ITS ALREADY-CLONED scene root under Weapon_R

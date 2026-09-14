@@ -133,9 +133,12 @@ function assertProfileCoherence(): void {
     near(cfg.throws[i].speed, profileJson.throws[i].speedMetersPerSecond, 1e-9, `speed L${i + 1}`);
     near(cfg.throws[i].restitution, profileJson.throws[i].restitution, 1e-9, `restitution L${i + 1}`);
     near(cfg.throws[i].maxWorldBounces, profileJson.throws[i].maximumWorldBounces, 0, `bounces L${i + 1}`);
+    near(cfg.throws[i].convergeDistance, profileJson.throws[i].convergeDistanceMeters, 1e-9, `converge distance L${i + 1}`);
+    near(cfg.throws[i].straightFlightMeters, profileJson.throws[i].straightFlightMeters, 1e-9, `straight flight L${i + 1}`);
     near(cfg.throws[i].clipDuration, GOOFY_TIMING.throws[i].duration, 1e-9, `throw clip duration L${i + 1}`);
     near(cfg.damage, profileJson.throws[i].damage, 0, `damage L${i + 1}`);
   }
+  near(cfg.maxSpeedAfterBounce, profileJson.projectile.maxSpeedAfterBounceMetersPerSecond, 1e-9, "max speed after bounce");
   near(cfg.maxLifetimeSeconds, profileJson.projectile.maximumLifetimeSeconds, 1e-9, "lifetime");
   near(cfg.catchDuration, profileJson.catch.duration, 1e-9, "catch duration");
   near(cfg.catchHandContactAt, profileJson.catch.handContactAt, 1e-9, "catch contact");

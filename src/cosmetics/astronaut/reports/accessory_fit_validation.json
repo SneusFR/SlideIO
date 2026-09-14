@@ -1,0 +1,107 @@
+{
+  "status": "passed_sampled_closed_helmet_and_docking_fit",
+  "checkedAtUtc": "2026-09-14T07:48:06.274894+00:00",
+  "version": "Closed helmet and integrated ivory docking base; replaces the previous open-visor report.",
+  "sourceTP": {
+    "sha256": "da0875cfd7207c90c94439358e77f1847ad09e653012f1e2fb925555898ed3ea",
+    "geometryRigHandsAndAnimationClipsModified": false
+  },
+  "finalAssets": {
+    "Astronaut_Helmet.glb": {
+      "sha256": "60fbc5e02b2b9603c486bd912821df498a3651a490c1734129c6d03fb8c72958",
+      "bytes": 148212,
+      "triangles": 4736
+    },
+    "Astronaut_TP_Clothing.glb": {
+      "sha256": "174c58d68c7c9460bab7424f0ba06bf4f52fca497a13c252712d452b4293e70d",
+      "bytes": 699796,
+      "triangles": 9967
+    },
+    "Astronaut_Backpack.glb": {
+      "sha256": "9afeb373deeacdc6ed0e3414a1d31be8a37b6458163e126eceb569716368beda",
+      "bytes": 89832,
+      "triangles": 1728
+    }
+  },
+  "attachment": {
+    "hats": [
+      "Astro_Helmet",
+      "Astro_HelmetSeal"
+    ],
+    "rigidSocket": "Head_Socket",
+    "separateFaceItem": false
+  },
+  "sampling": {
+    "poses": 103,
+    "method": "Bind pose plus 17 equally spaced samples in each original clip.",
+    "clips": [
+      "Run_Goofy",
+      "Jump",
+      "Dash",
+      "Slide",
+      "Jump_LeftLead",
+      "Jump_RightLead"
+    ],
+    "engine": "Three.js 185 CPU skinning; Blender BVH surface queries."
+  },
+  "closedEnclosure": {
+    "modeledShellTriangles": 2240,
+    "allShellTrianglesVerifiedInActualExport": true,
+    "positionComparisonPrecisionSourceUnits": 1e-05,
+    "nonManifoldShellEdges": 0,
+    "onlyBoundary": "64-point neck loop at z=0.515, coupled to the skinned docking base. Rear and crown have no opening.",
+    "leafVerticesChecked": 53869,
+    "leafVerticesOutside": 0,
+    "minimumSampledLeafClearanceSourceUnits": 0.012143704108893871,
+    "closestLeafSample": {
+      "clip": "Dash",
+      "time": 0.3500000052154064
+    }
+  },
+  "dockingBase": {
+    "design": "wide ivory docking footing z .476-.501; compact graphite neck band z .501-.515",
+    "upperEdgePoints": 64,
+    "upperHeadWeightError": 0,
+    "maximumUpperEdgeGapToHelmetSourceUnits": 3.4519403642351543e-09,
+    "lowerInfluenceMethod": "source barycentric Shoulder/Arm/Hand weights folded into nearest torso ancestor, preserving inherited torso motion",
+    "excludedLowerBones": [
+      "Shoulder_L",
+      "UpperArm_L",
+      "LowerArm_L",
+      "Hand_L",
+      "Index_L_1",
+      "Middle_L_1",
+      "Ring_L_1",
+      "Thumb_L_1",
+      "Weapon_L",
+      "Shoulder_R",
+      "UpperArm_R",
+      "LowerArm_R",
+      "Hand_R",
+      "Index_R_1",
+      "Middle_R_1",
+      "Ring_R_1",
+      "Thumb_R_1",
+      "Weapon_R"
+    ],
+    "maximumLowerArmOrShoulderWeight": 0.0,
+    "maximumLowerSkinningOracleErrorSourceUnits": 2.70475051176801e-08,
+    "surfaceContact": {
+      "pointPosePairs": 6592,
+      "lowerWallCrossesShirt": 16,
+      "lowerInnerEdgeEmbeddedInShirt": 6576,
+      "positiveInnerGaps": 0,
+      "interpretation": "The footing is deliberately implanted into the shirt volume; exact zero distance to its visible surface is neither required nor asserted."
+    }
+  },
+  "backpack": {
+    "sha256IdenticalToPreviouslyTestedExport": true,
+    "previousSampledPoses": 103,
+    "previousResult": "No body surface crossings. Geometry check reused because exact asset hash and original source/poses are unchanged."
+  },
+  "limitations": [
+    "This samples 103 poses; it is not a proof for every continuous-time pose, animation blend, or future clip.",
+    "The lower contact query uses the actual animated shirt shoulder triangles and local surface normals; it supplements visual inspection rather than proving visibility from every camera.",
+    "The CPU check does not render materials or decode textures. Leaf clearance is vertex-to-triangle sampling, not an exact continuous global minimum."
+  ]
+}

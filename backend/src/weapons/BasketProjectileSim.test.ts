@@ -124,7 +124,7 @@ test("launch: the ball leaves the RIGHT HAND (never the eye) and converges on th
   const { start, vel } = resolveBasketLaunch(eye, dir, 2, null, () => null);
   assert.deepStrictEqual(start, o);
   assert.ok(Math.abs(len(vel) - B.throws[1].speed) < 1e-9, "standing shooter: level speed exactly");
-  const D = B.launchConvergeDistance;
+  const D = B.throws[1].convergeDistance;
   const targetZ = eye.z - D; // the eye aims at this plane at the converge distance
   const t = (start.z - targetZ) / -vel.z; // time to reach it (no gravity in this check)
   const px = start.x + vel.x * t;
@@ -181,6 +181,83 @@ test("player contact: consumed on the first hit, owner excluded, wall in front b
   const w = createBasketProjectileState({ x: 0, y: 1.2, z: 0 }, { x: 0, y: 0, z: -24 }, 3);
   const evWall = stepBasketProjectile(w, 0.2, casterFor(wall, targets), "A");
   assert.ok(evWall.some((e) => e.type === "bounce") && !evWall.some((e) => e.type === "hit"));
+});
+
+test("max charge (L3): sniper ball — 200 m/s, gravity-free straight flight along the aim, hit-tag at 100 m", () => {
+  const L3 = B.throws[2];
+  assert.ok(L3.speed >= 150, "L3 leaves at sniper speed");
+  assert.ok(L3.straightFlightMeters >= 150, "straight budget covers a whole map");
+  // Standing shooter, target 100 m away on the open ground (a wall-free lane).
+  const eye = { x: 0, y: 1.45, z: 0 };
+  const targetZ = -100;
+  const target = { id: "B", x: 0, y: 0.9, z: targetZ };
+  const aim = { x: 0 - eye.x, y: 0.9 + 0.3 - eye.y, z: targetZ - eye.z };
+  const alen = len(aim);
+  const dir = { x: aim.x / alen, y: aim.y / alen, z: aim.z / alen };
+  const { start, vel } = resolveBasketLaunch(eye, dir, 3, null, () => null);
+  const p = createBasketProjectileState(start, vel, 3);
+  assert.ok(Math.abs(len(vel) - L3.speed) < 1e-9);
+  assert.strictEqual(p.straightLeft, L3.straightFlightMeters);
+  const ground: ColliderBox[] = [[0, -0.5, 0, 400, 1, 400]];
+  let hit: Extract<ReturnType<typeof stepBasketProjectile>[number], { type: "hit" }> | null = null;
+  let steps = 0;
+  const startY = p.pos.y;
+  for (let i = 0; i < 120 && !hit; i++) {
+    const ev = stepBasketProjectile(p, 0.05, casterFor(ground, [target]), "A");
+    steps++;
+    assert.ok(!ev.some((e) => e.type === "bounce"), "never touches the ground on the way");
+    const h = ev.find((e) => e.type === "hit");
+    if (h && h.type === "hit") hit = h;
+  }
+  assert.ok(hit && hit.targetId === "B", "the ball reaches the player the crosshair covers, 100 m away");
+  assert.ok(steps * 0.05 <= 0.6, `arrives in ${(steps * 0.05).toFixed(2)} s (sniper-like, ≤ 0.6 s)`);
+  // Straight: the ball never dipped below its aim line (no gravity sag).
+  const aimYAtHit = eye.y + dir.y * ((hit.point.z - eye.z) / dir.z);
+  assert.ok(hit.point.y >= aimYAtHit - 0.6, `no gravity sag: hit y ${hit.point.y.toFixed(2)} vs aim ${aimYAtHit.toFixed(2)}`);
+  assert.ok(p.pos.y < startY, "the aim itself was slightly downward");
+
+  // Lower levels are unchanged: no straight budget, gravity from the first step.
+  for (const level of [1, 2] as const) {
+    const q = createBasketProjectileState({ x: 0, y: 5, z: 0 }, { x: 0, y: 0, z: -B.throws[level - 1].speed }, level);
+    assert.strictEqual(q.straightLeft, 0);
+    stepBasketProjectile(q, 0.05, casterFor([]), null);
+    assert.ok(q.vel.y < -1e-6, `L${level} falls immediately`);
+  }
+});
+
+test("max charge (L3): the straight flight ENDS at the first world bounce → falls & bounces like a basketball, speed capped", () => {
+  const ground: ColliderBox[] = [[0, -0.5, 0, 400, 1, 400]];
+  const wall: ColliderBox[] = [[0, 5, -20, 40, 10, 1]]; // face at z = −19.5
+  const p = createBasketProjectileState({ x: 0, y: 1.2, z: 0 }, { x: 0, y: 0, z: -B.throws[2].speed }, 3);
+  const ev = stepBasketProjectile(p, 0.05, casterFor([...ground, ...wall]), null); // 10 m/step → contact in the 2nd
+  assert.ok(!ev.some((e) => e.type === "bounce"));
+  assert.ok(Math.abs(p.pos.y - 1.2) < 1e-9, "flat flight so far (no gravity)");
+  const ev2 = stepBasketProjectile(p, 0.05, casterFor([...ground, ...wall]), null);
+  const bounce = ev2.find((e) => e.type === "bounce");
+  assert.ok(bounce && bounce.type === "bounce", "wall bounce");
+  assert.strictEqual(p.straightLeft, 0, "straight budget zeroed at the first world bounce");
+  assert.ok(len(bounce.vel) <= B.maxSpeedAfterBounce + 1e-9, `rebound capped (${len(bounce.vel).toFixed(1)} ≤ ${B.maxSpeedAfterBounce} m/s)`);
+  assert.ok(bounce.vel.z > 0, "comes back off the wall");
+  assert.ok(p.vel.y < 0, "gravity applied to the leftover time of the SAME step (starts falling right after the bounce)");
+  // Then a normal basketball: reaches the ground and bounces upward.
+  let groundBounce = false;
+  for (let i = 0; i < 100 && !groundBounce; i++) {
+    const e = stepBasketProjectile(p, 0.05, casterFor([...ground, ...wall]), null);
+    groundBounce = e.some((b) => b.type === "bounce" && Math.abs(b.normal.y - 1) < 1e-9 && b.vel.y > 0);
+  }
+  assert.ok(groundBounce, "drops and bounces on the ground afterwards");
+
+  // Budget spent by DISTANCE (no wall): gravity resumes once 250 m are flown.
+  const far = createBasketProjectileState({ x: 0, y: 50, z: 0 }, { x: 0, y: 0, z: -200 }, 3);
+  let flown = 0;
+  while (far.straightLeft > 0 && flown < 400) {
+    stepBasketProjectile(far, 0.05, casterFor([]), null);
+    flown = -far.pos.z;
+  }
+  assert.ok(Math.abs(flown - B.throws[2].straightFlightMeters) < 10 + 1e-9, `gravity-free for ≈${B.throws[2].straightFlightMeters} m (${flown.toFixed(1)})`);
+  assert.ok(Math.abs(far.pos.y - 50) < 1e-6 || far.vel.y < 0, "level until the budget ends, then falls");
+  stepBasketProjectile(far, 0.05, casterFor([]), null);
+  assert.ok(far.vel.y < -1e-6, "falling after the budget");
 });
 
 test("lifetime: expired event once the age passes the maximum", () => {

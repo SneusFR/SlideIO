@@ -381,13 +381,38 @@ export const NetworkWeaponConfig = {
     levelThresholdsSeconds: [0, 0.25, 0.45],
     /** Charge time beyond which the level no longer grows (s). */
     maxChargeSeconds: 0.45,
-    /** Per level (index = level − 1): authored release marker inside the
-     *  Throw clip, initial speed, world restitution, world bounce budget. */
+    /**
+     * Per level (index = level − 1): authored release marker inside the
+     * Throw clip, initial speed, world restitution, world bounce budget,
+     * plus the two aim-assist knobs that make the MAX charge a "sniper ball":
+     *  - `convergeDistance` (m): distance along the aim at which the
+     *    hand-launched ball rejoins the eye aim line (velocity direction
+     *    convergence). L1/L2 rejoin the crosshair at 12 m (lob feel); L3
+     *    converges far out (80 m) so the ball stays ON the crosshair at
+     *    range: the hand offset (≈0.53 m) shrinks linearly to 0 at 80 m and
+     *    is still < 0.53 m at 160 m — below the ball + capsule contact
+     *    radius (0.30 + 0.53 m), so a crosshair on a player's body hits
+     *    from point blank to the far end of every map.
+     *  - `straightFlightMeters` (m): gravity-FREE flight budget at launch.
+     *    While it lasts the ball flies dead straight along its velocity —
+     *    hit-tag: what the crosshair covers, the ball reaches. It ends at
+     *    the FIRST world bounce or once the distance is spent; from then
+     *    on the ball falls and bounces like any basketball. 0 = plain arc.
+     * L3 = 200 m/s straight: 100 m crossed in 0.5 s, the whole map covered
+     * before gravity ever kicks in.
+     */
     throws: [
-      { releaseAt: 0.14, speed: 11, restitution: 0.4, maxWorldBounces: 1, clipDuration: 0.5 },
-      { releaseAt: 0.16, speed: 17, restitution: 0.6, maxWorldBounces: 3, clipDuration: 0.56 },
-      { releaseAt: 0.18, speed: 24, restitution: 0.78, maxWorldBounces: 5, clipDuration: 0.62 },
+      { releaseAt: 0.14, speed: 11, restitution: 0.4, maxWorldBounces: 1, clipDuration: 0.5, convergeDistance: 12, straightFlightMeters: 0 },
+      { releaseAt: 0.16, speed: 17, restitution: 0.6, maxWorldBounces: 3, clipDuration: 0.56, convergeDistance: 12, straightFlightMeters: 0 },
+      { releaseAt: 0.18, speed: 200, restitution: 0.78, maxWorldBounces: 5, clipDuration: 0.62, convergeDistance: 80, straightFlightMeters: 250 },
     ],
+    /**
+     * Speed ceiling (m/s) applied right after EVERY world bounce: a ball
+     * arriving at sniper speed loses its energy on the wall and comes back
+     * as a readable bouncing basketball (never a 150 m/s pinball). Slower
+     * balls (L1/L2 arcs) are never affected.
+     */
+    maxSpeedAfterBounce: 30,
     /** FLAT damage on a player hit — every level, no head bonus. */
     damage: 25,
     /** The first accepted player hit consumes the projectile. */
@@ -403,9 +428,6 @@ export const NetworkWeaponConfig = {
      * still lands where the crosshair points (see basketLaunchOrigin).
      */
     launchOffset: { right: 0.42, down: 0.32, forward: 0.55 },
-    /** Distance (m) along the aim at which the hand-launched ball rejoins
-     *  the eye aim line (velocity direction convergence). */
-    launchConvergeDistance: 12,
     /**
      * SHOOTER MOMENTUM inheritance: the ball leaves at level speed PLUS
      * this fraction of the shooter's velocity projected on the aim line

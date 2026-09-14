@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "status": "PASS",
+  "contract": "closed_helmet_five_slots",
+  "completedAt": "2026-09-14T07:42:02.733Z",
+  "method": {
+    "runtime": "Three.js 185",
+    "strictTypeScript": true,
+    "cpuOnly": true,
+    "realAssetsVerified": true,
+    "positionTolerance": 0.000001
+  },
+  "checks": {
+    "total": 192,
+    "passed": 192,
+    "failed": 0,
+    "categories": [
+      {
+        "category": "setup",
+        "passed": 1,
+        "failed": 0
+      },
+      {
+        "category": "synthetic masks, binding, instances and lifecycle",
+        "passed": 88,
+        "failed": 0
+      },
+      {
+        "category": "invalid loaded contracts",
+        "passed": 12,
+        "failed": 0
+      },
+      {
+        "category": "closed helmet preparation failures and empty mask",
+        "passed": 6,
+        "failed": 0
+      },
+      {
+        "category": "real exported assets",
+        "passed": 85,
+        "failed": 0
+      }
+    ]
+  },
+  "validatedBehaviors": [
+    "Original bones and bind pose preserved; no second armature attached",
+    "Existing live skeleton reused with verified inverse binds and joint remapping",
+    "Independent skinning oracle under a posed rig and transformed parent",
+    "Five slots, partial outfits, TP/FP context selection",
+    "One hats selection equips and removes the rigid closed helmet and skinned neck seal together",
+    "Triangle-mask union and material groups preserved; matching body outline masked",
+    "Exact source geometry bytes unchanged and restored on removal",
+    "Independent avatars and immutable shared clothing templates",
+    "Atomic replacement and preservation of previous outfit on invalid contract or callback failure",
+    "Idempotent disposal; private materials released once; original rig resources preserved",
+    "Input files unchanged during the final validation"
+  ],
+  "metrics": {
+    "tp": {
+      "originalBones": 37,
+      "addedArmatures": 0,
+      "addedMeshes": 7,
+      "bodyTrianglesOriginal": 6864,
+      "bodyTrianglesHidden": 3255,
+      "bodyTrianglesRemaining": 3609,
+      "suitVertices": 15291,
+      "suitTriangles": 16431,
+      "suitColorDrawCalls": 7,
+      "independentDeformationSamples": 1766,
+      "maximumWorldPositionError": 2.6645352591003757e-15
+    },
+    "fp": {
+      "originalBones": 37,
+      "addedArmatures": 0,
+      "addedMeshes": 1,
+      "bodyTrianglesOriginal": 2209,
+      "bodyTrianglesHidden": 529,
+      "bodyTrianglesRemaining": 1680,
+      "suitVertices": 851,
+      "suitTriangles": 1201,
+      "suitColorDrawCalls": 1,
+      "independentDeformationSamples": 426,
+      "maximumWorldPositionError": 1.7763568394002505e-15
+    }
+  },
+  "maximumWorldPositionError": 2.6645352591003757e-15,
+  "drawCallScope": "Estimated main color-pass submissions for visible meshes from the asset statistics. Excludes weapons, original body, scene, shadows and added outlines. Transparent helmet glass is part of the helmet asset.",
+  "files": {
+    "module": {
+      "file": "integration/AstronautCosmetics.ts",
+      "sha256": "04a6d2e8b870f36e68d2d8f95af96b1427548cb2d9fe322ecd9ac4efe4a5da4c"
+    },
+    "runtimeAssets": [
+      {
+        "file": "assets/Astronaut_TP_Clothing.glb",
+        "bytes": 699796,
+        "sha256": "174c58d68c7c9460bab7424f0ba06bf4f52fca497a13c252712d452b4293e70d"
+      },
+      {
+        "file": "assets/Astronaut_FP_Clothing.glb",
+        "bytes": 71056,
+        "sha256": "97c5c01539ea1dc14698d7665279cee76356885e05ac14bdf2c891fbb083076f"
+      },
+      {
+        "file": "assets/Astronaut_Helmet.glb",
+        "bytes": 148212,
+        "sha256": "60fbc5e02b2b9603c486bd912821df498a3651a490c1734129c6d03fb8c72958"
+      },
+      {
+        "file": "assets/Astronaut_Backpack.glb",
+        "bytes": 89832,
+        "sha256": "9afeb373deeacdc6ed0e3414a1d31be8a37b6458163e126eceb569716368beda"
+      },
+      {
+        "file": "assets/masks.json",
+        "bytes": 18672,
+        "sha256": "215d12ad54d2a30a5e09008a46c1b53c800bd84b811b832aba23ff75ff8f8994"
+      }
+    ],
+    "referenceSources": [
+      {
+        "context": "tp",
+        "file": "Potato_TP_Character.glb",
+        "sha256": "da0875cfd7207c90c94439358e77f1847ad09e653012f1e2fb925555898ed3ea",
+        "matchesCurrentGame": true,
+        "distributedAsRuntimeAsset": false
+      },
+      {
+        "context": "fp",
+        "file": "Potato_FP_CommonArms.glb",
+        "sha256": "d790645d04f0790a08b304058d5216e71e5de025a4ab69b6e314abd9288866d6",
+        "matchesCurrentGame": true,
+        "distributedAsRuntimeAsset": false
+      }
+    ]
+  },
+  "distribution": {
+    "slots": 5,
+    "glbFiles": 4,
+    "maskFiles": 1,
+    "glbTotalBytes": 1008896
+  },
+  "provenance": {
+    "fullReportSha256": "9ee1a3e439ccc2d70732211e299d5433567d35171c5eee815b1df4fc49e1020a",
+    "fullReportLocation": "Development workspace: work/astronaut/runtime_validation.json",
+    "largeSampleArraysIncluded": false
+  },
+  "limits": [
+    "CPU validation does not certify GPU appearance; visual checks are performed separately.",
+    "Game menu, network, outline and corpse integration are described in integration/PROMPT_CLINE.md and are not changes made to SlideIO by this pack."
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "setId": "potato_astronaut",
+  "label": "Astronaute",
+  "items": [
+    {"id":"astronaut_shoes","slot":"shoes","label":"Bottes astronaute","icon":"apercus/icones/Bottes.png"},
+    {"id":"astronaut_pants","slot":"pants","label":"Pantalon astronaute","icon":"apercus/icones/Pantalon.png"},
+    {"id":"astronaut_top","slot":"tops","label":"Haut astronaute","icon":"apercus/icones/Haut.png","fpRepresentation":"Astro_Sleeves"},
+    {"id":"astronaut_backpack","slot":"bags","label":"Sac astronaute","icon":"apercus/icones/Sac.png"},
+    {"id":"astronaut_helmet","slot":"hats","label":"Casque astronaute fermé","icon":"apercus/icones/Casque.png","includesVisor":true,"skinnedComponent":"Astro_HelmetSeal"}
+  ]
+}

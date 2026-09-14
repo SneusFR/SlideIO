@@ -21,6 +21,8 @@ import {
   POTATO_BONES,
 } from "../characters/PotatoCharacter";
 import { CHARACTER_HITBOX_SCALE } from "../../shared/combat/NetworkWeapons";
+import { CharacterOutfitSlot } from "../cosmetics/astronaut/AstronautRuntime";
+import type { CharacterCosmeticsSelection } from "../../shared/combat/CharacterCosmetics";
 
 /** Per-frame pose data fed by the Bot (drives the animation state). */
 export interface BotPose {
@@ -120,10 +122,39 @@ export class BotModel {
   private anim: RemotePlayerAnimationController | null = null;
   /** Red contour hull meshes of THIS clone (visibility follows setSeen). */
   private readonly outlineMeshes: THREE.Object3D[] = [];
-  /** Per-bot cloned materials (damage flash via emissive — never shared). */
+  /** Every material the damage flash drives (bot clones + outfit pieces). */
   private readonly flashMats: THREE.Material[] = [];
+  /** Authored emissive of every flash material (restored between flashes). */
+  private readonly flashBase = new Map<THREE.Material, THREE.Color>();
+  /** Material clones OWNED by this bot (disposed with it) — never outfit ones. */
+  private readonly ownedMats: THREE.Material[] = [];
   /** In-hand Plasma Rifle grip (muzzle anchor) — null until loaded. */
   private grip: THREE.Group | null = null;
+  /**
+   * OPTIONAL character outfit of this bot (nothing by default — bots never
+   * inherit the local player's cosmetics; see setOutfit). Its pieces join
+   * the LOS-toggled outline hulls and the damage-flash material list, and
+   * leave them again when the outfit changes — the handle owns and
+   * disposes its own material clones, the bot never double-disposes them.
+   */
+  private readonly outfit = new CharacterOutfitSlot({
+    context: "tp",
+    outline: true,
+    outlineVisible: () => this.seen,
+    onHullAdded: (hull) => {
+      this.outlineMeshes.push(hull);
+      return () => {
+        const i = this.outlineMeshes.indexOf(hull);
+        if (i >= 0) this.outlineMeshes.splice(i, 1);
+      };
+    },
+    onMaterialsAdded: (materials) => {
+      for (const mat of materials) this.registerFlashMaterial(mat);
+      return () => {
+        for (const mat of materials) this.unregisterFlashMaterial(mat);
+      };
+    },
+  });
 
   // ---- Invisible hitboxes (raycast gameplay) ----
   private readonly bodyHitbox: THREE.Mesh;
@@ -229,14 +260,27 @@ export class BotModel {
           this.outlineMeshes.push(mesh);
           mesh.visible = this.seen && cc.enemyOutlineEnabled;
         } else {
-          // Per-bot material clone → the damage flash never tints the
+          // Per-bot material clone(s) → the damage flash never tints the
           // template (and therefore never the remote players / menu).
-          const mat = mesh.material as THREE.Material;
-          const cloned = mat.clone();
-          mesh.material = cloned;
-          this.flashMats.push(cloned);
+          // Material[] exports are supported (one clone per entry).
+          if (Array.isArray(mesh.material)) {
+            const cloned = mesh.material.map((m) => m.clone());
+            mesh.material = cloned;
+            for (const m of cloned) {
+              this.ownedMats.push(m);
+              this.registerFlashMaterial(m);
+            }
+          } else {
+            const cloned = (mesh.material as THREE.Material).clone();
+            mesh.material = cloned;
+            this.ownedMats.push(cloned);
+            this.registerFlashMaterial(cloned);
+          }
         }
       });
+      // Outfit target = this clone (meshes + bones). Applies a selection
+      // already requested through setOutfit (or nothing at all).
+      this.outfit.setTarget(model);
 
       // Head hitbox follows the REAL Head bone from now on. The Potato
       // rig has no head-tip helper (and the plant leaf must NEVER count
@@ -421,9 +465,14 @@ export class BotModel {
     let glow = Math.max(this.flashAmount * 0.55, this.headFlashAmount * 0.85);
     // Spawn protection: soft white pulse over the whole body.
     if (protectedNow) glow = Math.max(glow, 0.16 + 0.16 * Math.sin(time * 20));
+    // Flash = authored emissive + white glow (the suit's original emission
+    // is preserved, never overwritten by the flash scalar).
     for (const mat of this.flashMats) {
       const m = mat as THREE.MeshStandardMaterial;
-      if (m.emissive) m.emissive.setScalar(glow);
+      if (!m.emissive) continue;
+      const base = this.flashBase.get(mat);
+      if (base) m.emissive.copy(base).addScalar(glow);
+      else m.emissive.setScalar(glow);
     }
 
     // Enemy UI: pure billboard (never rotates with the body) + fill.
@@ -465,15 +514,48 @@ export class BotModel {
     return corpse;
   }
 
+  /**
+   * EXPLICIT cosmetic outfit for this bot (product rule: bots do NOT
+   * automatically wear the local player's selection — nothing is applied
+   * unless a caller asks). Empty selection = base look. Kept across the
+   * asset load: a selection set before the clone exists applies on attach.
+   */
+  setOutfit(selection: CharacterCosmeticsSelection): void {
+    this.outfit.setSelection(selection);
+  }
+
+  /** Join the damage-flash list (authored emissive remembered). */
+  private registerFlashMaterial(mat: THREE.Material): void {
+    if (this.flashMats.includes(mat)) return;
+    this.flashMats.push(mat);
+    const emissive = (mat as THREE.MeshStandardMaterial).emissive;
+    if (emissive) this.flashBase.set(mat, emissive.clone());
+  }
+
+  /** Leave the damage-flash list (emissive restored; NOT disposed here). */
+  private unregisterFlashMaterial(mat: THREE.Material): void {
+    const i = this.flashMats.indexOf(mat);
+    if (i >= 0) this.flashMats.splice(i, 1);
+    const base = this.flashBase.get(mat);
+    const emissive = (mat as THREE.MeshStandardMaterial).emissive;
+    if (base && emissive) emissive.copy(base);
+    this.flashBase.delete(mat);
+  }
+
   dispose(): void {
     this.disposed = true;
+    // Outfit first: its hooks unregister its hulls / materials, then the
+    // handle disposes ITS OWN material clones (never touched below).
+    this.outfit.dispose();
     this.anim?.dispose();
     this.anim = null;
     this.grip?.removeFromParent();
     this.grip = null;
     // Per-bot cloned materials only — the template/shared ones stay alive.
-    for (const mat of this.flashMats) mat.dispose();
+    for (const mat of this.ownedMats) mat.dispose();
+    this.ownedMats.length = 0;
     this.flashMats.length = 0;
+    this.flashBase.clear();
     this.bodyHitbox.geometry.dispose();
     this.headHitbox.geometry.dispose();
     this.healthBar.traverse((o) => {

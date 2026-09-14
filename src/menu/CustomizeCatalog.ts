@@ -2,6 +2,16 @@ import type { PrimaryWeaponId } from "../loadout/Loadout";
 import { PRIMARY_ITEMS } from "../loadout/Loadout";
 import { DEFAULT_WEAPON_SKIN } from "../../shared/combat/WeaponSkins";
 import { BASKET_SKINS } from "../weapons/goofybasket/skins/runtime/GoofyBasketSkins";
+import { CHARACTER_COSMETIC_IDS, type CharacterCosmeticSlot } from "../../shared/combat/CharacterCosmetics";
+import { DEFAULT_CHARACTER_COSMETIC } from "../loadout/Cosmetics";
+// Potato Astronaut pack: ids + labels from catalog.astronaut.json, icons
+// from the pack's apercus/icones (512×512 transparent PNGs).
+import astronautCatalog from "../cosmetics/astronaut/catalog.astronaut.json";
+import astroBootsIcon from "../cosmetics/astronaut/icons/Bottes.png";
+import astroPantsIcon from "../cosmetics/astronaut/icons/Pantalon.png";
+import astroTopIcon from "../cosmetics/astronaut/icons/Haut.png";
+import astroBagIcon from "../cosmetics/astronaut/icons/Sac.png";
+import astroHelmetIcon from "../cosmetics/astronaut/icons/Casque.png";
 
 /**
  * Display catalog of the CUSTOMIZE menu. Skins are pure cosmetics: the
@@ -43,6 +53,8 @@ export interface SkinCard {
   tagline?: string;
   /** Not equippable yet (placeholder / assets pending). */
   locked?: boolean;
+  /** Real card icon (character pieces) — placeholders use the bean. */
+  icon?: string;
 }
 
 export interface WeaponSkinSet {
@@ -106,11 +118,55 @@ export function sortByRarity(cards: SkinCard[]): SkinCard[] {
 // ---------------------------------------------------------------------
 
 export interface CharacterCategory {
-  key: string;
+  key: CharacterCosmeticSlot;
   label: string;
   /** Inline SVG path (24×24) of the tab icon. */
   icon: string;
   items: SkinCard[];
+}
+
+/** "Nothing equipped" card of every character slot (first in each grid). */
+export const BASE_CHARACTER_CARD: SkinCard = {
+  id: DEFAULT_CHARACTER_COSMETIC,
+  name: "AUCUN",
+  rarity: "standard",
+  tagline: "L'apparence d'origine du haricot",
+};
+
+// ---- Potato Astronaut pack (LÉGENDAIRE) — real, equippable pieces ----
+interface AstronautCatalogItem {
+  id: string;
+  slot: string;
+  label: string;
+  icon: string;
+}
+const ASTRONAUT_ICONS: Record<string, string> = {
+  astronaut_shoes: astroBootsIcon,
+  astronaut_pants: astroPantsIcon,
+  astronaut_top: astroTopIcon,
+  astronaut_backpack: astroBagIcon,
+  astronaut_helmet: astroHelmetIcon,
+};
+const ASTRONAUT_TAGLINES: Record<string, string> = {
+  astronaut_shoes: "Bottes magnétiques, semelles lunaires",
+  astronaut_pants: "Pantalon pressurisé, genouillères renforcées",
+  astronaut_top: "Haut de combinaison — manches visibles en vue FP",
+  astronaut_backpack: "Module de survie dorsal",
+  astronaut_helmet: "Casque fermé, visière intégrée et joint souple",
+};
+
+/** Astronaut cards of one slot (ids validated against the shared whitelist). */
+function astronautCards(slot: CharacterCosmeticSlot): SkinCard[] {
+  const items = (astronautCatalog as { items: AstronautCatalogItem[] }).items;
+  return items
+    .filter((item) => item.slot === slot && CHARACTER_COSMETIC_IDS[slot].includes(item.id))
+    .map((item) => ({
+      id: item.id,
+      name: item.label.toUpperCase(),
+      rarity: "legendaire" as Rarity,
+      tagline: ASTRONAUT_TAGLINES[item.id],
+      icon: ASTRONAUT_ICONS[item.id],
+    }));
 }
 
 export const CHARACTER_CATEGORIES: CharacterCategory[] = [
@@ -119,6 +175,8 @@ export const CHARACTER_CATEGORIES: CharacterCategory[] = [
     label: "CHAPEAUX",
     icon: "M4 15c4 2 12 2 16 0v2c-4 2-12 2-16 0v-2zm3-1c0-3 1-6 5-6s5 3 5 6c-3 1-7 1-10 0z",
     items: [
+      BASE_CHARACTER_CARD,
+      ...astronautCards("hats"),
       { id: "__hat_1", name: "PANIER PERCHÉ", rarity: "rare", locked: true },
       { id: "__hat_2", name: "COIN-COIN", rarity: "rare", locked: true },
       { id: "__hat_3", name: "ŒUF AU PLAT", rarity: "peu_commun", locked: true },
@@ -132,6 +190,8 @@ export const CHARACTER_CATEGORIES: CharacterCategory[] = [
     label: "SACS",
     icon: "M8 7V6a4 4 0 0 1 8 0v1h2a1 1 0 0 1 1 1v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8a1 1 0 0 1 1-1h2zm2 0h4V6a2 2 0 0 0-4 0v1z",
     items: [
+      BASE_CHARACTER_CARD,
+      ...astronautCards("bags"),
       { id: "__bag_1", name: "SAC PROVISIONS", rarity: "peu_commun", locked: true },
       { id: "__bag_2", name: "SAC DE SPORT", rarity: "rare", locked: true },
     ],
@@ -141,6 +201,8 @@ export const CHARACTER_CATEGORIES: CharacterCategory[] = [
     label: "HAUTS",
     icon: "M8 4l4 2 4-2 4 3-2 3-2-1v11H8V9L6 10 4 7l4-3z",
     items: [
+      BASE_CHARACTER_CARD,
+      ...astronautCards("tops"),
       { id: "__top_1", name: "VESTE TEDDY", rarity: "rare", locked: true },
       { id: "__top_2", name: "MAILLOT B", rarity: "peu_commun", locked: true },
     ],
@@ -149,15 +211,28 @@ export const CHARACTER_CATEGORIES: CharacterCategory[] = [
     key: "pants",
     label: "PANTALONS",
     icon: "M7 3h10l1 18h-4l-2-9-2 9H6L7 3z",
-    items: [{ id: "__pants_1", name: "SHORT DE MATCH", rarity: "peu_commun", locked: true }],
+    items: [
+      BASE_CHARACTER_CARD,
+      ...astronautCards("pants"),
+      { id: "__pants_1", name: "SHORT DE MATCH", rarity: "peu_commun", locked: true },
+    ],
   },
   {
     key: "shoes",
     label: "CHAUSSURES",
     icon: "M3 15l6-2 3-4 2 3 6 2v3H3v-2z",
-    items: [{ id: "__shoes_1", name: "BASKETS CITRUS", rarity: "rare", locked: true }],
+    items: [
+      BASE_CHARACTER_CARD,
+      ...astronautCards("shoes"),
+      { id: "__shoes_1", name: "BASKETS CITRUS", rarity: "rare", locked: true },
+    ],
   },
 ];
+
+/** True when at least one real (unlocked, non-base) piece exists in `cat`. */
+export function hasEquippableCharacterItems(cat: CharacterCategory): boolean {
+  return cat.items.some((c) => !c.locked && c.id !== DEFAULT_CHARACTER_COSMETIC);
+}
 
 export const EMOTE_PLACEHOLDERS: SkinCard[] = [
   { id: "__emote_1", name: "DUNK", rarity: "rare", locked: true },

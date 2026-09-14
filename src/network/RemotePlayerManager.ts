@@ -19,6 +19,10 @@ import { buildSkeletonRagdollParts } from "../ragdoll/SkeletonRagdollFactory";
 // ONCE and cloned per avatar. The SAME asset drives the solo bots
 // (BotModel), so every humanoid enemy shares the exact model + animations.
 import { loadCharacterAsset, stripEnemyOutline, CharacterAsset, FEET_OFFSET, MODEL_TOP } from "../characters/PotatoCharacter";
+// Character OUTFIT (Potato Astronaut pack): applied on each avatar CLONE
+// from the server-replicated selection — never on the shared template.
+import { CharacterOutfitSlot, getAstronautLibrary } from "../cosmetics/astronaut/AstronautRuntime";
+import { decodeCharacterCosmetics } from "../../shared/combat/CharacterCosmetics";
 
 /** Nametag height above the capsule center (meters). */
 const NAMETAG_HEIGHT = MODEL_TOP + 0.42;
@@ -145,6 +149,14 @@ class RemotePlayer {
   burrowed = false;
   /** Phase 5: the REAL equipped weapon GLB in this avatar's hand. */
   readonly weapons: RemoteWeaponController;
+  /**
+   * Server-replicated CHARACTER outfit on this clone (enemy → red contour
+   * hulls on the added pieces too). The slot caches the applied selection:
+   * feeding it every state patch is free until the encoded string changes.
+   */
+  readonly outfit = new CharacterOutfitSlot({ context: "tp", outline: true });
+  /** Last replicated outfit string (dedup before decoding). */
+  private outfitKey: string | null = null;
   /** Latest INTERPOLATED aim (drives remote beams; never raw packets). */
   lastYaw = 0;
   lastPitch = 0;
@@ -224,6 +236,8 @@ class RemotePlayer {
     this.group.visible = false; // hidden until the first snapshot arrives
 
     this.anim = new RemotePlayerAnimationController(model, -FEET_OFFSET, asset.clips);
+    // Outfit target = the clone holding meshes AND bones (never the template).
+    this.outfit.setTarget(model);
     this.weapons = new RemoteWeaponController(model, scene);
     // HexSniper equipped → the avatar swaps to the TP two-hand pose set
     // (hold/run/masked jump-dash-slide). Derived from the EXISTING synced
@@ -503,8 +517,23 @@ class RemotePlayer {
     if (this.debugMarker) scene.add(this.debugMarker);
   }
 
+  /**
+   * Server-replicated outfit string → decoded (re-validated) selection.
+   * Called on EVERY state patch; dedup on the raw string keeps it free.
+   * A selection arriving before the pack assets are ready is kept by the
+   * slot and applied when they land (dropped if this avatar left first).
+   */
+  setOutfit(encoded: string): void {
+    if (encoded === this.outfitKey) return;
+    this.outfitKey = encoded;
+    this.outfit.setSelection(decodeCharacterCosmetics(encoded));
+  }
+
   /** Remove from the scene. Shared template resources are NOT disposed. */
   dispose(scene: THREE.Scene): void {
+    // Outfit FIRST: restores the clone's base geometry references and frees
+    // its private materials (any corpse snapshot already owns its own copy).
+    this.outfit.dispose();
     this.weapons.dispose();
     scene.remove(this.group);
     if (this.debugMarker) {
@@ -642,7 +671,10 @@ export class RemotePlayerManager {
 
   /** Load + cache the character asset (call once before the game starts). */
   async preload(): Promise<void> {
-    this.asset = await loadCharacterAsset();
+    // The outfit pack loads alongside (shared, session-wide). Its failure is
+    // logged by the runtime and never blocks the avatars (base look kept).
+    const [asset] = await Promise.all([loadCharacterAsset(), getAstronautLibrary()]);
+    this.asset = asset;
   }
 
   /** Wire the death-ragdoll corpse sink (visual only — never authoritative). */
@@ -730,6 +762,9 @@ export class RemotePlayerManager {
       // SERVER-validated equipped weapon (+ its cosmetic skin) → real GLB
       // in the hand. Late joiners read the same synced fields.
       remote.weapons.setWeapon(p.weapon, p.skin);
+      // SERVER-validated CHARACTER outfit (independent of the weapon skin):
+      // cached on the raw string — only a real change re-dresses the clone.
+      remote.setOutfit(p.outfit);
 
       // ts = SERVER timestamp of the transform (never raw client clocks).
       // Dead players push nothing: the server refuses their transforms and

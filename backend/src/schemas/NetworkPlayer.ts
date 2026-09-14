@@ -83,4 +83,12 @@ export class NetworkPlayer extends Schema {
    *  (shared/combat/WeaponSkins.ts). Pure presentation: never read by any
    *  gameplay rule. "default" = the base weapon materials. */
   @type("string") skin = "default";
+
+  /** CHARACTER outfit — encoded `slot:id,slot:id` string (fixed slot order,
+   *  see shared/combat/CharacterCosmetics.ts) written ONLY by the server
+   *  after strict validation of a CHARACTER_COSMETICS message (known slots,
+   *  whitelisted ids, bounded length — never an asset path). Distinct from
+   *  the WEAPON skin above. Pure presentation: no hitbox, collision, speed,
+   *  size or damage rule ever reads it. "" = base character. */
+  @type("string") outfit = "";
 }

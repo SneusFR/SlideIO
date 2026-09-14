@@ -234,6 +234,9 @@ export class GoofyBasketProjectileSystem {
     ball.state.resting = false;
     ball.state.bounceCount = index;
     ball.state.bouncesLeft = B.throws[ball.state.level - 1].maxWorldBounces - index;
+    // The server ended the straight (gravity-free) flight at its first world
+    // bounce — mirror it so the local ball drops from here like the server's.
+    ball.state.straightLeft = 0;
     if (!predictedSame) this.onBounce?.(pos, normal, ball.remote);
   }
 

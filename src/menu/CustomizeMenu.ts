@@ -6,11 +6,20 @@ import {
   EMOTE_PLACEHOLDERS,
   RARITIES,
   WEAPON_SKIN_SETS,
+  hasEquippableCharacterItems,
   sortByRarity,
   type SkinCard,
   type WeaponSkinSet,
 } from "./CustomizeCatalog";
-import { loadWeaponSkin, saveWeaponSkin } from "../loadout/Cosmetics";
+import {
+  DEFAULT_CHARACTER_COSMETIC,
+  loadCharacterCosmetic,
+  loadCharacterCosmetics,
+  loadWeaponSkin,
+  saveCharacterCosmetic,
+  saveWeaponSkin,
+} from "../loadout/Cosmetics";
+import type { CharacterCosmeticsSelection } from "../../shared/combat/CharacterCosmetics";
 import { loadLoadout, type PrimaryWeaponId } from "../loadout/Loadout";
 import { getWeaponIconUrl, hasWeaponIcon } from "./WeaponIconRenderer";
 import { DEFAULT_WEAPON_SKIN } from "../../shared/combat/WeaponSkins";
@@ -248,10 +257,30 @@ export class CustomizeMenu {
     this.refreshBoard();
   }
 
-  /** Equipped id in the current context (weapons: persisted skin; others: none). */
+  /**
+   * Equipped id in the current context: weapons → persisted skin of the
+   * selected weapon; character → persisted piece of the selected slot
+   * ("default" when bare); emotes → none.
+   */
   private equippedId(): string {
     if (this.tab === "weapons") return loadWeaponSkin(this.weaponSet.weapon);
+    if (this.tab === "character") return loadCharacterCosmetic(this.characterCategory.key);
     return "";
+  }
+
+  /**
+   * Outfit shown on the 3D character: the PERSISTED selection with the
+   * inspected card substituted on its own slot (preview before equipping;
+   * "AUCUN" previews the bare slot). Locked placeholders preview nothing.
+   */
+  private previewedOutfit(): CharacterCosmeticsSelection {
+    const outfit = loadCharacterCosmetics();
+    const card = this.inspectedCard();
+    if (!card || card.locked) return outfit;
+    const slot = this.characterCategory.key;
+    if (card.id === DEFAULT_CHARACTER_COSMETIC) delete outfit[slot];
+    else outfit[slot] = card.id;
+    return outfit;
   }
 
   private currentCards(): SkinCard[] {
@@ -283,7 +312,10 @@ export class CustomizeMenu {
       this.boardCountEl.textContent = `${total} skin${total > 1 ? "s" : ""} disponible${total > 1 ? "s" : ""}`;
     } else if (this.tab === "character") {
       this.boardTitleEl.textContent = "TON HARICOT";
-      this.boardCountEl.textContent = `${total} objet${total > 1 ? "s" : ""} · bientôt`;
+      const live = hasEquippableCharacterItems(this.characterCategory);
+      this.boardCountEl.textContent = live
+        ? `${total} objet${total > 1 ? "s" : ""} · ${this.characterCategory.label.toLowerCase()}`
+        : `${total} objet${total > 1 ? "s" : ""} · bientôt`;
     } else {
       this.boardTitleEl.textContent = "EMOTES";
       this.boardCountEl.textContent = `${total} emote${total > 1 ? "s" : ""} · bientôt`;
@@ -349,7 +381,7 @@ export class CustomizeMenu {
           this.sounds.click();
           this.characterCategory = cat;
           this.search = "";
-          this.inspectedId = "";
+          this.inspectedId = this.equippedId();
           this.refreshBoard();
         });
         this.subEl.appendChild(btn);
@@ -425,6 +457,8 @@ export class CustomizeMenu {
       `;
       const holder = el.querySelector<HTMLElement>(".cz-card-icon")!;
       if (this.tab === "weapons") this.mountIcon(holder, this.weaponSet.weapon, card.id);
+      else if (card.icon) this.mountImageIcon(holder, card.icon);
+      else if (this.tab === "character" && card.id === DEFAULT_CHARACTER_COSMETIC) this.mountBaseIcon(holder);
       else this.mountPlaceholderIcon(holder, card);
       el.addEventListener("pointerenter", () => this.sounds.hover());
       el.addEventListener("click", () => {
@@ -460,6 +494,26 @@ export class CustomizeMenu {
     });
   }
 
+  /** Real card image (character pieces: the pack's 512×512 PNG icons). */
+  private mountImageIcon(holder: HTMLElement, url: string): void {
+    const img = document.createElement("img");
+    img.alt = "";
+    img.draggable = false;
+    img.addEventListener("load", () => img.classList.add("ready"));
+    img.src = url;
+    holder.appendChild(img);
+  }
+
+  /** "AUCUN" card of a character slot: the plain bean, no BIENTÔT tag. */
+  private mountBaseIcon(holder: HTMLElement): void {
+    const img = document.createElement("img");
+    img.className = "ready";
+    img.src = haricotUrl;
+    img.alt = "";
+    img.draggable = false;
+    holder.appendChild(img);
+  }
+
   /** Placeholder visuals (character / emotes): a bean silhouette tinted by rarity. */
   private mountPlaceholderIcon(holder: HTMLElement, card: SkinCard): void {
     const img = document.createElement("img");
@@ -487,6 +541,7 @@ export class CustomizeMenu {
       const skinId = card && !card.locked ? card.id : DEFAULT_WEAPON_SKIN;
       // Live 3D preview only exists for the GoofyBasket today; the other
       // weapons show their icon snapshot instead.
+      this.preview.setSubject("ball");
       if (isBasket) {
         this.preview.setSkin(skinId);
         this.preview.canvas.style.display = "";
@@ -500,19 +555,30 @@ export class CustomizeMenu {
       this.previewSubEl.textContent = card?.tagline ?? "";
       this.previewOwnerEl.textContent = `Skin de ${titleCase(this.weaponSet.weaponName)}`;
       this.setPreviewRarity(card);
+    } else if (this.tab === "character") {
+      // REAL 3D character (TP clone + outfit runtime): the persisted outfit
+      // with the inspected piece swapped in on its slot.
+      this.previewEl.classList.remove("placeholder");
+      this.preview.setSkin(DEFAULT_WEAPON_SKIN);
+      this.preview.setSubject("character");
+      this.preview.setCharacterOutfit(this.previewedOutfit());
+      this.preview.canvas.style.display = "";
+      this.clearPreviewFallback();
+      this.previewTitleEl.textContent = card ? card.name : "TON HARICOT";
+      this.previewSubEl.textContent = card
+        ? (card.tagline ?? (card.locked ? "Bientôt disponible" : ""))
+        : "";
+      this.previewOwnerEl.textContent = `Objet · ${this.characterCategory.label}`;
+      this.setPreviewRarity(card);
     } else {
       this.previewEl.classList.add("placeholder");
       this.preview.setSkin(DEFAULT_WEAPON_SKIN);
+      this.preview.setSubject("ball");
       this.preview.canvas.style.display = "none";
       this.showPreviewFallback(null);
-      this.previewTitleEl.textContent = card
-        ? card.name
-        : this.tab === "character"
-          ? "TON HARICOT"
-          : "EMOTES";
+      this.previewTitleEl.textContent = card ? card.name : "EMOTES";
       this.previewSubEl.textContent = card ? (card.tagline ?? "Bientôt disponible") : "Aperçu bientôt disponible";
-      this.previewOwnerEl.textContent =
-        this.tab === "character" ? `Objet · ${this.characterCategory.label}` : "Emote";
+      this.previewOwnerEl.textContent = "Emote";
       this.setPreviewRarity(card);
     }
   }
@@ -564,19 +630,26 @@ export class CustomizeMenu {
       this.boardFootEl.textContent = "";
       return;
     }
-    const equipped = this.tab === "weapons" && !card.locked && card.id === this.equippedId();
+    const equippable = this.tab === "weapons" || this.tab === "character";
+    const equipped = equippable && !card.locked && card.id === this.equippedId();
+    const isBase = this.tab === "character" && card.id === DEFAULT_CHARACTER_COSMETIC;
     const label = this.tab === "weapons" ? "CE SKIN" : this.tab === "character" ? "CET OBJET" : "CETTE EMOTE";
+    const action = isBase ? "RETIRER LA PIÈCE" : `ÉQUIPER ${label}`;
     this.footerEl.innerHTML = `
-      <button class="cz-equip ${equipped ? "equipped" : ""}" type="button" ${card.locked || equipped ? "disabled" : ""}>
-        ${card.locked ? "🔒 BIENTÔT" : equipped ? "✔ ÉQUIPÉ" : `ÉQUIPER ${label}`}
+      <button class="cz-equip ${equipped ? "equipped" : ""}" type="button" ${card.locked || equipped || !equippable ? "disabled" : ""}>
+        ${card.locked ? "🔒 BIENTÔT" : equipped ? (isBase ? "✔ RIEN D'ÉQUIPÉ" : "✔ ÉQUIPÉ") : action}
       </button>
     `;
     // Right-side note under the grid: what the button will do.
     this.boardFootEl.textContent = card.locked
       ? "Cet élément arrive bientôt — il n'est pas encore équipable."
       : equipped
-        ? `${card.name} est équipé · appliqué en partie et au respawn.`
-        : `Cosmétique uniquement · aucun impact sur le gameplay.`;
+        ? isBase
+          ? `Aucune pièce équipée · ${this.characterCategory.label.toLowerCase()} d'origine.`
+          : `${card.name} est équipé · appliqué en partie et au respawn.`
+        : isBase
+          ? `Retire la pièce équipée · retour à l'apparence de base.`
+          : `Cosmétique uniquement · aucun impact sur le gameplay.`;
 
     if (pop) {
       this.footerEl.classList.remove("pop");
@@ -587,13 +660,17 @@ export class CustomizeMenu {
     const equipBtn = this.footerEl.querySelector<HTMLButtonElement>(".cz-equip")!;
     equipBtn.addEventListener("pointerenter", () => this.sounds.hover());
     equipBtn.addEventListener("click", () => {
-      if (card.locked || this.tab !== "weapons" || card.id === this.equippedId()) return;
+      if (card.locked || !equippable || card.id === this.equippedId()) return;
       this.sounds.click();
-      // Cosmetic only: persisted in its OWN store (never a loadout change).
-      saveWeaponSkin(this.weaponSet.weapon, card.id);
+      // Cosmetic only: persisted in its OWN store (never a loadout change —
+      // no weapon reset, no attack interruption; the game re-reads it in
+      // applyLoadout and pushes the outfit to the server separately).
+      if (this.tab === "weapons") saveWeaponSkin(this.weaponSet.weapon, card.id);
+      else saveCharacterCosmetic(this.characterCategory.key, card.id); // "default" clears the slot
       this.renderSub();
       this.renderGrid();
       this.renderFooter();
+      this.renderPreviewCaption(); // the 3D character now wears the persisted outfit
     });
   }
 }

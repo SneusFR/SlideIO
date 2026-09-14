@@ -20,6 +20,11 @@ import {
   isMapId,
   type MapDefinition,
 } from "../../../shared/map/MapRegistry";
+import {
+  CHARACTER_COSMETICS_MAX_ENCODED_LENGTH,
+  encodeCharacterCosmetics,
+  validateCharacterCosmetics,
+} from "../../../shared/combat/CharacterCosmetics";
 
 interface JoinOptions {
   name?: unknown;
@@ -256,6 +261,22 @@ export class GameRoom extends Room<GameRoomState> {
       this.combatMsgReceived++; // DEV diag counter (aggregated, never logged)
       const player = this.state.players.get(client.sessionId);
       if (player) this.weapons.handleAction(player, (message ?? {}) as WeaponActionMessage);
+    });
+    // CHARACTER outfit (cosmetic only, distinct from the weapon skin):
+    // accepted in the LOBBY too so late joiners / the match start already
+    // replicate the right look. STRICT validation — unknown slots, unknown
+    // ids, non-object payloads or oversized structures are refused whole
+    // (the replicated state is never partially updated). Never touches
+    // weapons, health, hitboxes or any gameplay state.
+    this.onMessage("CHARACTER_COSMETICS", (client, message) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+      const raw = (message as { outfit?: unknown } | undefined)?.outfit;
+      if (JSON.stringify(raw ?? null).length > 4 * CHARACTER_COSMETICS_MAX_ENCODED_LENGTH) return;
+      const selection = validateCharacterCosmetics(raw);
+      if (!selection) return;
+      const encoded = encodeCharacterCosmetics(selection);
+      if (encoded !== player.outfit) player.outfit = encoded; // synced → every client
     });
 
     console.log(`[GameRoom ${this.roomId}] created`);

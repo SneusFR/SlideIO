@@ -35,7 +35,13 @@ import { SpearViewmodel } from "../weapons/SpearViewmodel";
 import { SpearConfig as spearCfg } from "../weapons/SpearConfig";
 import { SpearHUD } from "../ui/SpearHUD";
 import { loadLoadout, MeleeWeaponId, PrimaryWeaponId } from "../loadout/Loadout";
-import { loadWeaponSkin } from "../loadout/Cosmetics";
+import { loadWeaponSkin, loadCharacterCosmetics } from "../loadout/Cosmetics";
+import {
+  CharacterOutfitSlot,
+  FULL_ASTRONAUT_SELECTION,
+  getAstronautLibrary,
+} from "../cosmetics/astronaut/AstronautRuntime";
+import { encodeCharacterCosmetics } from "../../shared/combat/CharacterCosmetics";
 import { getGoofyBasketSkinLibrary } from "../weapons/goofybasket/GoofyBasketSkinRuntime";
 import { GOOFY_BASKET_SKIN_IDS } from "../../shared/combat/WeaponSkins";
 import { ObliterreurWeapon } from "../weapons/obliterreur/ObliterreurWeapon";
@@ -259,6 +265,14 @@ export class Game {
   // ---- Phase 5: networked weapons (multiplayer only) ----
   /** Last WEAPON_EQUIP actually sent (dedup — resent on respawn). */
   private lastSentEquip = "";
+  /** Last CHARACTER_COSMETICS actually sent (encoded selection, dedup). */
+  private lastSentOutfit: string | null = null;
+  /**
+   * Local player's CHARACTER outfit on the FIRST-PERSON common arms: only
+   * the `tops` piece has an FP representation (Astro_Sleeves). Bound to the
+   * unique arms instance through ViewmodelSystem.setArmsReadyHook.
+   */
+  private readonly fpOutfit = new CharacterOutfitSlot({ context: "fp" });
   /** Plasma edge detection: local isFiring → PLASMA_START / PLASMA_STOP. */
   private netPlasmaWasFiring = false;
   /** ~10 Hz PLASMA_AIM refresh accumulator while firing. */
@@ -497,6 +511,10 @@ export class Game {
     // rendered AFTER the world with ONE depth clear (see frame()). Owned by
     // exactly ONE weapon at a time (fpOwner) — Brick Maul or HexSniper.
     this.viewmodelSystem = new ViewmodelSystem(window.innerWidth / window.innerHeight);
+    // FP outfit (sleeves) dresses the UNIQUE arms instance once it exists —
+    // no second rig, no second mixer; the selection is fed by applyLoadout.
+    this.viewmodelSystem.setArmsReadyHook((arms) => this.fpOutfit.setTarget(arms));
+    this.fpOutfit.setSelection(loadCharacterCosmetics());
 
     // ---- Brick Maul (melee): grounded WHIRLWIND + airborne Ground Slam ----
     this.shockwave = new Shockwave(this.scene);
@@ -845,8 +863,15 @@ export class Game {
     void this.gameAudio.preload();
     // SOLO: (re)apply the persisted loadout on every re-entry.
     // MULTIPLAYER: loadout changes made from the Escape menu only apply
-    // on the NEXT RESPAWN (see onLocalRespawned) — never mid-life.
+    // on the NEXT RESPAWN (see onLocalRespawned) — never mid-life. The
+    // CHARACTER outfit is pure presentation (no weapon / attack / hitbox
+    // effect), so it refreshes right away: FP sleeves + replicated field.
     if (!this.multiplayer) this.applyLoadout();
+    else {
+      const outfit = loadCharacterCosmetics();
+      this.fpOutfit.setSelection(outfit);
+      this.sendNetworkOutfit(outfit);
+    }
     this.input.requestPointerLock();
   }
 
@@ -902,11 +927,35 @@ export class Game {
     // (medkit + coin GLBs + additive halo sprites: programs AND textures
     // never seen before). Warm both far below the map right now.
     let releaseCorpseMats: (() => void) | null = null;
+    // CHARACTER OUTFIT (Potato Astronaut): the suit materials (vertex-color
+    // PBR, transparent visor, their outline hulls, and their corpse fade
+    // clones) are programs the base character never compiles. Dress one
+    // living clone + one corpse clone with the FULL outfit for the warm
+    // frames, then restore + drop them.
+    const outfitSlots: CharacterOutfitSlot[] = [];
     try {
-      const asset = await loadCharacterAsset();
+      const [asset, library] = await Promise.all([loadCharacterAsset(), getAstronautLibrary()]);
+      if (library) {
+        const dressed = skeletonClone(asset.template);
+        dressed.position.copy(far);
+        const living = new CharacterOutfitSlot({ context: "tp", outline: true });
+        living.setTarget(dressed);
+        living.setSelection(FULL_ASTRONAUT_SELECTION);
+        outfitSlots.push(living);
+        temp.push(dressed);
+      }
       const corpse = skeletonClone(asset.template);
       stripEnemyOutline(corpse); // real corpses never keep the red outline
       corpse.position.copy(far);
+      if (library) {
+        // Corpse path of the outfit: pooled transparent fade clones of the
+        // suit's private materials (evicted again once released — the
+        // ephemeral policy keeps the pool bounded).
+        const dead = new CharacterOutfitSlot({ context: "tp" });
+        dead.setTarget(corpse);
+        dead.setSelection(FULL_ASTRONAUT_SELECTION);
+        outfitSlots.push(dead);
+      }
       releaseCorpseMats = this.corpses.warmUp(corpse);
       temp.push(corpse);
     } catch {
@@ -1021,6 +1070,9 @@ export class Game {
     // Skin handles first (restore the clones' base materials, free their
     // private clones / FX) — the shared library textures stay alive.
     for (const h of skinHandles) h.dispose();
+    // Outfit slots: restore the clones' base geometry + free the suit's
+    // private materials (the shared library geometries stay alive).
+    for (const slot of outfitSlots) slot.dispose();
     for (const obj of temp) this.scene.remove(obj);
     releaseCorpseMats?.();
     this.shockwave.update(10);
@@ -1061,6 +1113,12 @@ export class Game {
     // are IDENTICAL strings to NetworkWeaponId — no mapping table) and its
     // validated cosmetic skin (replicated to every client / late joiner).
     this.sendNetworkEquip();
+    // CHARACTER outfit (independent of weapons): FP sleeves on the local
+    // arms + replicated selection. A pure outfit change never resets a
+    // weapon, cancels an attack or re-arbitrates the FP owner.
+    const outfit = loadCharacterCosmetics();
+    this.fpOutfit.setSelection(outfit);
+    this.sendNetworkOutfit(outfit);
     const melee = selection.melee;
     if (melee !== this.meleeWeapon) {
       weaponsChanged = true;
@@ -1367,6 +1425,8 @@ export class Game {
     this.wrapNetworkWeaponCallbacks();
     // Tell the server which primary we start with.
     this.sendNetworkEquip(true);
+    // ... and which character outfit (independent replicated field).
+    this.sendNetworkOutfit(loadCharacterCosmetics(), true);
     // Melee visual override state is replicated separately (never through
     // the primary equip); re-announce it for this fresh session.
     this.netMeleeShown = false;
@@ -1386,6 +1446,7 @@ export class Game {
     this.multiplayer = null;
     this.multiplayerClient = null;
     this.lastSentEquip = "";
+    this.lastSentOutfit = null;
     this.netMeleeShown = false;
     // HexSniper back to full LOCAL authority (solo / bots).
     this.hexSniper.networkAuthority = false;
@@ -2629,6 +2690,22 @@ export class Game {
     if (!force && key === this.lastSentEquip) return;
     this.lastSentEquip = key;
     this.multiplayerClient.sendWeaponEquip(weapon, skin);
+  }
+
+  /**
+   * CHARACTER_COSMETICS for the persisted outfit (dedup on the encoded
+   * selection unless forced). Separate message from WEAPON_EQUIP: the
+   * server never treats it as a weapon change.
+   */
+  private sendNetworkOutfit(
+    outfit: ReturnType<typeof loadCharacterCosmetics> = loadCharacterCosmetics(),
+    force = false,
+  ): void {
+    if (!this.multiplayer || !this.multiplayerClient?.isConnected) return;
+    const key = encodeCharacterCosmetics(outfit);
+    if (!force && key === this.lastSentOutfit) return;
+    this.lastSentOutfit = key;
+    this.multiplayerClient.sendCharacterCosmetics(outfit);
   }
 
   /** Plasma has no local callback: edge-detect + 10 Hz silent aim. */

@@ -8,6 +8,10 @@ import type {
   ApplyImpulseEvent,
   HexPullEvent,
 } from "../../shared/combat/NetworkWeapons";
+import {
+  sanitizeCharacterCosmetics,
+  type CharacterCosmeticsSelection,
+} from "../../shared/combat/CharacterCosmetics";
 
 /** Snapshot of a networked player (mirrors the backend NetworkPlayer). */
 export interface NetworkPlayerInfo {
@@ -43,6 +47,9 @@ export interface NetworkPlayerInfo {
   weapon: string;
   /** SERVER-VALIDATED cosmetic skin of the equipped weapon ("default" = base). */
   skin: string;
+  /** SERVER-VALIDATED encoded CHARACTER outfit ("" = base character) —
+   *  see shared/combat/CharacterCosmetics.ts. Distinct from `skin`. */
+  outfit: string;
   /** Smoothed RTT of this player (ms) — leaderboard display only. */
   pingMs: number;
 }
@@ -337,6 +344,15 @@ export class MultiplayerClient {
   }
 
   /**
+   * Publish the CHARACTER outfit (validated cosmetic ids per slot — never
+   * asset paths). Independent from the weapon equip: it never cancels an
+   * attack or changes the weapon. Accepted by the server in the lobby too.
+   */
+  sendCharacterCosmetics(outfit: CharacterCosmeticsSelection): void {
+    this.room?.send("CHARACTER_COSMETICS", { outfit: sanitizeCharacterCosmetics(outfit) });
+  }
+
+  /**
    * Send one weapon ACTION (origin / direction / extra point only — the
    * server computes every hit). The sequence is auto-incremented here so
    * every call site stays trivially correct.
@@ -405,6 +421,7 @@ export class MultiplayerClient {
         respawnAt: p.respawnAt ?? 0,
         weapon: p.weapon ?? "PLASMA_RIFLE",
         skin: p.skin ?? "default",
+        outfit: typeof p.outfit === "string" ? p.outfit : "",
         pingMs: p.pingMs ?? 0,
       });
     });
@@ -675,6 +692,7 @@ interface NetworkPlayerLike {
   respawnAt?: number;
   weapon?: string;
   skin?: string;
+  outfit?: string;
   pingMs?: number;
 }
 
