@@ -25,10 +25,12 @@ type MainTab = "character" | "weapons" | "emotes";
  * green tabs, chunky rounded cards), laid out like the reference mocks:
  *
  *   ┌ logo + CUSTOMIZE ──── PERSONNAGE | ARMES | EMOTES ──── ✕ RETOUR ┐
- *   │ [APERÇU 3D, faire tourner]  │ sous-onglets / sélecteur d'arme    │
- *   │                             │ recherche · N skins                 │
- *   │                             │ grille de cartes bleues (rareté)   │
- *   ├─ [icône] NOM · Type · Rareté ───────────── [ ÉQUIPER CE SKIN ] ─┤
+ *   │ APERÇU ········ [EFFETS] │ CHOISIR UN SKIN · N skins  [arme ▾]  │
+ *   │  ‹  [ballon 3D]  ›       │ 🔍 recherche ············ [Rareté ▾] │
+ *   │  Glisser pour tourner    │ grille de cartes bleues              │
+ *   │  (RARETÉ) NOM · tagline  │   ✓ ÉQUIPÉ / APERÇU badges           │
+ *   │  Skin de Goofy Basket    │                                      │
+ *   │ [   ÉQUIPER CE SKIN    ] │ note (cosmétique / équipé / bientôt) │
  *
  * ARMES is live for the GoofyBasket (4 pack skins previewed on the REAL
  * ball through the shared skin runtime); other weapons, PERSONNAGE and
@@ -47,7 +49,11 @@ export class CustomizeMenu {
   private readonly previewEl: HTMLElement;
   private readonly previewTitleEl: HTMLElement;
   private readonly previewSubEl: HTMLElement;
-  private readonly chargeEl: HTMLElement;
+  private readonly previewRarityEl: HTMLElement;
+  private readonly previewOwnerEl: HTMLElement;
+  private readonly boardTitleEl: HTMLElement;
+  private readonly boardCountEl: HTMLElement;
+  private readonly boardFootEl: HTMLElement;
   private readonly preview: CustomizePreview;
 
   private tab: MainTab = "weapons";
@@ -80,31 +86,40 @@ export class CustomizeMenu {
         </header>
         <section class="cz-body">
           <aside class="cz-preview">
-            <div class="cz-preview-badge">APERÇU</div>
-            <div class="cz-preview-stage"></div>
+            <div class="cz-preview-top">
+              <div class="cz-preview-badge">APERÇU</div>
+              <label class="cz-fx">
+                <span>EFFETS</span>
+                <input class="cz-fx-input" type="checkbox" checked>
+                <span class="cz-fx-track"><span class="cz-fx-knob"></span></span>
+              </label>
+            </div>
+            <div class="cz-preview-stage">
+              <button class="cz-preview-arrow cz-preview-arrow-l" type="button" aria-label="Tourner à gauche">‹</button>
+              <button class="cz-preview-arrow cz-preview-arrow-r" type="button" aria-label="Tourner à droite">›</button>
+            </div>
+            <div class="cz-preview-hint">Glisser pour tourner</div>
             <div class="cz-preview-caption">
+              <div class="cz-preview-rarity"></div>
               <div class="cz-preview-name"></div>
               <div class="cz-preview-sub"></div>
+              <div class="cz-preview-owner"></div>
             </div>
-            <div class="cz-charge">
-              <span class="cz-charge-label">CHARGE</span>
-              <input class="cz-charge-input" type="range" min="0" max="100" value="0">
-              <span class="cz-charge-value">0%</span>
-            </div>
-            <div class="cz-turn">
-              <button class="cz-turn-btn" data-dir="-1" type="button">‹</button>
-              <span class="cz-turn-label">FAIRE TOURNER</span>
-              <button class="cz-turn-btn" data-dir="1" type="button">›</button>
-            </div>
-            <button class="cz-reset" type="button">RÉINITIALISER L'APERÇU</button>
+            <footer class="cz-footer"></footer>
           </aside>
           <section class="cz-board">
-            <div class="cz-sub"></div>
+            <div class="cz-board-head">
+              <div class="cz-board-heading">
+                <div class="cz-board-title"></div>
+                <div class="cz-board-count"></div>
+              </div>
+              <div class="cz-sub"></div>
+            </div>
             <div class="cz-toolbar"></div>
             <div class="cz-grid"></div>
+            <div class="cz-board-foot"></div>
           </section>
         </section>
-        <footer class="cz-footer"></footer>
       </div>
     `;
     document.body.appendChild(this.root);
@@ -117,8 +132,13 @@ export class CustomizeMenu {
     this.previewEl = this.root.querySelector(".cz-preview")!;
     this.previewTitleEl = this.root.querySelector(".cz-preview-name")!;
     this.previewSubEl = this.root.querySelector(".cz-preview-sub")!;
-    this.chargeEl = this.root.querySelector(".cz-charge")!;
-    this.root.querySelector(".cz-preview-stage")!.appendChild(this.preview.canvas);
+    this.previewRarityEl = this.root.querySelector(".cz-preview-rarity")!;
+    this.previewOwnerEl = this.root.querySelector(".cz-preview-owner")!;
+    this.boardTitleEl = this.root.querySelector(".cz-board-title")!;
+    this.boardCountEl = this.root.querySelector(".cz-board-count")!;
+    this.boardFootEl = this.root.querySelector(".cz-board-foot")!;
+    // Canvas goes UNDER the ‹ › arrows (they're absolutely positioned).
+    this.root.querySelector(".cz-preview-stage")!.prepend(this.preview.canvas);
 
     this.wireStaticControls();
     this.renderTabs();
@@ -173,30 +193,23 @@ export class CustomizeMenu {
       this.sounds.click();
       this.close();
     });
-    for (const btn of this.root.querySelectorAll<HTMLButtonElement>(".cz-turn-btn")) {
-      hover(btn);
-      btn.addEventListener("click", () => {
+
+    // EFFETS toggle: aura / plasma of the previewed skin on or off.
+    const fx = this.root.querySelector<HTMLInputElement>(".cz-fx-input")!;
+    hover(fx.parentElement!);
+    fx.addEventListener("change", () => {
+      this.sounds.click();
+      this.preview.setEffectsEnabled(fx.checked);
+    });
+
+    // ‹ › arrows: give the turntable a push in either direction.
+    for (const arrow of this.root.querySelectorAll<HTMLButtonElement>(".cz-preview-arrow")) {
+      hover(arrow);
+      arrow.addEventListener("click", () => {
         this.sounds.click();
-        this.preview.spin(btn.dataset.dir === "-1" ? -1 : 1);
+        this.preview.nudge(arrow.classList.contains("cz-preview-arrow-l") ? -1 : 1);
       });
     }
-    const reset = this.root.querySelector<HTMLButtonElement>(".cz-reset")!;
-    hover(reset);
-    const chargeInput = this.root.querySelector<HTMLInputElement>(".cz-charge-input")!;
-    const chargeValue = this.root.querySelector<HTMLElement>(".cz-charge-value")!;
-    reset.addEventListener("click", () => {
-      this.sounds.click();
-      this.preview.resetView();
-      chargeInput.value = "0";
-      chargeValue.textContent = "0%";
-      this.inspectedId = this.equippedId();
-      this.refreshBoard();
-    });
-    chargeInput.addEventListener("input", () => {
-      const v = Number(chargeInput.value) / 100;
-      chargeValue.textContent = `${Math.round(v * 100)}%`;
-      this.preview.setCharge(v);
-    });
   }
 
   // ------------------------------------------------------------------
@@ -254,11 +267,27 @@ export class CustomizeMenu {
   }
 
   private refreshBoard(): void {
+    this.renderHeading();
     this.renderSub();
     this.renderToolbar();
     this.renderGrid();
     this.renderFooter();
     this.renderPreviewCaption();
+  }
+
+  /** "CHOISIR UN SKIN · 5 skins disponibles" above the grid. */
+  private renderHeading(): void {
+    const total = this.currentCards().length;
+    if (this.tab === "weapons") {
+      this.boardTitleEl.textContent = "CHOISIR UN SKIN";
+      this.boardCountEl.textContent = `${total} skin${total > 1 ? "s" : ""} disponible${total > 1 ? "s" : ""}`;
+    } else if (this.tab === "character") {
+      this.boardTitleEl.textContent = "TON HARICOT";
+      this.boardCountEl.textContent = `${total} objet${total > 1 ? "s" : ""} · bientôt`;
+    } else {
+      this.boardTitleEl.textContent = "EMOTES";
+      this.boardCountEl.textContent = `${total} emote${total > 1 ? "s" : ""} · bientôt`;
+    }
   }
 
   private inspectedCard(): SkinCard | null {
@@ -273,29 +302,37 @@ export class CustomizeMenu {
   private renderSub(): void {
     this.subEl.innerHTML = "";
     if (this.tab === "weapons") {
+      // Weapon picker: icon · <select> · chevron, styled like the mock's dropdown.
+      const wrap = document.createElement("label");
+      wrap.className = "cz-weapon-select";
+      wrap.innerHTML = `
+        <span class="cz-subtab-icon"></span>
+        <select aria-label="Arme"></select>
+        <svg class="cz-chevron" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      `;
+      this.mountIcon(wrap.querySelector(".cz-subtab-icon")!, this.weaponSet.weapon, DEFAULT_WEAPON_SKIN);
+      const select = wrap.querySelector<HTMLSelectElement>("select")!;
       for (const set of WEAPON_SKIN_SETS) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "cz-subtab cz-weapon-tab";
-        if (set === this.weaponSet) btn.classList.add("active");
+        const opt = document.createElement("option");
+        opt.value = set.weapon;
         const live = set.skins.some((s) => !s.locked && s.id !== DEFAULT_WEAPON_SKIN);
-        btn.innerHTML = `
-          <span class="cz-subtab-icon"></span>
-          <span class="cz-subtab-label">${set.weaponName}</span>
-          ${live ? `<span class="cz-subtab-badge">${set.skins.length - 1}</span>` : ""}
-        `;
-        this.mountIcon(btn.querySelector(".cz-subtab-icon")!, set.weapon, DEFAULT_WEAPON_SKIN);
-        btn.addEventListener("pointerenter", () => this.sounds.hover());
-        btn.addEventListener("click", () => {
-          if (set === this.weaponSet) return;
-          this.sounds.click();
-          this.weaponSet = set;
-          this.search = "";
-          this.inspectedId = this.equippedId();
-          this.refreshBoard();
-        });
-        this.subEl.appendChild(btn);
+        opt.textContent = live ? `${set.weaponName}  (${set.skins.length - 1} skins)` : set.weaponName;
+        opt.selected = set === this.weaponSet;
+        select.appendChild(opt);
       }
+      wrap.addEventListener("pointerenter", () => this.sounds.hover());
+      select.addEventListener("change", () => {
+        const set = WEAPON_SKIN_SETS.find((s) => s.weapon === select.value);
+        if (!set || set === this.weaponSet) return;
+        this.sounds.click();
+        this.weaponSet = set;
+        this.search = "";
+        this.inspectedId = this.equippedId();
+        this.refreshBoard();
+      });
+      this.subEl.appendChild(wrap);
     } else if (this.tab === "character") {
       for (const cat of CHARACTER_CATEGORIES) {
         const btn = document.createElement("button");
@@ -330,26 +367,27 @@ export class CustomizeMenu {
   // ------------------------------------------------------------------
 
   private renderToolbar(): void {
-    const total = this.currentCards().length;
-    const label =
-      this.tab === "weapons" ? "skins" : this.tab === "character" ? "objets" : "emotes";
+    const what = this.tab === "weapons" ? "un skin" : this.tab === "character" ? "un objet" : "une emote";
     this.toolbarEl.innerHTML = `
       <label class="cz-search">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="2.4"/>
           <path d="M15 15l5 5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
         </svg>
-        <input type="text" placeholder="Rechercher…" value="${escapeAttr(this.search)}">
+        <input type="text" placeholder="Rechercher ${what}..." value="${escapeAttr(this.search)}">
       </label>
-      <div class="cz-count"><b>${total}</b> ${label}</div>
-      <div class="cz-sort">Tri : <b>Rareté</b></div>
+      <div class="cz-sort" title="Les cartes sont triées par rareté">
+        <span>Rareté</span>
+        <svg class="cz-chevron" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
     `;
     const input = this.toolbarEl.querySelector<HTMLInputElement>("input")!;
     input.addEventListener("input", () => {
       this.search = input.value.trim();
       this.renderGrid();
-      const count = this.toolbarEl.querySelector<HTMLElement>(".cz-count b");
-      if (count) count.textContent = String(this.currentCards().length);
+      this.renderHeading();
     });
   }
 
@@ -378,11 +416,12 @@ export class CustomizeMenu {
       if (card.locked) el.classList.add("locked");
       const isEquipped = !card.locked && card.id === equipped;
       el.innerHTML = `
-        ${isEquipped ? `<div class="cz-card-check">✔</div>` : ""}
+        ${isEquipped ? `<div class="cz-card-check">✓ ÉQUIPÉ</div>` : ""}
+        <div class="cz-card-peek">APERÇU</div>
         ${card.locked ? `<div class="cz-card-lock">🔒</div>` : ""}
         <div class="cz-card-icon"></div>
         <div class="cz-card-name">${card.name}</div>
-        <div class="cz-card-rarity">${rarity.label}</div>
+        <div class="cz-card-rarity"><i class="cz-dot"></i>${rarity.label}</div>
       `;
       const holder = el.querySelector<HTMLElement>(".cz-card-icon")!;
       if (this.tab === "weapons") this.mountIcon(holder, this.weaponSet.weapon, card.id);
@@ -445,7 +484,6 @@ export class CustomizeMenu {
     if (this.tab === "weapons") {
       this.previewEl.classList.remove("placeholder");
       const isBasket = this.weaponSet.weapon === "GOOFY_BASKET";
-      this.chargeEl.style.display = isBasket ? "" : "none";
       const skinId = card && !card.locked ? card.id : DEFAULT_WEAPON_SKIN;
       // Live 3D preview only exists for the GoofyBasket today; the other
       // weapons show their icon snapshot instead.
@@ -459,13 +497,11 @@ export class CustomizeMenu {
         this.showPreviewFallback(this.weaponSet.weapon);
       }
       this.previewTitleEl.textContent = card ? card.name : this.weaponSet.weaponName;
-      this.previewSubEl.textContent = card
-        ? `${this.weaponSet.weaponName} · ${RARITIES[card.rarity].label}`
-        : "";
-      this.previewSubEl.style.setProperty("--rarity", card ? RARITIES[card.rarity].color : "#c9d3dd");
+      this.previewSubEl.textContent = card?.tagline ?? "";
+      this.previewOwnerEl.textContent = `Skin de ${titleCase(this.weaponSet.weaponName)}`;
+      this.setPreviewRarity(card);
     } else {
       this.previewEl.classList.add("placeholder");
-      this.chargeEl.style.display = "none";
       this.preview.setSkin(DEFAULT_WEAPON_SKIN);
       this.preview.canvas.style.display = "none";
       this.showPreviewFallback(null);
@@ -474,11 +510,23 @@ export class CustomizeMenu {
         : this.tab === "character"
           ? "TON HARICOT"
           : "EMOTES";
-      this.previewSubEl.textContent = card
-        ? `${RARITIES[card.rarity].label} · bientôt disponible`
-        : "Aperçu bientôt disponible";
-      this.previewSubEl.style.setProperty("--rarity", card ? RARITIES[card.rarity].color : "#c9d3dd");
+      this.previewSubEl.textContent = card ? (card.tagline ?? "Bientôt disponible") : "Aperçu bientôt disponible";
+      this.previewOwnerEl.textContent =
+        this.tab === "character" ? `Objet · ${this.characterCategory.label}` : "Emote";
+      this.setPreviewRarity(card);
     }
+  }
+
+  /** Rarity pill above the previewed name (hidden when nothing is inspected). */
+  private setPreviewRarity(card: SkinCard | null): void {
+    if (!card) {
+      this.previewRarityEl.style.display = "none";
+      return;
+    }
+    const rarity = RARITIES[card.rarity];
+    this.previewRarityEl.style.display = "";
+    this.previewRarityEl.textContent = rarity.label;
+    this.previewRarityEl.style.setProperty("--rarity", rarity.color);
   }
 
   private showPreviewFallback(weapon: PrimaryWeaponId | null): void {
@@ -513,33 +561,22 @@ export class CustomizeMenu {
     const card = this.inspectedCard();
     if (!card) {
       this.footerEl.innerHTML = "";
+      this.boardFootEl.textContent = "";
       return;
     }
-    const rarity = RARITIES[card.rarity];
     const equipped = this.tab === "weapons" && !card.locked && card.id === this.equippedId();
-    const typeLabel =
-      this.tab === "weapons"
-        ? `Skin · ${this.weaponSet.weaponName}`
-        : this.tab === "character"
-          ? `Objet · ${this.characterCategory.label}`
-          : "Emote";
+    const label = this.tab === "weapons" ? "CE SKIN" : this.tab === "character" ? "CET OBJET" : "CETTE EMOTE";
     this.footerEl.innerHTML = `
-      <div class="cz-footer-icon" style="--rarity:${rarity.color}"></div>
-      <div class="cz-footer-text">
-        <div class="cz-footer-name">${card.name}</div>
-        <div class="cz-footer-meta">
-          <span>${typeLabel}</span>
-          <span class="cz-footer-rarity" style="--rarity:${rarity.color}">${rarity.label}</span>
-          ${card.tagline ? `<span class="cz-footer-tagline">${card.tagline}</span>` : ""}
-        </div>
-      </div>
       <button class="cz-equip ${equipped ? "equipped" : ""}" type="button" ${card.locked || equipped ? "disabled" : ""}>
-        ${card.locked ? "🔒 BIENTÔT" : equipped ? "✔ ÉQUIPÉ" : "ÉQUIPER CE SKIN"}
+        ${card.locked ? "🔒 BIENTÔT" : equipped ? "✔ ÉQUIPÉ" : `ÉQUIPER ${label}`}
       </button>
     `;
-    const holder = this.footerEl.querySelector<HTMLElement>(".cz-footer-icon")!;
-    if (this.tab === "weapons") this.mountIcon(holder, this.weaponSet.weapon, card.id);
-    else this.mountPlaceholderIcon(holder, card);
+    // Right-side note under the grid: what the button will do.
+    this.boardFootEl.textContent = card.locked
+      ? "Cet élément arrive bientôt — il n'est pas encore équipable."
+      : equipped
+        ? `${card.name} est équipé · appliqué en partie et au respawn.`
+        : `Cosmétique uniquement · aucun impact sur le gameplay.`;
 
     if (pop) {
       this.footerEl.classList.remove("pop");
@@ -559,6 +596,11 @@ export class CustomizeMenu {
       this.renderFooter();
     });
   }
+}
+
+/** "GOOFY BASKET" → "Goofy Basket" (weapon names are stored upper-case). */
+function titleCase(value: string): string {
+  return value.toLowerCase().replace(/(^|[\s-])\p{L}/gu, (m) => m.toUpperCase());
 }
 
 function escapeAttr(value: string): string {

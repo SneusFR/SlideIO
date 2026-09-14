@@ -31,11 +31,11 @@ const FRAME_CSS = `
   #customize-menu.open { display: flex; animation: cz-fade 0.2s ease; }
   @keyframes cz-fade { from { opacity: 0; } to { opacity: 1; } }
 
-  /* One big parchment board: header / body (preview + grid) / footer. */
+  /* One big parchment board: header / body (preview panel + grid board). */
   #customize-menu .cz-frame {
     position: relative;
     display: grid;
-    grid-template-rows: auto 1fr auto;
+    grid-template-rows: auto 1fr;
     gap: 14px;
     width: min(1240px, 96vw);
     height: min(840px, 92vh);
@@ -166,11 +166,13 @@ const PREVIEW_CSS = `
     padding: 16px 16px 18px;
     color: #f5ead2;
   }
+  #customize-menu .cz-preview-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
   #customize-menu .cz-preview-badge {
-    position: absolute;
-    top: 12px;
-    left: 16px;
-    z-index: 2;
     padding: 4px 12px;
     background: linear-gradient(180deg, #a8d94a, #78ac1e);
     border: 2px solid #4c6b1f;
@@ -181,6 +183,46 @@ const PREVIEW_CSS = `
     color: #fff;
     text-shadow: 0 2px 0 rgba(60, 90, 20, 0.6);
   }
+  /* EFFETS pill toggle (aura / plasma of the previewed skin). */
+  #customize-menu .cz-fx {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    color: #ffd98a;
+    user-select: none;
+  }
+  #customize-menu .cz-fx-input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+  #customize-menu .cz-fx-track {
+    position: relative;
+    width: 38px;
+    height: 20px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.45);
+    border: 2px solid rgba(255, 226, 178, 0.35);
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  #customize-menu .cz-fx-knob {
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #d8c7a3;
+    box-shadow: 0 2px 3px rgba(0, 0, 0, 0.4);
+    transition: transform 0.15s cubic-bezier(0.2, 1.4, 0.4, 1), background 0.15s ease;
+  }
+  #customize-menu .cz-fx-input:checked ~ .cz-fx-track {
+    background: linear-gradient(180deg, #a8d94a, #78ac1e);
+    border-color: #4c6b1f;
+  }
+  #customize-menu .cz-fx-input:checked ~ .cz-fx-track .cz-fx-knob { transform: translateX(18px); background: #fff; }
+  #customize-menu .cz-fx:hover .cz-fx-track { border-color: rgba(255, 226, 178, 0.7); }
+
   #customize-menu .cz-preview-stage {
     position: relative;
     flex: 1;
@@ -223,103 +265,86 @@ const PREVIEW_CSS = `
   #customize-menu .cz-preview-bean { animation: cz-bob 2.4s ease-in-out infinite; }
   @keyframes cz-bob { 0%, 100% { translate: 0 0; } 50% { translate: 0 -8px; } }
 
-  #customize-menu .cz-preview-caption { margin-top: 12px; text-align: center; }
+  /* ‹ › turntable arrows, floating over the stage. */
+  #customize-menu .cz-preview-arrow {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 2;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.42);
+    border: 2px solid rgba(255, 226, 178, 0.35);
+    color: #fff6e0;
+    font-family: "Baloo 2", sans-serif;
+    font-weight: 800;
+    font-size: 24px;
+    line-height: 1;
+    padding: 0 0 3px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+  }
+  #customize-menu .cz-preview-arrow-l { left: 10px; }
+  #customize-menu .cz-preview-arrow-r { right: 10px; }
+  #customize-menu .cz-preview-arrow:hover { background: rgba(120, 172, 30, 0.75); border-color: #a8d94a; }
+  #customize-menu .cz-preview-arrow:active { transform: translateY(-50%) scale(0.92); }
+  #customize-menu .cz-preview-hint {
+    margin-top: 8px;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    color: rgba(255, 226, 178, 0.55);
+    text-transform: uppercase;
+  }
+
+  /* Caption: rarity pill · NAME · tagline · "Skin de …" */
+  #customize-menu .cz-preview-caption {
+    margin-top: 10px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  #customize-menu .cz-preview-rarity {
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 9px;
+    background: var(--rarity, #c9d3dd);
+    color: #10240c;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.22em;
+    box-shadow: 0 0 12px color-mix(in srgb, var(--rarity, #c9d3dd) 55%, transparent);
+  }
   #customize-menu .cz-preview-name {
     font-family: "Luckiest Guy", cursive;
-    font-size: 22px;
+    font-size: 24px;
     line-height: 1.05;
     color: #fff6e0;
     text-shadow: 0 3px 0 rgba(40, 26, 10, 0.65), 0 0 16px rgba(255, 214, 140, 0.25);
   }
   #customize-menu .cz-preview-sub {
-    margin-top: 4px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.16em;
-    color: var(--rarity, #ffd98a);
-  }
-
-  /* Cosmetic charge slider (0..1 → emissive / aura intensity). */
-  #customize-menu .cz-charge {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 12px;
-    padding: 8px 12px;
-    background: rgba(0, 0, 0, 0.22);
-    border-radius: 12px;
-  }
-  #customize-menu .cz-charge-label,
-  #customize-menu .cz-charge-value {
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.2em;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
     color: #ffd98a;
-    min-width: 42px;
+    opacity: 0.95;
+    min-height: 1em;
   }
-  #customize-menu .cz-charge-value { text-align: right; }
-  #customize-menu .cz-charge-input {
-    flex: 1;
-    appearance: none;
-    height: 8px;
-    border-radius: 4px;
-    background: linear-gradient(90deg, #78ac1e, #ffd75e 60%, #ff8a3a);
-    outline: none;
-    cursor: pointer;
-  }
-  #customize-menu .cz-charge-input::-webkit-slider-thumb {
-    appearance: none;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: #fff6e0;
-    border: 3px solid #5b3d21;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
-  }
-
-  #customize-menu .cz-turn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    margin-top: 10px;
-  }
-  #customize-menu .cz-turn-label {
+  #customize-menu .cz-preview-owner {
     font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.22em;
-    color: rgba(245, 234, 210, 0.8);
-  }
-  #customize-menu .cz-turn-btn {
-    width: 34px;
-    height: 34px;
-    border-radius: 50%;
-    border: 3px solid #3a2814;
-    background: linear-gradient(180deg, #a8d94a, #78ac1e);
-    color: #fff;
-    font-size: 20px;
-    line-height: 1;
-    cursor: pointer;
-    box-shadow: 0 3px 0 #4c6b1f;
-    transition: transform 0.1s ease, box-shadow 0.1s ease, filter 0.15s ease;
-  }
-  #customize-menu .cz-turn-btn:hover { filter: brightness(1.1); }
-  #customize-menu .cz-turn-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 #4c6b1f; }
-  #customize-menu .cz-reset {
-    margin-top: 10px;
-    background: rgba(255, 248, 226, 0.08);
-    border: 2px solid rgba(255, 226, 178, 0.35);
-    border-radius: 12px;
-    color: #f5ead2;
-    font-family: "Baloo 2", sans-serif;
     font-weight: 700;
-    font-size: 11px;
     letter-spacing: 0.16em;
-    padding: 8px 12px;
-    cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease;
+    color: rgba(255, 226, 178, 0.6);
+    text-transform: uppercase;
   }
-  #customize-menu .cz-reset:hover { background: rgba(255, 248, 226, 0.18); border-color: #ffd98a; }
+  #customize-menu .cz-preview.placeholder .cz-preview-stage { cursor: default; }
+  #customize-menu .cz-preview.placeholder .cz-preview-arrow,
+  #customize-menu .cz-preview.placeholder .cz-preview-hint,
+  #customize-menu .cz-preview.placeholder .cz-fx { visibility: hidden; }
 `;
 
 const BOARD_CSS = `
@@ -330,10 +355,92 @@ const BOARD_CSS = `
     min-height: 0;
     gap: 12px;
   }
+  /* Head row: "CHOISIR UN SKIN · 5 skins disponibles" on the left, weapon picker / categories on the right. */
+  #customize-menu .cz-board-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  #customize-menu .cz-board-title {
+    font-family: "Luckiest Guy", cursive;
+    font-size: 22px;
+    line-height: 1;
+    color: #5b3d21;
+    letter-spacing: 0.04em;
+    text-shadow: 0 2px 0 rgba(255, 248, 226, 0.9);
+  }
+  #customize-menu .cz-board-count {
+    margin-top: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: #7d9a3c;
+    text-transform: uppercase;
+  }
   #customize-menu .cz-sub {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+  }
+  /* Weapon dropdown: icon · <select> · chevron, same chrome as the sub-tabs. */
+  #customize-menu .cz-weapon-select {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px 5px 6px;
+    background: rgba(255, 248, 226, 0.85);
+    border: 2px solid #c9b48a;
+    border-radius: 14px;
+    color: #5b3d21;
+    cursor: pointer;
+    transition: border-color 0.15s ease;
+  }
+  #customize-menu .cz-weapon-select:hover,
+  #customize-menu .cz-weapon-select:focus-within { border-color: #78ac1e; }
+  #customize-menu .cz-weapon-select select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    border: 0;
+    outline: none;
+    padding-right: 22px;
+    color: #5b3d21;
+    font-family: "Baloo 2", sans-serif;
+    font-weight: 800;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+  }
+  #customize-menu .cz-weapon-select select option { color: #4a3117; background: #f4e8ca; }
+  #customize-menu .cz-chevron {
+    position: absolute;
+    right: 10px;
+    width: 14px;
+    height: 14px;
+    pointer-events: none;
+    color: #7a5b33;
+  }
+  #customize-menu .cz-sort {
+    position: relative;
+    display: flex;
+    align-items: center;
+    padding: 8px 32px 8px 14px;
+    background: rgba(255, 248, 226, 0.85);
+    border: 2px solid #c9b48a;
+    border-radius: 14px;
+    cursor: default;
+  }
+  #customize-menu .cz-board-foot {
+    min-height: 16px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: #7a5b33;
+    text-align: right;
+    padding: 0 6px;
   }
   #customize-menu .cz-subtab {
     position: relative;
@@ -429,7 +536,6 @@ const BOARD_CSS = `
     font-size: 13px;
     user-select: text;
   }
-  #customize-menu .cz-count,
   #customize-menu .cz-sort {
     font-size: 11px;
     font-weight: 700;
@@ -437,8 +543,6 @@ const BOARD_CSS = `
     color: #7a5b33;
     white-space: nowrap;
   }
-  #customize-menu .cz-count b,
-  #customize-menu .cz-sort b { color: #4c6b1f; }
 `;
 
 
@@ -540,106 +644,75 @@ const CARDS_CSS = `
     text-shadow: 0 2px 3px rgba(0, 0, 0, 0.5);
   }
   #customize-menu .cz-card-rarity {
+    display: flex;
+    align-items: center;
+    gap: 5px;
     font-size: 9px;
     font-weight: 800;
     letter-spacing: 0.22em;
     color: var(--rarity);
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
   }
-  #customize-menu .cz-card-check {
-    position: absolute;
-    top: -10px;
-    right: -8px;
-    width: 30px;
-    height: 30px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(180deg, #a8d94a, #78ac1e);
-    border: 3px solid #ffffff;
+  #customize-menu .cz-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
+    background: var(--rarity);
+    box-shadow: 0 0 6px var(--rarity);
+  }
+  /* Corner badges: "✓ ÉQUIPÉ" (green, always) and "APERÇU" (only on the inspected card). */
+  #customize-menu .cz-card-check,
+  #customize-menu .cz-card-peek {
+    position: absolute;
+    top: -9px;
+    padding: 3px 9px;
+    border-radius: 9px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.16em;
     color: #fff;
-    font-size: 14px;
     box-shadow: 0 3px 6px rgba(0, 0, 0, 0.35);
     z-index: 1;
+    white-space: nowrap;
   }
+  #customize-menu .cz-card-check {
+    left: 10px;
+    background: linear-gradient(180deg, #a8d94a, #78ac1e);
+    border: 2px solid #ffffff;
+    text-shadow: 0 1px 0 rgba(60, 90, 20, 0.6);
+  }
+  #customize-menu .cz-card-peek {
+    right: 10px;
+    background: linear-gradient(180deg, #ffd75e, #e0a72e);
+    border: 2px solid #ffffff;
+    color: #4a3117;
+    display: none;
+  }
+  #customize-menu .cz-card.inspected .cz-card-peek { display: block; }
+  /* Both badges on the same card: keep them from overlapping. */
+  #customize-menu .cz-card.inspected .cz-card-check + .cz-card-peek { right: 10px; }
   #customize-menu .cz-card-lock { position: absolute; top: 8px; right: 10px; font-size: 16px; z-index: 1; }
 `;
 
 
 const FOOTER_CSS = `
   /* ============ BOTTOM: inspected item · ÉQUIPER ============ */
+  /* Lives at the bottom of the wooden preview panel: one big ÉQUIPER button. */
   #customize-menu .cz-footer {
     display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 12px 16px;
-    background: rgba(107, 74, 43, 0.14);
-    border: 3px solid #6b4a2b;
-    border-radius: 20px;
-    min-height: 82px;
+    align-items: stretch;
+    margin-top: 14px;
+    min-height: 52px;
   }
   #customize-menu .cz-footer.pop { animation: cz-pop 0.28s cubic-bezier(0.2, 1.4, 0.4, 1); }
   @keyframes cz-pop {
     from { transform: translateY(8px) scale(0.985); opacity: 0.5; }
     to { transform: translateY(0) scale(1); opacity: 1; }
   }
-  #customize-menu .cz-footer-icon {
-    position: relative;
-    width: 72px;
-    height: 58px;
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 14px;
-    background: linear-gradient(160deg, #35618d 0%, #234666 55%, #1b3852 100%);
-    border: 3px solid var(--rarity, #6fa8d6);
-    box-shadow: 0 0 14px color-mix(in srgb, var(--rarity, #6fa8d6) 55%, transparent);
-    overflow: hidden;
-  }
-  #customize-menu .cz-footer-icon img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    opacity: 0;
-    transition: opacity 0.2s ease;
-    filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.45));
-  }
-  #customize-menu .cz-footer-icon img.ready { opacity: 1; }
-  #customize-menu .cz-footer-icon .cz-icon-soon { bottom: 3px; font-size: 7px; padding: 1px 5px; }
-  #customize-menu .cz-footer-icon .cz-icon-emoji { font-size: 30px; }
-  #customize-menu .cz-footer-text { flex: 1; min-width: 0; }
-  #customize-menu .cz-footer-name {
-    font-family: "Luckiest Guy", cursive;
-    font-size: 22px;
-    line-height: 1;
-    color: #5b3d21;
-    text-shadow: 0 2px 0 rgba(255, 248, 226, 0.9);
-  }
-  #customize-menu .cz-footer-meta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px 12px;
-    margin-top: 5px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    color: #7a5b33;
-  }
-  #customize-menu .cz-footer-rarity {
-    padding: 2px 10px;
-    border-radius: 9px;
-    background: var(--rarity);
-    color: #10240c;
-    letter-spacing: 0.18em;
-    font-size: 10px;
-  }
-  #customize-menu .cz-footer-tagline { font-weight: 600; letter-spacing: 0.02em; opacity: 0.85; }
 
   #customize-menu .cz-equip {
-    flex-shrink: 0;
+    flex: 1;
     background: linear-gradient(180deg, #a8d94a, #78ac1e);
     border: 3px solid #4c6b1f;
     border-radius: 16px;
@@ -671,10 +744,11 @@ const RESPONSIVE_CSS = `
     #customize-menu .cz-frame { width: 96vw; height: 94vh; padding: 14px; gap: 10px; }
     #customize-menu .cz-header { grid-template-columns: 1fr auto; }
     #customize-menu .cz-tabs { grid-column: 1 / -1; justify-content: center; order: 3; }
-    #customize-menu .cz-body { grid-template-columns: 1fr; grid-template-rows: 260px 1fr; }
+    #customize-menu .cz-body { grid-template-columns: 1fr; grid-template-rows: 340px 1fr; }
     #customize-menu .cz-subtitle { display: none; }
-    #customize-menu .cz-turn, #customize-menu .cz-reset { display: none; }
-    #customize-menu .cz-footer-tagline { display: none; }
+    #customize-menu .cz-preview-hint,
+    #customize-menu .cz-preview-owner { display: none; }
+    #customize-menu .cz-board-foot { text-align: center; }
   }
 `;
 

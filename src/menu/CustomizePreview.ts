@@ -4,8 +4,8 @@ import { GoofyBasketSkinSlot } from "../weapons/goofybasket/GoofyBasketSkinRunti
 
 /**
  * 3D preview of the CUSTOMIZE menu (left "APERÇU" panel): a real ball
- * instance (same GLB, same skin runtime as the game) on a small turntable,
- * lit like the in-game FP pass, with a cosmetic charge slider.
+ * instance (same GLB, same skin runtime as the game) on a small turntable
+ * (auto-rotation + drag to spin), lit like the in-game FP pass.
  *
  * The preview owns its OWN renderer + canvas and only renders while the
  * menu is open (its render loop stops on hide) — it never touches the
@@ -25,11 +25,12 @@ export class CustomizePreview {
   private running = false;
   private lastTime = 0;
   private clock = 0;
-  private charge = 0;
   private autoRotate = true;
   private spinVelocity = 0;
   private loaded = false;
   private disposed = false;
+  /** "EFFETS" toggle of the panel: aura / plasma on or off (materials stay). */
+  private effectsEnabled = true;
 
   constructor() {
     this.canvas = document.createElement("canvas");
@@ -42,8 +43,10 @@ export class CustomizePreview {
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
+    // Pulled back a bit so the ball (and its aura / plasma effects) breathes
+    // inside the taller stage instead of filling it edge to edge.
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.01, 20);
-    this.camera.position.set(0, 0.12, 1.55);
+    this.camera.position.set(0, 0.18, 2.6);
     this.camera.lookAt(0, 0, 0);
 
     // Warm key + cool fill + soft rim: reads "toy in the sun", like the icons.
@@ -90,8 +93,8 @@ export class CustomizePreview {
     try {
       const gltf = await loadGoofyBasketGltf();
       if (this.disposed) return;
-      // Instance clone (shared geometry + base materials). Sized so the ball
-      // fills the panel: local radius 0.125 × 3.6 ≈ 0.45 m at 1.55 m.
+      // Instance clone (shared geometry + base materials). Local radius
+      // 0.125 × 3.6 ≈ 0.45 m, framed with generous margin by the camera at 2.6 m.
       this.ball = instantiateGoofyBasket(gltf, 3.6);
       this.turntable.add(this.ball);
       this.skin.setTarget(this.ball);
@@ -106,23 +109,15 @@ export class CustomizePreview {
     this.skin.setSkin(skinId);
   }
 
-  /** Cosmetic charge 0..1 (slider) — drives emissive boosts / aura intensity. */
-  setCharge(charge01: number): void {
-    this.charge = THREE.MathUtils.clamp(charge01, 0, 1);
+  /** Show / hide the skin's ambient effects (aura, plasma…). */
+  setEffectsEnabled(enabled: boolean): void {
+    this.effectsEnabled = enabled;
   }
 
-  /** Nudge the turntable (◄ / ► buttons). */
-  spin(direction: -1 | 1): void {
+  /** Nudge the turntable by a fixed angle (‹ › arrows), then resume idle spin. */
+  nudge(direction: -1 | 1): void {
     this.autoRotate = false;
-    this.spinVelocity = direction * 6;
-  }
-
-  /** Back to the default framing + slow auto-rotation. */
-  resetView(): void {
-    this.turntable.rotation.set(0.18, 0, 0);
-    this.spinVelocity = 0;
-    this.autoRotate = true;
-    this.charge = 0;
+    this.spinVelocity = direction * 5.5;
   }
 
   /** Start rendering (menu opened). Idempotent. */
@@ -165,7 +160,8 @@ export class CustomizePreview {
     this.turntable.position.y = Math.sin(this.clock * 1.6) * 0.012;
 
     if (this.loaded) {
-      this.skin.update(this.clock, { charge: this.charge, visible: true, effectsEnabled: true });
+      // Idle hold pose (no charge): the skin's ambient effects only.
+      this.skin.update(this.clock, { charge: 0, visible: true, effectsEnabled: this.effectsEnabled });
     }
     this.renderer.render(this.scene, this.camera);
   }
