@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { NetworkWeaponId, isNetworkWeaponId } from "../../../shared/combat/NetworkWeapons";
+import { sanitizeWeaponSkin } from "../../../shared/combat/WeaponSkins";
 import { createWeaponMount } from "../../weapons/profiles/WeaponProfile";
 import { HexSniperProfile } from "../../weapons/profiles/HexSniperProfile";
 import { loadHexSniperGltf } from "../../weapons/hexsniper/HexSniperModel";
@@ -285,6 +286,10 @@ export class RemoteWeaponController {
   presentationClock: (() => { clip: string | null; time: number }) | null = null;
   /** Grounded state reader for the TP dribble floor fit (wired by RemotePlayer). */
   isGrounded: (() => boolean) | null = null;
+  /** Local viewer position reader (TP skin aura distance budget). */
+  viewerPosition: (() => THREE.Vector3 | null) | null = null;
+  /** SERVER-replicated cosmetic skin of the equipped weapon ("default" = base). */
+  private skinId = "default";
 
   // Procedural swing state (SPEAR legacy path only)
   private swingTimer = -1;
@@ -301,10 +306,21 @@ export class RemoteWeaponController {
     private readonly effectsParent: THREE.Object3D | null = null,
   ) {}
 
-  /** Mirror the server-synced weapon id (unknown strings are ignored). */
-  setWeapon(raw: string): void {
+  /**
+   * Mirror the server-synced weapon id (unknown strings are ignored) and
+   * its COSMETIC skin. A skin change ALONE never re-attaches the weapon
+   * (no phase reset, no equip clip): the skin is swapped on the displayed
+   * ball instance in place.
+   */
+  setWeapon(raw: string, rawSkin = "default"): void {
     if (!isNetworkWeaponId(raw)) return;
-    if (this.equipped === raw) return;
+    const skin = sanitizeWeaponSkin(raw, rawSkin);
+    const skinChanged = skin !== this.skinId;
+    this.skinId = skin;
+    if (this.equipped === raw) {
+      if (skinChanged) this.basket?.setSkin(skin);
+      return;
+    }
     this.equipped = raw;
     this.refreshDisplayed();
   }
@@ -570,8 +586,9 @@ export class RemoteWeaponController {
       this.maulEyes.update(dt);
     }
     // GoofyBasket TP ball: driven from the avatar's arm clock (same mixer).
+    // The skin aura budget uses the local viewer distance (far = cut).
     if (this.basket && this.presentationClock) {
-      this.basket.update(dt, this.presentationClock(), this.isGrounded?.() ?? true);
+      this.basket.update(dt, this.presentationClock(), this.isGrounded?.() ?? true, this.viewerPosition?.() ?? null);
     }
   }
 
@@ -777,7 +794,8 @@ export class RemoteWeaponController {
     let gltfScene: THREE.Object3D = socket;
     while (gltfScene.parent && gltfScene.parent !== this.characterModel) gltfScene = gltfScene.parent;
     if (gltfScene.parent !== this.characterModel) gltfScene = this.characterModel; // flat test hierarchies
-    this.basket = new GoofyBasketRemotePresentation(gltf, socket, gltfScene);
+    // Skin applied on THIS avatar's ball instance (server-replicated id).
+    this.basket = new GoofyBasketRemotePresentation(gltf, socket, gltfScene, this.skinId);
     this.displayed = NetworkWeaponId.GOOFY_BASKET;
     this.onArmedChanged?.(GoofyBasketProfile.id);
     if (this.basketPhase !== null) this.playBasketPhaseClip(this.basketPhase, this.basketPhaseTimer);

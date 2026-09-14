@@ -41,6 +41,8 @@ export interface NetworkPlayerInfo {
   respawnAt: number;
   // ---- Phase 5: SERVER-VALIDATED equipped weapon (NetworkWeaponId) ----
   weapon: string;
+  /** SERVER-VALIDATED cosmetic skin of the equipped weapon ("default" = base). */
+  skin: string;
   /** Smoothed RTT of this player (ms) — leaderboard display only. */
   pingMs: number;
 }
@@ -325,9 +327,13 @@ export class MultiplayerClient {
   // Phase 5 — weapon messages (client says WHAT IT DID, never results)
   // ------------------------------------------------------------------
 
-  /** Equip a weapon by its logical NetworkWeaponId (server validates). */
-  sendWeaponEquip(weapon: string): void {
-    this.room?.send("WEAPON_EQUIP", { weapon });
+  /**
+   * Equip a weapon by its logical NetworkWeaponId (server validates) with
+   * its COSMETIC skin id (validated too — never an asset path). Sending the
+   * same weapon with another skin only updates the replicated skin.
+   */
+  sendWeaponEquip(weapon: string, skin = "default"): void {
+    this.room?.send("WEAPON_EQUIP", { weapon, skin });
   }
 
   /**
@@ -398,6 +404,7 @@ export class MultiplayerClient {
         assists: p.assists ?? 0,
         respawnAt: p.respawnAt ?? 0,
         weapon: p.weapon ?? "PLASMA_RIFLE",
+        skin: p.skin ?? "default",
         pingMs: p.pingMs ?? 0,
       });
     });
@@ -519,10 +526,11 @@ export class MultiplayerClient {
           ? { px: message.px, py: num(message.py), pz: num(message.pz) }
           : {}),
         ...(typeof message.tid === "string" ? { tid: message.tid } : {}),
-        // GoofyBasket: projectile id / locked level / bounce number.
+        // GoofyBasket: projectile id / locked level / bounce number / cosmetic skin.
         ...(typeof message.pid === "number" ? { pid: message.pid } : {}),
         ...(typeof message.lv === "number" ? { lv: message.lv } : {}),
         ...(typeof message.bn === "number" ? { bn: message.bn } : {}),
+        ...(typeof message.sk === "string" ? { sk: message.sk } : {}),
       });
     });
     room.onMessage("HIT_CONFIRMED", (message: Partial<HitConfirmedEvent>) => {
@@ -666,6 +674,7 @@ interface NetworkPlayerLike {
   assists?: number;
   respawnAt?: number;
   weapon?: string;
+  skin?: string;
   pingMs?: number;
 }
 

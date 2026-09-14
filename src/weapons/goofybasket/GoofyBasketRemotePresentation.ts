@@ -4,6 +4,10 @@ import { createWeaponMount } from "../profiles/WeaponProfile";
 import { GoofyBasketProfile, GOOFY_BALL, GOOFY_TIMING, goofyClipName, type GoofyClipKind } from "./GoofyBasketProfile";
 import { instantiateGoofyBasket, createGoofyBasketPresentation } from "./GoofyBasketModel";
 import { GoofyBasketBallDriver, type BallClipInfo } from "./GoofyBasketBallDriver";
+import { GoofyBasketSkinSlot } from "./GoofyBasketSkinRuntime";
+
+/** Beyond this distance (m) from the viewer the TP aura is cut (materials stay). */
+const TP_EFFECTS_MAX_DISTANCE = 28;
 
 /** Locomotion run clip the TP Run layer is retimed to (see PotatoCharacter). */
 const RUN_GOOFY_DURATION = 0.8;
@@ -36,12 +40,18 @@ export class GoofyBasketRemotePresentation {
   private readonly gripM = new THREE.Matrix4();
   private readonly parentWorld = new THREE.Matrix4();
   private readonly floorProbe = new THREE.Vector3();
+  /** Cosmetic skin of this avatar's TP ball (`low` — nearby avatars; aura cut far away). */
+  private readonly skin = new GoofyBasketSkinSlot({ context: "tp", quality: "low" });
+  private skinClock = 0;
+  private readonly ballWorld = new THREE.Vector3();
 
   constructor(
     gltf: GLTF,
     private readonly socket: THREE.Object3D,
     /** The normalized glTF scene (NOT the unscaled wrapper). */
     private readonly gltfScene: THREE.Object3D,
+    /** Cosmetic skin id replicated by the server ("default" = base ball). */
+    skinId = "default",
   ) {
     this.mount = createWeaponMount("GoofyBasketMount", GoofyBasketProfile.tpMount);
     socket.add(this.mount);
@@ -63,6 +73,10 @@ export class GoofyBasketRemotePresentation {
     this.ball = instantiateGoofyBasket(gltf, GOOFY_BALL.freePresentationScale);
     this.ball.visible = false;
     gltfScene.add(this.ball);
+    // Skin on THIS avatar's ball instance only (never the shared template,
+    // never the whole character) — other players are never recolored.
+    this.skin.setSkin(skinId);
+    this.skin.setTarget(this.ball);
     void createGoofyBasketPresentation().then(({ presentation, library }) => {
       if (this.disposed || !this.ball) return;
       this.driver = new GoofyBasketBallDriver(
@@ -89,8 +103,19 @@ export class GoofyBasketRemotePresentation {
    * = world height of the avatar's feet when grounded (the model root),
    * null while airborne / sliding.
    */
-  update(dt: number, clock: { clip: string | null; time: number }, grounded: boolean): void {
-    if (!this.driver || !this.ball) return;
+  update(
+    dt: number,
+    clock: { clip: string | null; time: number },
+    grounded: boolean,
+    /** Viewer (local camera) world position — TP aura budget by distance; null = always on. */
+    viewer: THREE.Vector3 | null = null,
+  ): void {
+    if (!this.ball) return;
+    this.skinClock += dt;
+    if (!this.driver) {
+      this.skin.update(this.skinClock, { charge: 0, visible: false, effectsEnabled: false });
+      return;
+    }
     this.gltfScene.updateWorldMatrix(true, false);
     this.socket.updateWorldMatrix(true, false);
     this.mount.updateWorldMatrix(false, false);
@@ -104,17 +129,35 @@ export class GoofyBasketRemotePresentation {
       floorWorldY = this.floorProbe.y;
     }
     this.driver.update(dt, { clip: clock.clip, time: clock.time, grip: this.gripM, parentToWorld: this.parentWorld, floorWorldY });
+
+    // Cosmetic skin: aura follows the ball's EXACT visibility; cut beyond
+    // the distance budget (the textures / emissive stay applied).
+    let effectsEnabled = true;
+    if (viewer && this.ball.visible) {
+      this.ballWorld.setFromMatrixPosition(this.ball.matrixWorld);
+      effectsEnabled = this.ballWorld.distanceToSquared(viewer) <= TP_EFFECTS_MAX_DISTANCE * TP_EFFECTS_MAX_DISTANCE;
+    }
+    this.skin.update(this.skinClock, { charge: 0, visible: this.ball.visible, effectsEnabled });
+  }
+
+  /** Server-replicated cosmetic skin changed (skin alone: no phase reset). */
+  setSkin(skinId: string): void {
+    this.skin.setSkin(skinId);
   }
 
   /** Death / respawn: hide the ball and drop gathers. */
   reset(): void {
     this.driver?.reset();
     if (this.ball) this.ball.visible = false;
+    this.skin.update(this.skinClock, { charge: 0, visible: false, effectsEnabled: false });
   }
 
   dispose(): void {
     this.disposed = true;
     this.driver?.reset();
+    // Restore the instance materials BEFORE dropping the ball (the clone
+    // shares geometry + base materials with the template — never disposed).
+    this.skin.dispose();
     this.ball?.removeFromParent();
     this.ball = null;
     this.mount.removeFromParent();

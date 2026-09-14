@@ -35,6 +35,9 @@ import { SpearViewmodel } from "../weapons/SpearViewmodel";
 import { SpearConfig as spearCfg } from "../weapons/SpearConfig";
 import { SpearHUD } from "../ui/SpearHUD";
 import { loadLoadout, MeleeWeaponId, PrimaryWeaponId } from "../loadout/Loadout";
+import { loadWeaponSkin } from "../loadout/Cosmetics";
+import { getGoofyBasketSkinLibrary } from "../weapons/goofybasket/GoofyBasketSkinRuntime";
+import { GOOFY_BASKET_SKIN_IDS } from "../../shared/combat/WeaponSkins";
 import { ObliterreurWeapon } from "../weapons/obliterreur/ObliterreurWeapon";
 import { RevolverWeapon } from "../weapons/revolver/RevolverWeapon";
 import { loadRevolverTemplate } from "../weapons/revolver/RevolverModel";
@@ -47,6 +50,8 @@ import { HexSniperWeapon } from "../weapons/hexsniper/HexSniperWeapon";
 import { HexSniperWorldAdapter } from "../weapons/hexsniper/HexSniperWorldAdapter";
 import { HexSniperConfig as hexCfg } from "../weapons/hexsniper/HexSniperConfig";
 import { GoofyBasketWeapon } from "../weapons/goofybasket/GoofyBasketWeapon";
+import { instantiateGoofyBasket, loadGoofyBasketGltf } from "../weapons/goofybasket/GoofyBasketModel";
+import { GOOFY_BALL } from "../weapons/goofybasket/GoofyBasketProfile";
 import { ViewmodelSystem } from "../weapons/viewmodel/ViewmodelSystem";
 import { MusicSelectorHUD } from "../ui/MusicSelectorHUD";
 import { KillstreakManager, KILLSTREAK_SLOT_CODES } from "../killstreaks/KillstreakManager";
@@ -86,6 +91,7 @@ import {
   BASKET_ACTION_THROW,
   BASKET_ACTION_LAUNCH,
   BASKET_ACTION_BOUNCE,
+  BASKET_ACTION_REST,
   BASKET_ACTION_END,
 } from "../../shared/combat/NetworkWeapons";
 import type {
@@ -914,6 +920,28 @@ export class Game {
     } catch {
       /* pickup assets failed — nothing to warm */
     }
+    // GOOFY BASKET SKINS: the four pack skins own programs the base ball
+    // never compiles (textured PBR clones, additive aura shells / ribbons /
+    // embers, the patched lava surface). Dress one temporary clone per
+    // skin far below the map for the warm frames, then restore + drop
+    // them — the first skinned ball in a match never freezes.
+    const skinHandles: { dispose(): void }[] = [];
+    try {
+      const [library, gltf] = await Promise.all([getGoofyBasketSkinLibrary(), loadGoofyBasketGltf()]);
+      if (library) {
+        let seed = 1;
+        for (const skinId of GOOFY_BASKET_SKIN_IDS) {
+          const clone = instantiateGoofyBasket(gltf, GOOFY_BALL.projectileRootScale);
+          clone.position.copy(far);
+          const handle = library.apply(clone, skinId, { context: "fp", quality: "high", seed: seed++ });
+          handle.update(0.5, { charge: 0.5, visible: true, effectsEnabled: true });
+          skinHandles.push(handle);
+          temp.push(clone);
+        }
+      }
+    } catch (err) {
+      console.warn("GoofyBasket skins: warm-up skipped", err);
+    }
     for (const obj of temp) this.scene.add(obj);
     this.shockwave.spawn(far, 1, 0.5, this.phaseColor);
     this.particles.burst(far, 4, 1, 0.3, this.phaseColor, 0);
@@ -990,6 +1018,9 @@ export class Game {
     // 4. Cleanup: transient warm objects removed, pools back at rest.
     // The corpse fade clones return to the CorpseManager pool with their
     // compiled programs kept warm — the first real corpse reuses them.
+    // Skin handles first (restore the clones' base materials, free their
+    // private clones / FX) — the shared library textures stay alive.
+    for (const h of skinHandles) h.dispose();
     for (const obj of temp) this.scene.remove(obj);
     releaseCorpseMats?.();
     this.shockwave.update(10);
@@ -1021,8 +1052,14 @@ export class Game {
       this.hexSniper.reset(); // unequip cancels any tongue/bite in progress
       this.goofyBasket.reset(); // charge dropped; flying balls keep their lifecycle
     }
+    // COSMETICS: the equipped skin of the primary. Applied on the held ball
+    // instance in place — a skin change ALONE is NOT a weapon change (no
+    // reset, no attack cancel, the FP owner is untouched). Balls already in
+    // flight keep the skin captured at their creation.
+    this.goofyBasket.setSkin(loadWeaponSkin("GOOFY_BASKET"));
     // MULTIPLAYER: the server must know the equipped primary (loadout ids
-    // are IDENTICAL strings to NetworkWeaponId — no mapping table).
+    // are IDENTICAL strings to NetworkWeaponId — no mapping table) and its
+    // validated cosmetic skin (replicated to every client / late joiner).
     this.sendNetworkEquip();
     const melee = selection.melee;
     if (melee !== this.meleeWeapon) {
@@ -1941,6 +1978,8 @@ export class Game {
             dashing: this.movement.isDashing,
             floorWorldY: null,
           },
+          // The thrown ball inherits the shooter's momentum (shared rule).
+          velocity: this.movement.velocity,
         },
         this.fpOwner === "GOOFY_BASKET",
       );
@@ -1998,6 +2037,9 @@ export class Game {
 
     // Multiplayer (Phase 2): remote avatars + fixed-rate transform send.
     // Runs its own network accumulator — never one send per render frame.
+    // The local eye position feeds the remote cosmetic budgets (TP skin
+    // aura cut at distance) — read-only, never a gameplay input.
+    this.multiplayer?.remotes.setViewerPosition(this.fpsCamera.camera.position);
     this.multiplayer?.update(dt);
     this.netDebugHud?.update(dt); // F1 overlay (throttled; free when hidden)
     this.netAttackerAge += dt; // network damage-direction memory decays
@@ -2433,8 +2475,9 @@ export class Game {
     // BOUNCE / END) come back through handleLocalActionConfirmed.
     this.goofyBasket.onNetChargeStart = () => this.netSendAimedAction(WeaponActionType.BASKET_CHARGE_START);
     this.goofyBasket.onNetChargeCancel = () => this.netSendAimedAction(WeaponActionType.BASKET_CHARGE_CANCEL);
-    this.goofyBasket.onNetThrowRequest = (gatherDelayed) =>
-      this.netSendAimedAction(WeaponActionType.BASKET_THROW_REQUEST, undefined, gatherDelayed ? 1 : 0);
+    // px/py/pz = the shooter velocity the ball inherits (server-clamped).
+    this.goofyBasket.onNetThrowRequest = (gatherDelayed, shooterVelocity) =>
+      this.netSendAimedAction(WeaponActionType.BASKET_THROW_REQUEST, shooterVelocity, gatherDelayed ? 1 : 0);
   }
 
   /**
@@ -2466,6 +2509,9 @@ export class Game {
           this.basketVec3.set(event.hx ?? 0, event.hy ?? 1, event.hz ?? 0),
         );
         return;
+      case BASKET_ACTION_REST:
+        this.goofyBasket.onNetworkRest(event.pid, this.basketVec.set(event.ox, event.oy, event.oz));
+        return;
       case BASKET_ACTION_END:
         this.goofyBasket.onNetworkEnd(
           event.pid,
@@ -2481,11 +2527,18 @@ export class Game {
     switch (event.action) {
       case BASKET_ACTION_LAUNCH: {
         const level = (event.lv === 2 || event.lv === 3 ? event.lv : 1) as 1 | 2 | 3;
+        // `sk` = the cosmetic skin captured by the server at the throw —
+        // the ball keeps it even if its owner changes skin mid-flight.
+        // The thrower (event.playerId = its remote target key) is EXCLUDED
+        // from the local sweep so the ball never "hits" its own owner at
+        // spawn and freezes between server confirms.
         this.goofyBasket.projectiles.launchRemote(
           this.basketVec.set(event.ox, event.oy, event.oz),
           this.basketVec2.set(event.dx, event.dy, event.dz),
           level,
           event.pid,
+          event.sk ?? "default",
+          event.playerId,
         );
         return;
       }
@@ -2497,6 +2550,9 @@ export class Game {
           this.basketVec2.set(event.dx, event.dy, event.dz),
           this.basketVec3.set(event.hx ?? 0, event.hy ?? 1, event.hz ?? 0),
         );
+        return;
+      case BASKET_ACTION_REST:
+        this.goofyBasket.projectiles.applyServerRest(event.pid, this.basketVec.set(event.ox, event.oy, event.oz));
         return;
       case BASKET_ACTION_END:
         this.goofyBasket.projectiles.applyServerEnd(
@@ -2559,14 +2615,20 @@ export class Game {
     });
   }
 
-  /** WEAPON_EQUIP for the current primary (dedup unless forced). */
+  /**
+   * WEAPON_EQUIP for the current primary + its cosmetic skin (dedup on the
+   * PAIR unless forced): a skin change alone re-sends the same weapon with
+   * the new skin — the server treats it as a pure cosmetic update.
+   */
   private sendNetworkEquip(force = false): void {
     if (!this.multiplayer || !this.multiplayerClient?.isConnected) return;
     // Loadout ids match NetworkWeaponId one-to-one (Bass Blaster included).
     const weapon: string = this.primaryWeapon;
-    if (!force && weapon === this.lastSentEquip) return;
-    this.lastSentEquip = weapon;
-    this.multiplayerClient.sendWeaponEquip(weapon);
+    const skin = weapon === "GOOFY_BASKET" ? this.goofyBasket.skin : "default";
+    const key = `${weapon}|${skin}`;
+    if (!force && key === this.lastSentEquip) return;
+    this.lastSentEquip = key;
+    this.multiplayerClient.sendWeaponEquip(weapon, skin);
   }
 
   /** Plasma has no local callback: edge-detect + 10 Hz silent aim. */

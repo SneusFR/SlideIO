@@ -24,6 +24,8 @@ import {
 } from "../../../shared/combat/BasketProjectileSim";
 import { GOOFY_BALL } from "./GoofyBasketProfile";
 import { instantiateGoofyBasket, loadGoofyBasketGltf } from "./GoofyBasketModel";
+import { GoofyBasketSkinSlot } from "./GoofyBasketSkinRuntime";
+import { DEFAULT_WEAPON_SKIN } from "../../../shared/combat/WeaponSkins";
 
 const B = NetworkWeaponConfig.goofyBasket;
 /** Member of everything; collides with the STATIC world bit only (never characters / ragdolls). */
@@ -47,6 +49,10 @@ interface FlyingBall {
   remote: boolean;
   /** Reconciliation blend: displayed offset (predicted − server) decaying to zero. */
   offset: THREE.Vector3;
+  /** Cosmetic skin captured at creation (null = base ball, nothing to restore). */
+  skin: GoofyBasketSkinSlot | null;
+  /** Cosmetic clock of the skin effects (seconds since the spawn). */
+  skinClock: number;
 }
 
 /**
@@ -111,22 +117,75 @@ export class GoofyBasketProjectileSystem {
    * Launch a ball (local prediction or solo authority). Origin/velocity are
    * WORLD; returns the id to link a later server LAUNCH (reconciliation).
    */
-  launch(origin: THREE.Vector3, velocity: THREE.Vector3, level: 1 | 2 | 3, ownerKey: string | null, serverId: number | null): number | null {
+  launch(
+    origin: THREE.Vector3,
+    velocity: THREE.Vector3,
+    level: 1 | 2 | 3,
+    ownerKey: string | null,
+    serverId: number | null,
+    skinId: string = DEFAULT_WEAPON_SKIN,
+  ): number | null {
     const id = serverId ?? this.nextLocalId--;
-    return this.spawn(origin, velocity, level, ownerKey, id, false) ? id : null;
+    return this.spawn(origin, velocity, level, ownerKey, id, false, skinId) ? id : null;
   }
 
-  /** Remote replay: the server LAUNCH of another player's ball. */
-  launchRemote(origin: THREE.Vector3, velocity: THREE.Vector3, level: 1 | 2 | 3, serverId: number): void {
+  /**
+   * Remote replay: the server LAUNCH of another player's ball (`skinId` =
+   * the confirm's cosmetic id). `ownerKey` = the thrower's target key (its
+   * remote session id): the local sweep must EXCLUDE it, otherwise the ball
+   * spawns inside the thrower's own hitbox, "hits" it at distance 0 and
+   * freezes until the next server confirm — the ball then seemed to move
+   * only when the server reported a contact.
+   */
+  launchRemote(
+    origin: THREE.Vector3,
+    velocity: THREE.Vector3,
+    level: 1 | 2 | 3,
+    serverId: number,
+    skinId: string = DEFAULT_WEAPON_SKIN,
+    ownerKey: string | null = null,
+  ): void {
     this.removeById(serverId);
-    this.spawn(origin, velocity, level, null, serverId, true);
+    this.spawn(origin, velocity, level, ownerKey, serverId, true, skinId);
   }
 
-  private spawn(origin: THREE.Vector3, velocity: THREE.Vector3, level: 1 | 2 | 3, ownerKey: string | null, id: number, remote: boolean): boolean {
+  /**
+   * Nearest STATIC world hit along a ray (m), or null — the shared launch
+   * resolution keeps the hand start point out of geometry with it.
+   */
+  raycastWorld(from: BasketVec3, dir: BasketVec3, maxDist: number): number | null {
+    const hit = this.physics.world.castRay(
+      new RAPIER.Ray({ x: from.x, y: from.y, z: from.z }, { x: dir.x, y: dir.y, z: dir.z }),
+      maxDist,
+      true,
+      undefined,
+      WORLD_ONLY_GROUPS,
+    );
+    return hit ? hit.timeOfImpact : null;
+  }
+
+  private spawn(
+    origin: THREE.Vector3,
+    velocity: THREE.Vector3,
+    level: 1 | 2 | 3,
+    ownerKey: string | null,
+    id: number,
+    remote: boolean,
+    skinId: string,
+  ): boolean {
     if (!this.gltf) return false;
     const root = instantiateGoofyBasket(this.gltf, GOOFY_BALL.projectileRootScale);
     root.position.copy(origin);
     this.scene.add(root);
+    // COSMETIC skin captured NOW (creation): a later skin change on the
+    // owner never recolors this ball. Projectiles run the `low` quality.
+    let skin: GoofyBasketSkinSlot | null = null;
+    if (skinId !== DEFAULT_WEAPON_SKIN) {
+      skin = new GoofyBasketSkinSlot({ context: "projectile", quality: "low", seed: Math.abs(id) * 3.7 });
+      skin.setSkin(skinId);
+      skin.setTarget(root);
+      skin.update(0, { charge: 0, visible: true, effectsEnabled: true });
+    }
     this.balls.push({
       root,
       state: createBasketProjectileState(origin, velocity, level),
@@ -135,6 +194,8 @@ export class GoofyBasketProjectileSystem {
       spinAxis: new THREE.Vector3(1, 0, 0),
       remote,
       offset: new THREE.Vector3(),
+      skin,
+      skinClock: 0,
     });
     return true;
   }
@@ -151,15 +212,38 @@ export class GoofyBasketProjectileSystem {
     this.snap(ball, origin, velocity);
   }
 
-  /** Server BOUNCE #`index` of `serverId`: snap the state after the bounce (dedup by count). */
+  /**
+   * Server BOUNCE #`index` of `serverId`: snap the state after the bounce.
+   * A bounce the local sim already predicted (same index) is a pure
+   * correction: the state is re-snapped ONLY when it drifted from the
+   * server (position / velocity beyond a small tolerance) — never skipped,
+   * otherwise a divergent local ball would only converge at the NEXT
+   * contact. Older indexes (late / duplicated confirms) are ignored.
+   */
   applyServerBounce(serverId: number, index: number, pos: THREE.Vector3, vel: THREE.Vector3, normal: THREE.Vector3): void {
     const ball = this.balls.find((b) => b.id === serverId);
-    if (!ball || index <= ball.state.bounceCount) return; // duplicate / already predicted
+    if (!ball || index < ball.state.bounceCount) return; // stale confirm
+    const predictedSame = index === ball.state.bounceCount;
+    if (predictedSame) {
+      const drift = this.tmp.set(ball.state.pos.x, ball.state.pos.y, ball.state.pos.z).distanceTo(pos);
+      const vDrift = this.tmp2.set(ball.state.vel.x, ball.state.vel.y, ball.state.vel.z).distanceTo(vel);
+      if (drift < 0.15 && vDrift < 0.5) return; // prediction matches — nothing to correct
+    }
     ball.offset.copy(ball.root.position).sub(pos);
     this.snap(ball, pos, vel);
+    ball.state.resting = false;
     ball.state.bounceCount = index;
     ball.state.bouncesLeft = B.throws[ball.state.level - 1].maxWorldBounces - index;
-    this.onBounce?.(pos, normal, ball.remote);
+    if (!predictedSame) this.onBounce?.(pos, normal, ball.remote);
+  }
+
+  /** Server REST of `serverId`: the ball sits at `pos` until its END (expiry). */
+  applyServerRest(serverId: number, pos: THREE.Vector3): void {
+    const ball = this.balls.find((b) => b.id === serverId);
+    if (!ball) return;
+    ball.offset.copy(ball.root.position).sub(pos);
+    this.snap(ball, pos, this.tmp2.set(0, 0, 0));
+    ball.state.resting = true;
   }
 
   /** Server END of `serverId`: remove (duplicates are no-ops). */
@@ -191,7 +275,10 @@ export class GoofyBasketProjectileSystem {
 
   /** Drop every ball silently (death cleanup / loadout swap). */
   clear(): void {
-    for (const b of this.balls) this.scene.remove(b.root);
+    for (const b of this.balls) {
+      b.skin?.dispose(); // restore the instance materials before the drop
+      this.scene.remove(b.root);
+    }
     this.balls.length = 0;
   }
 
@@ -210,12 +297,25 @@ export class GoofyBasketProjectileSystem {
           }
           continue;
         }
-        // Terminal event.
+        if (ev.type === "rest") {
+          // Not terminal: the ball sits there until its lifetime expires
+          // (the server REST confirm re-snaps the exact pose in multiplayer).
+          continue;
+        }
+        // Terminal event (player hit / expiry).
         if (ball.remote || this.networkAuthority) {
           // The SERVER decides the end (END confirm removes the ball): the
           // predicted ball simply stops at the contact — never a phantom
-          // flight, never a local damage call.
+          // flight, never a local damage call. The END confirm normally
+          // removes the ball at the shared lifetime; the local expiry is
+          // only a SAFETY NET one second later (a lost confirm never leaves
+          // an immortal ball).
+          if (ev.type === "expired") {
+            if (ball.state.age >= B.maxLifetimeSeconds + 1) ended = true;
+            break;
+          }
           ball.state.vel.x = ball.state.vel.y = ball.state.vel.z = 0;
+          ball.state.resting = true;
           break;
         }
         ended = true;
@@ -238,6 +338,11 @@ export class GoofyBasketProjectileSystem {
         this.tmp.set(0, 1, 0).cross(this.tmp2);
         if (this.tmp.lengthSq() > 1e-8) ball.spinAxis.copy(this.tmp).normalize();
         ball.root.rotateOnWorldAxis(ball.spinAxis, (speed / B.projectileRadius) * dt);
+      }
+      // Cosmetic skin effects (children of the ball root: they spin with it).
+      if (ball.skin) {
+        ball.skinClock += dt;
+        ball.skin.update(ball.skinClock, { charge: 0, visible: ball.root.visible, effectsEnabled: true });
       }
     }
   }
@@ -321,7 +426,10 @@ export class GoofyBasketProjectileSystem {
   }
 
   private remove(index: number): void {
-    // Geometry / materials are shared with the cached GLB — never disposed.
+    // Skin handle first: restores the original shared materials and frees
+    // only this instance's private clones / effects. Geometry and base
+    // materials are shared with the cached GLB — never disposed.
+    this.balls[index].skin?.dispose();
     this.scene.remove(this.balls[index].root);
     this.balls.splice(index, 1);
   }

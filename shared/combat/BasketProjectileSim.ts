@@ -51,16 +51,23 @@ export interface BasketProjectileState {
   vel: BasketVec3;
   age: number;
   level: 1 | 2 | 3;
-  /** World bounces still allowed before the next world contact ends it. */
+  /** World bounces still allowed before the ball comes to REST on the next world contact. */
   bouncesLeft: number;
   /** Bounces already performed (event numbering, dedup). */
   bounceCount: number;
+  /**
+   * True once the ball stopped on the world (budget spent / too slow /
+   * degenerate corner): it stays where it is, INERT (no more contacts, no
+   * damage), until the lifetime expires.
+   */
+  resting: boolean;
 }
 
 export type BasketStepEvent =
   | { type: "bounce"; index: number; pos: BasketVec3; vel: BasketVec3; normal: BasketVec3 }
   | { type: "hit"; targetId: string; point: BasketVec3 }
-  | { type: "world-end"; point: BasketVec3; normal: BasketVec3 }
+  /** The ball came to rest on the world (NOT terminal: it stays until expiry). */
+  | { type: "rest"; point: BasketVec3; normal: BasketVec3 }
   | { type: "expired"; point: BasketVec3 };
 
 export function createBasketProjectileState(
@@ -76,14 +83,145 @@ export function createBasketProjectileState(
     level,
     bouncesLeft: cfg.throws[level - 1].maxWorldBounces,
     bounceCount: 0,
+    resting: false,
   };
 }
 
-/** Initial velocity = validated aim direction × level speed (NO added lift). */
-export function basketLaunchVelocity(dir: BasketVec3, level: 1 | 2 | 3): BasketVec3 {
-  const speed = NetworkWeaponConfig.goofyBasket.throws[level - 1].speed;
-  const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
-  return { x: (dir.x / len) * speed, y: (dir.y / len) * speed, z: (dir.z / len) * speed };
+function normalizeOrZero(v: BasketVec3): BasketVec3 {
+  const len = Math.hypot(v.x, v.y, v.z);
+  return len > 1e-9 ? { x: v.x / len, y: v.y / len, z: v.z / len } : { x: 0, y: 0, z: 0 };
+}
+
+/**
+ * Aim-frame basis for the launch: `right` = aim × worldUp (flat), `down` =
+ * −worldUp. A near-vertical aim falls back to a stable right vector so the
+ * hand offset never collapses.
+ */
+function launchBasis(dir: BasketVec3): { fwd: BasketVec3; right: BasketVec3 } {
+  const fwd = normalizeOrZero(dir);
+  // fwd × up (Y-up, right-handed) = (−fz, 0, fx): looking down −Z → right = +X.
+  let right = { x: -fwd.z, y: 0, z: fwd.x };
+  const len = Math.hypot(right.x, right.z);
+  right = len > 1e-4 ? { x: right.x / len, y: 0, z: right.z / len } : { x: 1, y: 0, z: 0 };
+  return { fwd, right };
+}
+
+/**
+ * WORLD launch point of the ball for a shooter eye `eye` aiming along
+ * `dir`: the RIGHT HAND (eye + right / down / forward offsets in the aim
+ * frame) — the ball never pops out of the head. Shared by the shooter's
+ * prediction and the server so both create the ball at the same point.
+ */
+export function basketLaunchOrigin(eye: BasketVec3, dir: BasketVec3): BasketVec3 {
+  const o = NetworkWeaponConfig.goofyBasket.launchOffset;
+  const { fwd, right } = launchBasis(dir);
+  return {
+    x: eye.x + right.x * o.right + fwd.x * o.forward,
+    y: eye.y - o.down + fwd.y * o.forward,
+    z: eye.z + right.z * o.right + fwd.z * o.forward,
+  };
+}
+
+/**
+ * Initial velocity of the ball (m/s), SHARED rule:
+ *   1. direction = from the hand launch point toward the eye aim line at
+ *      `launchConvergeDistance` (the ball rejoins the crosshair, no lift);
+ *   2. magnitude = level speed + the shooter's momentum along that line
+ *      (forward factor; never negative — a backpedalling shooter throws at
+ *      the plain level speed) — "the faster the player, the faster the ball";
+ *   3. plus the perpendicular shooter velocity × lateral factor (readable
+ *      from a strafing / sliding player).
+ * `shooterVel` may be omitted (standing shooter / legacy callers).
+ */
+export function basketLaunchVelocity(
+  dir: BasketVec3,
+  level: 1 | 2 | 3,
+  shooterVel: BasketVec3 | null = null,
+  eye: BasketVec3 | null = null,
+): BasketVec3 {
+  const cfg = NetworkWeaponConfig.goofyBasket;
+  const speed = cfg.throws[level - 1].speed;
+  const fwd = normalizeOrZero(dir);
+  let d = fwd;
+  if (eye) {
+    // Converge from the hand toward the point the eye aims at.
+    const origin = basketLaunchOrigin(eye, fwd);
+    const target = {
+      x: eye.x + fwd.x * cfg.launchConvergeDistance,
+      y: eye.y + fwd.y * cfg.launchConvergeDistance,
+      z: eye.z + fwd.z * cfg.launchConvergeDistance,
+    };
+    const conv = normalizeOrZero({ x: target.x - origin.x, y: target.y - origin.y, z: target.z - origin.z });
+    if (conv.x !== 0 || conv.y !== 0 || conv.z !== 0) d = conv;
+  }
+  let v = { x: d.x * speed, y: d.y * speed, z: d.z * speed };
+  if (shooterVel) {
+    let sv = { x: shooterVel.x, y: shooterVel.y, z: shooterVel.z };
+    const sLen = Math.hypot(sv.x, sv.y, sv.z);
+    if (!Number.isFinite(sLen)) sv = { x: 0, y: 0, z: 0 };
+    else if (sLen > cfg.maxShooterSpeed) {
+      const k = cfg.maxShooterSpeed / sLen;
+      sv = { x: sv.x * k, y: sv.y * k, z: sv.z * k };
+    }
+    // Signed projection on the aim: the perpendicular part is what remains
+    // once the WHOLE along-aim component is removed (so a backpedalling
+    // shooter's backward velocity never leaks into the lateral carry);
+    // only a POSITIVE along-aim component speeds the ball up.
+    const alongSigned = sv.x * d.x + sv.y * d.y + sv.z * d.z;
+    const perp = { x: sv.x - d.x * alongSigned, y: sv.y - d.y * alongSigned, z: sv.z - d.z * alongSigned };
+    // Only the horizontal part of the perpendicular velocity is carried: a
+    // jumping shooter must not lob the ball into the sky.
+    perp.y = 0;
+    const fwdGain = Math.max(0, alongSigned) * cfg.shooterMomentumForwardFactor;
+    v = {
+      x: v.x + d.x * fwdGain + perp.x * cfg.shooterMomentumLateralFactor,
+      y: v.y + d.y * fwdGain,
+      z: v.z + d.z * fwdGain + perp.z * cfg.shooterMomentumLateralFactor,
+    };
+  }
+  return v;
+}
+
+/**
+ * Nearest world hit distance along a ray, or null — injected by each side
+ * (server: shared AABB list; client: Rapier world). Used only to keep the
+ * hand launch point out of geometry.
+ */
+export type BasketWorldRaycast = (from: BasketVec3, dir: BasketVec3, maxDist: number) => number | null;
+
+/**
+ * SHARED launch resolution (server + shooter prediction): the ball starts
+ * at the RIGHT HAND point unless the eye → hand segment (plus one ball
+ * radius of margin) crosses geometry — then it starts at the eye pushed
+ * forward by its radius (or at the eye itself when even that is blocked).
+ * The velocity always converges toward the eye aim line and inherits the
+ * shooter's momentum.
+ */
+export function resolveBasketLaunch(
+  eye: BasketVec3,
+  dir: BasketVec3,
+  level: 1 | 2 | 3,
+  shooterVel: BasketVec3 | null,
+  raycast: BasketWorldRaycast,
+): { start: BasketVec3; vel: BasketVec3 } {
+  const r = NetworkWeaponConfig.goofyBasket.projectileRadius;
+  const fwd = normalizeOrZero(dir);
+  const hand = basketLaunchOrigin(eye, fwd);
+  const toHand = { x: hand.x - eye.x, y: hand.y - eye.y, z: hand.z - eye.z };
+  const handDist = Math.hypot(toHand.x, toHand.y, toHand.z);
+  const handDir = normalizeOrZero(toHand);
+  const handBlocked = handDist > 1e-6 && raycast(eye, handDir, handDist + r) !== null;
+  let start: BasketVec3;
+  let velEye: BasketVec3 | null;
+  if (!handBlocked) {
+    start = hand;
+    velEye = eye; // converge from the hand toward the crosshair
+  } else {
+    const exitBlocked = raycast(eye, fwd, r * 1.5) !== null;
+    start = exitBlocked ? { ...eye } : { x: eye.x + fwd.x * r, y: eye.y + fwd.y * r, z: eye.z + fwd.z * r };
+    velEye = null; // already on the aim line: straight along it
+  }
+  return { start, vel: basketLaunchVelocity(fwd, level, shooterVel, velEye) };
 }
 
 /**
@@ -96,8 +234,13 @@ export function basketLaunchVelocity(dir: BasketVec3, level: 1 | 2 | 3): BasketV
  * center off the surface by `surfaceClearance`, and continues the
  * REMAINING time along the new direction (never "move then test the
  * final point"). At most `maxContactsPerStep` contacts are resolved; a
- * further contact in the same step ends the ball (safety against a
- * degenerate corner).
+ * further contact in the same step puts the ball to rest (safety against
+ * a degenerate corner).
+ *
+ * A world contact with no bounce budget left (or a too-slow rebound) does
+ * NOT end the ball: it comes to REST at the contact (`rest` event, velocity
+ * zeroed) and stays visible until `maxLifetimeSeconds` — the only terminal
+ * events are a player `hit` and the lifetime `expired`.
  */
 export function stepBasketProjectile(
   p: BasketProjectileState,
@@ -115,6 +258,18 @@ export function stepBasketProjectile(
     events.push({ type: "expired", point: { ...p.pos } });
     return events;
   }
+  if (p.resting) return events; // inert until expiry
+
+  const rest = (n: BasketVec3, contactPoint: BasketVec3): BasketStepEvent[] => {
+    p.vel.x = p.vel.y = p.vel.z = 0;
+    p.resting = true;
+    // Sit on the surface (never inside it) — same clearance as a bounce.
+    p.pos.x += n.x * cfg.surfaceClearance;
+    p.pos.y += n.y * cfg.surfaceClearance;
+    p.pos.z += n.z * cfg.surfaceClearance;
+    events.push({ type: "rest", point: contactPoint, normal: { ...n } });
+    return events;
+  };
 
   // Semi-implicit gravity (velocity first, then the swept displacement).
   p.vel.y -= cfg.gravity * dt;
@@ -159,8 +314,7 @@ export function stepBasketProjectile(
     };
     contacts++;
     if (p.bouncesLeft <= 0 || contacts > cfg.maxContactsPerStep) {
-      events.push({ type: "world-end", point: contactPoint, normal: { ...n } });
-      return events;
+      return rest(n, contactPoint);
     }
     // Reflect: v' = v − (1 + e)(v·n)n on the normal component only, so the
     // tangential slide keeps its full speed (rolling feel on shallow hits).
@@ -185,8 +339,7 @@ export function stepBasketProjectile(
       normal: { ...n },
     });
     if (Math.hypot(p.vel.x, p.vel.y, p.vel.z) < cfg.minBounceSpeed) {
-      events.push({ type: "world-end", point: contactPoint, normal: { ...n } });
-      return events;
+      return rest(n, contactPoint);
     }
   }
   return events;

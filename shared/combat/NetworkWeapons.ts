@@ -80,7 +80,9 @@ export enum WeaponActionType {
   /** GOOFY BASKET: the input was released — the SERVER computes the level
    *  from its own charge clock, engages the Throw phase and creates the
    *  projectile at the authored release marker (never at this message).
-   *  `pi` = gather delay flag (1 = a dribble gather precedes the throw). */
+   *  `pi` = gather delay flag (1 = a dribble gather precedes the throw).
+   *  px/py/pz = the shooter's CURRENT velocity (m/s, clamped server-side)
+   *  — the ball inherits it (basketLaunchVelocity). */
   BASKET_THROW_REQUEST = "BASKET_THROW_REQUEST",
   /** VISUAL ONLY — the melee weapon is HELD (slot 2) / stowed again. The
    *  server-authoritative primary (WEAPON_EQUIP) never changes: this only
@@ -123,8 +125,12 @@ export const BASKET_ACTION_LAUNCH = "BASKET_LAUNCH";
 /** World bounce #`bn` of projectile `pid`: ox/oy/oz = position AFTER the
  *  bounce, dx/dy/dz = velocity after the bounce, hx/hy/hz = contact normal. */
 export const BASKET_ACTION_BOUNCE = "BASKET_BOUNCE";
+/** Projectile `pid` came to REST on the world (bounce budget spent / too
+ *  slow): ox/oy/oz = rest position, dx/dy/dz = 0, hx/hy/hz = surface
+ *  normal. NOT terminal — the ball stays until BASKET_END (expiry). */
+export const BASKET_ACTION_REST = "BASKET_REST";
 /** Projectile `pid` ended: hx/hy/hz = final point; `tid` = hit victim
- *  (absent on a world / expiry end). */
+ *  (absent on an expiry end). */
 export const BASKET_ACTION_END = "BASKET_END";
 
 /**
@@ -370,10 +376,11 @@ export const NetworkWeaponConfig = {
    * profile module asserts both stay coherent at load.
    */
   goofyBasket: {
-    /** Hold time (s) at which each level becomes available: L1 = tap. */
-    levelThresholdsSeconds: [0, 0.58, 1.0],
+    /** Hold time (s) at which each level becomes available: L1 = tap.
+     *  FAST paliers: L2 at a quarter second, L3 under half a second. */
+    levelThresholdsSeconds: [0, 0.25, 0.45],
     /** Charge time beyond which the level no longer grows (s). */
-    maxChargeSeconds: 1.0,
+    maxChargeSeconds: 0.45,
     /** Per level (index = level − 1): authored release marker inside the
      *  Throw clip, initial speed, world restitution, world bounce budget. */
     throws: [
@@ -385,7 +392,32 @@ export const NetworkWeaponConfig = {
     damage: 25,
     /** The first accepted player hit consumes the projectile. */
     firstPlayerHitConsumesProjectile: true,
-    maxLifetimeSeconds: 6,
+    /** Every ball lives EXACTLY this long (s): a ball whose bounce budget
+     *  is spent (or that slowed down) comes to REST and stays visible until
+     *  this expiry — it never vanishes early. A player hit still consumes it. */
+    maxLifetimeSeconds: 5,
+    /**
+     * Launch point relative to the shooter's EYE in the aim frame (m):
+     * right / down / forward — the ball leaves the RIGHT HAND, never the
+     * head. Its velocity converges toward the eye aim line so the throw
+     * still lands where the crosshair points (see basketLaunchOrigin).
+     */
+    launchOffset: { right: 0.42, down: 0.32, forward: 0.55 },
+    /** Distance (m) along the aim at which the hand-launched ball rejoins
+     *  the eye aim line (velocity direction convergence). */
+    launchConvergeDistance: 12,
+    /**
+     * SHOOTER MOMENTUM inheritance: the ball leaves at level speed PLUS
+     * this fraction of the shooter's velocity projected on the aim line
+     * (a fast player throws a faster ball). The component AGAINST the aim
+     * is ignored (a backward-running shooter never throws backwards) and
+     * the perpendicular part is carried at the lateral factor so the ball
+     * stays readable from a sliding / strafing player.
+     */
+    shooterMomentumForwardFactor: 1.0,
+    shooterMomentumLateralFactor: 0.35,
+    /** Plausibility clamp on the client-reported shooter speed (m/s). */
+    maxShooterSpeed: 40,
     /** Canonical WORLD collision radius (m) = authoredRadius 0.110 ×
      *  TP character normalization 2.693161874726703 (profile
      *  `ball.projectileWorldRadius`). Diameter ≈ 59.25 cm — intentional. */
@@ -417,6 +449,8 @@ export const NetworkWeaponConfig = {
 /** Client → server: equip a weapon (logical ID only, never asset paths). */
 export interface WeaponEquipMessage {
   weapon: string;
+  /** COSMETIC skin id (whitelist per weapon — see WeaponSkins.ts). Absent = default. */
+  skin?: string;
 }
 
 /** Client → server: a gameplay ACTION (origin/direction, never results). */
@@ -486,6 +520,9 @@ export interface WeaponActionConfirmedEvent {
   lv?: number;
   /** GOOFY BASKET: bounce number (1-based) — dedup of duplicated confirms. */
   bn?: number;
+  /** GOOFY BASKET: COSMETIC skin id captured when the projectile was created
+   *  (THROW / LAUNCH) — a later skin change never recolors a ball in flight. */
+  sk?: string;
 }
 
 /**

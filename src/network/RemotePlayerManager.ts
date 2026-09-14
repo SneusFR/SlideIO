@@ -211,6 +211,8 @@ class RemotePlayer {
     private readonly onDied: ((remote: RemotePlayer) => void) | null = null,
     /** WORLD scene (remote HexSniper tether lives there, not on the hand). */
     scene: THREE.Object3D | null = null,
+    /** Local viewer world position (shared, updated by the Game) — TP skin aura budget. */
+    viewer: THREE.Vector3 | null = null,
   ) {
     // SkeletonUtils clone: required for skinned meshes (shares geometry /
     // materials / textures with the cached template — cheap per player).
@@ -239,6 +241,8 @@ class RemotePlayer {
     // mixer — read after anim.update) + grounded state for the floor fit.
     this.weapons.presentationClock = () => this.anim.presentationClock();
     this.weapons.isGrounded = () => this.lastGrounded;
+    // Cosmetic skin aura budget: cut far from the local viewer (wired by the manager).
+    this.weapons.viewerPosition = () => viewer;
     this.group.add(this.createNametag(name));
     this.createHealthBar();
 
@@ -622,12 +626,19 @@ export class RemotePlayerManager {
   /** Death ragdoll sink (owned by the Game — optional in tests). */
   private corpses: CorpseManager | null = null;
   private readonly corpseVelocity = new THREE.Vector3();
+  /** Local viewer world position (copied by the Game each frame) — cosmetic budgets. */
+  private readonly viewer = new THREE.Vector3();
 
   // ---- Anomaly history (ring buffer for the F1 debug HUD) ----
   private readonly anomalies: NetworkAnomaly[] = [];
   private lastAnomalyConsoleAt = 0;
 
   constructor(private readonly scene: THREE.Scene) {}
+
+  /** Feed the local camera position (TP skin aura distance budget). */
+  setViewerPosition(position: THREE.Vector3): void {
+    this.viewer.copy(position);
+  }
 
   /** Load + cache the character asset (call once before the game starts). */
   async preload(): Promise<void> {
@@ -707,6 +718,7 @@ export class RemotePlayerManager {
           (text) => this.pushAnomaly(text),
           (dead) => this.spawnRemoteCorpse(dead),
           this.scene,
+          this.viewer,
         );
         this.remotes.set(p.id, remote);
         this.scene.add(remote.group);
@@ -715,8 +727,9 @@ export class RemotePlayerManager {
 
       // SERVER-owned combat state → avatar visibility + health bar.
       remote.setCombatState(p.health, p.maxHealth, p.isAlive);
-      // SERVER-validated equipped weapon → real GLB in the hand.
-      remote.weapons.setWeapon(p.weapon);
+      // SERVER-validated equipped weapon (+ its cosmetic skin) → real GLB
+      // in the hand. Late joiners read the same synced fields.
+      remote.weapons.setWeapon(p.weapon, p.skin);
 
       // ts = SERVER timestamp of the transform (never raw client clocks).
       // Dead players push nothing: the server refuses their transforms and

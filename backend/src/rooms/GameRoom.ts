@@ -248,7 +248,8 @@ export class GameRoom extends Room<GameRoomState> {
     this.onMessage("WEAPON_EQUIP", (client, message) => {
       if (this.state.phase !== GameRoomPhase.PLAYING) return;
       const player = this.state.players.get(client.sessionId);
-      if (player) this.weapons.handleEquip(player, (message as WeaponEquipMessage)?.weapon);
+      const equip = message as WeaponEquipMessage | undefined;
+      if (player) this.weapons.handleEquip(player, equip?.weapon, equip?.skin);
     });
     this.onMessage("WEAPON_ACTION", (client, message) => {
       if (this.state.phase !== GameRoomPhase.PLAYING) return;

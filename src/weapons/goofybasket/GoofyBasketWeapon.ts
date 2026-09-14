@@ -4,10 +4,12 @@ import { HitFeedbackManager } from "../../combat/HitFeedbackManager";
 import { PhysicsWorld } from "../../physics/PhysicsWorld";
 import { ViewmodelSystem } from "../viewmodel/ViewmodelSystem";
 import { NetworkWeaponConfig, goofyBasketLevelForHold } from "../../../shared/combat/NetworkWeapons";
-import { basketLaunchVelocity } from "../../../shared/combat/BasketProjectileSim";
+import { resolveBasketLaunch } from "../../../shared/combat/BasketProjectileSim";
 import { GOOFY_TIMING } from "./GoofyBasketProfile";
 import { GoofyBasketViewmodel, type GoofyViewmodelMotion } from "./GoofyBasketViewmodel";
 import { GoofyBasketProjectileSystem, type BasketTargetSource } from "./GoofyBasketProjectile";
+import { DEFAULT_WEAPON_SKIN, sanitizeWeaponSkin } from "../../../shared/combat/WeaponSkins";
+import { NetworkWeaponId } from "../../../shared/combat/NetworkWeapons";
 
 const B = NetworkWeaponConfig.goofyBasket;
 
@@ -19,6 +21,8 @@ export interface GoofyBasketFrameInput {
   /** Alive, primary held, pointer locked, not melee/knockdown-blocked. */
   canAct: boolean;
   motion: GoofyViewmodelMotion;
+  /** Shooter WORLD velocity this frame (m/s) — the thrown ball inherits it. */
+  velocity: THREE.Vector3;
 }
 
 /** Gameplay sequence of the ball in hand (independent from the presentation). */
@@ -56,7 +60,8 @@ export class GoofyBasketWeapon {
   /** Network hooks (wired by the Game in multiplayer). */
   onNetChargeStart: (() => void) | null = null;
   onNetChargeCancel: (() => void) | null = null;
-  onNetThrowRequest: ((gatherDelayed: boolean) => void) | null = null;
+  /** Release → server: gather flag + the shooter velocity the ball inherits. */
+  onNetThrowRequest: ((gatherDelayed: boolean, shooterVelocity: THREE.Vector3) => void) | null = null;
   /** Cosmetic: a ball left the hand (audio). */
   onRelease: ((level: 1 | 2 | 3) => void) | null = null;
   networkAuthority = false;
@@ -69,9 +74,19 @@ export class GoofyBasketWeapon {
   private viewmodelVisible = false;
   private inspecting = false;
   private ownerKey: string | null = null;
+  /**
+   * COSMETIC skin id of the held ball (validated). Captured into every
+   * projectile at ITS creation — a later skin change never recolors a ball
+   * already in flight (predicted or server-launched).
+   */
+  private skinId: string = DEFAULT_WEAPON_SKIN;
   /** Aim captured at the release (the marker launches along it, never re-aimed). */
   private readonly aimOrigin = new THREE.Vector3();
   private readonly aimDir = new THREE.Vector3();
+  /** Shooter velocity captured at the release (the ball inherits it). */
+  private readonly aimShooterVel = new THREE.Vector3();
+  /** Latest shooter velocity fed by the Game (read at the release). */
+  private readonly frameVelocity = new THREE.Vector3();
   private readonly tmpOrigin = new THREE.Vector3();
   private readonly tmpVel = new THREE.Vector3();
 
@@ -101,6 +116,24 @@ export class GoofyBasketWeapon {
 
   setTargets(targets: BasketTargetSource | null): void {
     this.projectiles.setTargets(targets);
+  }
+
+  /**
+   * Equip a COSMETIC skin on the held ball. Pure presentation: no reset,
+   * no sequence change, no network attack cancel — a skin change alone
+   * must never behave like a weapon swap. Balls already flying keep the
+   * skin captured at their creation.
+   */
+  setSkin(skinId: string): void {
+    const valid = sanitizeWeaponSkin(NetworkWeaponId.GOOFY_BASKET, skinId);
+    if (valid === this.skinId) return;
+    this.skinId = valid;
+    this.viewmodel.setSkin(valid);
+  }
+
+  /** Validated cosmetic skin id currently equipped on the held ball. */
+  get skin(): string {
+    return this.skinId;
   }
 
   /** True while a charge / throw / catch sequence is engaged (blocks slot switches like other weapons' busy states). */
@@ -226,15 +259,20 @@ export class GoofyBasketWeapon {
     if (s.kind === "throwing" && s.serverId === pid && !s.released) {
       // Server marker before ours (latency): launch now on the server data.
       s.released = true;
-      s.predictedId = this.projectiles.launch(origin, velocity, level, this.ownerKey, pid);
+      s.predictedId = this.projectiles.launch(origin, velocity, level, this.ownerKey, pid, this.skinId);
       this.onRelease?.(level);
       return;
     }
-    if (!this.projectiles.has(pid)) this.projectiles.launch(origin, velocity, level, this.ownerKey, pid);
+    if (!this.projectiles.has(pid)) this.projectiles.launch(origin, velocity, level, this.ownerKey, pid, this.skinId);
   }
 
   onNetworkBounce(pid: number, index: number, pos: THREE.Vector3, vel: THREE.Vector3, normal: THREE.Vector3): void {
     this.projectiles.applyServerBounce(pid, index, pos, vel, normal);
+  }
+
+  /** BASKET_REST: our ball came to rest on the server — snap it there until END. */
+  onNetworkRest(pid: number, pos: THREE.Vector3): void {
+    this.projectiles.applyServerRest(pid, pos);
   }
 
   onNetworkEnd(pid: number, point: THREE.Vector3): void {
@@ -253,6 +291,7 @@ export class GoofyBasketWeapon {
    */
   update(dt: number, input: GoofyBasketFrameInput, ownsPresentation: boolean): void {
     this.clock += dt;
+    this.frameVelocity.copy(input.velocity);
     const held = input.canAct && input.fireHeld;
 
     // ---- Input → sequence ----
@@ -318,6 +357,9 @@ export class GoofyBasketWeapon {
 
     // ---- Presentation (single mixer advance) ----
     if (ownsPresentation && this.viewmodel.isAttached) this.viewmodel.update(dt, input.motion);
+    // Cosmetic skin effects follow the ball EVERY frame (charge = the same
+    // normalized progress the HUD shows; visible = the real ball flag).
+    this.viewmodel.updateSkin(dt, this.chargeProgress);
 
     // ---- Flying balls (world) ----
     this.projectiles.update(dt);
@@ -338,6 +380,9 @@ export class GoofyBasketWeapon {
   private release(level: 1 | 2 | 3): void {
     this.camera.getWorldPosition(this.aimOrigin);
     this.camera.getWorldDirection(this.aimDir);
+    // The shooter momentum of THIS frame rides on the ball (shared rule);
+    // the same vector goes to the server so both compute the same launch.
+    this.aimShooterVel.copy(this.frameVelocity);
     const gatherDelayed = this.viewmodel.ballFree;
     if (gatherDelayed) {
       this.seq = { kind: "gathering", level, until: this.clock + GOOFY_TIMING.gather };
@@ -345,7 +390,7 @@ export class GoofyBasketWeapon {
     } else {
       this.beginThrow(level);
     }
-    this.onNetThrowRequest?.(gatherDelayed);
+    this.onNetThrowRequest?.(gatherDelayed, this.aimShooterVel);
   }
 
   private beginThrow(level: 1 | 2 | 3): void {
@@ -362,18 +407,24 @@ export class GoofyBasketWeapon {
   }
 
   /**
-   * Launch along the aim captured at the release. Origin = camera eye
-   * pushed forward by the ball radius (the FP-drawn ball's screen point is
-   * NOT a reliable world origin); a wall closer than that keeps the eye as
-   * origin — the first swept step then resolves the contact (never a
-   * tunnel, never a start inside geometry).
+   * Launch along the aim captured at the release with the SHARED rule
+   * (resolveBasketLaunch): the ball leaves the RIGHT HAND point (eye +
+   * right/down/forward offsets), converging on the crosshair line, at the
+   * level speed plus the shooter's own momentum. If the hand is inside
+   * geometry the eye (+ radius) is used instead — never a start inside a
+   * wall, never a tunnel (the first swept step resolves any contact).
    */
   private launchLocal(seq: Extract<Sequence, { kind: "throwing" }>): void {
-    const r = B.projectileRadius;
-    this.tmpOrigin.copy(this.aimOrigin).addScaledVector(this.aimDir, r);
-    const v = basketLaunchVelocity({ x: this.aimDir.x, y: this.aimDir.y, z: this.aimDir.z }, seq.level);
-    this.tmpVel.set(v.x, v.y, v.z);
-    seq.predictedId = this.projectiles.launch(this.tmpOrigin, this.tmpVel, seq.level, this.ownerKey, seq.serverId);
+    const { start, vel } = resolveBasketLaunch(
+      { x: this.aimOrigin.x, y: this.aimOrigin.y, z: this.aimOrigin.z },
+      { x: this.aimDir.x, y: this.aimDir.y, z: this.aimDir.z },
+      seq.level,
+      { x: this.aimShooterVel.x, y: this.aimShooterVel.y, z: this.aimShooterVel.z },
+      (from, dir, maxDist) => this.projectiles.raycastWorld(from, dir, maxDist),
+    );
+    this.tmpOrigin.set(start.x, start.y, start.z);
+    this.tmpVel.set(vel.x, vel.y, vel.z);
+    seq.predictedId = this.projectiles.launch(this.tmpOrigin, this.tmpVel, seq.level, this.ownerKey, seq.serverId, this.skinId);
     this.onRelease?.(seq.level);
     this.onCameraShake?.(0.1 + 0.1 * seq.level);
   }

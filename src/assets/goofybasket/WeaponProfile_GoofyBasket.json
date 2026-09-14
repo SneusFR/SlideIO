@@ -349,10 +349,10 @@
   "charge": {
     "levelThresholdsSeconds": [
       0,
-      0.58,
-      1.0
+      0.25,
+      0.45
     ],
-    "maxChargeSeconds": 1.0,
+    "maxChargeSeconds": 0.45,
     "sequence": [
       "Charge_L1",
       "Charge_L2",
@@ -393,10 +393,13 @@
   "projectile": {
     "damage": 25,
     "firstPlayerHitConsumesProjectile": true,
-    "maximumLifetimeSeconds": 6,
+    "maximumLifetimeSeconds": 5,
+    "restsWhenBounceBudgetSpent": true,
     "continuousSphereCollision": true,
     "ignoreOwner": true,
-    "launchDirection": "validatedAimDirection",
+    "launchOrigin": "rightHand (eye + right 0.42 / down 0.32 / forward 0.55 m, aim frame)",
+    "launchDirection": "validatedAimDirection (hand converges on the eye aim line at 12 m)",
+    "inheritsShooterMomentum": "forward component x1.0, horizontal lateral x0.35, never against the aim",
     "addedVerticalVelocity": 0,
     "forcedLob": false,
     "chargeAnimation": "Palm behind ball facing enemy, progressive backward retraction L1 to L3, direct forward push on release.",

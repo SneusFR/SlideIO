@@ -16,13 +16,15 @@ import {
   BASKET_ACTION_THROW,
   BASKET_ACTION_LAUNCH,
   BASKET_ACTION_BOUNCE,
+  BASKET_ACTION_REST,
   BASKET_ACTION_END,
   goofyBasketLevelForHold,
 } from "../../../shared/combat/NetworkWeapons";
+import { DEFAULT_WEAPON_SKIN, sanitizeWeaponSkin } from "../../../shared/combat/WeaponSkins";
 import {
   type BasketProjectileState,
-  basketLaunchVelocity,
   createBasketProjectileState,
+  resolveBasketLaunch,
   stepBasketProjectile,
 } from "../../../shared/combat/BasketProjectileSim";
 import { DamageType, HitZone } from "../combat/DamageTypes";
@@ -120,8 +122,12 @@ interface BasketThrowState {
   readyAt: number;
   origin: Vec3;
   dir: Vec3;
+  /** Shooter velocity reported at the release (clamped) — inherited by the ball. */
+  shooterVel: Vec3;
   launched: boolean;
   viewDelayMs: number;
+  /** COSMETIC skin captured at the throw (replicated on THROW / LAUNCH only). */
+  skin: string;
 }
 
 /** One in-flight GOOFY BASKET ball (server-simulated, shared integration). */
@@ -160,6 +166,8 @@ interface HammerAttackState {
 /** Per-player server-side weapon state (never trusted from the client). */
 class PlayerWeaponState {
   weapon: NetworkWeaponId = NetworkWeaponId.PLASMA_RIFLE;
+  /** COSMETIC skin of `weapon` (validated whitelist id) — never a gameplay input. */
+  skin: string = DEFAULT_WEAPON_SKIN;
   lastSeq = -1;
   // Plasma
   plasmaActive = false;
@@ -368,12 +376,24 @@ export class WeaponManager {
   // Message entry points
   // ------------------------------------------------------------------
 
-  /** WEAPON_EQUIP: logical ID only; refused for dead/unknown players. */
-  handleEquip(player: NetworkPlayer, rawWeapon: unknown): void {
+  /**
+   * WEAPON_EQUIP: logical ID (+ cosmetic skin id) only; refused for
+   * dead/unknown players. A SKIN CHANGE ALONE (same weapon) only updates
+   * the replicated skin: it never cancels a charge, a throw, a beam or an
+   * inspection — unlike a real weapon swap below.
+   */
+  handleEquip(player: NetworkPlayer, rawWeapon: unknown, rawSkin: unknown = DEFAULT_WEAPON_SKIN): void {
     if (!player.isAlive) return;
     if (!isNetworkWeaponId(rawWeapon)) return;
     const s = this.stateOf(player.id);
-    if (s.weapon === rawWeapon) return;
+    const skin = sanitizeWeaponSkin(rawWeapon, rawSkin);
+    if (s.weapon === rawWeapon) {
+      if (s.skin !== skin) {
+        s.skin = skin;
+        player.skin = skin; // synced schema state → all clients (late joiners included)
+      }
+      return;
+    }
     // Switching away drops continuous actions cleanly. Anchors never
     // survive a weapon swap (mirrors the local obliterreur.reset()).
     this.stopPlasma(player, s);
@@ -391,7 +411,9 @@ export class WeaponManager {
     s.basketChargeStart = 0;
     if (s.basketThrow && !s.basketThrow.launched) s.basketThrow = null;
     s.weapon = rawWeapon;
+    s.skin = skin;
     player.weapon = rawWeapon; // synced schema state → all clients
+    player.skin = skin;
   }
 
   /** WEAPON_ACTION: validates + executes one gameplay action. */
@@ -594,6 +616,15 @@ export class WeaponManager {
     const gather = msg.pi === 1 ? B.maxGatherDelaySeconds : 0;
     const startedAt = now + gather * 1000;
     const id = this.nextBasketId++;
+    // Shooter velocity (px/py/pz): the ball inherits the momentum along the
+    // aim. Plausibility-clamped to the shared max (never trusted raw); a
+    // missing / malformed value = standing shooter.
+    let shooterVel: Vec3 = this.readPoint(msg) ?? { x: 0, y: 0, z: 0 };
+    const sLen = Math.hypot(shooterVel.x, shooterVel.y, shooterVel.z);
+    if (sLen > B.maxShooterSpeed) {
+      const k = B.maxShooterSpeed / sLen;
+      shooterVel = { x: shooterVel.x * k, y: shooterVel.y * k, z: shooterVel.z * k };
+    }
     s.basketThrow = {
       id,
       level,
@@ -602,8 +633,12 @@ export class WeaponManager {
       readyAt: startedAt + (def.clipDuration + B.catchDuration) * 1000,
       origin,
       dir,
+      shooterVel,
       launched: false,
       viewDelayMs: now - this.resolveRewindTime(msg),
+      // COSMETIC: the skin equipped at the throw is captured with the
+      // projectile id — a later skin change never recolors this ball.
+      skin: s.skin,
     };
     s.inspecting = false;
     this.host.broadcastAction({
@@ -620,6 +655,7 @@ export class WeaponManager {
       dz: dir.z,
       pid: id,
       lv: level,
+      sk: s.skin,
     });
   }
 
@@ -634,24 +670,24 @@ export class WeaponManager {
   }
 
   /**
-   * Create the ball at the marker. Origin = the VALIDATED eye origin of the
-   * release (already within MAX_ORIGIN_DRIFT of the transform), pushed
-   * forward by the ball radius; a wall closer than that blocks the exit
-   * and the ball starts at the eye instead (never inside geometry).
+   * Create the ball at the marker. Origin = the RIGHT HAND launch point
+   * (shared rule from the VALIDATED eye origin + aim — never the head); if
+   * the segment eye → hand crosses map geometry (hand through a wall) the
+   * ball starts at the eye pushed forward by its radius instead (never
+   * inside geometry). Velocity = shared rule: level speed converging on
+   * the aim line + the shooter's inherited momentum.
    */
   private launchBasket(player: NetworkPlayer, t: BasketThrowState): void {
-    const r = W.goofyBasket.projectileRadius;
-    let start = t.origin;
-    const exitBlocked = raycastMap(t.origin, t.dir, r * 1.5, this.mapBoxes);
-    if (exitBlocked === null) start = pointAt(t.origin, t.dir, r);
-    const vel = basketLaunchVelocity(t.dir, t.level);
+    const { start, vel } = resolveBasketLaunch(t.origin, t.dir, t.level, t.shooterVel, (from, dir, maxDist) =>
+      raycastMap(from, dir, maxDist, this.mapBoxes),
+    );
     this.basketProjectiles.push({
       id: t.id,
       ownerId: player.id,
       state: createBasketProjectileState(start, vel, t.level),
       viewDelayMs: t.viewDelayMs,
     });
-    this.basketEvent(player.id, BASKET_ACTION_LAUNCH, start, vel, { pid: t.id, lv: t.level });
+    this.basketEvent(player.id, BASKET_ACTION_LAUNCH, start, vel, { pid: t.id, lv: t.level, sk: t.skin });
   }
 
   private tickBasketProjectiles(dt: number): void {
@@ -675,6 +711,17 @@ export class WeaponManager {
           this.basketEvent(p.ownerId, BASKET_ACTION_BOUNCE, ev.pos, ev.vel, {
             pid: p.id,
             bn: ev.index,
+            hx: ev.normal.x,
+            hy: ev.normal.y,
+            hz: ev.normal.z,
+          });
+          continue;
+        }
+        if (ev.type === "rest") {
+          // NOT terminal: the ball sits at the contact until its expiry.
+          // Clients snap theirs to the exact rest pose (zero velocity).
+          this.basketEvent(p.ownerId, BASKET_ACTION_REST, p.state.pos, p.state.vel, {
+            pid: p.id,
             hx: ev.normal.x,
             hy: ev.normal.y,
             hz: ev.normal.z,
@@ -715,7 +762,7 @@ export class WeaponManager {
     action: string,
     pos: Vec3,
     vel: Vec3,
-    extra: Partial<Pick<WeaponActionConfirmedEvent, "pid" | "lv" | "bn" | "hx" | "hy" | "hz" | "tid">>,
+    extra: Partial<Pick<WeaponActionConfirmedEvent, "pid" | "lv" | "bn" | "hx" | "hy" | "hz" | "tid" | "sk">>,
   ): void {
     this.host.broadcastAction({
       playerId: ownerId,

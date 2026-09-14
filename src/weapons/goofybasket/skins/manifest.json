@@ -1,0 +1,169 @@
+{
+  "version": "1.0.0",
+  "date": "2026-09-13",
+  "threeTested": "0.185.1",
+  "modelReplacement": false,
+  "cosmeticOnly": true,
+  "skins": [
+    {
+      "id": "mandarine",
+      "name": "Mandarine",
+      "rarity": "Peu commun",
+      "extraDrawCalls": {
+        "low": 0,
+        "high": 0
+      }
+    },
+    {
+      "id": "street_pop",
+      "name": "Street Pop",
+      "rarity": "Rare",
+      "extraDrawCalls": {
+        "low": 0,
+        "high": 0
+      }
+    },
+    {
+      "id": "haute_tension",
+      "name": "Haute Tension",
+      "rarity": "Epic",
+      "extraDrawCalls": {
+        "low": 1,
+        "high": 2
+      }
+    },
+    {
+      "id": "eclipse_solaire",
+      "name": "Éclipse solaire",
+      "rarity": "Légendaire",
+      "animatedSurface": true,
+      "extraDrawCalls": {
+        "low": 2,
+        "high": 4
+      }
+    }
+  ],
+  "referenceModels": {
+    "GoofyBasket.glb": {
+      "sha256": "0fe1cf18b9c36eaa115b8cc5be6ce9e85a3453293aa6924602aacd9b126fd493",
+      "included": false
+    },
+    "GoofyBasket_LOD1.glb": {
+      "sha256": "9eb93f2f68f5fdf6595a7a2b2853542d9904a643a89629a43ff142a685a4a09e",
+      "included": false
+    }
+  },
+  "textures": [
+    {
+      "file": "assets/textures/EclipseSolaire_BaseColor.png",
+      "size": [
+        1024,
+        1024
+      ],
+      "colorSpace": "srgb",
+      "flipY": false
+    },
+    {
+      "file": "assets/textures/EclipseSolaire_Emissive.png",
+      "size": [
+        1024,
+        1024
+      ],
+      "colorSpace": "srgb",
+      "flipY": false
+    },
+    {
+      "file": "assets/textures/HauteTension_BaseColor.png",
+      "size": [
+        1024,
+        1024
+      ],
+      "colorSpace": "srgb",
+      "flipY": false
+    },
+    {
+      "file": "assets/textures/HauteTension_Emissive.png",
+      "size": [
+        1024,
+        1024
+      ],
+      "colorSpace": "srgb",
+      "flipY": false
+    },
+    {
+      "file": "assets/textures/StreetPop_BaseColor.png",
+      "size": [
+        1024,
+        1024
+      ],
+      "colorSpace": "srgb",
+      "flipY": false
+    }
+  ],
+  "checksums": {
+    "apercus/collection.png": {
+      "bytes": 630897,
+      "sha256": "d8a40841b2a60d7e9938cf5fbeb76b2d43270f752f8c13ee8edf1d6c33fae7fc"
+    },
+    "apercus/eclipse_solaire.png": {
+      "bytes": 802669,
+      "sha256": "1732f23bcb971cde91ddfa5c72817cdf3f0d1f5545171ef62b11b85b4436f2e5"
+    },
+    "apercus/haute_tension.png": {
+      "bytes": 465379,
+      "sha256": "44a26520af1b7fe863742aa57d0e890638ae8dea5954bba2422448890b0f9b88"
+    },
+    "apercus/mandarine.png": {
+      "bytes": 209194,
+      "sha256": "8ff0dd47a7431a6eb500fbaf156e7aec9b64e5cc6b19527776a06d5d0afbdb7f"
+    },
+    "apercus/street_pop.png": {
+      "bytes": 483054,
+      "sha256": "f46e130150b0a342b35a2b60465427bce45041893fc2f3f02c0e00dad1b5cdd0"
+    },
+    "assets/textures/EclipseSolaire_BaseColor.png": {
+      "bytes": 711134,
+      "sha256": "036ecf89abe63ec232a78bac7aec946bc612ba9c68abcb5d07d66639bbb60b2a"
+    },
+    "assets/textures/EclipseSolaire_Emissive.png": {
+      "bytes": 334907,
+      "sha256": "d55aa9d5ac155a70160fec419677b2f3d64796b7a8f4cd2a73432d5246ccb706"
+    },
+    "assets/textures/HauteTension_BaseColor.png": {
+      "bytes": 255899,
+      "sha256": "cfcac18f5e99b1b8b8c0740727203e34567d72774506334ca3c94db1798b754c"
+    },
+    "assets/textures/HauteTension_Emissive.png": {
+      "bytes": 53695,
+      "sha256": "01d02650e7f0aa66baeca8a7f75403fc2314dafe927702f1d950cb8cfdb9f940"
+    },
+    "assets/textures/StreetPop_BaseColor.png": {
+      "bytes": 426965,
+      "sha256": "928b280afb705ebd4397c7363662f8cd06b00970783776b3617101d6e7b5c48b"
+    },
+    "CONTROLES.md": {
+      "bytes": 3707,
+      "sha256": "0ded8034805d1972bfef5f525011d0f138d5ef3b949c60369c06dc6ec40ef157"
+    },
+    "LISEZ_MOI.md": {
+      "bytes": 6269,
+      "sha256": "dbf84ba22e512cdd3cd5fb1f79c01d7a54f8d484f48c37c394d1c9c1829c67aa"
+    },
+    "PROMPT_CLINE.md": {
+      "bytes": 4713,
+      "sha256": "63bb07bda97e1975789e73720c77b32f606a5a7276d5ab9fcd799610fd5ae5af"
+    },
+    "runtime/BasketLavaSurface.ts": {
+      "bytes": 5629,
+      "sha256": "22c6218259ec948a54352719b185ff414598d47da7fdf3ebe59118da46a4c5aa"
+    },
+    "runtime/BasketSkinFX.ts": {
+      "bytes": 15026,
+      "sha256": "90569e28b150c3f9ca7cafd53df13c695e0de7b1fc5ed9c059cd4a481e7198b8"
+    },
+    "runtime/GoofyBasketSkins.ts": {
+      "bytes": 12361,
+      "sha256": "d53bc2d96ef1cb32a7005bb6a174aeb9183625f3843fdd2c194d344d24a1e188"
+    }
+  }
+}

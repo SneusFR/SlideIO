@@ -27,6 +27,7 @@ import {
   BASKET_ACTION_THROW,
   BASKET_ACTION_LAUNCH,
   BASKET_ACTION_BOUNCE,
+  BASKET_ACTION_REST,
   BASKET_ACTION_END,
 } from "../../../shared/combat/NetworkWeapons";
 import { HexSniperConfig as hexCfg } from "../../weapons/hexsniper/HexSniperConfig";
@@ -396,6 +397,7 @@ export class RemoteCombatVFXController {
         return;
       case BASKET_ACTION_LAUNCH:
       case BASKET_ACTION_BOUNCE:
+      case BASKET_ACTION_REST:
       case BASKET_ACTION_END:
         this.onBasketProjectile?.(ev);
         return;

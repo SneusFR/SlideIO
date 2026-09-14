@@ -431,12 +431,13 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
         trigger: "CLIC GAUCHE — TAP / MAINTENIR / RELÂCHER",
         name: "LANCER CHARGÉ",
         description:
-          "Un tap lance immédiatement au niveau 1. Maintenir prépare le niveau 2 puis 3 ; relâcher verrouille le niveau et engage le lancer dans la direction visée (aucun angle de cloche ajouté). Le ballon rebondit sur murs et sols selon son niveau, puis s'arrête ; le premier joueur touché est le seul.",
+          "Un tap lance immédiatement au niveau 1. Maintenir prépare le niveau 2 puis 3 ; relâcher verrouille le niveau et engage le lancer de la main droite dans la direction visée (aucun angle de cloche ajouté). Votre élan s'ajoute au ballon : plus vous allez vite, plus il part vite. Le ballon rebondit sur murs et sols selon son niveau, puis reste posé au sol jusqu'à sa disparition ; le premier joueur touché est le seul.",
         stats: [
           { label: "DÉGÂTS", value: `${gb.damage} PV` },
           { label: "NIVEAU 2 / 3", value: `${gb.levelThresholdsSeconds[1]} s / ${gb.levelThresholdsSeconds[2]} s` },
-          { label: "VITESSE", value: gb.throws.map((t) => t.speed).join(" / ") + " m/s" },
+          { label: "VITESSE", value: gb.throws.map((t) => t.speed).join(" / ") + " m/s + élan" },
           { label: "REBONDS DÉCOR", value: gb.throws.map((t) => t.maxWorldBounces).join(" / ") },
+          { label: "DURÉE DE VIE", value: `${gb.maxLifetimeSeconds} s` },
         ],
       },
       {

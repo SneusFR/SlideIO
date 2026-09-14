@@ -17,6 +17,7 @@ import {
 } from "./GoofyBasketModel";
 import { GoofyBasketBallDriver, type BallClipInfo } from "./GoofyBasketBallDriver";
 import type { BasketSample } from "./GoofyBasketPresentation";
+import { GoofyBasketSkinSlot } from "./GoofyBasketSkinRuntime";
 
 /** Per-frame locomotion snapshot handed by the Game (cosmetic only). */
 export interface GoofyViewmodelMotion {
@@ -77,6 +78,10 @@ export class GoofyBasketViewmodel {
   /** Dribble presentation state (grounded locomotion only). */
   private dribble: "none" | "start" | "run" | "catch" = "none";
   private readonly curveByClip = new Map<string, BallClipInfo>();
+  /** Cosmetic skin of the ONE FP ball (high quality — applied on the instance). */
+  private readonly skin = new GoofyBasketSkinSlot({ context: "fp", quality: "high" });
+  /** Cosmetic clock for the skin effects (owner loop — no extra RAF). */
+  private skinClock = 0;
 
   // Scratch
   private readonly gripM = new THREE.Matrix4();
@@ -101,6 +106,9 @@ export class GoofyBasketViewmodel {
       this.prepareViewmodelMaterials(this.ball);
       this.ball.visible = false;
       this.viewmodel.swayRoot.add(this.ball);
+      // Skin on the INSTANCE (never the shared template): the pack clones
+      // the per-instance materials again and shares only its textures.
+      this.skin.setTarget(this.ball);
       this.driver = new GoofyBasketBallDriver(
         "FP",
         curves.presentation,
@@ -151,6 +159,38 @@ export class GoofyBasketViewmodel {
   /** True while the ball is visually away from the hand (dribble bounce / gather). */
   get ballFree(): boolean {
     return this.driver?.isFree ?? false;
+  }
+
+  /** Cosmetic skin of the FP ball (validated id; "default" = base ball). */
+  setSkin(skinId: string): void {
+    this.skin.setSkin(skinId);
+  }
+
+  get skinId(): string {
+    return this.skin.skinId;
+  }
+
+  /**
+   * Cosmetic per-frame pass for the skin effects — called by the weapon
+   * controller EVERY frame (even while another owner holds the arms) so a
+   * hidden ball never keeps a ghost aura: `visible` follows the ball flag
+   * exactly (hidden after the release, during the Catch descent, etc.).
+   */
+  updateSkin(dt: number, charge01: number): void {
+    this.skinClock += dt;
+    this.skin.update(this.skinClock, {
+      charge: charge01,
+      visible: this.attached && this.ball !== null && this.ball.visible && this.viewmodel.visible,
+      effectsEnabled: true,
+    });
+  }
+
+  /** Full teardown (session end): restore the ball materials before dropping it. */
+  dispose(): void {
+    this.skin.dispose();
+    this.ball?.removeFromParent();
+    this.ball = null;
+    this.driver = null;
   }
 
 

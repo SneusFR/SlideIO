@@ -77,4 +77,10 @@ export class NetworkPlayer extends Schema {
    *  after validating a WEAPON_EQUIP message. Remote clients read this to
    *  attach the right weapon model to the character's hand. */
   @type("string") weapon = "PLASMA_RIFLE";
+
+  /** COSMETIC skin id of the equipped weapon — written ONLY by the server
+   *  after validating it against the shared per-weapon whitelist
+   *  (shared/combat/WeaponSkins.ts). Pure presentation: never read by any
+   *  gameplay rule. "default" = the base weapon materials. */
+  @type("string") skin = "default";
 }

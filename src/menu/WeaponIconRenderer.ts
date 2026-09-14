@@ -13,6 +13,8 @@ import poisonUrl from "../assets/Lance_poison_jeu.glb?url";
 import hexSniperUrl from "../assets/potato/HexSniper_Weapon.glb?url";
 // Goofy Basket = the ball LOD1 (light — plenty for a 384px icon).
 import goofyBasketUrl from "../assets/goofybasket/GoofyBasket_LOD1.glb?url";
+import { getGoofyBasketSkinLibrary } from "../weapons/goofybasket/GoofyBasketSkinRuntime";
+import { DEFAULT_WEAPON_SKIN, isGoofyBasketSkinId, sanitizeWeaponSkin } from "../../shared/combat/WeaponSkins";
 
 /**
  * Offscreen 3D icon factory for the Loadout menu.
@@ -49,18 +51,21 @@ export function hasWeaponIcon(id: string): boolean {
 
 /**
  * PNG data-URL of the weapon's rendered 3D model (null on any failure).
- * Safe to call repeatedly: the render happens exactly once per weapon.
+ * Safe to call repeatedly: the render happens exactly once per
+ * (weapon, skin) pair — the cache key includes the cosmetic skin id.
  */
-export function getWeaponIconUrl(id: string): Promise<string | null> {
+export function getWeaponIconUrl(id: string, skinId: string = DEFAULT_WEAPON_SKIN): Promise<string | null> {
   const url = MODEL_URLS[id];
   if (!url) return Promise.resolve(null);
-  let cached = iconCache.get(id);
+  const skin = sanitizeWeaponSkin(id, skinId);
+  const key = `${id}|${skin}`;
+  let cached = iconCache.get(key);
   if (!cached) {
-    cached = renderIcon(url).catch((err) => {
-      console.warn(`[loadout] weapon icon failed for ${id}`, err);
+    cached = renderIcon(url, id, skin).catch((err) => {
+      console.warn(`[loadout] weapon icon failed for ${key}`, err);
       return null;
     });
-    iconCache.set(id, cached);
+    iconCache.set(key, cached);
   }
   return cached;
 }
@@ -113,11 +118,30 @@ function releaseContextIfIdle(): void {
   ctx = null;
 }
 
-async function renderIcon(url: string): Promise<string | null> {
+async function renderIcon(url: string, weaponId: string, skinId: string): Promise<string | null> {
   pendingRenders++;
   try {
     const gltf = await new GLTFLoader().loadAsync(url);
     const { renderer, scene, camera } = getContext();
+
+    // COSMETIC skin (GoofyBasket only): applied on THIS freshly loaded
+    // instance with `context: "icon"` (materials only, no aura). The
+    // handle is disposed BEFORE the deep dispose below so the library's
+    // SHARED textures are restored out of the materials and never freed
+    // by the generic cleanup (ownership rules: the library owns them).
+    let skinHandle: { dispose(): void } | null = null;
+    if (weaponId === "GOOFY_BASKET" && isGoofyBasketSkinId(skinId)) {
+      const library = await getGoofyBasketSkinLibrary();
+      if (library) {
+        try {
+          const handle = library.apply(gltf.scene, skinId, { context: "icon", quality: "low", seed: 3 });
+          handle.update(0, { charge: 0, visible: true, effectsEnabled: false });
+          skinHandle = handle;
+        } catch (err) {
+          console.warn(`[loadout] skin "${skinId}" failed on the icon — base model used`, err);
+        }
+      }
+    }
 
     const staged = stageModel(gltf.scene);
     scene.add(staged);
@@ -125,6 +149,7 @@ async function renderIcon(url: string): Promise<string | null> {
     renderer.render(scene, camera);
     const dataUrl = renderer.domElement.toDataURL("image/png");
     scene.remove(staged);
+    skinHandle?.dispose(); // restore base materials first (shared textures safe)
     disposeDeep(staged);
     return dataUrl;
   } finally {

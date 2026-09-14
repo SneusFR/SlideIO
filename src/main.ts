@@ -1,5 +1,6 @@
 import { Game } from "./game/Game";
 import { LoadoutMenu } from "./menu/LoadoutMenu";
+import { CustomizeMenu } from "./menu/CustomizeMenu";
 import { MenuAudio } from "./menu/MenuAudio";
 import { MenuOverlay } from "./menu/MenuOverlay";
 import { LobbyBrowser } from "./menu/LobbyBrowser";
@@ -43,6 +44,7 @@ async function main(): Promise<void> {
   const sounds = new MenuAudio();
   void sounds.preload();
   const loadoutMenu = new LoadoutMenu(sounds);
+  const customizeMenu = new CustomizeMenu(sounds);
 
   const multiplayer = new MultiplayerClient();
   const menu = new MenuOverlay(sounds, multiplayer);
@@ -57,9 +59,10 @@ async function main(): Promise<void> {
 
   // ---- Menu wiring ----
   menu.onLoadout = () => loadoutMenu.open();
-  // No dedicated skin system yet: CUSTOMIZE opens the same inventory
-  // (weapons/killstreaks) surface rather than a fake duplicate screen.
-  menu.onCustomize = () => loadoutMenu.open();
+  // CUSTOMIZE: cosmetic skins (live 3D preview of the real ball). The
+  // selection is persisted; the game re-reads it in applyLoadout() (match
+  // entry / respawn / solo resume) — a skin change never resets a weapon.
+  menu.onCustomize = () => customizeMenu.open();
   menu.onChangeLobby = () => browser.open();
   // FPS LIMIT (settings popover): pure loop pacing — applies live.
   menu.onFpsCapChange = (maxFps) => game.setFpsCap(maxFps);

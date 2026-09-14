@@ -9,6 +9,7 @@ import { GameRoomState } from "../schemas/GameRoomState";
 import { NetworkPlayer } from "../schemas/NetworkPlayer";
 import { WeaponManager } from "./WeaponManager";
 import { NetworkWeaponId, WeaponActionType, NetworkWeaponConfig as W, PLAYER_EYE_OFFSET } from "../../../shared/combat/NetworkWeapons";
+import { basketLaunchOrigin } from "../../../shared/combat/BasketProjectileSim";
 import { hitscan, hasLineOfSight } from "./HitDetection";
 
 interface Recorded {
@@ -644,16 +645,57 @@ test("basket: tap without charge = level 1, projectile created at the 0.14 s mar
   assert.strictEqual(launch.length, 1);
   assert.strictEqual(launch[0].pid, throws[0].pid);
   const speed = Math.hypot(launch[0].dx, launch[0].dy, launch[0].dz);
-  assert.ok(Math.abs(speed - GB.throws[0].speed) < 1e-6, "L1 speed, no added lift");
-  assert.ok(Math.abs(launch[0].dy) < 1e-9, "flat aim → zero vertical velocity");
+  assert.ok(Math.abs(speed - GB.throws[0].speed) < 1e-6, "standing shooter: L1 speed exactly (no momentum, no lift)");
+  // RIGHT HAND launch point (shared rule), never the eye / head.
+  const eye = eyeOf(a);
+  const expected = basketLaunchOrigin(eye, { x: 0, y: 0, z: -1 });
+  assert.ok(Math.abs(launch[0].ox - expected.x) < 1e-9 && Math.abs(launch[0].oy - expected.y) < 1e-9 && Math.abs(launch[0].oz - expected.z) < 1e-9, "launched from the hand");
+  assert.ok(launch[0].oy < eye.y - 0.2, "clearly below the eye");
+  assert.ok(launch[0].ox > eye.x + 0.2, "clearly to the right of the eye (facing −Z → +X)");
+  // Hand → aim-line convergence: heads slightly left and up, never a lob.
+  assert.ok(launch[0].dx < 0 && launch[0].dy > 0 && launch[0].dy < 1.0, "converges on the crosshair line");
 });
 
-test("basket: level thresholds 0.58 / 1.00 s are decided by the SERVER clock", () => {
+test("basket: the ball inherits the shooter momentum reported at the release (px/py/pz), clamped", () => {
+  const cases: [{ x: number; y: number; z: number }, number][] = [
+    [{ x: 0, y: 0, z: -20 }, GB.throws[0].speed + 20 * GB.shooterMomentumForwardFactor], // running into the aim
+    [{ x: 0, y: 0, z: 20 }, GB.throws[0].speed], // backpedalling → plain level speed
+    [{ x: 0, y: 0, z: -500 }, GB.throws[0].speed + GB.maxShooterSpeed * GB.shooterMomentumForwardFactor], // cheat → clamp
+  ];
+  for (const [shooterVel, expectedSpeed] of cases) {
+    const { wm, rec, addPlayer, advance } = makeWorld();
+    const a = addPlayer("A", 3, 0.9, 16);
+    wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
+    fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 }, { px: shooterVel.x, py: shooterVel.y, pz: shooterVel.z });
+    tickFor(wm, advance, 200);
+    const launch = basketActions(rec, "BASKET_LAUNCH");
+    assert.strictEqual(launch.length, 1);
+    const speed = Math.hypot(launch[0].dx, launch[0].dy, launch[0].dz);
+    // The convergence tilt is tiny: compare the speed along the aim.
+    assert.ok(Math.abs(speed - expectedSpeed) < 0.05, `shooter ${shooterVel.z} m/s → ball ${speed.toFixed(2)} ≈ ${expectedSpeed}`);
+  }
+  // Faster shooter → faster ball (monotonic).
+  const speeds: number[] = [];
+  for (const vz of [-5, -15, -30]) {
+    const { wm, rec, addPlayer, advance } = makeWorld();
+    const a = addPlayer("A", 3, 0.9, 16);
+    wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
+    fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 }, { px: 0, py: 0, pz: vz });
+    tickFor(wm, advance, 200);
+    const l = basketActions(rec, "BASKET_LAUNCH")[0];
+    speeds.push(Math.hypot(l.dx, l.dy, l.dz));
+  }
+  assert.ok(speeds[0] < speeds[1] && speeds[1] < speeds[2], "the faster the player, the faster the ball");
+});
+
+test("basket: level thresholds 0.25 / 0.45 s are decided by the SERVER clock", () => {
+  const t2 = Math.round(GB.levelThresholdsSeconds[1] * 1000);
+  const t3 = Math.round(GB.levelThresholdsSeconds[2] * 1000);
   const cases: [number, number][] = [
-    [570, 1],
-    [580, 2],
-    [990, 2],
-    [1000, 3],
+    [t2 - 10, 1],
+    [t2, 2],
+    [t3 - 10, 2],
+    [t3, 3],
     [4000, 3], // prolonged max charge keeps level 3
   ];
   for (const [ms, expected] of cases) {
@@ -685,7 +727,7 @@ test("basket: repeated release / charge during the engaged sequence is refused; 
   assert.strictEqual(basketActions(rec, "BASKET_THROW").length, 1, "release before readyAt refused");
   tickFor(wm, advance, 200);
   fire(wm, a, WeaponActionType.BASKET_CHARGE_START, eyeOf(a), { x: 0, y: 0, z: -1 });
-  advance(600);
+  advance(Math.round(GB.levelThresholdsSeconds[1] * 1000) + 50); // inside the L2 window (< L3)
   fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 });
   const t = basketActions(rec, "BASKET_THROW");
   assert.strictEqual(t.length, 2, "new sequence after the catch");
@@ -717,28 +759,51 @@ test("basket: flat 25 damage on the first player contact, projectile consumed, h
   }
 });
 
-test("basket: world bounce budget per level, then the next world contact ends the ball", () => {
+test("basket: world bounce budget per level, then the ball RESTS (BASKET_REST) and ends only at the 5 s lifetime", () => {
   for (const level of [1, 2, 3] as const) {
-    const { wm, rec, addPlayer, advance } = makeWorld();
+    const { wm, rec, addPlayer, advance, nowMs } = makeWorld();
     const a = addPlayer("A", 0, 0.9, 20);
     wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
     fire(wm, a, WeaponActionType.BASKET_CHARGE_START, eyeOf(a), { x: 0, y: 0, z: -1 });
     advance(GB.levelThresholdsSeconds[level - 1] * 1000 + 5);
     // Straight down onto the open ground slab: pure vertical bounces.
     fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: -1, z: 0 });
-    tickFor(wm, advance, GB.maxLifetimeSeconds * 1000 + 1500);
+    const thrownAt = nowMs();
+    let launchedAt = 0;
+    let restAt = 0;
+    let endAt = 0;
+    for (let i = 0; i < (GB.maxLifetimeSeconds * 1000 + 1500) / 50; i++) {
+      tickFor(wm, advance, 50);
+      if (!launchedAt && basketActions(rec, "BASKET_LAUNCH").length) launchedAt = nowMs();
+      if (!restAt && basketActions(rec, "BASKET_REST").length) restAt = nowMs();
+      if (!endAt && basketActions(rec, "BASKET_END").length) endAt = nowMs();
+    }
     const bounces = basketActions(rec, "BASKET_BOUNCE");
-    // L3 at 24 m/s straight down: 0.78 restitution → the 5th ground contact
-    // would come at ≈6.75 s, past the 6 s lifetime → 4 bounces then expiry.
-    const expected = level === 3 ? 4 : GB.throws[level - 1].maxWorldBounces;
+    // L3 at 24 m/s straight down: 0.78 restitution → bounces at ≈0.03 /
+    // 2.4 / 4.2 s, the 4th ground contact would come at ≈5.7 s, past the
+    // 5 s lifetime → 3 bounces then expiry in flight (no rest). L1 / L2
+    // spend their budget and come to rest.
+    const expected = level === 3 ? 3 : GB.throws[level - 1].maxWorldBounces;
     assert.strictEqual(bounces.length, expected, `L${level} bounce budget / lifetime`);
     for (let i = 0; i < bounces.length; i++) {
       assert.strictEqual(bounces[i].bn, i + 1, "bounce numbering");
       assert.ok(bounces[i].dy > 0, "reflected upward");
       assert.ok(Math.abs(bounces[i].hy - 1) < 1e-9, "ground normal");
     }
+    const rests = basketActions(rec, "BASKET_REST");
+    if (level < 3) {
+      assert.strictEqual(rests.length, 1, `L${level}: one rest event once the budget is spent`);
+      assert.ok(Math.hypot(rests[0].dx, rests[0].dy, rests[0].dz) === 0, "rest = zero velocity");
+      assert.ok(Math.abs(rests[0].hy - 1) < 1e-9, "rest on the ground");
+      assert.ok(restAt > thrownAt && restAt < endAt, "rest happens before the end");
+    } else {
+      assert.strictEqual(rests.length, 0, "L3 never spends its budget within the lifetime here");
+    }
     assert.strictEqual(basketActions(rec, "BASKET_END").length, 1, "exactly one end event");
     assert.strictEqual(wm.basketProjectileCount, 0);
+    // The ball lived the FULL lifetime after its launch (never vanished early).
+    const lived = (endAt - launchedAt) / 1000;
+    assert.ok(Math.abs(lived - GB.maxLifetimeSeconds) <= 0.1, `L${level} lived ${lived.toFixed(2)} s ≈ ${GB.maxLifetimeSeconds} s`);
   }
 });
 
