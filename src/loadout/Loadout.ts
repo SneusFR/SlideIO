@@ -460,17 +460,18 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
     name: "POPCORN SHOTGUN",
     tagline: "Fusil à pompe qui tire du popcorn",
     summary:
-      "Un fusil à pompe à deux mains chargé au popcorn : 2 coups par recharge, le réservoir en verre montre ce qu'il reste (plein, à moitié, vide). Dévastateur de près, il touche encore de loin mais beaucoup moins. Un seul grain dans la tête suffit.",
+      "Un fusil à pompe à deux mains chargé au popcorn : 2 coups par recharge, le réservoir en verre montre ce qu'il reste (plein, à moitié, vide). Dévastateur de près, il touche encore de loin mais beaucoup moins. Les grains dans la tête font 1,5× plus mal.",
     ratings: { power: 90, precision: 35, difficulty: 45 },
     abilities: [
       {
         trigger: "CLIC GAUCHE",
         name: "RAFALE DE POPCORN",
         description:
-          `${pc.pellets} popcorns partent en gerbe depuis le centre de l'écran. Tous les grains d'un même tir sur une cible s'additionnent en un seul coup. De près, c'est un one shot ; un seul grain dans la tête tue à toute distance. Le premier tir est suivi d'un coup de pompe, le second vide le réservoir.`,
+          `${pc.pellets} popcorns partent en gerbe depuis le centre de l'écran. Tous les grains d'un même tir sur une cible s'additionnent en un seul coup. De près, c'est un one shot ; chaque grain dans la tête fait ×${pc.headMultiplier} de dégâts. L'arme se met droite à chaque tir. Le premier tir est suivi d'un coup de pompe, le second vide le réservoir.`,
         stats: [
           { label: "PLOMBS", value: `${pc.pellets}` },
           { label: "DÉGÂTS / PLOMB", value: pct(pc.pelletDamageFraction) },
+          { label: "TÊTE", value: `×${pc.headMultiplier}` },
           { label: "PLEINE PUISSANCE", value: `≤ ${pc.falloff.fullUntil} m` },
           { label: "PORTÉE MAX", value: `${pc.maxRange} m` },
           { label: "CADENCE", value: `${pc.timeline.fireReady} s` },

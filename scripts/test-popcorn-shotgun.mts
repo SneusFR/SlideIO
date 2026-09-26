@@ -56,10 +56,14 @@ try {
       for (let i = 0; i < 12; i++) assert.ok(a[i].distanceTo(b[i]) < 1e-9, `seed ${seed} pellet ${i}`);
     }
     for (const d of [0, 5, 8, 12, 18, 23, 28, 40]) assert.ok(Math.abs(REF.pelletFalloff(d) - R.popcornPelletFalloff(d)) < 1e-12);
+    // SlideIO damage rule: body pellet = 2 × the pack's (1/4 of max HP), head pellet × 1.5, NO one-shot.
     const hits = [{ distance: 4, head: false }, { distance: 9, head: false }];
     const refHits = hits.map((h) => ({ distance: h.distance, zone: "body" }));
-    assert.ok(Math.abs(REF.shotDamage(refHits, 100, 100) - R.popcornShotDamage(hits, 100, 100)) < 1e-9);
-    assert.equal(R.popcornShotDamage([{ distance: 39, head: true }], 100, 73), 73, "head pellet = remaining HP");
+    assert.ok(Math.abs(2 * REF.shotDamage(refHits, 100, 100) - R.popcornShotDamage(hits, 100, 100)) < 1e-9, "body = 2 × pack");
+    assert.equal(R.popcornShotDamage([{ distance: 4, head: false }], 100, 100), 25, "1 body pellet ≤ 8 m = 25 % HP");
+    assert.equal(R.popcornShotDamage([{ distance: 4, head: true }], 100, 100), 37.5, "1 head pellet ≤ 8 m = 37.5 % HP");
+    assert.ok(Math.abs(R.popcornShotDamage([{ distance: 39, head: true }], 100, 73) - 9.375) < 1e-9, "far head pellet: NO one-shot");
+    assert.equal(R.popcornShotIsHeadshot([{ distance: 5, head: false }, { distance: 5, head: true }]), true);
   });
 
   await test("same seed + same aim → identical pellets on the shooter and the server (wire rounding)", () => {
@@ -75,11 +79,11 @@ try {
     assert.deepEqual(a, b, "bit-identical");
   });
 
-  await test("distance profile (real server volumes): one-shot up close, partial at 10-12 m, ~1 weak pellet at 20+ m", () => {
+  await test("distance profile (real server volumes, aim = chest, real head/body split)", () => {
     const out = Array.from({ length: 12 }, () => ({ x: 0, y: 0, z: 0 }));
-    const stats: Record<number, { pel: number; bodyKill: number; dmg: number }> = {};
+    const stats: Record<number, { pel: number; kill: number; dmg: number }> = {};
     const N = 3000;
-    console.log("    dist | pellets/12 | body dmg | body one-shot | shots with a head pellet (aim = chest)");
+    console.log("    dist | pellets/12 | dmg (head ×1.5 incl.) | one-shot | shots with a head pellet");
     for (const d of [2, 4, 5, 6, 8, 10, 12, 15, 20, 30]) {
       let pel = 0, kill = 0, dmg = 0, head = 0;
       for (let s = 0; s < N; s++) {
@@ -93,18 +97,18 @@ try {
         }
         pel += hits.length;
         if (R.popcornShotIsHeadshot(hits)) head++;
-        const body = R.popcornShotDamage(hits.map((h) => ({ ...h, head: false })), 100, 100);
-        dmg += Math.min(body, 150);
-        if (body >= 100) kill++;
+        const v = R.popcornShotDamage(hits, 100, 100);
+        dmg += Math.min(v, 300);
+        if (v >= 100) kill++;
       }
-      stats[d] = { pel: pel / N, bodyKill: kill / N, dmg: dmg / N };
+      stats[d] = { pel: pel / N, kill: kill / N, dmg: dmg / N };
       console.log(
-        `    ${String(d).padStart(4)} | ${(pel / N).toFixed(1).padStart(10)} | ${(dmg / N).toFixed(0).padStart(6)} % | ${(100 * kill / N).toFixed(0).padStart(11)} % | ${(100 * head / N).toFixed(0).padStart(4)} %`,
+        `    ${String(d).padStart(4)} | ${(pel / N).toFixed(1).padStart(10)} | ${(dmg / N).toFixed(0).padStart(19)} % | ${(100 * kill / N).toFixed(0).padStart(6)} % | ${(100 * head / N).toFixed(0).padStart(4)} %`,
       );
     }
-    assert.ok(stats[2].bodyKill === 1 && stats[4].bodyKill === 1, "2-4 m body = one shot");
-    assert.ok(stats[10].pel >= 2 && stats[12].pel <= 3.5 && stats[12].bodyKill === 0, "10-12 m: 2-3 pellets, partial");
-    assert.ok(stats[20].pel <= 1.5 && stats[30].pel >= 0.9 && stats[30].dmg < 10, "20 m+: ~1 weak pellet");
+    assert.ok(stats[2].kill === 1 && stats[4].kill === 1 && stats[6].kill === 1, "up close = one shot");
+    assert.ok(stats[20].kill === 0 && stats[30].kill === 0 && stats[30].dmg < 15, "far: never a one shot, small damage");
+    assert.ok(stats[20].pel <= 1.5 && stats[30].pel >= 0.9, "20 m+: ~1 pellet");
   });
 
   await test("profile = JSON (clips, mounts, mask) and shared timeline = JSON actions", () => {
@@ -142,6 +146,9 @@ try {
     },
   });
   fp.attachViewmodel(vm);
+  // Same prerequisite as PopcornShotgunWeapon.load(): derive the straight fire clips.
+  const { prepareStraightFireClips } = await server.ssrLoadModule("/src/weapons/popcorn/PopcornStraightFire.ts");
+  await prepareStraightFireClips(PROF.PopcornShotgunProfile.fpPosesUrl, PROF.POPCORN_STRAIGHT_FIRE.aim, PROF.POPCORN_STRAIGHT_FIRE.sources);
   await vm.equip(PROF.PopcornShotgunProfile, fp.object, { playEquipClip: true });
   const cam = new THREE.PerspectiveCamera(92, 16 / 9, 0.05, 500);
   const motion = { straight: false, running: false, speed: 0, grounded: true, verticalVelocity: 0, jumpSequence: 0 };
@@ -157,6 +164,35 @@ try {
     assert.equal(vm.presentationClock().clip, "FP_Equip_PopcornShotgun");
     step(1);
     assert.equal(vm.presentationClock().clip, "FP_PopcornShotgun_Hold");
+  });
+
+  await test("FP: firing snaps the gun STRAIGHT (like aiming), grip glued, then back to hold", () => {
+    const aimErr = () => {
+      const q = fp.muzzle.getWorldQuaternion(new THREE.Quaternion());
+      const f = new THREE.Vector3(-1, 0, 0).applyQuaternion(q);
+      const c = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.getWorldQuaternion(new THREE.Quaternion()));
+      return THREE.MathUtils.radToDeg(f.angleTo(c));
+    };
+    const gap = () =>
+      vm.scene.getObjectByName("Hand_L")!.getWorldPosition(new THREE.Vector3())
+        .distanceTo(fp.object.getObjectByName("OffhandSocket")!.getWorldPosition(new THREE.Vector3()));
+    const holdErr = aimErr(), holdGap = gap();
+    assert.ok(fp.fire());
+    assert.equal(vm.presentationClock().clip, "FP_Fire_PopcornShotgun_Straight");
+    let maxGap = 0;
+    const errs: number[] = [];
+    for (let f = 0; f < 36; f++) {
+      step(1 / 60);
+      maxGap = Math.max(maxGap, gap());
+      errs.push(aimErr());
+    }
+    const straightErr = Math.min(...errs.slice(5)); // after the 0.02 s fade + recoil peak
+    console.log(`    muzzle off-axis: hold ${holdErr.toFixed(1)}° → firing ${errs[5].toFixed(1)}° / ${straightErr.toFixed(1)}° (min)`);
+    assert.ok(holdErr > 8 && straightErr < 3, "straight while firing");
+    assert.ok(maxGap - holdGap < 0.005, `left hand stays on the pump (+${((maxGap - holdGap) * 1000).toFixed(1)} mm)`);
+    step(1.2);
+    assert.ok(aimErr() > 8, "back to the hold pose after the shot");
+    fp.setAmmo(2);
   });
 
   await test("FP: fire (pump) → FireLast (no pump) → dry fire → reload gates 1.75 / 2.06 s → full tank", () => {

@@ -5,7 +5,8 @@ import { HitZone } from "../../combat/HitZone";
 import { HitFeedbackManager } from "../../combat/HitFeedbackManager";
 import { TrainingTarget } from "../../targets/TrainingTarget";
 import { ViewmodelSystem } from "../viewmodel/ViewmodelSystem";
-import { PopcornShotgunProfile, POPCORN_SHOTGUN_TIMELINE } from "../profiles/PopcornShotgunProfile";
+import { PopcornShotgunProfile, POPCORN_SHOTGUN_TIMELINE, POPCORN_STRAIGHT_FIRE } from "../profiles/PopcornShotgunProfile";
+import { prepareStraightFireClips } from "./PopcornStraightFire";
 import { PopcornShotgunController, type PopcornShotgunEvents } from "./PopcornShotgunController";
 import { PopcornProjectiles } from "./PopcornProjectiles";
 import { loadPopcornShotgunGltf } from "./PopcornShotgunModel";
@@ -109,7 +110,12 @@ export class PopcornShotgunWeapon {
 
   private async load(): Promise<void> {
     try {
-      const gltf = await loadPopcornShotgunGltf();
+      // The shots play the STRAIGHT fire clips (derived once into the cached
+      // FP pose library) — they must exist before the profile is equipped.
+      const [gltf] = await Promise.all([
+        loadPopcornShotgunGltf(),
+        prepareStraightFireClips(PopcornShotgunProfile.fpPosesUrl, POPCORN_STRAIGHT_FIRE.aim, POPCORN_STRAIGHT_FIRE.sources),
+      ]);
       this.controller = new PopcornShotgunController(gltf, {
         firstPerson: true, // popcorn physics in the tank
         timeline: POPCORN_SHOTGUN_TIMELINE,

@@ -931,10 +931,13 @@ const popcornFires = (rec: Recorded) => rec.actions.filter((e) => e.action === W
 
 test("popcorn: point blank body shot = one shot, ONE damage event, seed + ammo confirmed", () => {
   const { wm, rec, addPlayer } = makeWorld();
-  const a = addPlayer("A", 3, 0.9, 16);
-  const b = addPlayer("B", 3, 0.9, 13); // 3 m
+  // Open ground (x = −40): all 12 pellets reach the target (at x = 3 a wall
+  // beside the shooter eats 9 of them — that spot only passed thanks to the
+  // old head one-shot rule).
+  const a = addPlayer("A", -40, 0.9, 16);
+  const b = addPlayer("B", -40, 0.9, 13); // 3 m
   wm.handleEquip(a, NetworkWeaponId.POPCORN_SHOTGUN);
-  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 0.9, z: 13 }), { sd: 12345 });
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), dirTo(eyeOf(a), { x: -40, y: 0.9, z: 13 }), { sd: 12345 });
   assert.strictEqual(b.isAlive, false, "3 m body shot kills");
   assert.strictEqual(rec.hits.length, 1, "all pellets summed into ONE hit event");
   assert.strictEqual(rec.damages.length, 1);
@@ -944,18 +947,29 @@ test("popcorn: point blank body shot = one shot, ONE damage event, seed + ammo c
   assert.strictEqual(conf[0].am, 1);
 });
 
-test("popcorn: a head pellet one-shots at any range (≤ 40 m)", () => {
+test("popcorn: head pellets = ×1.5 damage, NO one-shot at range", () => {
   const { wm, rec, addPlayer } = makeWorld();
   const a = addPlayer("A", 3, 0.9, 16);
   const b = addPlayer("B", 3, 0.9, -8); // 24 m, open street
   wm.handleEquip(a, NetworkWeaponId.POPCORN_SHOTGUN);
-  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 0.9 + 0.875, z: -8 }), { sd: 7 });
-  if (rec.hits.length > 0) {
+  // Head-aimed shot: server damage must equal the shared prediction (head pellets × 1.5).
+  const aim = dirTo(eyeOf(a), { x: 3, y: 0.9 + 0.875, z: -8 });
+  const dirs = Array.from({ length: PS.pellets }, () => ({ x: 0, y: 0, z: 0 }));
+  popcornPelletDirections(aim, 7, dirs);
+  const pred = dirs
+    .map((d) => popcornRayVsPlayer(eyeOf(a), d, b, PS.maxRange))
+    .filter((h) => h !== null)
+    .map((h) => ({ distance: h!.t, head: h!.head }));
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), aim, { sd: 7 });
+  if (pred.length > 0 && rec.hits.length > 0) {
+    assert.ok(pred.some((h) => h.head), "the aimed pellet lands in the head");
     assert.strictEqual(rec.hits[0].ev.hitZone, "HEAD");
-    assert.strictEqual(b.isAlive, false, "head pellet = at least the remaining HP");
-  } else {
-    assert.ok(rec.hits.length === 0, "wall-blocked in this map slice — rule covered by the shared unit test");
+    assert.ok(Math.abs(rec.hits[0].ev.damageDealt - popcornShotDamage(pred, 200, 200)) < 1e-6, "server = shared (× 1.5)");
+    assert.ok(b.isAlive, "a far head pellet no longer one-shots");
   }
+  // Exact values of the rule (independent of the map).
+  assert.strictEqual(popcornShotDamage([{ distance: 5, head: true }], 200, 200), 200 * 0.25 * 1.5);
+  assert.strictEqual(popcornShotDamage([{ distance: 5, head: false }], 200, 200), 200 * 0.25);
 });
 
 test("popcorn: long range body shot = small damage, no kill", () => {
@@ -963,10 +977,10 @@ test("popcorn: long range body shot = small damage, no kill", () => {
   const a = addPlayer("A", 3, 0.9, 16);
   const b = addPlayer("B", 3, 0.9, -4); // 20 m
   wm.handleEquip(a, NetworkWeaponId.POPCORN_SHOTGUN);
-  // Pick (with the SHARED rule) a seed whose pellets only touch the body:
-  // at 20 m a stray ring pellet can reach the 0.45 m head sphere (head
-  // one-shot rule — see the integration report). This also checks that
-  // the server resolves exactly what the shared module predicts.
+  // Pick (with the SHARED rule) a seed whose pellets only touch the body
+  // (a stray ring pellet can reach the 0.45 m head sphere and get × 1.5).
+  // This also checks that the server resolves exactly what the shared
+  // module predicts.
   const aim = dirTo(eyeOf(a), { x: 3, y: 0.9, z: -4 });
   const dirs = Array.from({ length: PS.pellets }, () => ({ x: 0, y: 0, z: 0 }));
   let seed = 0;

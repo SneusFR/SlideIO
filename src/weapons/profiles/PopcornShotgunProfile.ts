@@ -34,9 +34,13 @@ export const PopcornShotgunProfile: WeaponViewProfile = {
     equip: profileJson.fpClips.equip,
     unequip: profileJson.fpClips.unequip,
   },
+  // SlideIO: the shots play the STRAIGHT variants (authored motion re-based on
+  // the Aim pose — see weapons/popcorn/PopcornStraightFire.ts) so the FP gun
+  // points where remote players see it point. The clips are derived at load
+  // (PopcornShotgunWeapon awaits POPCORN_STRAIGHT_FIRE before equipping).
   fpActions: {
-    fire: profileJson.fpActions.fire,
-    fireLast: profileJson.fpActions.fireLast,
+    fire: { clip: profileJson.fpActions.fire.clip + "_Straight", loop: false },
+    fireLast: { clip: profileJson.fpActions.fireLast.clip + "_Straight", loop: false },
     reload: profileJson.fpActions.reload,
   },
   tpClips: {
@@ -58,6 +62,12 @@ export const POPCORN_TP_AIM_CLIPS = {
   aim: profileJson.tpClips.aim,
   raise: profileJson.tpClips.raise,
   lower: profileJson.tpClips.lower,
+} as const;
+
+/** Authored FP clips the straight shots are derived from (Aim pose = new base). */
+export const POPCORN_STRAIGHT_FIRE = {
+  aim: profileJson.fpClips.aim,
+  sources: [profileJson.fpActions.fire.clip, profileJson.fpActions.fireLast.clip],
 } as const;
 
 /** Action timelines (seconds) consumed by PopcornShotgunController. */

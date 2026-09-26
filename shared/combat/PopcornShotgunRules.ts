@@ -61,17 +61,18 @@ export const PopcornShotgunConfig = {
   jitterDeg: 0.25,
   /** Beyond this distance a pellet hits nothing (m). */
   maxRange: 40,
-  /** Share of MAX HP removed by ONE full-power pellet (8 pellets = kill). */
-  pelletDamageFraction: 1 / 8,
+  /**
+   * Share of MAX HP removed by ONE full-power BODY pellet: 1/4 (4 full-power
+   * pellets = kill). Doubled from the pack's 1/8 (SlideIO tuning).
+   */
+  pelletDamageFraction: 1 / 4,
   /** Distance falloff: 100 % until 8 m, 50 % at 18 m, 25 % from 28 m. */
   falloff: { fullUntil: 8, halfAt: 18, quarterFrom: 28 },
-  /** Imposed rule: at least one pellet in the head = one shot. */
-  headshotOneShot: true,
   /**
-   * OPTIONAL range cap of the head one-shot rule (m). null = no cap (the
-   * rule as specified). Tuning knob only — see the integration report.
+   * Multiplier applied to EACH pellet that lands in the head (no head
+   * one-shot rule anymore — a head pellet simply hits 1.5× harder).
    */
-  headshotOneShotMaxRange: null as number | null,
+  headMultiplier: 1.5,
   /**
    * Authored timelines (seconds) — MUST match
    * src/assets/potato/WeaponProfile_PopcornShotgun.json → actions
@@ -226,24 +227,21 @@ export interface PopcornPelletHit {
 /**
  * Damage of ONE shot on ONE target: all its pellets are summed and the
  * caller applies the total ONCE (one damage event, one hitmarker, clean
- * kill attribution). A head pellet raises it to at least the remaining HP.
+ * kill attribution). Each pellet = maxHp × 1/4 × falloff, × 1.5 when it
+ * lands in the head. `currentHp` is kept in the signature for callers that
+ * clamp (the health systems already clamp at 0).
  */
-export function popcornShotDamage(hits: readonly PopcornPelletHit[], maxHp: number, currentHp: number): number {
+export function popcornShotDamage(hits: readonly PopcornPelletHit[], maxHp: number, _currentHp: number): number {
   let dmg = 0;
-  let head = false;
-  const cap = C.headshotOneShotMaxRange;
   for (const h of hits) {
-    dmg += maxHp * C.pelletDamageFraction * popcornPelletFalloff(h.distance);
-    if (h.head && (cap === null || h.distance <= cap)) head = true;
+    dmg += maxHp * C.pelletDamageFraction * popcornPelletFalloff(h.distance) * (h.head ? C.headMultiplier : 1);
   }
-  if (head && C.headshotOneShot) dmg = Math.max(dmg, currentHp);
   return dmg;
 }
 
-/** True when at least one pellet of the list counts as a head hit. */
+/** True when at least one pellet of the shot hit the head (hitmarker / zone). */
 export function popcornShotIsHeadshot(hits: readonly PopcornPelletHit[]): boolean {
-  const cap = C.headshotOneShotMaxRange;
-  return hits.some((h) => h.head && (cap === null || h.distance <= cap));
+  return hits.some((h) => h.head);
 }
 
 /**
