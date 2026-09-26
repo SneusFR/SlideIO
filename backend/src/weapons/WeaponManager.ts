@@ -28,6 +28,13 @@ import {
   stepBasketProjectile,
 } from "../../../shared/combat/BasketProjectileSim";
 import { DamageType, HitZone } from "../combat/DamageTypes";
+import { sanitizePopcornSeed } from "../../../shared/combat/PopcornShotgunRules";
+import {
+  PopcornShotgunState,
+  resolvePopcornFire,
+  startPopcornReload,
+  cancelPopcornReload,
+} from "./PopcornShotgunServer";
 import { DamageResult } from "../combat/DamageResult";
 import { NetworkPlayer } from "../schemas/NetworkPlayer";
 import { MAP_COLLIDER_BOXES, type ColliderBox } from "../../../shared/map/MapColliders";
@@ -229,6 +236,8 @@ class PlayerWeaponState {
   basketChargeStart = 0;
   /** Engaged throw (Throw phase + Catch) — null = free to charge / throw. */
   basketThrow: BasketThrowState | null = null;
+  // Popcorn Shotgun (server-owned ammo / cadence / reload clock)
+  popcorn = new PopcornShotgunState();
 }
 
 /** IO the room provides — WeaponManager stays free of Colyseus types. */
@@ -410,6 +419,10 @@ export class WeaponManager {
     // left the hand yet; an already launched projectile keeps flying.
     s.basketChargeStart = 0;
     if (s.basketThrow && !s.basketThrow.launched) s.basketThrow = null;
+    // Leaving the shotgun mid-reload: before the refill point the ammo is
+    // unchanged (local parity: controller.cancelReload()). Ammo persists
+    // across weapon swaps, like the local controller instance.
+    cancelPopcornReload(s.popcorn, this.host.now());
     s.weapon = rawWeapon;
     s.skin = skin;
     player.weapon = rawWeapon; // synced schema state → all clients
@@ -537,6 +550,19 @@ export class WeaponManager {
         return;
       case WeaponActionType.BASKET_THROW_REQUEST:
         this.handleBasketThrowRequest(player, s, seq, origin, dir, msg);
+        return;
+      case WeaponActionType.POPCORN_FIRE:
+        this.handlePopcornFire(player, s, seq, origin, dir, msg);
+        return;
+      case WeaponActionType.POPCORN_RELOAD:
+        if (s.weapon !== NetworkWeaponId.POPCORN_SHOTGUN) return;
+        if (!startPopcornReload(s.popcorn, this.host.now())) return;
+        this.confirmPopcorn(player, action, seq, this.eyePos(player), dir ?? UP, s.popcorn.ammo);
+        return;
+      case WeaponActionType.POPCORN_RELOAD_CANCEL:
+        if (s.weapon !== NetworkWeaponId.POPCORN_SHOTGUN) return;
+        if (!cancelPopcornReload(s.popcorn, this.host.now())) return;
+        this.confirmPopcorn(player, action, seq, this.eyePos(player), dir ?? UP, s.popcorn.ammo);
         return;
       default:
         return; // unknown action — silently refused
@@ -858,6 +884,87 @@ export class WeaponManager {
       const amount = zone === HitZone.HEAD ? W.revolver.headDamage : W.revolver.bodyDamage;
       this.dealDamage(player, hit.targetId, amount, DamageType.REVOLVER, zone, NetworkWeaponId.REVOLVER);
     }
+  }
+
+  // ------------------------------------------------------------------
+  // POPCORN SHOTGUN — 12 seeded pellets, summed ONCE per victim
+  // ------------------------------------------------------------------
+
+  /**
+   * POPCORN_FIRE: validate ammo / cadence / reload gate, recompute the 12
+   * pellets from the client's seed + aim (shared rule — identical on every
+   * client), raycast them against the lag-compensated targets and apply
+   * ONE summed damage event per victim (head pellet = at least the
+   * remaining HP). Every accepted shot is confirmed (sd + am) so remotes
+   * replay the same popcorns and the TP Fire / FireLast clip.
+   */
+  private handlePopcornFire(
+    player: NetworkPlayer,
+    s: PlayerWeaponState,
+    seq: number,
+    origin: Vec3 | null,
+    dir: Vec3 | null,
+    msg: WeaponActionMessage,
+  ): void {
+    if (s.weapon !== NetworkWeaponId.POPCORN_SHOTGUN || !origin || !dir) return;
+    const seed = sanitizePopcornSeed(msg.sd);
+    if (seed === null) return;
+    const now = this.host.now();
+    const result = resolvePopcornFire(
+      s.popcorn,
+      now,
+      origin,
+      dir,
+      seed,
+      this.rewindTargets(player.id, this.resolveRewindTime(msg)),
+      player.id,
+      this.mapBoxes,
+      (id) => {
+        const t = this.host.getPlayer(id);
+        return t && t.isAlive ? [t.maxHealth, t.health] : null;
+      },
+    );
+    if (!result.accepted) return;
+    this.confirmPopcorn(player, WeaponActionType.POPCORN_FIRE, seq, origin, dir, result.ammoLeft, seed, result.centerPoint);
+    for (const v of result.victims) {
+      this.dealDamage(
+        player,
+        v.targetId,
+        v.amount,
+        DamageType.POPCORN_SHOTGUN,
+        v.headshot ? HitZone.HEAD : HitZone.BODY,
+        NetworkWeaponId.POPCORN_SHOTGUN,
+      );
+    }
+  }
+
+  /** Popcorn confirm: the regular confirm + pellet seed (`sd`) + server ammo (`am`). */
+  private confirmPopcorn(
+    player: NetworkPlayer,
+    action: string,
+    seq: number,
+    origin: Vec3,
+    dir: Vec3,
+    ammo: number,
+    seed?: number,
+    hit?: Vec3,
+  ): void {
+    this.host.broadcastAction({
+      playerId: player.id,
+      weapon: NetworkWeaponId.POPCORN_SHOTGUN,
+      action,
+      seq,
+      ts: this.host.now(),
+      ox: origin.x,
+      oy: origin.y,
+      oz: origin.z,
+      dx: dir.x,
+      dy: dir.y,
+      dz: dir.z,
+      ...(hit ? { hx: hit.x, hy: hit.y, hz: hit.z } : {}),
+      ...(seed !== undefined ? { sd: seed } : {}),
+      am: ammo,
+    });
   }
 
   private handleRevolverThrow(
@@ -1698,6 +1805,7 @@ export class WeaponManager {
     // already flying ball keeps its lifecycle (owner alive check at hit).
     s.basketChargeStart = 0;
     s.basketThrow = null;
+    cancelPopcornReload(s.popcorn, this.host.now()); // a corpse never finishes a reload
   }
 
   /** Whoever is pulling `victimId` drops the grab (victim died / left). */
@@ -1730,6 +1838,7 @@ export class WeaponManager {
     s.revolverUnavailableUntil = 0;
     s.basketChargeStart = 0;
     s.basketThrow = null;
+    s.popcorn.reset(); // respawn = full tank (local parity: setAmmo(2))
   }
 
   removePlayer(playerId: string): void {

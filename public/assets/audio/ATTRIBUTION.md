@@ -140,6 +140,18 @@ Le whoosh de lancer du Goofy Basket est un **layer de sons CC0 déjà présents*
 | `hexsniper/hex_chomp_01.mp3` | Open Mouth Chomp.wav | 457475 | CC0 | https://freesound.org/s/457475/ |
 | `hexsniper/hex_gulp_01.mp3` | Big Gulp | 721604 | CC0 | https://freesound.org/s/721604/ |
 
+## Popcorn Shotgun
+
+| Fichier local | Titre original | Freesound ID | Licence | Source |
+|---|---|---|---|---|
+| `popcorn/popcorn_shot_01.mp3` | Shotgun Shot | 163455 | CC0 | https://freesound.org/s/163455/ |
+| `popcorn/popcorn_pump_back_01.mp3` | R870 Pump 1 | 844178 | CC0 | https://freesound.org/s/844178/ |
+| `popcorn/popcorn_pump_forward_01.mp3` | R870 Pump 2 | 844179 | CC0 | https://freesound.org/s/844179/ |
+| `popcorn/popcorn_pop_01.mp3` | Pop Corn POP (single) | 792666 | CC0 | https://freesound.org/s/792666/ |
+| `popcorn/popcorn_dry_fire_01.mp3` | 9mm Handgun Being Dry Fired | 674568 | CC0 | https://freesound.org/s/674568/ |
+
+Le clic du couvercle réutilise `ui/ui_click_plop_01.mp3` (déjà listé plus haut).
+
 ## Hits (confirmation de dégâts)
 
 | Fichier local | Titre original | Freesound ID | Licence | Source |

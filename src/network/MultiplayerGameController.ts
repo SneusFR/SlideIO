@@ -99,6 +99,11 @@ export class MultiplayerGameController {
     this.vfx.onBasketProjectile = fn;
   }
 
+  /** POPCORN SHOTGUN: remote players' fire / reload confirms. */
+  set onRemotePopcornAction(fn: ((event: WeaponActionConfirmedEvent) => void) | null) {
+    this.vfx.onPopcornAction = fn;
+  }
+
   private readonly statsSource = new NetworkStatsSource();
   /** Local alive state as told BY THE SERVER (never by local HP math). */
   private localAlive = true;

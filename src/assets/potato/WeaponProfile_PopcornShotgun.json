@@ -1,0 +1,595 @@
+{
+  "schemaVersion": 1,
+  "id": "PopcornShotgun",
+  "compatibleRig": "Potato_Master_Clean_v1",
+  "units": "meter",
+  "assets": {
+    "fpRig": "Potato_FP_CommonArms.glb",
+    "fpPoses": "PopcornShotgun_FP_Poses.glb",
+    "tpRig": "Potato_TP_Character.glb",
+    "tpPoses": "PopcornShotgun_TP_Poses.glb",
+    "weapon": "PopcornShotgun_Weapon.glb"
+  },
+  "camera": {
+    "verticalFovDegrees": 65,
+    "near": 0.01,
+    "far": 100,
+    "axes": "+X right, +Y up, -Z forward",
+    "aspectReference": "16:9",
+    "additionalCameraOffset": [
+      0,
+      0,
+      0
+    ]
+  },
+  "mounts": {
+    "fp": {
+      "poseSpace": "camera",
+      "bone": "Weapon_R",
+      "matrixColumnMajor": [
+        -0.10045616444423111,
+        0.06937951183468885,
+        0.38091354802238664,
+        0.0,
+        0.1010751016201509,
+        0.3845791623103804,
+        -0.043391224274674074,
+        0.0,
+        -0.37375451845736696,
+        0.08535480529521186,
+        -0.11411487517705282,
+        0.0,
+        -0.0014295816001837457,
+        -0.0016399283218185498,
+        -0.021864986733819418,
+        1.0
+      ],
+      "matrixRows": [
+        [
+          -0.10045616444423111,
+          0.1010751016201509,
+          -0.37375451845736696,
+          -0.0014295816001837457
+        ],
+        [
+          0.06937951183468885,
+          0.3845791623103804,
+          0.08535480529521186,
+          -0.0016399283218185498
+        ],
+        [
+          0.38091354802238664,
+          -0.043391224274674074,
+          -0.11411487517705282,
+          -0.021864986733819418
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "weaponRootScalePreserved": 0.19,
+      "additionalScale": 0.4000001108803211,
+      "clips": [
+        {
+          "name": "FP_Reload_PopcornShotgun",
+          "frames": 133,
+          "sampleFps": 60,
+          "duration": 2.2,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.151
+        },
+        {
+          "name": "FP_PopcornShotgun_Hold",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.003
+        },
+        {
+          "name": "FP_Aim_PopcornShotgun",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.032
+        },
+        {
+          "name": "FP_PopcornShotgun_Run",
+          "frames": 25,
+          "sampleFps": 30,
+          "duration": 0.8,
+          "loop": true,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.077
+        },
+        {
+          "name": "FP_Raise_PopcornShotgun",
+          "frames": 37,
+          "sampleFps": 120,
+          "duration": 0.3,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.031
+        },
+        {
+          "name": "FP_Lower_PopcornShotgun",
+          "frames": 37,
+          "sampleFps": 120,
+          "duration": 0.3,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.031
+        },
+        {
+          "name": "FP_Fire_PopcornShotgun",
+          "frames": 55,
+          "sampleFps": 60,
+          "duration": 0.9,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.023
+        },
+        {
+          "name": "FP_FireLast_PopcornShotgun",
+          "frames": 34,
+          "sampleFps": 60,
+          "duration": 0.55,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.018
+        },
+        {
+          "name": "FP_Equip_PopcornShotgun",
+          "frames": 34,
+          "sampleFps": 60,
+          "duration": 0.55,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.125
+        },
+        {
+          "name": "FP_Unequip_PopcornShotgun",
+          "frames": 22,
+          "sampleFps": 60,
+          "duration": 0.35,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.125
+        },
+        {
+          "name": "FP_Inspect_PopcornShotgun",
+          "frames": 217,
+          "sampleFps": 60,
+          "duration": 3.6,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.125
+        }
+      ],
+      "authoring": {
+        "method": "IK per frame with soft joint limits (wrist swing<=72deg, twist<=32deg; forearm twist<=40deg): weapon placed in camera space, right arm solved on Weapon_R, left arm solved on the live OffhandSocket (pump grip fitted on the hand mesh) / button frames",
+        "holdGripCameraSpace": [
+          0.254,
+          -0.281,
+          -0.508
+        ],
+        "holdYawPitchRollDeg": [
+          12.0,
+          0.0,
+          0.0
+        ],
+        "sameChannelSetAsHexSniper": true
+      }
+    },
+    "tp": {
+      "poseSpace": "character",
+      "bone": "Weapon_R",
+      "matrixColumnMajor": [
+        -0.06201392833798684,
+        0.14573272133021561,
+        0.3121155769322014,
+        0.0,
+        0.10817704187213656,
+        0.30932828415013985,
+        -0.12293780670236266,
+        0.0,
+        -0.32703513738647527,
+        0.07468549225597577,
+        -0.09985031826265442,
+        0.0,
+        -0.013750768844457473,
+        -0.01937828400795119,
+        -0.01064827360516787,
+        1.0
+      ],
+      "matrixRows": [
+        [
+          -0.06201392833798684,
+          0.10817704187213656,
+          -0.32703513738647527,
+          -0.013750768844457473
+        ],
+        [
+          0.14573272133021561,
+          0.30932828415013985,
+          0.07468549225597577,
+          -0.01937828400795119
+        ],
+        [
+          0.3121155769322014,
+          -0.12293780670236266,
+          -0.09985031826265442,
+          -0.01064827360516787
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "weaponRootScalePreserved": 0.19,
+      "additionalScale": 0.34999983819701996,
+      "clips": [
+        {
+          "name": "TP_Reload_PopcornShotgun",
+          "frames": 133,
+          "sampleFps": 60,
+          "duration": 2.2,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 6.592
+        },
+        {
+          "name": "TP_Run_PopcornShotgun",
+          "frames": 25,
+          "sampleFps": 30,
+          "duration": 0.8,
+          "loop": true,
+          "channels": 26,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "TP_Raise_PopcornShotgun",
+          "frames": 37,
+          "sampleFps": 120,
+          "duration": 0.3,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.024
+        },
+        {
+          "name": "TP_Lower_PopcornShotgun",
+          "frames": 37,
+          "sampleFps": 120,
+          "duration": 0.3,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.022
+        },
+        {
+          "name": "TP_Hold_PopcornShotgun",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.205
+        },
+        {
+          "name": "TP_Aim_PopcornShotgun",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.067
+        },
+        {
+          "name": "TP_Fire_PopcornShotgun",
+          "frames": 55,
+          "sampleFps": 60,
+          "duration": 0.9,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.252
+        },
+        {
+          "name": "TP_FireLast_PopcornShotgun",
+          "frames": 34,
+          "sampleFps": 60,
+          "duration": 0.55,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.271
+        }
+      ],
+      "sourceSurfaceContactsByClip": {
+        "Hold": {
+          "R": [
+            0.22749,
+            0.26521,
+            -0.17671
+          ],
+          "L": [
+            -1.23527,
+            -1.04028,
+            -0.3308
+          ]
+        },
+        "Run": {
+          "R": [
+            0.22749,
+            0.26521,
+            -0.17671
+          ],
+          "L": [
+            -1.2354,
+            -1.04049,
+            -0.33298
+          ]
+        },
+        "Aim": {
+          "R": [
+            0.22749,
+            0.26521,
+            -0.17671
+          ],
+          "L": [
+            -1.23574,
+            -1.04052,
+            -0.33096
+          ]
+        }
+      },
+      "animatedWeaponSocketCorrection": "Weapon_R translation is keyed at its rest value in every TP clip (resets the HexSniper offset).",
+      "stance": {
+        "alwaysAiming": true,
+        "gunDirection": "straight ahead (character +Z), level, no roll, in hold / aim / run / fire",
+        "spineYawLeanDeg": [
+          -12.00327073579741,
+          4.5247582106171835
+        ],
+        "leftHandSocket": "OffhandSocketTP (rear of the pump: the TP arms are short)",
+        "characterSkinRequired": "Potato_TP_Character.glb v5 (flank / armpit weights repaired, 506 vertices, no other change)"
+      }
+    }
+  },
+  "fpClips": {
+    "hold": "FP_PopcornShotgun_Hold",
+    "run": "FP_PopcornShotgun_Run",
+    "aim": "FP_Aim_PopcornShotgun",
+    "raise": "FP_Raise_PopcornShotgun",
+    "lower": "FP_Lower_PopcornShotgun",
+    "inspect": "FP_Inspect_PopcornShotgun",
+    "equip": "FP_Equip_PopcornShotgun",
+    "unequip": "FP_Unequip_PopcornShotgun"
+  },
+  "fpActions": {
+    "fire": {
+      "clip": "FP_Fire_PopcornShotgun",
+      "loop": false
+    },
+    "fireLast": {
+      "clip": "FP_FireLast_PopcornShotgun",
+      "loop": false
+    },
+    "reload": {
+      "clip": "FP_Reload_PopcornShotgun",
+      "loop": false
+    }
+  },
+  "tpClips": {
+    "hold": "TP_Hold_PopcornShotgun",
+    "run": "TP_Run_PopcornShotgun",
+    "aim": "TP_Aim_PopcornShotgun",
+    "raise": "TP_Raise_PopcornShotgun",
+    "lower": "TP_Lower_PopcornShotgun",
+    "actions": {
+      "fire": {
+        "clip": "TP_Fire_PopcornShotgun",
+        "loop": false
+      },
+      "fireLast": {
+        "clip": "TP_FireLast_PopcornShotgun",
+        "loop": false
+      },
+      "reload": {
+        "clip": "TP_Reload_PopcornShotgun",
+        "loop": false
+      }
+    }
+  },
+  "upperBodyMask": [
+    "Hand_L",
+    "Hand_R",
+    "Index_L_1",
+    "Index_R_1",
+    "LowerArm_L",
+    "LowerArm_R",
+    "Middle_L_1",
+    "Middle_R_1",
+    "Plant_Root",
+    "Ring_L_1",
+    "Ring_R_1",
+    "Shoulder_L",
+    "Shoulder_R",
+    "Spine_1",
+    "Thumb_L_1",
+    "Thumb_R_1",
+    "UpperArm_L",
+    "UpperArm_R",
+    "Weapon_R"
+  ],
+  "weaponClips": {
+    "idle": "Idle",
+    "fire": "Fire",
+    "fireLast": "Fire_Last",
+    "reload": "Reload",
+    "inspect": "Inspect",
+    "equip": "Equip"
+  },
+  "actions": {
+    "fire": {
+      "fpClip": "FP_Fire_PopcornShotgun",
+      "tpClip": "TP_Fire_PopcornShotgun",
+      "weaponClip": "Fire",
+      "duration": 0.9,
+      "recommendedFadeIn": 0.02,
+      "events": {
+        "shot": 0.0,
+        "pumpBack": 0.26,
+        "pumpForward": 0.42,
+        "readyToFire": 0.58
+      }
+    },
+    "fireLast": {
+      "fpClip": "FP_FireLast_PopcornShotgun",
+      "tpClip": "TP_FireLast_PopcornShotgun",
+      "weaponClip": "Fire_Last",
+      "duration": 0.55,
+      "recommendedFadeIn": 0.02,
+      "events": {
+        "shot": 0.0,
+        "readyToFire": 0.3
+      },
+      "note": "Last popcorn load: no pump (nothing to chamber) - the rack happens at the end of the reload."
+    },
+    "reload": {
+      "fpClip": "FP_Reload_PopcornShotgun",
+      "tpClip": "TP_Reload_PopcornShotgun",
+      "weaponClip": "Reload",
+      "duration": 2.2,
+      "recommendedFadeIn": 0.08,
+      "events": {
+        "lidOpen": 0.28,
+        "kernelsIn": [
+          0.44,
+          0.64
+        ],
+        "lidClose": 0.88,
+        "pops": [
+          0.92,
+          1.75
+        ],
+        "ammoRefilled": 1.75,
+        "pumpBack": 1.8,
+        "pumpForward": 1.93,
+        "readyToFire": 2.06
+      },
+      "leftHand": {
+        "releasePump": 0.06,
+        "flickLid": [
+          0.24,
+          0.32
+        ],
+        "sprinkle": [
+          0.44,
+          0.64
+        ],
+        "pullLidShut": [
+          0.72,
+          0.88
+        ],
+        "backOnPump": 1.08
+      },
+      "note": "v4: the gun comes to the left hand; flick the lid open, sprinkle kernels, pull the lid shut, pops, rack."
+    },
+    "inspect": {
+      "fpClip": "FP_Inspect_PopcornShotgun",
+      "weaponClip": "Inspect",
+      "duration": 3.6
+    }
+  },
+  "inspection": {
+    "armsClip": "FP_Inspect_PopcornShotgun",
+    "weaponClip": "Inspect",
+    "duration": 3.6,
+    "loop": false,
+    "rightHandIsSoleSupport": true,
+    "leftHandReleaseStarts": 0.12,
+    "leftHandOffGun": [
+      0.42,
+      3.02
+    ],
+    "leftRegripComplete": 3.38,
+    "showcase": {
+      "leftSide": [
+        0.95,
+        1.6
+      ],
+      "topAndRightTilt": [
+        2.3,
+        2.75
+      ]
+    },
+    "gameplayEvents": []
+  },
+  "popcorn": {
+    "tankNode": "Tank",
+    "dataIn": "Tank node extras (GLTFLoader -> userData)",
+    "count": 72,
+    "perShot": 36,
+    "shots": 2,
+    "fill": {
+      "2": "full",
+      "1": "half",
+      "0": "empty"
+    },
+    "physics": {
+      "firstPersonOnly": true,
+      "fixedStepHz": 60,
+      "maxSubsteps": 3,
+      "iterations": 4,
+      "drawCalls": 2,
+      "sleep": "positional drift < 0.002 units over 12 steps",
+      "inertiaScale": 0.45,
+      "maxInertiaG": 2.2
+    },
+    "remote": "No physics: baked full / half layouts + pop scale animation."
+  },
+  "assetLoading": {
+    "fpRigInstancesPerLocalPlayer": 1,
+    "loadPoseAnimationsOnCommonRig": true,
+    "renderPoseLibraryScene": false,
+    "cloneSkeletonPerInstance": true,
+    "attachWholeWeaponSceneUnderMount": true,
+    "preserveWeaponRootScale": 0.19,
+    "applyMountMatrixOnce": true,
+    "applyLegacyNormalization": false
+  },
+  "render": {
+    "separateFirstPersonScene": true,
+    "clearDepthOnceBeforeArmsAndWeapon": true,
+    "opaqueDepthTest": true,
+    "opaqueDepthWrite": true,
+    "glassRenderOrder": 2,
+    "runtimeDrawCalls": "6 meshes + 2 InstancedMesh (popcorn, kernels) + 1 optional muzzle burst"
+  },
+  "presentationRules": {
+    "straightPose": "Aim",
+    "straightWhile": [
+      "ADS"
+    ],
+    "inspectionOnlyWhen": "Idle, not firing / reloading, no ADS, stationary",
+    "useAuthoredRaiseLowerTransitionsForADS": true,
+    "neverDelayGameplayToFinishVisualTransition": true,
+    "aimNote": "Hip-level 'tight' aim: the popcorn tank would hide the crosshair in a true ADS, so the straight pose keeps the screen centre free."
+  },
+  "sharedCharacterLocomotion": {
+    "clips": [
+      "Run_Goofy",
+      "Jump",
+      "Dash",
+      "Slide"
+    ],
+    "slideGuide": "Potato_Slide_Integration.json"
+  }
+}

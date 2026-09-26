@@ -179,6 +179,8 @@ export class RemoteCombatVFXController {
    * avatar's Throw / Catch phases are replayed through `remotes`.
    */
   onBasketProjectile: ((ev: WeaponActionConfirmedEvent) => void) | null = null;
+  /** POPCORN SHOTGUN: remote players' fire / reload confirms (wired by the Game). */
+  onPopcornAction: ((ev: WeaponActionConfirmedEvent) => void) | null = null;
 
   private elapsed = 0;
   private disposed = false;
@@ -460,6 +462,13 @@ export class RemoteCombatVFXController {
         return;
       case HEX_ACTION_BITE:
         this.hexBite(ev);
+        return;
+      case WeaponActionType.POPCORN_FIRE:
+      case WeaponActionType.POPCORN_RELOAD:
+      case WeaponActionType.POPCORN_RELOAD_CANCEL:
+        // Popcorn Shotgun: TP clips + weapon clip + shared visual popcorns
+        // + positional SFX are owned by the Game (single projectile pool).
+        this.onPopcornAction?.(ev);
         return;
       default:
         return; // unknown action — silently ignored

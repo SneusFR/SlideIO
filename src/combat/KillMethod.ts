@@ -34,5 +34,7 @@ export enum KillMethod {
   HEX_SNIPER_BITE = "HEX_SNIPER_BITE",
   /** GOOFY BASKET bouncing basketball (flat hit, no special medal). */
   GOOFY_BASKET = "GOOFY_BASKET",
+  /** POPCORN SHOTGUN pellets (one summed hit per shot and per victim). */
+  POPCORN_SHOTGUN = "POPCORN_SHOTGUN",
   ENVIRONMENT = "ENVIRONMENT",
 }

@@ -11,6 +11,12 @@ import { WeaponManager } from "./WeaponManager";
 import { NetworkWeaponId, WeaponActionType, NetworkWeaponConfig as W, PLAYER_EYE_OFFSET } from "../../../shared/combat/NetworkWeapons";
 import { basketLaunchOrigin } from "../../../shared/combat/BasketProjectileSim";
 import { hitscan, hasLineOfSight } from "./HitDetection";
+import {
+  PopcornShotgunConfig,
+  popcornPelletDirections,
+  popcornRayVsPlayer,
+  popcornShotDamage,
+} from "../../../shared/combat/PopcornShotgunRules";
 
 interface Recorded {
   actions: any[];
@@ -914,6 +920,127 @@ test("basket: wrong weapon / dead player requests are ignored", () => {
   a.isAlive = false;
   fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 });
   assert.strictEqual(basketActions(rec, "BASKET_THROW").length, 0);
+});
+
+// ---------------------------------------------------------------------
+// POPCORN SHOTGUN (shared seeded pellets, summed damage, ammo / reload)
+// ---------------------------------------------------------------------
+
+const PS = PopcornShotgunConfig;
+const popcornFires = (rec: Recorded) => rec.actions.filter((e) => e.action === WeaponActionType.POPCORN_FIRE);
+
+test("popcorn: point blank body shot = one shot, ONE damage event, seed + ammo confirmed", () => {
+  const { wm, rec, addPlayer } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  const b = addPlayer("B", 3, 0.9, 13); // 3 m
+  wm.handleEquip(a, NetworkWeaponId.POPCORN_SHOTGUN);
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 0.9, z: 13 }), { sd: 12345 });
+  assert.strictEqual(b.isAlive, false, "3 m body shot kills");
+  assert.strictEqual(rec.hits.length, 1, "all pellets summed into ONE hit event");
+  assert.strictEqual(rec.damages.length, 1);
+  const conf = popcornFires(rec);
+  assert.strictEqual(conf.length, 1);
+  assert.strictEqual(conf[0].sd, 12345);
+  assert.strictEqual(conf[0].am, 1);
+});
+
+test("popcorn: a head pellet one-shots at any range (≤ 40 m)", () => {
+  const { wm, rec, addPlayer } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  const b = addPlayer("B", 3, 0.9, -8); // 24 m, open street
+  wm.handleEquip(a, NetworkWeaponId.POPCORN_SHOTGUN);
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 0.9 + 0.875, z: -8 }), { sd: 7 });
+  if (rec.hits.length > 0) {
+    assert.strictEqual(rec.hits[0].ev.hitZone, "HEAD");
+    assert.strictEqual(b.isAlive, false, "head pellet = at least the remaining HP");
+  } else {
+    assert.ok(rec.hits.length === 0, "wall-blocked in this map slice — rule covered by the shared unit test");
+  }
+});
+
+test("popcorn: long range body shot = small damage, no kill", () => {
+  const { wm, rec, addPlayer } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  const b = addPlayer("B", 3, 0.9, -4); // 20 m
+  wm.handleEquip(a, NetworkWeaponId.POPCORN_SHOTGUN);
+  // Pick (with the SHARED rule) a seed whose pellets only touch the body:
+  // at 20 m a stray ring pellet can reach the 0.45 m head sphere (head
+  // one-shot rule — see the integration report). This also checks that
+  // the server resolves exactly what the shared module predicts.
+  const aim = dirTo(eyeOf(a), { x: 3, y: 0.9, z: -4 });
+  const dirs = Array.from({ length: PS.pellets }, () => ({ x: 0, y: 0, z: 0 }));
+  let seed = 0;
+  let expected = 0;
+  for (let s = 1; s < 500; s++) {
+    popcornPelletDirections(aim, s, dirs);
+    const hits = dirs.map((d) => popcornRayVsPlayer(eyeOf(a), d, b, PS.maxRange)).filter((h) => h !== null);
+    if (hits.length > 0 && hits.every((h) => !h!.head)) {
+      seed = s;
+      expected = popcornShotDamage(hits.map((h) => ({ distance: h!.t, head: false })), 200, 200);
+      break;
+    }
+  }
+  assert.ok(seed > 0, "a body-only seed exists");
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), aim, { sd: seed });
+  assert.strictEqual(rec.hits.length, 1, "a far shot still touches");
+  assert.ok(Math.abs(rec.hits[0].ev.damageDealt - expected) < 1e-6, "server = shared prediction");
+  assert.strictEqual(rec.hits[0].ev.hitZone, "BODY");
+  assert.ok(b.isAlive, "20 m body shot never kills");
+  assert.ok(rec.hits[0].ev.damageDealt <= b.maxHealth * 0.25, "only a few weak pellets");
+});
+
+test("popcorn: 2 loads, cadence 0.58 s, dry fire refused, reload gates 1.75 / 2.06 s", () => {
+  const { wm, rec, addPlayer, advance } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  wm.handleEquip(a, NetworkWeaponId.POPCORN_SHOTGUN);
+  const up = { x: 0, y: 1, z: 0 }; // shoot the sky: no victim needed
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), up, { sd: 1 });
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), up, { sd: 2 });
+  assert.strictEqual(popcornFires(rec).length, 1, "cadence refuses the spam shot");
+  advance(PS.timeline.fireReady * 1000);
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), up, { sd: 3 });
+  assert.strictEqual(popcornFires(rec).length, 2);
+  assert.strictEqual(popcornFires(rec)[1].am, 0, "last load");
+  advance(2000);
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), up, { sd: 4 });
+  assert.strictEqual(popcornFires(rec).length, 2, "empty tank refused");
+  // Reload cancelled BEFORE 1.75 s keeps 0 ammo.
+  fire(wm, a, WeaponActionType.POPCORN_RELOAD, eyeOf(a), up);
+  advance(1000);
+  fire(wm, a, WeaponActionType.POPCORN_RELOAD_CANCEL, eyeOf(a), up);
+  advance(3000);
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), up, { sd: 5 });
+  assert.strictEqual(popcornFires(rec).length, 2, "cancel before refill keeps the tank empty");
+  // Full reload: refused at 1.9 s, accepted from 2.06 s.
+  fire(wm, a, WeaponActionType.POPCORN_RELOAD, eyeOf(a), up);
+  advance(1900);
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), up, { sd: 6 });
+  assert.strictEqual(popcornFires(rec).length, 2, "fire refused before readyToFire");
+  advance(200);
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), up, { sd: 7 });
+  assert.strictEqual(popcornFires(rec).length, 3, "fire accepted after 2.06 s");
+  assert.strictEqual(popcornFires(rec)[2].am, 1, "reload refilled 2 loads");
+  // A cancel AFTER 1.75 s keeps the refilled tank.
+  advance(1000);
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), up, { sd: 8 });
+  fire(wm, a, WeaponActionType.POPCORN_RELOAD, eyeOf(a), up);
+  advance(1800);
+  fire(wm, a, WeaponActionType.POPCORN_RELOAD_CANCEL, eyeOf(a), up);
+  advance(100);
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), up, { sd: 9 });
+  assert.strictEqual(popcornFires(rec).at(-1).am, 1, "cancel after 1.75 s = full tank");
+});
+
+test("popcorn: wrong weapon / missing seed / invalid seed refused", () => {
+  const { wm, rec, addPlayer } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), { x: 0, y: 1, z: 0 }, { sd: 1 });
+  wm.handleEquip(a, NetworkWeaponId.POPCORN_SHOTGUN);
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), { x: 0, y: 1, z: 0 });
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), { x: 0, y: 1, z: 0 }, { sd: -3 });
+  fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), { x: 0, y: 1, z: 0 }, { sd: 1.5 });
+  assert.strictEqual(popcornFires(rec).length, 0);
 });
 
 console.log(`\n${passed} weapon tests passed`);

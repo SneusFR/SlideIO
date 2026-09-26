@@ -4,7 +4,7 @@ import { ViewmodelJumpMotion, type ViewmodelMotionInput } from "./ViewmodelJumpM
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { loadFPArmsGltf, loadFPPoseClips } from "./FPArmsRig";
 import { WeaponViewProfile, createWeaponMount } from "../profiles/WeaponProfile";
-import { HEX_FP_CAMERA } from "../profiles/HexSniperProfile";
+import { FP_CAMERA } from "./FPCameraConfig";
 
 /**
  * COMMON FIRST-PERSON VIEWMODEL SYSTEM (local player only).
@@ -92,10 +92,10 @@ export class ViewmodelSystem {
 
   constructor(aspect: number) {
     this.camera = new THREE.PerspectiveCamera(
-      HEX_FP_CAMERA.verticalFovDegrees,
+      FP_CAMERA.verticalFovDegrees,
       aspect,
-      HEX_FP_CAMERA.near,
-      HEX_FP_CAMERA.far,
+      FP_CAMERA.near,
+      FP_CAMERA.far,
     );
     this.scene.add(this.camera);
     this.camera.add(this.swayGroup);

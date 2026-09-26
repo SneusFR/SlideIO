@@ -341,6 +341,7 @@ class RemotePlayer {
       // independent clone of the current pose).
       this.weapons.maulReset();
       this.weapons.basketReset();
+      this.weapons.popcornReset();
       if (this.group.visible) this.onDied?.(this);
       this.alive = false;
       this.group.visible = false;
@@ -366,6 +367,7 @@ class RemotePlayer {
     this.healthRatioTarget = 1;
     this.weapons.maulReset(); // respawn = teleport: phases dropped, pupils reset
     this.weapons.basketReset();
+    this.weapons.popcornReset(); // respawn = full tank (server resets its ammo too)
   }
 
   /** Sample the buffer at renderTime (server ms) and drive visuals. */
@@ -870,6 +872,30 @@ export class RemotePlayerManager {
       if (!remote.alive || !remote.group.visible) continue;
       cb(remote.sessionId, remote.group.position);
     }
+  }
+
+  // ---- POPCORN SHOTGUN remote replay (server-confirmed) ----
+
+  /** POPCORN_FIRE / POPCORN_RELOAD → weapon clip + TP clip the same frame. */
+  popcornAction(sessionId: string, action: "fire" | "reload", ammoAfter: number | null, elapsed: number): boolean {
+    return this.remotes.get(sessionId)?.weapons.popcornAction(action, ammoAfter, elapsed) ?? false;
+  }
+
+  popcornReloadCancel(sessionId: string, ammoAfter: number | null): void {
+    this.remotes.get(sessionId)?.weapons.popcornReloadCancel(ammoAfter);
+  }
+
+  /**
+   * World position of a remote shotgun's REAL muzzle (visual popcorn
+   * origin) — false when the avatar is hidden / the shotgun not attached.
+   */
+  getPopcornMuzzle(sessionId: string, out: THREE.Vector3): boolean {
+    const remote = this.remotes.get(sessionId);
+    if (!remote || !remote.alive || !remote.group.visible) return false;
+    const muzzle = remote.weapons.popcornMuzzle;
+    if (!muzzle) return false;
+    muzzle.getWorldPosition(out);
+    return true;
   }
 
   /** A confirmed melee action → real melee GLB in hand + swing anim. */

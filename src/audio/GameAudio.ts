@@ -41,6 +41,13 @@ export const AUDIO_MANIFEST: Record<string, string> = {
   basket_bounce_01: `${A}/basket/basket_bounce_01.mp3`,
   basket_bounce_02: `${A}/basket/basket_bounce_02.mp3`,
   basket_bounce_03: `${A}/basket/basket_bounce_03.mp3`,
+  // Popcorn Shotgun (shot / pump / pop / dry click — CC0, see ATTRIBUTION.md)
+  popcorn_shot: `${A}/popcorn/popcorn_shot_01.mp3`,
+  popcorn_pump_back: `${A}/popcorn/popcorn_pump_back_01.mp3`,
+  popcorn_pump_forward: `${A}/popcorn/popcorn_pump_forward_01.mp3`,
+  popcorn_pop: `${A}/popcorn/popcorn_pop_01.mp3`,
+  popcorn_dry_fire: `${A}/popcorn/popcorn_dry_fire_01.mp3`,
+  popcorn_lid_click: `${A}/ui/ui_click_plop_01.mp3`,
   // Hex Sniper (tongue whip / wet grab / jaws / eating — CC0, see ATTRIBUTION.md)
   hex_tongue_whip: `${A}/hexsniper/hex_tongue_whip_01.mp3`,
   hex_tongue_out: `${A}/hexsniper/hex_tongue_out_01.mp3`,
@@ -642,6 +649,87 @@ export class GameAudio {
       refDistance: 6,
       maxDistance: 70,
     });
+  }
+
+  // ------------------------------------------------------------------
+  // POPCORN SHOTGUN (CC0 shot / pump / pop samples + existing clicks)
+  // ------------------------------------------------------------------
+
+  /** Low "pop" detonation: shotgun sample pitched down + a popcorn pop on top. */
+  popcornShot(): void {
+    audio.play("popcorn_shot", { bus: "weapons", volume: 0.7, volumeVar: 0.04, rate: 0.82, rateVar: 0.03, maxInstances: 3 });
+    audio.play("popcorn_pop", { bus: "weapons", volume: 0.55, rate: 0.6, rateVar: 0.05, delay: 0.01 });
+  }
+
+  /** Empty tank: dry trigger click. */
+  popcornDryFire(): void {
+    audio.play("popcorn_dry_fire", { bus: "weapons", volume: 0.6, rateVar: 0.04, throttleMs: 120 });
+  }
+
+  /** Pump "clac" (back) / "clac" (forward). */
+  popcornPump(forward: boolean): void {
+    audio.play(forward ? "popcorn_pump_forward" : "popcorn_pump_back", {
+      bus: "weapons",
+      volume: 0.65,
+      rateVar: 0.04,
+      throttleMs: 60,
+    });
+  }
+
+  /** Plastic lid click (open / close). */
+  popcornLid(open: boolean): void {
+    audio.play("popcorn_lid_click", { bus: "weapons", volume: 0.45, rate: open ? 1.25 : 0.95, rateVar: 0.04, throttleMs: 80 });
+  }
+
+  /** Kernels sprinkled into the tank: a short rattle of tiny clicks. */
+  popcornKernels(): void {
+    for (let i = 0; i < 6; i++) {
+      audio.play("popcorn_dry_fire", {
+        bus: "weapons",
+        volume: 0.12,
+        rate: 2.4,
+        rateVar: 0.35,
+        delay: i * 0.03 + Math.random() * 0.02,
+        maxInstances: 6,
+      });
+    }
+  }
+
+  /**
+   * One kernel popped (up to 72 per reload, crescendo). Voices limited:
+   * ≈ 30 / s max (throttle 33 ms) and 6 simultaneous instances; pitch
+   * wobble so the crescendo never sounds machine-gunned.
+   */
+  popcornPop(): void {
+    audio.play("popcorn_pop", {
+      bus: "weapons",
+      volume: 0.35,
+      volumeVar: 0.12,
+      rate: 1.1,
+      rateVar: 0.3,
+      throttleMs: 33,
+      maxInstances: 6,
+    });
+  }
+
+  /** Remote shooter: spatialized shot at the shooter position. */
+  popcornShotAt(pos: THREE.Vector3): void {
+    audio.playAt("popcorn_shot", pos, { bus: "weapons", volume: 0.85, rate: 0.82, rateVar: 0.03, refDistance: 8, maxInstances: 4 });
+  }
+
+  /** Remote reload: a burst of spatialized pops (few voices, cheap). */
+  popcornReloadAt(pos: THREE.Vector3): void {
+    for (let i = 0; i < 5; i++) {
+      audio.playAt("popcorn_pop", pos, {
+        bus: "weapons",
+        volume: 0.3,
+        rate: 1.1,
+        rateVar: 0.3,
+        delay: 0.95 + i * 0.16,
+        refDistance: 5,
+        maxInstances: 5,
+      });
+    }
   }
 
   // ------------------------------------------------------------------

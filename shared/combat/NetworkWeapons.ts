@@ -19,6 +19,7 @@ export enum NetworkWeaponId {
   POISON_SPRAYER = "POISON_SPRAYER",
   HEX_SNIPER = "HEX_SNIPER",
   GOOFY_BASKET = "GOOFY_BASKET",
+  POPCORN_SHOTGUN = "POPCORN_SHOTGUN",
 }
 
 export function isNetworkWeaponId(raw: unknown): raw is NetworkWeaponId {
@@ -93,6 +94,17 @@ export enum WeaponActionType {
    *  a late arrival resumes at the elapsed time from `ts`). */
   INSPECT_START = "INSPECT_START",
   INSPECT_CANCEL = "INSPECT_CANCEL",
+  /** POPCORN SHOTGUN: one shot. `sd` = pellet seed (uint32), dx/dy/dz =
+   *  camera aim — the server recomputes the 12 pellets from BOTH
+   *  (shared/combat/PopcornShotgunRules), validates ammo / cadence and
+   *  applies the summed damage ONCE per victim. Confirm: `sd` + `am`. */
+  POPCORN_FIRE = "POPCORN_FIRE",
+  /** POPCORN SHOTGUN: reload started (ammo counts at 1.75 s, fire again
+   *  from 2.06 s — server clock). */
+  POPCORN_RELOAD = "POPCORN_RELOAD",
+  /** POPCORN SHOTGUN: reload interrupted (weapon slot switch…) — before
+   *  the refill point the ammo stays unchanged. */
+  POPCORN_RELOAD_CANCEL = "POPCORN_RELOAD_CANCEL",
 }
 
 // ---------------------------------------------------------------------
@@ -530,6 +542,8 @@ export interface WeaponActionMessage {
   /** Obliterreur anchor SLOT (0 = A, 1 = B) — keeps both sides in
    *  lockstep with the local placement alternation. */
   pi?: number;
+  /** POPCORN SHOTGUN: pellet seed (uint32) of a POPCORN_FIRE. */
+  sd?: number;
 }
 
 /** Server → all clients: a VALIDATED action to replay (VFX / audio / anim). */
@@ -571,6 +585,12 @@ export interface WeaponActionConfirmedEvent {
   /** GOOFY BASKET: COSMETIC skin id captured when the projectile was created
    *  (THROW / LAUNCH) — a later skin change never recolors a ball in flight. */
   sk?: string;
+  /** POPCORN SHOTGUN: pellet seed of a confirmed POPCORN_FIRE (remote
+   *  clients rebuild the same 12 pellets from `sd` + dx/dy/dz). */
+  sd?: number;
+  /** POPCORN SHOTGUN: server ammo AFTER the action (0 = last load fired →
+   *  TP FireLast clip; also resyncs the remote tank). */
+  am?: number;
 }
 
 /**

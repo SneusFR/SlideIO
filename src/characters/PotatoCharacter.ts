@@ -12,6 +12,8 @@ import { loadBrickMaulTPClips } from "../weapons/brickmaul/BrickMaulModel";
 import { BrickMaulProfile } from "../weapons/brickmaul/BrickMaulProfile";
 import { loadGoofyBasketTPClips } from "../weapons/goofybasket/GoofyBasketModel";
 import { GoofyBasketProfile } from "../weapons/goofybasket/GoofyBasketProfile";
+import { loadPopcornShotgunTPClips } from "../weapons/popcorn/PopcornShotgunModel";
+import { PopcornShotgunProfile } from "../weapons/profiles/PopcornShotgunProfile";
 // POTATO character pack (src/assets/potato) — the common third-person model
 // for remote players AND bots. One GLB carries mesh + skeleton + the four
 // locomotion clips (Run_Goofy / Jump / Dash / Slide, all in place — no root
@@ -178,7 +180,18 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       console.error("GoofyBasket: TP pose library failed to load", err);
       return [] as THREE.AnimationClip[];
     }),
-  ]).then(([gltf, posesGltf, maulClips, basketClips]: [GLTF, GLTF, THREE.AnimationClip[], THREE.AnimationClip[]]) => {
+    // Popcorn Shotgun TP pose library (clips only) — same failure policy.
+    loadPopcornShotgunTPClips().catch((err) => {
+      console.error("PopcornShotgun: TP pose library failed to load", err);
+      return [] as THREE.AnimationClip[];
+    }),
+  ]).then(([gltf, posesGltf, maulClips, basketClips, popcornClips]: [
+    GLTF,
+    GLTF,
+    THREE.AnimationClip[],
+    THREE.AnimationClip[],
+    THREE.AnimationClip[],
+  ]) => {
     const model = gltf.scene;
 
     // Normalize ONCE on the template, measured from the REST pose (the
@@ -408,9 +421,61 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       };
     }
 
+    // ---- Popcorn Shotgun TP profile set (PopcornShotgun_TP_Poses.glb) ----
+    // TWO-HAND "always aiming" stance. The authored upperBodyMask (both
+    // arms + fingers, shoulders, Spine_1 bladed 3/4, Plant_Root, Weapon_R)
+    // is the hold layer. TP_Hold animates ONLY that mask, so every other
+    // bone is filled from the unarmed locomotion (never the bind pose):
+    //   idle  = derived idle body + the animated TP_Hold (2 s breathing);
+    //   run   = TP_Run (authored with its own legs, 0.8 s like Run_Goofy)
+    //           + Run_Goofy for the bones it does not key (head, neck…);
+    //   jump / dash / slide = locomotion body + the Hold grip frozen.
+    // Fire / FireLast / Reload are LAYERS reduced to the mask, played over
+    // the lower-body locomotion (GoofyBasket pattern): a player firing or
+    // reloading while running keeps running.
+    let popcornshotgun: ArmedProfileClips | null = null;
+    const pcTp = PopcornShotgunProfile.tpClips!;
+    const pcHoldSrc = byName(popcornClips, pcTp.hold);
+    const pcRunSrc = byName(popcornClips, pcTp.run);
+    if (pcHoldSrc && pcRunSrc && PopcornShotgunProfile.upperBodyMask) {
+      const mask = new Set<string>(PopcornShotgunProfile.upperBodyMask);
+      const pcHold = overlayClip(idle, pcHoldSrc, `${pcHoldSrc.name}_Full`);
+      const pcRun = overlayClip(run, pcRunSrc, `${pcRunSrc.name}_Full`);
+      const masked = (base: THREE.AnimationClip) => buildMaskedVariant(base, pcHoldSrc, mask, "_PopcornShotgun");
+      const pcJumpVariants = jumpVariants.map(masked);
+      const pcDash = masked(dash);
+      const pcSlide = masked(slide);
+      const actions: ArmedProfileClips["actions"] = {};
+      for (const [key, def] of Object.entries(pcTp.actions ?? {})) {
+        const clip = byName(popcornClips, def.clip);
+        if (clip) actions[key] = { clip: keepBones(clip, mask, "_Layer"), loop: def.loop, layered: true };
+      }
+      popcornshotgun = {
+        hold: pcHold,
+        run: pcRun,
+        jump: pcJumpVariants[0],
+        jumpVariants: pcJumpVariants,
+        dash: pcDash,
+        slide: pcSlide,
+        equip: null,
+        unequip: null,
+        inspect: null,
+        lowerBody: {
+          hold: stripBones(pcHold, mask, "_Lower"),
+          run: stripBones(pcRun, mask, "_Lower"),
+          jump: stripBones(pcJumpVariants[0], mask, "_Lower"),
+          jumpVariants: pcJumpVariants.map((c) => stripBones(c, mask, "_Lower")),
+          dash: stripBones(pcDash, mask, "_Lower"),
+          slide: stripBones(pcSlide, mask, "_Lower"),
+        },
+        actions,
+      };
+    }
+
     const profiles: Record<string, ArmedProfileClips> = {};
     if (brickmaul) profiles.brickmaul = brickmaul;
     if (goofybasket) profiles[GoofyBasketProfile.id] = goofybasket;
+    if (popcornshotgun) profiles[PopcornShotgunProfile.id] = popcornshotgun;
 
     const clips: RemoteCharacterClips = {
       idle,
@@ -467,6 +532,22 @@ function buildMaskedVariant(
     }
   }
   return new THREE.AnimationClip(`${base.name}${suffix}`, base.duration, tracks);
+}
+
+/**
+ * Full-body composite: EVERY track of `layer` (kept verbatim, its own
+ * duration) + the tracks of `base` for the bones the layer does NOT key.
+ * Used when a pose library clip only animates part of the skeleton
+ * (Popcorn Shotgun TP_Hold / TP_Run) so no bone falls back to the bind
+ * pose. `base` must share the layer duration or be a constant pose.
+ */
+function overlayClip(base: THREE.AnimationClip, layer: THREE.AnimationClip, name: string): THREE.AnimationClip {
+  const keyed = new Set(layer.tracks.map((t) => trackBone(t.name)));
+  const tracks: THREE.KeyframeTrack[] = layer.tracks.map((t) => t.clone());
+  for (const track of base.tracks) {
+    if (!keyed.has(trackBone(track.name))) tracks.push(track.clone());
+  }
+  return new THREE.AnimationClip(name, layer.duration, tracks);
 }
 
 /** Bounding-sphere inflation factor for skinned culling (see above). */

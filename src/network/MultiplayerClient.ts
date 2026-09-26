@@ -374,6 +374,8 @@ export class MultiplayerClient {
       /** View time (server ms) at which the shooter SAW the targets —
        *  the server rewinds its lag-comp history to this exact time. */
       vt?: number;
+      /** PopcornShotgun pellet seed (uint32, sent verbatim). */
+      sd?: number;
     } = {},
   ): void {
     if (!this.room) return;
@@ -387,6 +389,7 @@ export class MultiplayerClient {
       ...(data.px !== undefined ? { px: round3(data.px), py: round3(data.py ?? 0), pz: round3(data.pz ?? 0) } : {}),
       ...(data.pi !== undefined ? { pi: data.pi } : {}),
       ...(data.vt !== undefined ? { vt: Math.round(data.vt) } : {}),
+      ...(data.sd !== undefined ? { sd: data.sd >>> 0 } : {}),
     });
   }
 
@@ -548,6 +551,9 @@ export class MultiplayerClient {
         ...(typeof message.lv === "number" ? { lv: message.lv } : {}),
         ...(typeof message.bn === "number" ? { bn: message.bn } : {}),
         ...(typeof message.sk === "string" ? { sk: message.sk } : {}),
+        // PopcornShotgun: pellet seed + server ammo after the action.
+        ...(typeof message.sd === "number" ? { sd: message.sd } : {}),
+        ...(typeof message.am === "number" ? { am: message.am } : {}),
       });
     });
     room.onMessage("HIT_CONFIRMED", (message: Partial<HitConfirmedEvent>) => {

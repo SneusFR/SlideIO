@@ -58,6 +58,13 @@ import { HexSniperConfig as hexCfg } from "../weapons/hexsniper/HexSniperConfig"
 import { GoofyBasketWeapon } from "../weapons/goofybasket/GoofyBasketWeapon";
 import { instantiateGoofyBasket, loadGoofyBasketGltf } from "../weapons/goofybasket/GoofyBasketModel";
 import { GOOFY_BALL } from "../weapons/goofybasket/GoofyBasketProfile";
+import { PopcornShotgunWeapon, findFloorBelow } from "../weapons/popcorn/PopcornShotgunWeapon";
+import { PopcornShotgunHUD } from "../ui/PopcornShotgunHUD";
+import {
+  PopcornShotgunConfig as popcornCfg,
+  popcornPelletDirections,
+  popcornRayVsPlayer,
+} from "../../shared/combat/PopcornShotgunRules";
 import { ViewmodelSystem } from "../weapons/viewmodel/ViewmodelSystem";
 import { MusicSelectorHUD } from "../ui/MusicSelectorHUD";
 import { KillstreakManager, KILLSTREAK_SLOT_CODES } from "../killstreaks/KillstreakManager";
@@ -164,7 +171,7 @@ export class Game {
    */
   private activeSlot: "PRIMARY" | "MELEE" = "PRIMARY";
   /** Owner of the shared FP arms right now (exactly one advances the mixer). */
-  private fpOwner: "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" = "NONE";
+  private fpOwner: "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" | "POPCORN_SHOTGUN" = "NONE";
   /** True during the maul's Unequip transition back to the primary. */
   private slotSwitchPending = false;
   /** FP maul inspection running (slot 2, F key). */
@@ -215,6 +222,20 @@ export class Game {
 
   // ---- GOOFY BASKET (charged bouncing basketball — shared FP arms) ----
   private goofyBasket: GoofyBasketWeapon;
+
+  // ---- POPCORN SHOTGUN (2-load popcorn pump shotgun — shared FP arms) ----
+  private popcornShotgun: PopcornShotgunWeapon;
+  private popcornHud: PopcornShotgunHUD;
+  /** Remote popcorn replay scratch (12 pellets, allocated once). */
+  private readonly popcornDirs = Array.from({ length: popcornCfg.pellets }, () => new THREE.Vector3());
+  private readonly popcornTo = Array.from({ length: popcornCfg.pellets }, () => new THREE.Vector3());
+  private readonly popcornNormals = Array.from({ length: popcornCfg.pellets }, () => new THREE.Vector3());
+  private readonly popcornNormalRefs: (THREE.Vector3 | null)[] = new Array(popcornCfg.pellets).fill(null);
+  private readonly popcornFloors: (number | null)[] = new Array(popcornCfg.pellets).fill(null);
+  private readonly popcornRay = new THREE.Raycaster();
+  private readonly popcornFloorRay = new THREE.Raycaster();
+  private readonly popcornVec = new THREE.Vector3();
+  private readonly popcornVec2 = new THREE.Vector3();
   private readonly basketVec = new THREE.Vector3();
   private readonly basketVec2 = new THREE.Vector3();
   private readonly basketVec3 = new THREE.Vector3();
@@ -480,6 +501,7 @@ export class Game {
       this.spear.reset();
       this.hexSniper.reset(); // a downed shooter releases the tongue
       this.goofyBasket.reset(); // a downed shooter drops its charge / unreleased throw
+      this.popcornShotgun.cancelReload(); // knocked down mid-reload: undone before 1.75 s
       this.meleeHoldPending = false;
     };
 
@@ -657,6 +679,18 @@ export class Game {
       this.musicSelector.setActiveIndex(this.bassBlaster.music.currentTrackIndex);
     };
 
+    // ---- POPCORN SHOTGUN (primary alternative — equipped from the Loadout
+    // menu): LMB = 12 seeded popcorn pellets (one-shot up close, head =
+    // one-shot), 2 loads, R = kernel reload (auto on a dry fire), RMB =
+    // tight hip aim, F = one-hand inspection. Presentation = shared FP arms
+    // + the pack's controller (tank physics); visual popcorns = ONE pool.
+    this.popcornShotgun = new PopcornShotgunWeapon(this.fpsCamera.camera, this.scene, this.viewmodelSystem);
+    this.popcornShotgun.owner = this.playerCombatant;
+    this.popcornShotgun.feedback = this.hitFeedback;
+    this.popcornShotgun.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
+    this.popcornHud = new PopcornShotgunHUD(popcornCfg.shots);
+    this.popcornRay.firstHitOnly = true;
+
     // ---- Audio: pure observation of existing gameplay events ----
     this.gameAudio = new GameAudio();
     this.movement.sfx = this.gameAudio.movementSfx;
@@ -704,6 +738,17 @@ export class Game {
     // remote balls — the projectile system is shared). Pure observers.
     this.goofyBasket.onRelease = (level) => this.gameAudio.basketThrow(level);
     this.goofyBasket.projectiles.onBounce = (pos) => this.gameAudio.basketBounce(pos);
+    // Popcorn Shotgun: pack §4 callbacks → SFX (pops voice-limited inside).
+    this.popcornShotgun.sfx = {
+      onShot: () => this.gameAudio.popcornShot(),
+      onDryFire: () => this.gameAudio.popcornDryFire(),
+      onPumpBack: () => this.gameAudio.popcornPump(false),
+      onPumpForward: () => this.gameAudio.popcornPump(true),
+      onLidOpen: () => this.gameAudio.popcornLid(true),
+      onKernelsIn: () => this.gameAudio.popcornKernels(),
+      onLidClose: () => this.gameAudio.popcornLid(false),
+      onPop: () => this.gameAudio.popcornPop(),
+    };
 
     this.playerCombatant.health.onDamaged = (amount, attacker) => {
       this.combatHud.notifyDamage(amount, this.damageAngleFrom(attacker));
@@ -750,6 +795,7 @@ export class Game {
       this.poison.reset(); // spray stopped, tank refilled for the respawn
       this.hexSniper.reset(); // tongue released mid-flight/pull, clean Idle
       this.goofyBasket.reset(); // charge / unreleased throw dropped, ball hidden (flying balls keep going)
+      this.popcornShotgun.reset(); // reload dropped, full tank for the respawn (server does the same)
       this.movement.stopHexPull(); // dying while reeled: the grab is gone
       this.meleeHoldPending = false;
       // Death mid-burrow: instant cleanup WITHOUT the AoE, then every
@@ -910,12 +956,16 @@ export class Game {
         console.error("ViewmodelSystem: FP arms failed to load", err),
       ),
       this.hexSniper.ready,
+      this.popcornShotgun.ready,
     ]);
 
     // 2. Transient visuals that never exist at rest: a thrown-revolver
     // clone (opaque SHARED template materials ≠ the viewmodel's cloned
     // transparent ones) + a shockwave ring + particles, far below the map.
     const far = new THREE.Vector3(0, -400, 0);
+    // Popcorn Shotgun visual pool: one popcorn far below the map (its
+    // instanced program compiles now, never on the first shot).
+    this.popcornShotgun.beginWarmUp(far);
     const temp: THREE.Object3D[] = [];
     try {
       const template = await loadRevolverTemplate();
@@ -1037,6 +1087,7 @@ export class Game {
       const prevOwner = this.fpOwner;
       if (prevOwner === "HEX_SNIPER") this.hexSniper.releasePresentation();
       if (prevOwner === "GOOFY_BASKET") this.goofyBasket.releasePresentation();
+      if (prevOwner === "POPCORN_SHOTGUN") this.popcornShotgun.releasePresentation();
       await this.hammerViewmodel.equip(false);
       this.viewmodelSystem.setVisible(true);
       this.viewmodelSystem.syncCamera(this.fpsCamera.camera);
@@ -1044,6 +1095,7 @@ export class Game {
       this.hammerViewmodel.hide();
       if (prevOwner === "HEX_SNIPER") this.hexSniper.takePresentation();
       if (prevOwner === "GOOFY_BASKET") this.goofyBasket.takePresentation();
+      if (prevOwner === "POPCORN_SHOTGUN") this.popcornShotgun.takePresentation();
     }
     this.viewmodelSystem.setVisible(fpWasVisible);
 
@@ -1082,6 +1134,7 @@ export class Game {
     for (const obj of temp) this.scene.remove(obj);
     releaseCorpseMats?.();
     this.shockwave.update(10);
+    this.popcornShotgun.endWarmUp();
     this.particles.update(10);
 
     // 5. Audio buffers decode in the background (no gesture required).
@@ -1109,6 +1162,7 @@ export class Game {
       this.poison.reset(); // fresh full tank + liquid motion memory cleared
       this.hexSniper.reset(); // unequip cancels any tongue/bite in progress
       this.goofyBasket.reset(); // charge dropped; flying balls keep their lifecycle
+      this.popcornShotgun.reset(); // fresh full tank
     }
     // COSMETICS: the equipped skin of the primary. Applied on the held ball
     // instance in place — a skin change ALONE is NOT a weapon change (no
@@ -1157,13 +1211,14 @@ export class Game {
    *   - otherwise                           → nobody (legacy viewmodels)
    * Exactly one owner advances the arms mixer per frame.
    */
-  private desiredFpOwner(): "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" {
+  private desiredFpOwner(): "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" | "POPCORN_SHOTGUN" {
     if (this.meleeWeapon === "HAMMER") {
       if (this.activeSlot === "MELEE" || this.slotSwitchPending) return "HAMMER";
       if (this.hammer.isBusy) return "HAMMER"; // temporary melee override
     }
     if (this.primaryWeapon === "HEX_SNIPER" && this.activeSlot === "PRIMARY") return "HEX_SNIPER";
     if (this.primaryWeapon === "GOOFY_BASKET" && this.activeSlot === "PRIMARY") return "GOOFY_BASKET";
+    if (this.primaryWeapon === "POPCORN_SHOTGUN" && this.activeSlot === "PRIMARY") return "POPCORN_SHOTGUN";
     return "NONE";
   }
 
@@ -1175,6 +1230,8 @@ export class Game {
     // the maul drops actions / inspect and detaches).
     if (this.fpOwner === "HEX_SNIPER") this.hexSniper.releasePresentation();
     if (this.fpOwner === "GOOFY_BASKET") this.goofyBasket.releasePresentation();
+    // Weapon switch: an unfinished reload is cancelled (pack §3) inside.
+    if (this.fpOwner === "POPCORN_SHOTGUN") this.popcornShotgun.releasePresentation();
     if (this.fpOwner === "HAMMER") {
       this.hammerInspecting = false;
       this.hammerViewmodel.hide();
@@ -1188,6 +1245,8 @@ export class Game {
       this.hexSniper.takePresentation();
     } else if (want === "GOOFY_BASKET") {
       this.goofyBasket.takePresentation();
+    } else if (want === "POPCORN_SHOTGUN") {
+      this.popcornShotgun.takePresentation(); // real Equip clip
     }
     this.syncNetworkMeleeShown();
   }
@@ -1409,6 +1468,11 @@ export class Game {
       forEach: (cb) => remotes.forEachVisible((id, center) => cb(id, center, null)),
     });
     this.multiplayer.onRemoteBasketProjectile = (event) => this.handleRemoteBasketProjectile(event);
+    // ---- POPCORN SHOTGUN (server-authoritative ammo / pellets / damage) ----
+    // Shooter side: the shot is predicted (clips, tank, visual popcorns);
+    // the server owns the damage (HIT_CONFIRMED drives the hitmarkers).
+    this.popcornShotgun.networkAuthority = true;
+    this.multiplayer.onRemotePopcornAction = (event) => this.handleRemotePopcornAction(event);
     // Victim side: reel toward the attacker's DISPLAYED position through
     // our own character controller (server HEX_PULL start/stop).
     this.multiplayer.onHexPull = (event) => {
@@ -1461,6 +1525,9 @@ export class Game {
     this.movement.stopHexPull();
     // GoofyBasket back to LOCAL authority: server-owned balls are dropped,
     // bot capsules become the targets again.
+    this.popcornShotgun.networkAuthority = false; // back to local damage (solo / bots)
+    this.popcornShotgun.reset();
+    this.popcornShotgun.projectiles?.clear(); // no popcorn from the old session left on the floor
     this.goofyBasket.networkAuthority = false;
     this.goofyBasket.projectiles.networkAuthority = false;
     this.goofyBasket.reset();
@@ -1873,6 +1940,7 @@ export class Game {
       const poisonEquipped = primaryHeld && this.primaryWeapon === "POISON_SPRAYER";
       const hexEquipped = primaryHeld && this.primaryWeapon === "HEX_SNIPER";
       const basketEquipped = primaryHeld && this.primaryWeapon === "GOOFY_BASKET";
+      const popcornEquipped = primaryHeld && this.primaryWeapon === "POPCORN_SHOTGUN";
       // KNOCKED DOWN (§ ragdoll) blocks EVERY weapon — exactly like a
       // ragdolled bot never fires. In-flight projectiles / explosions of
       // course keep ticking; only NEW actions are gated.
@@ -1892,7 +1960,8 @@ export class Game {
         !bassEquipped &&
         !poisonEquipped &&
         !hexEquipped &&
-        !basketEquipped;
+        !basketEquipped &&
+        !popcornEquipped;
       this.rifle.setViewmodelHidden(
         !primaryHeld ||
           this.hammer.isBusy ||
@@ -2050,6 +2119,29 @@ export class Game {
         },
         this.fpOwner === "GOOFY_BASKET",
       );
+      // POPCORN SHOTGUN: LMB fire (semi-auto on the authored readyToFire),
+      // R reload (auto on a dry fire), RMB tight hip aim, F inspection
+      // (terminal interaction keeps priority on F). The FP arms mixer
+      // advances ONLY while it owns them; the weapon clips + tank run in
+      // postCameraUpdate after the FP camera sync (render scope below).
+      this.popcornShotgun.setViewmodelHidden(
+        !popcornEquipped || this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
+      );
+      this.popcornShotgun.update(dt, {
+        fireHeld: popcornEquipped && this.input.pointerLocked && this.input.isMouseDown(0),
+        reloadPressed: popcornEquipped && this.input.wasPressed("KeyR"),
+        inspectPressed: popcornEquipped && !this.interactNearby && this.input.wasPressed("KeyF"),
+        aimHeld: popcornEquipped && this.input.isMouseDown(2),
+        canAct: popcornEquipped && playerAlive && !meleeBlocked && this.input.pointerLocked,
+        hittables: this.hittables,
+        staticHittables: this.staticHittables,
+        grounded: this.movement.grounded,
+        verticalVelocity: this.movement.velocity.y,
+        jumpSequence: this.movement.jumpSequence,
+        sliding: this.movement.state === MoveState.SLIDING,
+        speed: this.movement.horizontalSpeed,
+      });
+
       // LANCE on slot 2: held at rest between attacks (legacy viewmodel).
       this.spearViewmodel.setHeld(
         this.meleeWeapon === "SPEAR" && this.activeSlot === "MELEE" && playerAlive && !this.moleStrike.active,
@@ -2093,6 +2185,8 @@ export class Game {
     this.musicSelector.update(dt);
     this.poisonHud.setVisible(this.primaryWeapon === "POISON_SPRAYER");
     this.poisonHud.update(this.poison);
+    this.popcornHud.setVisible(this.primaryWeapon === "POPCORN_SHOTGUN");
+    this.popcornHud.update(this.popcornShotgun);
     this.combatHud.update(dt, this.playerCombatant.health, this.playerDeathTimer);
     // Knockdown banner (§ ragdoll): down → "KNOCKED DOWN", recoverable →
     // pulsing "PRESS SPACE TO GET UP" (a death always hides it).
@@ -2141,6 +2235,12 @@ export class Game {
       this.botManager.rebillboard(cam.quaternion, this.elapsed);
       this.damageNumbersHud.update(0, cam);
     }
+    // POPCORN SHOTGUN (pack §3): weapon clips + popcorn tank AFTER the FP
+    // camera follows the FINAL game-camera pose (the tank reads the real
+    // weapon world pose), then the shared visual popcorn pool. Paused with
+    // the game (dt = 0 in the Escape menu: nothing advances).
+    this.viewmodelSystem.syncCamera(cam);
+    this.popcornShotgun.postCameraUpdate(running ? dt : 0);
     try {
       // LOW preset: the shadow map is STATIC (baked once at load — see
       // warmUpRendering). No per-frame refresh: the caster re-render was the
@@ -2423,7 +2523,8 @@ export class Game {
       this.input.wasPressed("KeyR") &&
       this.primaryWeapon !== "REVOLVER" &&
       this.primaryWeapon !== "BASS_BLASTER" &&
-      this.primaryWeapon !== "POISON_SPRAYER";
+      this.primaryWeapon !== "POISON_SPRAYER" &&
+      this.primaryWeapon !== "POPCORN_SHOTGUN";
     if (fellOut || manualRespawn) {
       // Suicide / kill plane → normal death + respawn flow.
       this.playerCombatant.health.kill(null);
@@ -2545,6 +2646,99 @@ export class Game {
     // px/py/pz = the shooter velocity the ball inherits (server-clamped).
     this.goofyBasket.onNetThrowRequest = (gatherDelayed, shooterVelocity) =>
       this.netSendAimedAction(WeaponActionType.BASKET_THROW_REQUEST, shooterVelocity, gatherDelayed ? 1 : 0);
+
+    // POPCORN SHOTGUN: the predicted shot is reported with its pellet seed
+    // (the server rebuilds the same 12 pellets from seed + aim and owns
+    // the damage); reload start / cancel keep the server ammo clock in step.
+    this.popcornShotgun.onNetFire = (seed) => this.netSendAimedAction(WeaponActionType.POPCORN_FIRE, undefined, undefined, seed);
+    this.popcornShotgun.onNetReload = () => this.netSendAimedAction(WeaponActionType.POPCORN_RELOAD);
+    this.popcornShotgun.onNetReloadCancel = () => this.netSendAimedAction(WeaponActionType.POPCORN_RELOAD_CANCEL);
+  }
+
+  /**
+   * Remote players' Popcorn Shotgun confirms (pack §5): weapon clip + TP
+   * clip THE SAME FRAME (FireLast when the server says the tank is now
+   * empty), spatialized SFX, and the 12 COSMETIC popcorns rebuilt from the
+   * server seed + aim — visual raycasts only (map + remote avatars, the
+   * local player's proxy), never damage. They leave the remote's REAL
+   * muzzle and land on the rebuilt impacts.
+   */
+  private handleRemotePopcornAction(event: WeaponActionConfirmedEvent): void {
+    const remotes = this.multiplayer?.remotes;
+    if (!remotes) return;
+    const ammo = typeof event.am === "number" ? event.am : null;
+    const elapsed = remotes.elapsedSince(event.ts);
+    const shooterPos = this.popcornVec2.set(event.ox, event.oy, event.oz);
+    if (event.action === WeaponActionType.POPCORN_RELOAD_CANCEL) {
+      remotes.popcornReloadCancel(event.playerId, ammo);
+      return;
+    }
+    if (event.action === WeaponActionType.POPCORN_RELOAD) {
+      remotes.popcornAction(event.playerId, "reload", ammo, elapsed);
+      this.gameAudio.popcornReloadAt(shooterPos);
+      return;
+    }
+    if (event.action !== WeaponActionType.POPCORN_FIRE) return;
+    remotes.popcornAction(event.playerId, "fire", ammo, elapsed);
+    this.gameAudio.popcornShotAt(shooterPos);
+    const pool = this.popcornShotgun.projectiles;
+    if (!pool || typeof event.sd !== "number") return;
+
+    // Same pellets as the server: the confirm carries the server-normalized
+    // aim at full precision — used AS IS.
+    const origin = shooterPos;
+    popcornPelletDirections({ x: event.dx, y: event.dy, z: event.dz }, event.sd >>> 0, this.popcornDirs);
+    this.popcornRay.far = popcornCfg.maxRange;
+    const shooterId = event.playerId;
+    for (let i = 0; i < this.popcornDirs.length; i++) {
+      const dir = this.popcornDirs[i];
+      const nrm = this.popcornNormals[i];
+      let best = popcornCfg.maxRange;
+      let hit = false;
+      let onCharacter = false;
+      // World geometry.
+      this.popcornRay.set(origin, dir);
+      this.popcornRay.far = best;
+      const hits = this.popcornRay.intersectObjects(this.staticHittables, true);
+      if (hits.length > 0 && hits[0].distance < best) {
+        const h = hits[0];
+        best = h.distance;
+        hit = true;
+        if (h.face) nrm.copy(h.face.normal).transformDirection(h.object.matrixWorld);
+        else nrm.copy(dir).negate();
+      }
+      // Other remote avatars: the SHARED hit volumes (server shapes).
+      remotes.forEachVisible((id, center) => {
+        if (id === shooterId) return;
+        const r = popcornRayVsPlayer(origin, dir, center, best);
+        if (r && r.t < best) {
+          best = r.t;
+          hit = onCharacter = true;
+        }
+      });
+      // The local player (we see the popcorns hit US).
+      if (this.playerCombatant.health.alive) {
+        this.player.getPosition(this.popcornVec);
+        const r = popcornRayVsPlayer(origin, dir, this.popcornVec, best);
+        if (r && r.t < best) {
+          best = r.t;
+          hit = onCharacter = true;
+        }
+      }
+      const to = this.popcornTo[i].copy(origin).addScaledVector(dir, best);
+      if (!hit) {
+        this.popcornNormalRefs[i] = null;
+        this.popcornFloors[i] = null;
+        continue;
+      }
+      if (onCharacter) nrm.copy(dir).negate();
+      this.popcornNormalRefs[i] = nrm;
+      // Wall / character impact: the popcorn falls to the floor below (visual).
+      this.popcornFloors[i] =
+        onCharacter || nrm.y < 0.6 ? findFloorBelow(this.popcornFloorRay, to, nrm, this.staticHittables) : null;
+    }
+    if (!remotes.getPopcornMuzzle(shooterId, this.popcornVec)) this.popcornVec.copy(origin);
+    pool.spawn(this.popcornVec, this.popcornTo, this.popcornNormalRefs, this.popcornFloors);
   }
 
   /**
@@ -2660,6 +2854,8 @@ export class Game {
     action: string,
     extraPoint?: THREE.Vector3,
     pointIndex?: number,
+    /** PopcornShotgun pellet seed (POPCORN_FIRE only). */
+    seed?: number,
   ): void {
     if (!this.multiplayer || !this.multiplayerClient?.isConnected) return;
     const cam = this.fpsCamera.camera;
@@ -2679,6 +2875,7 @@ export class Game {
       ...(extraPoint ? { px: extraPoint.x, py: extraPoint.y, pz: extraPoint.z } : {}),
       ...(pointIndex !== undefined ? { pi: pointIndex } : {}),
       ...(vt !== null ? { vt } : {}),
+      ...(seed !== undefined ? { sd: seed } : {}),
     });
   }
 
@@ -2856,6 +3053,8 @@ function networkKillMethod(damageType: string): KillMethod {
       return KillMethod.HEX_SNIPER_TONGUE;
     case "GOOFY_BASKET":
       return KillMethod.GOOFY_BASKET;
+    case "POPCORN_SHOTGUN":
+      return KillMethod.POPCORN_SHOTGUN;
     default:
       return KillMethod.PLASMA;
   }

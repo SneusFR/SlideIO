@@ -25,6 +25,8 @@ export enum DamageType {
   HEX_SNIPER = "HEX_SNIPER",
   /** GOOFY BASKET bouncing ball (flat 75 on the first player contact). */
   GOOFY_BASKET = "GOOFY_BASKET",
+  /** POPCORN SHOTGUN pellets (summed per shot and per victim). */
+  POPCORN_SHOTGUN = "POPCORN_SHOTGUN",
   MOLE_STRIKE = "MOLE_STRIKE",
   ENVIRONMENT = "ENVIRONMENT",
 }

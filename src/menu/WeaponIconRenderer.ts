@@ -13,6 +13,8 @@ import poisonUrl from "../assets/Lance_poison_jeu.glb?url";
 import hexSniperUrl from "../assets/potato/HexSniper_Weapon.glb?url";
 // Goofy Basket = the ball LOD1 (light — plenty for a 384px icon).
 import goofyBasketUrl from "../assets/goofybasket/GoofyBasket_LOD1.glb?url";
+// Popcorn Shotgun = the pack's weapon GLB (low-poly, 180 KB).
+import popcornShotgunUrl from "../assets/potato/PopcornShotgun_Weapon.glb?url";
 import { getGoofyBasketSkinLibrary } from "../weapons/goofybasket/GoofyBasketSkinRuntime";
 import { DEFAULT_WEAPON_SKIN, isGoofyBasketSkinId, sanitizeWeaponSkin } from "../../shared/combat/WeaponSkins";
 
@@ -36,6 +38,7 @@ const MODEL_URLS: Record<string, string> = {
   POISON_SPRAYER: poisonUrl,
   HEX_SNIPER: hexSniperUrl,
   GOOFY_BASKET: goofyBasketUrl,
+  POPCORN_SHOTGUN: popcornShotgunUrl,
 };
 
 const ICON_SIZE = 384;

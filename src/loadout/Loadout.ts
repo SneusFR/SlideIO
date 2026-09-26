@@ -8,6 +8,7 @@ import { BassBlasterConfig as bb } from "../weapons/bassblaster/BassBlasterConfi
 import { PoisonConfig as pz } from "../weapons/poison/PoisonConfig";
 import { HexSniperConfig as hx } from "../weapons/hexsniper/HexSniperConfig";
 import { NetworkWeaponConfig } from "../../shared/combat/NetworkWeapons";
+import { PopcornShotgunConfig as pc } from "../../shared/combat/PopcornShotgunRules";
 
 /** GoofyBasket gameplay numbers come from the SHARED client/server config. */
 const gb = NetworkWeaponConfig.goofyBasket;
@@ -26,7 +27,8 @@ export type PrimaryWeaponId =
   | "BASS_BLASTER"
   | "POISON_SPRAYER"
   | "HEX_SNIPER"
-  | "GOOFY_BASKET";
+  | "GOOFY_BASKET"
+  | "POPCORN_SHOTGUN";
 export type KillstreakId = "NONE" | "MOLE_STRIKE" | "ORBITAL_SCAN" | "NOVA_STRIKE";
 
 /** Exactly three equippable killstreak slots (keys W / X / C in game). */
@@ -89,7 +91,8 @@ export function loadLoadout(): LoadoutSelection {
         parsed.primary === "BASS_BLASTER" ||
         parsed.primary === "POISON_SPRAYER" ||
         parsed.primary === "HEX_SNIPER" ||
-        parsed.primary === "GOOFY_BASKET"
+        parsed.primary === "GOOFY_BASKET" ||
+        parsed.primary === "POPCORN_SHOTGUN"
           ? parsed.primary
           : "PLASMA_RIFLE",
       killstreaks,
@@ -449,6 +452,47 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
           { label: "DURÉE DE VIE", value: `${gb.maxLifetimeSeconds} s` },
           { label: "DIAMÈTRE", value: `${Math.round(gb.projectileRadius * 200)} cm` },
         ],
+      },
+    ],
+  },
+  {
+    id: "POPCORN_SHOTGUN",
+    name: "POPCORN SHOTGUN",
+    tagline: "Fusil à pompe qui tire du popcorn",
+    summary:
+      "Un fusil à pompe à deux mains chargé au popcorn : 2 coups par recharge, le réservoir en verre montre ce qu'il reste (plein, à moitié, vide). Dévastateur de près, il touche encore de loin mais beaucoup moins. Un seul grain dans la tête suffit.",
+    ratings: { power: 90, precision: 35, difficulty: 45 },
+    abilities: [
+      {
+        trigger: "CLIC GAUCHE",
+        name: "RAFALE DE POPCORN",
+        description:
+          `${pc.pellets} popcorns partent en gerbe depuis le centre de l'écran. Tous les grains d'un même tir sur une cible s'additionnent en un seul coup. De près, c'est un one shot ; un seul grain dans la tête tue à toute distance. Le premier tir est suivi d'un coup de pompe, le second vide le réservoir.`,
+        stats: [
+          { label: "PLOMBS", value: `${pc.pellets}` },
+          { label: "DÉGÂTS / PLOMB", value: pct(pc.pelletDamageFraction) },
+          { label: "PLEINE PUISSANCE", value: `≤ ${pc.falloff.fullUntil} m` },
+          { label: "PORTÉE MAX", value: `${pc.maxRange} m` },
+          { label: "CADENCE", value: `${pc.timeline.fireReady} s` },
+        ],
+      },
+      {
+        trigger: "TOUCHE R — OU TIR À VIDE",
+        name: "RECHARGE AU MAÏS",
+        description:
+          "Pichenette sur le couvercle, une poignée de grains de maïs, couvercle refermé : les grains éclatent en popcorn dans le réservoir, puis on pompe. Changer d'arme avant la fin des pops annule la recharge.",
+        stats: [
+          { label: "COUPS", value: `${pc.shots}` },
+          { label: "MUNITIONS PRÊTES", value: `${pc.timeline.reloadAmmoRefilled} s` },
+          { label: "TIR POSSIBLE", value: `${pc.timeline.reloadReady} s` },
+        ],
+      },
+      {
+        trigger: "CLIC DROIT — MAINTENIR / TOUCHE F",
+        name: "VISÉE SERRÉE & INSPECTION",
+        description:
+          "Clic droit : l'arme se serre contre le corps sans cacher le viseur (même dispersion). F : inspection à une main (visuel uniquement).",
+        stats: [{ label: "INSPECTION", value: "3,6 s" }],
       },
     ],
   },

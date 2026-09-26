@@ -7,13 +7,6 @@ import fpPosesUrl from "../../assets/potato/HexSniper_FP_Poses.glb?url";
 // Authored integration data (mount matrices, clips, camera, contacts).
 import profileJson from "../../assets/potato/WeaponProfile_HexSniper.json";
 
-/** Reference FP camera parameters from the authored profile. */
-export const HEX_FP_CAMERA = {
-  verticalFovDegrees: profileJson.camera.verticalFovDegrees,
-  near: profileJson.camera.near,
-  far: profileJson.camera.far,
-} as const;
-
 /**
  * HexSniper presentation profile — mount matrices and clip names come
  * straight from the authored WeaponProfile_HexSniper.json (applied once,

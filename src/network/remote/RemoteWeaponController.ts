@@ -15,6 +15,9 @@ import { HEXSNIPER_PROFILE_ID } from "./RemotePlayerAnimationController";
 import { GoofyBasketProfile, GOOFY_TIMING, type GoofyActionKey } from "../../weapons/goofybasket/GoofyBasketProfile";
 import { loadGoofyBasketGltf } from "../../weapons/goofybasket/GoofyBasketModel";
 import { GoofyBasketRemotePresentation } from "../../weapons/goofybasket/GoofyBasketRemotePresentation";
+import { PopcornShotgunProfile, POPCORN_SHOTGUN_TIMELINE } from "../../weapons/profiles/PopcornShotgunProfile";
+import { PopcornShotgunController } from "../../weapons/popcorn/PopcornShotgunController";
+import { loadPopcornShotgunGltf } from "../../weapons/popcorn/PopcornShotgunModel";
 // Real weapon GLBs (same optimized assets as the local viewmodels/menu).
 import rifleUrl from "../../assets/voidrifle_opt.glb?url";
 import spearUrl from "../../assets/lance_opt.glb?url";
@@ -197,6 +200,7 @@ export function preloadRemoteWeaponTemplates(): Promise<void> {
     .map((id) => loadRemoteWeaponTemplate(id));
   jobs.push(loadRemoteHexSniper()); // animated path (shared GLB cache)
   jobs.push(loadBrickMaulGltf()); // Brick Maul (profile path, shared cache)
+  jobs.push(loadPopcornShotgunGltf()); // Popcorn Shotgun (profile path, shared with FP)
   return Promise.all(jobs).then(() => undefined);
 }
 
@@ -290,6 +294,13 @@ export class RemoteWeaponController {
   viewerPosition: (() => THREE.Vector3 | null) | null = null;
   /** SERVER-replicated cosmetic skin of the equipped weapon ("default" = base). */
   private skinId = "default";
+
+  // ---- POPCORN SHOTGUN dedicated state (profile TP mount + TP controller) ----
+  /** TP presentation controller (no physics: baked full / half layouts). */
+  private popcorn: PopcornShotgunController | null = null;
+  private popcornMount: THREE.Group | null = null;
+  /** Server ammo known before the weapon is attached (applied at attach). */
+  private popcornAmmo: number | null = null;
 
   // Procedural swing state (SPEAR legacy path only)
   private swingTimer = -1;
@@ -483,6 +494,57 @@ export class RemoteWeaponController {
     });
   }
 
+  // ---- POPCORN SHOTGUN visual replication (server-confirmed events) ----
+
+  /**
+   * POPCORN_FIRE / POPCORN_RELOAD confirmed by the server: the weapon clip
+   * (controller.playRemote) and the avatar's TP clip start THE SAME FRAME.
+   * `ammoAfter` = server ammo after the action (0 after a fire = the last
+   * load → TP FireLast, no pump). Never refused for a local mismatch.
+   * Returns false when the shotgun is not displayed (nothing replayed).
+   */
+  popcornAction(action: "fire" | "reload", ammoAfter: number | null, elapsed: number): boolean {
+    const c = this.popcorn;
+    if (!c) {
+      if (ammoAfter !== null) this.popcornAmmo = ammoAfter;
+      return false;
+    }
+    c.playRemote(action);
+    // Server authority on the tank level (a missed confirm never drifts).
+    if (action === "fire" && ammoAfter !== null && c.ammo !== ammoAfter) c.setAmmo(ammoAfter);
+    const key = action === "reload" ? "reload" : c.ammo === 0 ? "fireLast" : "fire";
+    const startAt = Math.max(0, elapsed);
+    this.onProfileAction?.(key, { startAt, fadeIn: action === "reload" ? 0.08 : 0.02 });
+    // Late confirm: advance the weapon clip by the same offset as the TP clip.
+    if (startAt > 0) c.update(startAt);
+    return true;
+  }
+
+  /** POPCORN_RELOAD_CANCEL (weapon swap mid-reload): undo before the refill point. */
+  popcornReloadCancel(ammoAfter: number | null): void {
+    if (ammoAfter !== null) this.popcornAmmo = ammoAfter;
+    const c = this.popcorn;
+    if (!c) return;
+    if (c.reloading) {
+      c.cancelReload();
+      this.onProfileAction?.(null, {});
+    }
+    if (ammoAfter !== null) c.setAmmo(ammoAfter);
+  }
+
+  /** Death / respawn: drop the replayed action, full tank (server resets it too). */
+  popcornReset(): void {
+    this.popcornAmmo = null;
+    if (!this.popcorn) return;
+    this.popcorn.setAmmo(this.popcorn.shots);
+    this.onProfileAction?.(null, {});
+  }
+
+  /** Displayed shotgun's muzzle node (visual pellet origin), or null. */
+  get popcornMuzzle(): THREE.Object3D | null {
+    return this.popcorn?.muzzle ?? null;
+  }
+
   /** Far / invisible avatars: suspend the cosmetic pupils, reset on resume. */
   setCosmeticSuspended(suspended: boolean): void {
     if (this.cosmeticSuspended === suspended) return;
@@ -528,6 +590,9 @@ export class RemoteWeaponController {
     // HexSniper creature clips + world tether (visual controller — never a
     // re-simulation; the tip is fed by the remote combat VFX controller).
     this.hexVisuals?.update(dt);
+    // Popcorn Shotgun: weapon clips (pump / lid) + baked tank pops. Cheap:
+    // the tank uploads instances only while something animates.
+    this.popcorn?.update(dt);
     if (this.overrideId) {
       this.overrideTimer -= dt;
       if (this.overrideTimer <= 0) {
@@ -611,6 +676,10 @@ export class RemoteWeaponController {
       this.basket.mount.getWorldPosition(out);
       return true;
     }
+    if (this.popcorn) {
+      this.popcorn.muzzle.getWorldPosition(out);
+      return true;
+    }
     if (!this.grip) return false;
     this.grip.getWorldPosition(out);
     return true;
@@ -653,6 +722,19 @@ export class RemoteWeaponController {
         })
         .catch((err) => {
           if (import.meta.env.DEV) console.warn("[RemoteWeapon] GoofyBasket load failed", err);
+        });
+      return;
+    }
+    if (target === NetworkWeaponId.POPCORN_SHOTGUN) {
+      // Profile path: whole weapon scene + TP controller, authored TP mount.
+      void loadPopcornShotgunGltf()
+        .then((gltf) => {
+          if (this.disposed || token !== this.loadToken) return;
+          this.detach();
+          this.attachPopcornShotgun(gltf);
+        })
+        .catch((err) => {
+          if (import.meta.env.DEV) console.warn("[RemoteWeapon] PopcornShotgun load failed", err);
         });
       return;
     }
@@ -802,6 +884,41 @@ export class RemoteWeaponController {
     else this.onProfileAction?.("equip", { fadeIn: 0.06 });
   }
 
+  /**
+   * POPCORN SHOTGUN remote attach (pack §5): TP controller (firstPerson
+   * false — baked full / half layouts, no physics) under the character's
+   * Weapon_R through the authored TP mount (applied ONCE, root keeps its
+   * 0.19). The avatar switches to the "PopcornShotgun" TP pose set.
+   */
+  private attachPopcornShotgun(gltf: GLTF): void {
+    const socket = this.characterModel.getObjectByName("Weapon_R");
+    if (!socket) {
+      if (import.meta.env.DEV) console.warn("[RemoteWeapon] Weapon_R socket not found — cannot attach POPCORN_SHOTGUN");
+      return;
+    }
+    let controller: PopcornShotgunController;
+    try {
+      controller = new PopcornShotgunController(gltf, {
+        firstPerson: false,
+        timeline: POPCORN_SHOTGUN_TIMELINE,
+        // No separate muzzle puff: the shared visual popcorns (Game) leave
+        // this weapon's real muzzle — one coherent effect, like in FP.
+        burstParent: null,
+      });
+    } catch (err) {
+      if (import.meta.env.DEV) console.warn("[RemoteWeapon] PopcornShotgun controller failed", err);
+      return;
+    }
+    const mount = createWeaponMount("PopcornShotgunTPMount", PopcornShotgunProfile.tpMount);
+    socket.add(mount);
+    mount.add(controller.object);
+    if (this.popcornAmmo !== null) controller.setAmmo(this.popcornAmmo);
+    this.popcorn = controller;
+    this.popcornMount = mount;
+    this.displayed = NetworkWeaponId.POPCORN_SHOTGUN;
+    this.onArmedChanged?.(PopcornShotgunProfile.id);
+  }
+
   // ---- HEX SNIPER remote tongue visuals (server-confirmed replay) ----
 
   hexTongueBegin(tip: THREE.Vector3): void {
@@ -901,6 +1018,18 @@ export class RemoteWeaponController {
       this.basket.dispose();
       this.basket = null;
       this.basketPhase = null;
+      this.displayed = null;
+      this.onProfileAction?.(null, {});
+      this.onArmedChanged?.(null);
+    }
+    // Popcorn Shotgun profile path cleanup: the instance (mixer, tank
+    // InstancedMeshes, muzzle puff) goes; shared GLB resources stay cached.
+    if (this.popcorn) {
+      this.popcornAmmo = this.popcorn.ammo; // survives a re-attach (melee override)
+      this.popcorn.dispose();
+      this.popcorn = null;
+      this.popcornMount?.removeFromParent();
+      this.popcornMount = null;
       this.displayed = null;
       this.onProfileAction?.(null, {});
       this.onArmedChanged?.(null);
