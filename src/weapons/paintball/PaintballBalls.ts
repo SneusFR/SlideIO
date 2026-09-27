@@ -11,20 +11,20 @@ export type PaintballAnchor = (out: THREE.Vector3) => boolean;
 export interface PaintballBallsOptions {
   /** Balls in flight at once, all players together (ring buffer). Default 256. */
   max?: number;
-  /** Flight speed (m/s). Tracer speed: the impact reads as instant, the ball is still seen. Default 400. */
+  /** Flight speed (m/s). Tracer speed: the impact reads as instant, the ball is still seen. Default 700. */
   speed?: number;
   /** Ball radius (m). Default 0.09 (18 cm — a big, readable cartoon paintball). */
   radius?: number;
   /**
    * Minimum ON-SCREEN size (radians of radius seen from the viewer): a far
-   * ball is scaled up so it never shrinks to a dot (at 400 m/s it is 20 m
-   * away after 3 frames). Default 0.007 (≈ 0.4° — the ball's size at ~13 m).
+   * ball is scaled up so it never shrinks to a dot (at 700 m/s it is 23 m
+   * away after 2 frames). Default 0.007 (≈ 0.4° — the ball's size at ~13 m).
    */
   minAngularRadius?: number;
   /**
-   * Ease-in (1 = constant speed). Default 2 — SAME arrival time, but the
-   * first frames stay close to the gun: at 20 m the ball is drawn at the
-   * muzzle, then ~1.2 m, ~5 m, ~11 m, then the impact — its exit is SEEN.
+   * Ease-in (1 = constant speed). Default 1.3 — SAME arrival time, the
+   * first frame stays a little closer to the gun (the exit is seen) without
+   * the slow, floaty start of a strong ease.
    */
   easeIn?: number;
   /**
@@ -43,11 +43,12 @@ export interface PaintballBallsOptions {
 }
 
 /**
- * Flight time bounds (s): ≥ 4 frames (the ball is always seen leaving the
- * barrel: muzzle → ~1 m out → mid → impact), ≤ 6 frames whatever the
- * distance (no weapon range: a 150 m shot still lands in 0.1 s).
+ * Flight time bounds (s): ≥ 2 frames (at 700 m/s a ball covers 11.7 m per
+ * frame — without a floor it would never be seen leaving the barrel under
+ * ~20 m), ≤ 0.1 s whatever the distance (no weapon range: past 70 m the
+ * ball speeds up so the splat never lags the shot by more than 6 frames).
  */
-const MIN_FLIGHT = 4 / 60;
+const MIN_FLIGHT = 2 / 60;
 const MAX_FLIGHT = 0.1;
 /** Updates during which the line start follows the live muzzle (then: the fired ray). */
 const ANCHOR_FRAMES = 2;
@@ -102,10 +103,10 @@ const _axis = new THREE.Vector3();
  *     readable on a dark map — no flat self-glow, no halo by default;
  *   - BIG (18 cm), never smaller on screen than ≈ 0.4° (a far ball is
  *     scaled up);
- *   - TRACER SPEED (400 m/s) with a bounded flight time: ≥ 4 frames (a
+ *   - TRACER SPEED (700 m/s) with a bounded flight time: ≥ 2 frames (a
  *     point-blank ball is still seen leaving the barrel), ≤ 0.1 s (any
- *     longer shot lands in 6 frames — no weapon range) — the splat appears
- *     practically with the hit;
+ *     shot past 70 m lands in 6 frames — no weapon range) — the splat
+ *     appears practically with the hit;
  *   - a short, faint tapered trail (0.3 m, lighter ball colour), never
  *     longer than the path already flown (never pokes into the gun / camera);
  *   - GLUED TO THE GUN, THEN STRAIGHT: on its first update the line start is
@@ -154,10 +155,10 @@ export class PaintballBalls {
 
   constructor(geometry: THREE.BufferGeometry, parent: THREE.Object3D, splats: PaintSplats | null, options: PaintballBallsOptions = {}) {
     const MAX = (this.max = options.max ?? 256);
-    this.speed = options.speed ?? 400;
+    this.speed = options.speed ?? 700;
     this.radius = options.radius ?? 0.09;
     this.minAngle = options.minAngularRadius ?? 0.007;
-    this.ease = options.easeIn ?? 2;
+    this.ease = options.easeIn ?? 1.3;
     this.trailLength = options.trailLength ?? 0.3;
     this.haloScale = options.halo ?? 0;
     this.spin = options.spin ?? 22;

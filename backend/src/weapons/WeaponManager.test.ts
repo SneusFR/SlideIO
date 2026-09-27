@@ -1112,20 +1112,30 @@ test("paintball: NO max range — a player 150 m away is hit (12), wall first st
   assert.ok(PB.maxRange >= 400, "ray covers every map diagonal");
 });
 
-test("paintball: server ray = shared ballDirection (same seed + spread), sky end point = ray length, spread clamped", () => {
+test("paintball: NO spread — any received cone clamps to 0°, the ball flies EXACTLY along the aim", () => {
   const { wm, rec, addPlayer, advance } = makeWorld();
   const a = addPlayer("A", -40, 0.9, 16);
   wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
-  const aim = { x: 0, y: 1, z: 0 }; // sky: nothing to hit, the end point is the end of the ray
-  fire(wm, a, WeaponActionType.PAINTBALL_FIRE, eyeOf(a), aim, { sd: 777, sp: 2.2 });
-  const c = paintFires(rec)[0];
-  const d = paintballBallDirection(aim, 2.2, 777, { x: 0, y: 0, z: 0 });
+  // Near-vertical sky shot (tilted: a cone would visibly move it): nothing
+  // to hit, the end point is the end of the ray.
+  const aim = dirTo(eyeOf(a), { x: -40 + 3, y: 100, z: 16 - 2 });
   const o = eyeOf(a);
-  assert.ok(Math.abs(c.hx - (o.x + d.x * PB.maxRange)) < 1e-9 && Math.abs(c.hz - (o.z + d.z * PB.maxRange)) < 1e-9);
-  assert.strictEqual(c.sp, 2.2);
-  advance(100);
-  fire(wm, a, WeaponActionType.PAINTBALL_FIRE, eyeOf(a), aim, { sd: 5, sp: 50 });
-  assert.strictEqual(paintFires(rec)[1].sp, PB.spreadMaxDeg, "huge cone clamped");
+  let k = 0;
+  for (const sp of [2.2, 50, 0.35, -1, undefined]) {
+    if (k > 0) advance(100);
+    fire(wm, a, WeaponActionType.PAINTBALL_FIRE, o, aim, { sd: 777 + k, ...(sp !== undefined ? { sp } : {}) });
+    const c = paintFires(rec)[k++];
+    assert.strictEqual(c.sp, 0, `cone ${sp} → 0°`);
+    // End point exactly on the aim ray (the server normalizes the aim).
+    const d = paintballBallDirection(aim, 0, c.sd, { x: 0, y: 0, z: 0 });
+    assert.ok(Math.abs(d.x - aim.x) < 1e-9 && Math.abs(d.y - aim.y) < 1e-9 && Math.abs(d.z - aim.z) < 1e-9, "0° cone = the aim itself");
+    const ex = o.x + aim.x * PB.maxRange, ey = o.y + aim.y * PB.maxRange, ez = o.z + aim.z * PB.maxRange;
+    assert.ok(
+      Math.abs(c.hx - ex) < 1e-6 && Math.abs(c.hy - ey) < 1e-6 && Math.abs(c.hz - ez) < 1e-6,
+      `end point on the aim ray (${c.hx},${c.hy},${c.hz}) vs (${ex},${ey},${ez})`,
+    );
+  }
+  assert.strictEqual(PB.spreadMaxDeg, 0);
 });
 
 test("paintball: cadence ≥ 0.1 s (jitter-tolerant, never above 600 rpm), 32 balls, empty refused", () => {

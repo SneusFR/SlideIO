@@ -100,6 +100,7 @@ import { MultiplayerGameController } from "../network/MultiplayerGameController"
 import type { MultiplayerClient } from "../network/MultiplayerClient";
 import { KillMethod } from "../combat/KillMethod";
 import {
+  NetworkWeaponId,
   WeaponActionType,
   HEX_ACTION_TONGUE_HIT,
   HEX_ACTION_TONGUE_MISS,
@@ -1577,16 +1578,22 @@ export class Game {
     this.paintballRifle.resolveRemoteHit = (origin, dir, maxDist) => {
       let best = maxDist;
       let bestId: string | null = null;
+      let bestHead = false;
       remotes.forEachVisible((id, center) => {
         const r = popcornRayVsPlayer(origin, dir, center, best);
         if (r && r.t < best) {
           best = r.t;
           bestId = id;
+          bestHead = r.head;
         }
       });
       if (bestId === null) return null;
-      return { distance: best, root: remotes.getCharacterModel(bestId) };
+      return { distance: best, root: remotes.getCharacterModel(bestId), head: bestHead };
     };
+    // Hitscan FEEL: the predicted hit (exact ray, server volumes) shows the
+    // hitmarker + plays the hit sound at the click; HIT_CONFIRMED then only
+    // adds the damage number (see handleNetworkHitConfirmed).
+    this.paintballRifle.onPredictedRemoteHit = (zone) => this.showPaintballHitFeedback(zone);
     // New session: no splat / paint from the solo sandbox or an old match.
     this.paintballRifle.fx.clearAll();
     // Victim side: reel toward the attacker's DISPLAYED position through
@@ -1646,6 +1653,7 @@ export class Game {
     this.popcornShotgun.projectiles?.clear(); // no popcorn from the old session left on the floor
     this.paintballRifle.networkAuthority = false; // back to local damage (solo / bots)
     this.paintballRifle.resolveRemoteHit = null;
+    this.paintballRifle.onPredictedRemoteHit = null;
     this.paintballRifle.reset();
     this.paintballRifle.fx.clearAll(); // the old match's splats never leak into solo
     this.goofyBasket.networkAuthority = false;
@@ -3214,9 +3222,26 @@ export class Game {
       }
     }
 
+    // PAINTBALL: the hitmarker + hit sound already fired at the click (the
+    // predicted hit, same exact ray + volumes as the server) — no second
+    // marker one round-trip later, and never the 80 ms plasma throttle (at
+    // 600 rpm it would swallow balls). A kill still gets its marker.
+    if (event.weapon === NetworkWeaponId.PAINTBALL_RIFLE && !event.killed) return;
+
     // Continuous plasma confirms ~20 Hz — keep the feedback readable.
     if (!event.killed && this.elapsed - this.lastNetHitFeedback < 0.08) return;
     this.lastNetHitFeedback = this.elapsed;
+    this.hitmarkerHud.show(zone);
+    if (zone === HitZone.HEAD) this.gameAudio.hitHead();
+    else this.gameAudio.hitBody();
+  }
+
+  /**
+   * PAINTBALL predicted remote hit: hitmarker + hit sound at the click,
+   * EVERY ball (never throttled — each ball of a 600 rpm burst that
+   * connects is heard / seen).
+   */
+  private showPaintballHitFeedback(zone: HitZone): void {
     this.hitmarkerHud.show(zone);
     if (zone === HitZone.HEAD) this.gameAudio.hitHead();
     else this.gameAudio.hitBody();

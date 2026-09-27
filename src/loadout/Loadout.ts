@@ -512,13 +512,13 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
         trigger: "CLIC GAUCHE — MAINTENIR",
         name: "RAFALE DE PEINTURE",
         description:
-          `Tir automatique : une bille toutes les ${pb.fireInterval} s tant que la gâchette est tenue. Chaque bille touche au moment du tir, sans portée maximale (premier obstacle ou limites de la carte) et sans atténuation avec la distance. La dispersion s'ouvre pendant la rafale et se referme dès qu'on relâche. Une tête fait ×${pb.headMultiplier}.`,
+          `Tir automatique : une bille toutes les ${pb.fireInterval} s tant que la gâchette est tenue. Chaque bille touche au moment du tir, sans portée maximale (premier obstacle ou limites de la carte) et sans atténuation avec la distance. Aucune dispersion : chaque bille part exactement au centre du viseur, même en rafale. Une tête fait ×${pb.headMultiplier}.`,
         stats: [
           { label: "DÉGÂTS", value: `${pb.bodyDamage} PV` },
           { label: "TÊTE", value: `${pb.bodyDamage * pb.headMultiplier} PV` },
           { label: "CADENCE", value: `${Math.round(60 / pb.fireInterval)} / min` },
           { label: "PORTÉE", value: "ILLIMITÉE" },
-          { label: "DISPERSION", value: `${pb.spreadMinDeg}° → ${pb.spreadMaxDeg}°` },
+          { label: "DISPERSION", value: pb.spreadMaxDeg > 0 ? `${pb.spreadMinDeg}° → ${pb.spreadMaxDeg}°` : "AUCUNE" },
         ],
       },
       {

@@ -66,10 +66,13 @@ try {
     }
     assert.equal(P.capacity, REF.CAPACITY);
     assert.equal(P.fireInterval, REF.FIRE_INTERVAL);
-    assert.equal(P.spreadMinDeg, REF.SPREAD_MIN_DEG);
-    assert.equal(P.spreadMaxDeg, REF.SPREAD_MAX_DEG);
-    assert.equal(P.bloomPerShotDeg, REF.BLOOM_PER_SHOT_DEG);
-    assert.equal(P.bloomRecoveryDegPerSecond, REF.BLOOM_RECOVERY_DEG_PER_S);
+    // Deliberate difference with the pack (0.35 → 2.2° bloom): NO spread.
+    assert.equal(P.spreadMinDeg, 0);
+    assert.equal(P.spreadMaxDeg, 0);
+    assert.equal(P.bloomPerShotDeg, 0);
+    assert.equal(R.PAINTBALL_MIN_SPREAD_DEG, 0);
+    // The cone MATH stays identical to the pack (same PRNG / draw order) for
+    // any cone — checked on the pack's own cones.
     // Same direction as the pack on the same seed (pack `up` = roll-free camera up).
     const a = new THREE.Vector3();
     for (const seed of [1, 42, 123456789, 4294967295]) {
@@ -83,12 +86,19 @@ try {
         assert.ok(THREE.MathUtils.radToDeg(Math.acos(Math.min(1, fwd.dot(a)))) <= spread + 1e-9, "inside the cone");
       }
     }
-    const refBloom = new REF.PaintballBloom();
+    // NO spread: a long burst keeps a 0° cone, every ball = the crosshair axis.
     const bloom = new R.PaintballBloomState();
-    for (let i = 0; i < 12; i++) { refBloom.onShot(); bloom.onShot(); }
-    assert.equal(bloom.spreadDeg, refBloom.spreadDeg);
-    refBloom.update(0.3, true); bloom.update(0.3, true);
-    assert.ok(Math.abs(bloom.spreadDeg - refBloom.spreadDeg) < 1e-12);
+    const fwd = new THREE.Vector3(0.3, -0.2, -1).normalize();
+    for (let i = 0; i < 40; i++) {
+      const spread = R.quantizePaintballSpread(bloom.spreadDeg);
+      assert.equal(spread, 0, `ball ${i}: 0° cone`);
+      const d = R.paintballBallDirection(fwd, spread, 1000 + i * 7919, { x: 0, y: 0, z: 0 });
+      assert.ok(Math.abs(d.x - fwd.x) < 1e-12 && Math.abs(d.y - fwd.y) < 1e-12 && Math.abs(d.z - fwd.z) < 1e-12, `ball ${i} exactly on the crosshair`);
+      bloom.onShot();
+      bloom.update(1 / 144, false);
+    }
+    // Any received cone (modified client) is clamped to 0 by the server rule.
+    for (const raw of [0.35, 2.2, 50, -3, NaN, "x"]) assert.equal(R.quantizePaintballSpread(raw), 0);
   });
 
   await test("same seed + aim + spread → identical ball on the shooter and the server (wire rounding)", () => {
@@ -98,7 +108,7 @@ try {
     const l = Math.sqrt(wx * wx + wy * wy + wz * wz);
     const srv = { x: wx / l, y: wy / l, z: wz / l }; // backend normalize()
     const spread = R.quantizePaintballSpread(1.23456789);
-    assert.equal(spread, 1.235);
+    assert.equal(spread, 0, "no spread: every cone clamps to 0°");
     assert.equal(R.quantizePaintballSpread(Math.round(spread * 1000) / 1000), spread, "wire round-trip stable");
     const a = R.paintballBallDirection(client, spread, 987654, { x: 0, y: 0, z: 0 });
     const b = R.paintballBallDirection(srv, spread, 987654, { x: 0, y: 0, z: 0 });
@@ -382,7 +392,16 @@ try {
     balls.clear();
   });
 
-  await test("exit is SEEN and straight: frame 0 at the muzzle, 2nd frame < 2 m, ≥ 4 frames, lands ≤ 6 frames, on the ray", () => {
+  await test("700 m/s tracer: real speed up to 70 m, ≥ 2 frames at point blank, ≤ 0.1 s beyond", () => {
+    const balls = fx.projectiles!;
+    assert.equal(balls.speed, 700);
+    assert.ok(Math.abs(balls.flightTime(35) - 35 / 700) < 1e-12, "35 m at 700 m/s (0.05 s)");
+    assert.ok(Math.abs(balls.flightTime(70) - 0.1) < 1e-12, "70 m = 0.1 s");
+    assert.equal(balls.flightTime(150), 0.1, "150 m still lands in 0.1 s");
+    assert.ok(Math.abs(balls.flightTime(3) - 2 / 60) < 1e-12, "point blank: 2 frames (exit still seen)");
+  });
+
+  await test("exit is SEEN and straight: frame 0 at the muzzle, then out, ≥ 2 frames, lands ≤ 3 frames at 20 m, on the ray", () => {
     const balls = fx.projectiles!;
     balls.clear();
     const from = new THREE.Vector3(0.3, -0.2, -0.6), to = new THREE.Vector3(0.3, -0.2, -20.6);
@@ -404,9 +423,9 @@ try {
     }
     console.log(`    20 m shot, ball along the ray per frame: ${dists.map((d) => d.toFixed(2)).join(" → ")}`);
     assert.ok(dists[0] < 0.1, "frame 0 at the muzzle");
-    assert.ok(dists[1] > dists[0] && dists[1] < 2, "2nd frame just out of the barrel");
-    assert.ok(dists.length >= 4, `seen ≥ 4 frames (${dists.length})`);
-    assert.ok(dists.length <= 6, "lands in ≤ 6 frames");
+    assert.ok(dists[1] > dists[0] && dists[1] < 15, "2nd frame out of the barrel, well short of the impact");
+    assert.ok(dists.length >= 2, `seen ≥ 2 frames (${dists.length})`);
+    assert.ok(dists.length <= 3, "20 m lands in ≤ 3 frames (hitscan feel)");
     for (let k = 1; k < dists.length; k++) assert.ok(dists[k] > dists[k - 1], "always forward");
     assert.ok(fx.splats.surfaceCount > n0, "splat on arrival");
     fx.clearAll();
@@ -485,6 +504,27 @@ try {
     }
     const added = fx.splats.surfaceCount - n0;
     console.log(`    60 balls on the same spot → ${added} instance(s)`);
+    // A merged splat keeps its SHAPE + ROTATION (readable under sustained
+    // fire): only the colour changes and it grows a little.
+    {
+      fx.clearAll();
+      const S = fx.splats as unknown as { seeds: THREE.InstancedBufferAttribute; rot: Float32Array; grow: Float32Array };
+      const i0 = fx.splats.splatSurface(new THREE.Vector3(9, 1, -3), new THREE.Vector3(0, 0, 1), c, undefined, 42);
+      const seed0 = S.seeds.getX(i0), rot0 = S.rot[i0], grow0 = S.grow[i0];
+      const blue = new THREE.Color(0, 0, 1);
+      const i1 = fx.splats.splatSurface(new THREE.Vector3(9.05, 1.02, -3), new THREE.Vector3(0, 0, 1), blue, undefined, 43);
+      assert.equal(i1, i0, "merged into the same splat");
+      assert.equal(S.seeds.getX(i0), seed0, "same shape (seed kept)");
+      assert.equal(S.rot[i0], rot0, "same rotation");
+      assert.ok(S.grow[i0] > grow0, "grows a little");
+      const got = new THREE.Color();
+      fx.splats.surfaceMesh.getColorAt(i0, got);
+      assert.ok(got.b > 0.99 && got.r < 0.01, "newest colour on top");
+      fx.clearAll();
+      for (let i = 0; i < 60; i++) {
+        fx.splats.splatSurface(new THREE.Vector3(5 + (i % 5) * 0.01, 1, -3), new THREE.Vector3(0, 0, 1), c, undefined, 1000 + i);
+      }
+    }
     // 3× splat: the quad of the first splat is ~0.96 m wide.
     const m = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
     fx.splats.surfaceMesh.getMatrixAt(0, m);
@@ -530,6 +570,53 @@ try {
     assert.equal(body.geometry, origGeo, "detach: original geometry back");
     assert.equal(body.material, origMat, "detach: original material back");
     anim.dispose();
+  });
+
+  await test("REAL weapon: every ball on the exact crosshair ray (no spread, no shake), predicted remote hit → immediate hitmarker", async () => {
+    const { PaintballRifleWeapon } = await server.ssrLoadModule("/src/weapons/paintball/PaintballRifleWeapon.ts");
+    const { HitZone } = await server.ssrLoadModule("/src/combat/HitZone.ts");
+    const cam = new THREE.PerspectiveCamera(92, 16 / 9, 0.1, 400);
+    cam.position.set(0, 1.6, 0);
+    cam.rotation.set(0.05, 0.2, 0, "YXZ");
+    cam.updateMatrixWorld(true);
+    const scene = new THREE.Scene();
+    const vm2 = new ViewmodelSystem(16 / 9);
+    await vm2.ready;
+    const w = new PaintballRifleWeapon(cam, scene, vm2);
+    await w.ready;
+    w.networkAuthority = true; // multiplayer: no local damage, server volumes
+    let shakes = 0;
+    w.onCameraShake = () => shakes++;
+    const sent: { seed: number; spread: number }[] = [];
+    w.onNetFire = (seed: number, spread: number) => sent.push({ seed, spread });
+    const rays: THREE.Vector3[] = [];
+    // Remote avatar straight ahead, 60 m away, on the crosshair ray.
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    w.resolveRemoteHit = (_o: THREE.Vector3, d: THREE.Vector3, maxDist: number) => {
+      rays.push(d.clone());
+      return maxDist > 60 ? { distance: 60, root: null, head: rays.length % 2 === 0 } : null;
+    };
+    const markers: number[] = [];
+    w.onPredictedRemoteHit = (zone: number) => markers.push(zone);
+    w.takePresentation();
+    const input = {
+      fireHeld: true, reloadPressed: false, inspectPressed: false, aimHeld: false, canAct: true,
+      hittables: [] as THREE.Object3D[], grounded: true, verticalVelocity: 0, jumpSequence: 0, sliding: false, speed: 0,
+    };
+    for (let f = 0; f < 144 * 2; f++) { // 2 s held at 144 Hz, camera never moves
+      w.update(1 / 144, input);
+      vm2.syncCamera(cam);
+      w.postCameraUpdate(1 / 144);
+    }
+    const aim = R.paintballAimDirection(fwd);
+    console.log(`    ${rays.length} balls, ${markers.length} immediate hitmarkers, max ray error ${Math.max(...rays.map((d) => THREE.MathUtils.radToDeg(d.angleTo(new THREE.Vector3(aim.x, aim.y, aim.z))))).toExponential(1)}°`);
+    assert.ok(rays.length >= 18, `a 2 s burst (${rays.length} balls)`);
+    for (const d of rays) assert.ok(d.angleTo(new THREE.Vector3(aim.x, aim.y, aim.z)) < 1e-9, "every ball EXACTLY on the crosshair ray");
+    assert.ok(sent.every((s) => s.spread === 0), "0° cone sent to the server");
+    assert.equal(shakes, 0, "no camera shake per ball (the ray camera never jitters)");
+    assert.equal(markers.length, rays.length, "one immediate hitmarker per ball that connects");
+    assert.ok(markers.includes(HitZone.HEAD) && markers.includes(HitZone.BODY), "zone forwarded (head / body)");
+    w.releasePresentation();
   });
 
   await test("files in place: pack GLBs, TP character kept, profile imports like HexSniperProfile", () => {

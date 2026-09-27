@@ -146,10 +146,11 @@ export class PaintSplats {
         }
       }
       if (best >= 0) {
+        // SlideIO: the merged splat keeps its SHAPE + ROTATION (no re-seed,
+        // no spin) — under sustained fire on one spot the splat under the
+        // crosshair stays readable; only the newest colour + a small growth.
         this.grow[best] = Math.min(this.maxGrow, this.grow[best] * 1.08 + 0.02);
-        this.rot[best] += (r() - 0.5) * 0.6;
         this.surfaceMesh.setColorAt(best, color);                 // the newest paint shows on top
-        this.seeds.setX(best, r() * 1000);
         this.writeMatrix(best);
         this.touch(best);
         return best;

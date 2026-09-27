@@ -15,7 +15,10 @@
  *     forward + world Y) — same as the Popcorn Shotgun: the server only
  *     receives the forward direction, a rolled up axis would break parity;
  *   - NO maximum range (the pack uses 45 m): a ball flies until the first
- *     wall / player / the map bounds, like the Hex Sniper tongue.
+ *     wall / player / the map bounds, like the Hex Sniper tongue;
+ *   - NO spread (the pack uses a 0.35 → 2.2° blooming cone): every ball
+ *     goes exactly where the crosshair points. The seed still drives the
+ *     splat shape (same splat on every client).
  */
 
 export interface PaintballVec3 {
@@ -41,10 +44,17 @@ export const PaintballRifleConfig = {
   bodyDamage: 12,
   /** Head multiplier (→ 18). */
   headMultiplier: 1.5,
-  /** Spread cone (degrees): first ball, bloom per ball, cap, recovery. */
-  spreadMinDeg: 0.35,
-  spreadMaxDeg: 2.2,
-  bloomPerShotDeg: 0.25,
+  /**
+   * Spread cone (degrees): first ball, bloom per ball, cap, recovery.
+   * ZERO BY DESIGN (the pack used 0.35 → 2.2°): every ball leaves EXACTLY
+   * along the crosshair, even in a long burst — a laser-precise hitscan.
+   * The server clamps any received `sp` to this 0° cone (a modified client
+   * cannot widen or narrow anything). The bloom machinery stays so a cone
+   * can be reintroduced by changing these numbers only.
+   */
+  spreadMinDeg: 0,
+  spreadMaxDeg: 0,
+  bloomPerShotDeg: 0,
   bloomRecoveryDegPerSecond: 4.0,
   /** ADS (tight hip aim) floor multiplier. */
   aimSpreadFactor: 0.6,

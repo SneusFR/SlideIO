@@ -60,7 +60,9 @@ export interface PaintballRifleFrameInput {
  * MULTIPLAYER (`networkAuthority`): the shot is PREDICTED (clips, hopper,
  * visual ball + paint on the local raycast) and reported with its seed +
  * spread + colour (onNetFire). The server rebuilds the same ray and owns
- * every damage — no local damage; hitmarkers come from HIT_CONFIRMED.
+ * every damage — no local damage. The hitmarker + hit sound fire at the
+ * click on a predicted remote hit (onPredictedRemoteHit); HIT_CONFIRMED
+ * adds the damage number (and the kill feedback).
  */
 export class PaintballRifleWeapon {
   owner: Combatant | null = null;
@@ -87,8 +89,19 @@ export class PaintballRifleWeapon {
    * Returns the distance + the avatar's skinned clone (paint target).
    */
   resolveRemoteHit:
-    | ((origin: THREE.Vector3, dir: THREE.Vector3, maxDist: number) => { distance: number; root: THREE.Object3D | null } | null)
+    | ((
+        origin: THREE.Vector3,
+        dir: THREE.Vector3,
+        maxDist: number,
+      ) => { distance: number; root: THREE.Object3D | null; head: boolean } | null)
     | null = null;
+  /**
+   * MULTIPLAYER: the predicted ball hit a remote avatar (the SAME volumes +
+   * the SAME exact ray as the server — no spread). Wired by the Game to the
+   * hitmarker + hit sound so the hitscan is FELT at the click, not one
+   * round-trip later; the server confirm only adds the damage number.
+   */
+  onPredictedRemoteHit: ((zone: HitZone) => void) | null = null;
 
   readonly ready: Promise<void>;
   /** Visual balls + splats + character paint: ONE instance for everybody. */
@@ -380,7 +393,9 @@ export class PaintballRifleWeapon {
     if (this.inspecting) this.cancelInspection(); // an attack always wins
     if (!c.fire()) return; // → onShot(ammoLeft, color) filled shotColor
     this.dryFireReady = false;
-    this.onCameraShake?.(0.035);
+    // No camera shake per ball: the shake jitters the camera the ray is cast
+    // from (random roll / pitch every frame) — the aim must stay laser-exact.
+    // The authored arms recoil (viewmodel only) still sells the kick.
 
     // Ray from the GAME camera (screen centre). Aim + spread quantized
     // exactly like the network payload: the server rebuilds the same ray.
@@ -402,6 +417,9 @@ export class PaintballRifleWeapon {
       // A remote player in front of everything: the ball lands on HIM.
       this.endPoint.copy(this.camPos).addScaledVector(this.ballDir, remote.distance);
       paint = remote.root ? this.fx.characterHit(remote.root, this.camPos, this.ballDir, this.endPoint) : null;
+      // Hitscan feel: hitmarker + hit sound NOW (same shapes + same exact
+      // ray as the server) — the server confirm only adds the damage number.
+      this.onPredictedRemoteHit?.(remote.head ? HitZone.HEAD : HitZone.BODY);
     } else if (!hit) {
       this.endPoint.copy(this.camPos).addScaledVector(this.ballDir, P.maxRange);
     } else {
