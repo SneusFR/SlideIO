@@ -10,8 +10,9 @@ Doc technique du pack : `INTEGRATION.md` (même dossier). Prompt d'origine, pipe
 | Assets | `src/assets/potato/PaintballRifle_*.glb`, `WeaponProfile_PaintballRifle.json` (perso TP : celui du Popcorn Shotgun, inchangé) |
 | Pack (inchangé) | `PaintballRifleController.ts`, `PaintballHopper.ts`, `PaintballHopperSim.ts`, `PaintballProjectiles.ts`, `PaintSplats.ts`, `PaintballSpread.ts` (référence, non utilisé au runtime) |
 | Cache GLB FP/TP | `PaintballRifleModel.ts` |
-| Billes / taches / peinture (1 instance) | `PaintballFX.ts` |
-| Vraies billes en vol (remplace `PaintballProjectiles` du pack, gardé pour le type `PaintHit`) | `PaintballBalls.ts` |
+| Jets / taches / peinture (1 instance) | `PaintballFX.ts` |
+| Jets de peinture en vol (remplace `PaintballProjectiles` du pack, gardé pour le type `PaintHit`) | `PaintJets.ts` |
+| Ancienne bille en vol (plus utilisée, gardée pour revenir en arrière) | `PaintballBalls.ts` |
 | Arme locale (FP + gameplay solo + prédiction réseau) | `PaintballRifleWeapon.ts` |
 | Règles partagées client/serveur | `shared/combat/PaintballRifleRules.ts` |
 | Autorité serveur | `backend/src/weapons/PaintballRifleServer.ts` (+ `WeaponManager.ts`) |
@@ -27,22 +28,24 @@ Doc technique du pack : `INTEGRATION.md` (même dossier). Prompt d'origine, pipe
 - `PAINTBALL_RELOAD` / `PAINTBALL_RELOAD_CANCEL` : horloge serveur, munitions au clic (1,52 s), tir à 2,10 s (tolérance 0,1 s). Changer d'arme ou mourir annule avant le clic.
 - Mort : chaque client efface la peinture du joueur mort (`clearPaintUnder`) ; départ d'un joueur : `detach`.
 
-## Billes visibles (comportement hitscan)
+## Jets de peinture visibles (comportement hitscan)
 
-- **La même bille que dans le réservoir** : géométrie `Ball_Template` (sphère à facettes), mêmes valeurs de matériau que `PaintballRifle_Ball` (brillant, rugosité 0,32, non métallique) et **couleur exacte de la palette** (celle de la bille partie du réservoir, identique à la tache). Chaque bille part avec une orientation aléatoire et tourne sur elle-même en vol (22 rad/s), comme les billes secouées dans le réservoir.
-- **Lisible de nuit sans effet « plasma »** : pas d'auto-éclairage uniforme ni de halo. Une petite lumière intégrée (direction de la lumière principale de l'arme en main, part ambiante 45 % + lambert sur la facette) garde les facettes et le côté éclairé visibles même sur une carte sombre.
-- **Taille** : 18 cm de diamètre, jamais plus petite qu'environ 0,4° à l'écran (une bille lointaine est agrandie), plafonnée près de la caméra.
-- **Précision laser** : aucune dispersion (0°, même en longue rafale) et **aucun tremblement de caméra** au tir (le rayon part de la caméra : un tremblement le ferait bouger au hasard). Chaque bille part exactement au centre du viseur, chez le tireur, sur le serveur et chez les autres joueurs. Le recul visuel de l'arme en main reste.
-- **Vitesse de traceur (700 m/s)** en **ligne droite** exacte sur le rayon du hitscan (pas d'arc), avec un temps de vol borné : **au moins 2 images** (à bout portant on la voit encore sortir du canon), **au plus 0,1 s** (vraie vitesse jusqu'à 70 m ; au-delà elle accélère pour arriver en 6 images). Départ léger (`easeIn` 1,3) et départ 1,15 rayon devant la bouche : sur un tir à 20 m, la bille se voit à 0 m → 8 m → impact. **La tache apparaît quasiment au clic.**
-- **Touche ressentie tout de suite (multijoueur)** : quand la bille prédite touche un avatar distant (mêmes volumes que le serveur, même rayon exact), l'indicateur de touche et le son partent **au clic**, pour chaque bille. La confirmation du serveur ajoute seulement le chiffre de dégâts (et le retour de kill), sans rejouer le son ni le filtre de 80 ms des armes continues. Les dégâts restent décidés par le serveur.
-- **Traînée discrète** : un petit cône de 0,3 m, fin (0,45 × le rayon), peu opaque (0,4), couleur de la bille éclaircie. Elle indique la direction sans faire « comète » et n'est jamais plus longue que le trajet déjà parcouru.
-- **Collées à l'arme** : pendant les 2 premières images, le départ de la trajectoire suit la **bouche du canon en direct** (FP : canon dessiné ; TP : vraie bouche du tireur distant). En pas chassés ou en glissade, la bille ne reste jamais « en arrière ». Ensuite, elle file sur le rayon tiré : tourner la caméra ne la courbe pas.
-- **Tir droit** : pendant le tir en FP, l'arme passe dans l'axe comme en visée (clips `_Straight` dérivés de la pose Aim, voir `PaintballStraightFire.ts`).
-- **Tir dans le vide** (ciel) : la bille file jusqu'au bout du rayon (`maxRange` = 400 m, plus long que la diagonale de chaque carte ; ce n'est pas une portée de gameplay) et disparaît sans tache.
-- **Taches** : 0,96 m de base (3× le pack), peinture sur les joueurs 22,5 cm de rayon (3×). Une bille qui tombe sur une tache existante la **fusionne sans la redessiner** : même forme, même rotation, seule la couleur change (la dernière dessus) et elle grossit un peu. En tir continu, la tache sous le viseur reste lisible (écart voulu avec le pack, qui la re-tirait au hasard à chaque bille).
-- **Multijoueur** : la bille prédite du tireur s'arrête sur l'avatar distant touché (mêmes volumes que le serveur) au lieu de traverser jusqu'au mur.
-- **Coût** : 3 draw calls pour tous les joueurs (billes, traînées, taches), 4 si le halo est activé.
-- Réglages : `new PaintballBalls(geometry, scene, splats, { speed, radius, easeIn, glow, trailLength, halo, spin })` dans `PaintballFX.init` (`trailLength: 0` = pas de traînée, `halo: 1.25` = léger halo additif, `glow: 0` = éclairage de la scène seul), `MIN_FLIGHT` / `MAX_FLIGHT` / `PAINT_RADIUS` / `BALL_ROUGHNESS` dans `PaintballBalls.ts`, `SPLAT_SIZE` dans `PaintballFX.ts`.
+- **Un vrai jet de peinture liquide par tir** (`PaintJets.ts`), plus de bille en vol. Le jet est de la **couleur exacte de la palette**, celle de la bille partie du réservoir (identique à la tache). Tout est purement visuel : les dégâts restent le hitscan immédiat (client solo / serveur), rien ne change côté réseau.
+- **Forme de liquide** : une chaîne de segments de tube instanciés dont le rayon est calculé dans le vertex shader. On a une goutte arrondie à l'avant, des ondulations qui avancent avec la peinture, un léger balancement, et une queue qui s'affine puis **se casse en perles** pendant que le jet se vide. Chaque jet a son propre seed, donc aucun jet n'est identique. La longueur des segments suit la distance à la caméra (même niveau de détail à l'écran), 96 segments max par jet.
+- **Texture de peinture, entièrement procédurale** (aucune image) : relief de surface en bruit (traînées d'écoulement + petites bulles) qui **glisse avec la peinture**, variations de pigment (plus riche où c'est épais, plus clair où le film est fin), rugosité basse et variable (0,07–0,3) pour un rendu mouillé et brillant, reflet net et bord brillant. Une petite lumière intégrée (`glow` 0,2) garde le jet lisible sur une carte sombre. Le relief s'efface au loin (anti-aliasing), donc pas de scintillement. Le rendu est opaque, sans tri de transparence.
+- **Timing** : l'avant du jet arrive à l'impact en **vitesse de traceur (700 m/s)**, en ligne droite exacte sur le rayon, avec **au moins 2 images** et **au plus 0,1 s** (même temps de vol que les anciennes billes). **La tache apparaît quasiment au clic.** Le jet reste accroché à la buse 50 ms, puis sa queue se vide dans l'impact en 0,14 s. À 600 coups/min les jets se chevauchent : en tir continu, ça fait un **jet pulsé continu**.
+- **Impact** : une **couronne d'éclaboussures** (12 gouttes dans la couleur du jet, étirées selon leur vitesse, qui retombent avec la gravité), des petites gouttes tant que le jet se déverse, puis la tache persistante / la peinture sur le joueur comme avant (`PaintSplats`, même seed = même tache chez tout le monde). Les gouttes sont déterministes (pas de `Math.random` dans la boucle) et ne créent pas de taches.
+- **Lisible à toute distance** : jamais plus fin qu'environ 0,2° à l'écran, plafonné près de la caméra (la vue FP n'est jamais bouchée). Les gouttes ont aussi une taille minimale à l'écran.
+- **Précision laser** : aucune dispersion (0°, même en longue rafale) et **aucun tremblement de caméra** au tir. Chaque jet part exactement au centre du viseur, chez le tireur, sur le serveur et chez les autres joueurs. Le recul visuel de l'arme en main reste.
+- **Touche ressentie tout de suite (multijoueur)** : quand le tir prédit touche un avatar distant (mêmes volumes que le serveur), l'indicateur de touche et le son partent **au clic**. La confirmation du serveur ajoute seulement le chiffre de dégâts (et le retour de kill).
+- **Collé à l'arme** : pendant les 2 premières images, le départ du jet suit la **bouche du canon en direct** (FP : canon dessiné ; TP : vraie bouche du tireur distant). Ensuite le jet reste sur le rayon tiré : tourner la caméra ne le courbe pas.
+- **Tir droit** : pendant le tir en FP, l'arme passe dans l'axe comme en visée (clips `_Straight`, voir `PaintballStraightFire.ts`).
+- **Tir dans le vide** (ciel) : le jet file jusqu'au bout du rayon (`maxRange` = 400 m, ce n'est pas une portée de gameplay) et se vide sans tache ni éclaboussure.
+- **Taches** (inchangées) : 0,96 m de base, peinture sur les joueurs 22,5 cm de rayon. Un tir qui tombe sur une tache existante la **fusionne sans la redessiner** (même forme, dernière couleur dessus, elle grossit un peu).
+- **Coût** : 3 draw calls pour tous les joueurs (jets, gouttes, taches), aucune allocation par image, rien n'est calculé quand aucun jet n'est en vol. Seule la partie utilisée des buffers est envoyée au GPU. En rafale continue : environ 2 jets / 50 segments en vie par tireur.
+- **Réglages** : `new PaintJets(scene, splats, { speed, radius, minAngularRadius, easeIn, glow, maxJets, maxSegments, maxDrops })` dans `PaintballFX.init`. Dans `PaintJets.ts` : `EMIT` / `DRAIN` (durée du jet), `HEAD_BULGE`, `FLOW`, `SPLASH_DROPS`, `MIN_FLIGHT` / `MAX_FLIGHT`, `PAINT_RADIUS`. `SPLAT_SIZE` est dans `PaintballFX.ts`.
+- **Revenir aux billes** : `PaintballBalls.ts` est toujours là. Il suffit de le réinstancier dans `PaintballFX.init` (`new PaintballBalls(ballTemplate.geometry, scene, splats)`).
+
 
 ## Limites connues
 

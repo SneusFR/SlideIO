@@ -489,6 +489,7 @@ export class PaintballRifleWeapon {
     to.y -= 1;
     const color = new THREE.Color(1, 0.2, 0.2);
     this.fx.spawn(far, to, color, null);
+    this.fx.projectiles?.splash(to, new THREE.Vector3(0, 1, 0), color, 2); // droplet program too
     this.fx.update(0.001);
     this.fx.splats.splatSurface(to, new THREE.Vector3(0, 1, 0), color, undefined, 1);
   }

@@ -2,7 +2,7 @@ import * as THREE from "three";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { PaintSplats, hitBarycentric } from "./PaintSplats";
 import type { PaintHit } from "./PaintballProjectiles";
-import { PaintballBalls, type PaintballAnchor } from "./PaintballBalls";
+import { PaintJets, type PaintballAnchor } from "./PaintJets";
 
 /** Surface splat diameter (m): 3× the pack's 0.32 m, matching the 3× ball. */
 const SPLAT_SIZE = 0.96;
@@ -11,13 +11,13 @@ const SPLAT_SIZE = 0.96;
 const BODY_MESH = "Potato";
 
 /**
- * PAINTBALL VISUALS (SlideIO glue around the pack's PaintSplats +
- * PaintballProjectiles) — ONE instance for the whole session, shared by the
- * local shooter and every remote replay:
+ * PAINTBALL VISUALS (SlideIO glue around the pack's PaintSplats) — ONE
+ * instance for the whole session, shared by the local shooter and every
+ * remote replay:
  *   - persistent surface splats (1 draw call, seeded → identical everywhere);
- *   - the REAL balls in flight (PaintballBalls: balls + trails, the hopper
- *     ball — Ball_Template geometry, hopper material, exact palette colour —
- *     18 cm, straight + fast, glued to the live muzzle);
+ *   - the PAINT JETS in flight (PaintJets: liquid paint streams + splash
+ *     droplets, exact palette colour of the ball that left the hopper,
+ *     straight + fast, glued to the live muzzle);
  *   - per-vertex paint on the characters: the gameplay hitboxes are boxes /
  *     capsules, so a second VISUAL raycast on the hit character's body mesh
  *     gives the face + barycentric the pack paints on (skinned raycast).
@@ -25,7 +25,7 @@ const BODY_MESH = "Potato";
  */
 export class PaintballFX {
   readonly splats: PaintSplats;
-  projectiles: PaintballBalls | null = null;
+  projectiles: PaintJets | null = null;
   /**
    * Called when a character body gets its paint material (per-avatar
    * clones replace the previous ones) — the solo bots re-route their
@@ -44,15 +44,11 @@ export class PaintballFX {
     this.splats = new PaintSplats(worldScene, { surfaceSize: SPLAT_SIZE });
   }
 
-  /** Build the ball pool + palette from the (cached) weapon GLB. */
+  /** Build the paint-jet pool + palette from the (cached) weapon GLB. */
   init(gltf: GLTF): void {
     if (this.projectiles) return;
-    const tpl = gltf.scene.getObjectByName("Ball_Template") as THREE.Mesh | undefined;
-    if (tpl?.isMesh) {
-      // The hopper ball geometry (unit radius) with a private glossy,
-      // self-lit paint material (never the in-hand stencil marking).
-      this.projectiles = new PaintballBalls(tpl.geometry, this.worldScene, this.splats);
-    }
+    // Procedural liquid paint streams (no asset needed) in the palette colours.
+    this.projectiles = new PaintJets(this.worldScene, this.splats);
     const pal = gltf.scene.getObjectByName("Hopper")?.userData.palette as number[][] | undefined;
     if (pal && pal.length > 0) {
       this.palette = pal.map((c) => new THREE.Color().setRGB(c[0], c[1], c[2], THREE.LinearSRGBColorSpace));
@@ -80,8 +76,8 @@ export class PaintballFX {
   }
 
   /**
-   * One real ball (muzzle → hitscan impact, straight). `hit` = what to paint
-   * on arrival (null = miss). `anchor` = the shooter's LIVE muzzle: the ball
+   * One paint jet (muzzle → hitscan impact, straight). `hit` = what to paint
+   * on arrival (null = miss). `anchor` = the shooter's LIVE muzzle: the jet
    * stays on the gun line while he moves (hitscan feel).
    */
   spawn(from: THREE.Vector3, to: THREE.Vector3, color: THREE.Color, hit: PaintHit | null, anchor: PaintballAnchor | null = null): void {

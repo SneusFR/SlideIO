@@ -356,144 +356,172 @@ try {
   const fx = new PaintballFX(worldScene);
   fx.init(weaponGltf);
   const viewer = new THREE.Vector3(0, 0, 0);
-  const ballAt = (k: number) => {
-    const m = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
-    fx.projectiles!.mesh.getMatrixAt(k, m);
-    m.decompose(p, q, s);
-    return { p, q, r: s.x };
+  /** Stream segments currently drawn: world start + along-ray values (m). */
+  const segs = () => {
+    const jets = fx.projectiles!;
+    const a = jets.mesh.geometry.getAttribute("aSeg") as THREE.InstancedBufferAttribute;
+    const out: { p: THREE.Vector3; s: number; len: number; tail: number; head: number }[] = [];
+    for (let k = 0; k < jets.mesh.count; k++) {
+      const m = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+      jets.mesh.getMatrixAt(k, m);
+      m.decompose(p, q, s);
+      out.push({ p, s: a.getX(k), len: a.getY(k), tail: a.getZ(k), head: a.getW(k) });
+    }
+    return out;
   };
+  const same = (x: THREE.Color, y: THREE.Color) => Math.abs(x.r - y.r) + Math.abs(x.g - y.g) + Math.abs(x.b - y.b) < 1e-5;
 
-  await test("flying ball == hopper ball: Ball_Template geometry, hopper material, EXACT palette colour, no halo, tumbling", () => {
-    const balls = fx.projectiles!;
-    assert.ok(balls, "ball pool built");
-    const tpl = weaponGltf.scene.getObjectByName("Ball_Template") as THREE.Mesh;
-    assert.equal(balls.mesh.geometry, tpl.geometry, "same faceted sphere as the hopper");
-    const mat = balls.mesh.material as THREE.MeshStandardMaterial;
-    const hopperMat = tpl.material as THREE.MeshStandardMaterial;
-    assert.ok(Math.abs(mat.roughness - hopperMat.roughness) < 1e-6, `roughness ${mat.roughness} == hopper ${hopperMat.roughness}`);
-    assert.equal(mat.metalness, hopperMat.metalness);
-    assert.equal(balls.halo, null, "no energy halo by default");
-    balls.clear();
+  await test("paint jet: EXACT palette colour, wet paint material, one continuous stream per shot", () => {
+    const jets = fx.projectiles!;
+    assert.ok(jets, "jet pool built");
+    jets.clear();
     const teal = fx.colorOf(2, new THREE.Color());
     const red = fx.colorOf(0, new THREE.Color());
     fx.spawn(new THREE.Vector3(0.3, -0.2, -0.6), new THREE.Vector3(0.3, -0.2, -30), teal, null);
+    fx.update(0, viewer);
+    fx.update(1 / 60, viewer);
+    const n = jets.mesh.count;
+    assert.ok(n > 1, `the stream is a chain of tube segments (${n})`);
+    const c = new THREE.Color();
+    for (let k = 0; k < n; k++) { jets.mesh.getColorAt(k, c); assert.ok(same(c, teal), "exact hopper colour (no flash boost)"); }
+    const chain = segs();
+    for (let k = 1; k < chain.length; k++) assert.ok(Math.abs(chain[k - 1].s + chain[k - 1].len - chain[k].s) < 1e-4, "no gap in the stream");
     fx.spawn(new THREE.Vector3(0.3, -0.2, -0.6), new THREE.Vector3(0.3, -0.2, -30), red, null);
     fx.update(0, viewer);
-    const c0 = new THREE.Color(), c1 = new THREE.Color();
-    balls.mesh.getColorAt(0, c0);
-    balls.mesh.getColorAt(1, c1);
-    for (const [got, want] of [[c0, teal], [c1, red]] as const) {
-      assert.ok(Math.abs(got.r - want.r) + Math.abs(got.g - want.g) + Math.abs(got.b - want.b) < 1e-5, "exact hopper colour (no flash boost)");
-    }
-    const q0 = ballAt(0).q.clone(), q1 = ballAt(1).q.clone();
-    assert.ok(Math.abs(q0.dot(q1)) < 0.9999, "each ball has its own random orientation");
-    fx.update(1 / 60, viewer);
-    assert.ok(Math.abs(ballAt(0).q.dot(q0)) < 0.9999, "the ball tumbles in flight");
-    balls.clear();
+    let reds = 0;
+    for (let k = 0; k < jets.mesh.count; k++) { jets.mesh.getColorAt(k, c); if (same(c, red)) reds++; }
+    assert.ok(reds >= 1 && reds < jets.mesh.count, "each jet keeps its own ball colour");
+    const mat = jets.mesh.material as THREE.MeshStandardMaterial;
+    assert.ok(mat.roughness <= 0.2 && mat.metalness === 0, "glossy wet paint, not metal");
+    assert.ok(!mat.transparent, "opaque liquid (no transparent sorting)");
+    assert.equal(mat.map, null, "procedural paint texture (no image asset)");
+    jets.clear();
   });
 
-  await test("700 m/s tracer: real speed up to 70 m, ≥ 2 frames at point blank, ≤ 0.1 s beyond", () => {
-    const balls = fx.projectiles!;
-    assert.equal(balls.speed, 700);
-    assert.ok(Math.abs(balls.flightTime(35) - 35 / 700) < 1e-12, "35 m at 700 m/s (0.05 s)");
-    assert.ok(Math.abs(balls.flightTime(70) - 0.1) < 1e-12, "70 m = 0.1 s");
-    assert.equal(balls.flightTime(150), 0.1, "150 m still lands in 0.1 s");
-    assert.ok(Math.abs(balls.flightTime(3) - 2 / 60) < 1e-12, "point blank: 2 frames (exit still seen)");
+  await test("700 m/s front: real speed up to 70 m, ≥ 2 frames at point blank, ≤ 0.1 s beyond", () => {
+    const jets = fx.projectiles!;
+    assert.equal(jets.speed, 700);
+    assert.ok(Math.abs(jets.flightTime(35) - 35 / 700) < 1e-12, "35 m at 700 m/s (0.05 s)");
+    assert.ok(Math.abs(jets.flightTime(70) - 0.1) < 1e-12, "70 m = 0.1 s");
+    assert.equal(jets.flightTime(150), 0.1, "150 m still lands in 0.1 s");
+    assert.ok(Math.abs(jets.flightTime(3) - 2 / 60) < 1e-12, "point blank: 2 frames (exit still seen)");
   });
 
-  await test("exit is SEEN and straight: frame 0 at the muzzle, then out, ≥ 2 frames, lands ≤ 3 frames at 20 m, on the ray", () => {
-    const balls = fx.projectiles!;
-    balls.clear();
+  await test("jet leaves the muzzle and stays straight on the ray: front ≤ 0.25 m at frame 0, lands ≤ 3 frames at 20 m", () => {
+    const jets = fx.projectiles!;
+    jets.clear();
     const from = new THREE.Vector3(0.3, -0.2, -0.6), to = new THREE.Vector3(0.3, -0.2, -20.6);
-    const hit = { normal: new THREE.Vector3(0, 0, 1), seed: 7 };
-    fx.spawn(from, to, new THREE.Color(1, 0, 0), hit);
-    const dists: number[] = [];
+    fx.spawn(from, to, new THREE.Color(1, 0, 0), { normal: new THREE.Vector3(0, 0, 1), seed: 7 });
     const n0 = fx.splats.surfaceCount;
+    const heads: number[] = [];
     fx.update(0, viewer);
-    for (let f = 0; f < 12 && balls.mesh.count > 0; f++) {
-      const { p } = ballAt(0);
-      const off = new THREE.Vector3().subVectors(p, from);
-      const along = off.z / (to.z - from.z) * from.distanceTo(to);
-      const perp = Math.hypot(off.x, off.y);
-      if (fx.splats.surfaceCount === n0) {
-        assert.ok(perp < 1e-4, `straight on the fired ray (frame ${f}: ${perp})`);
-        dists.push(along);
-      }
+    for (let f = 0; f < 12 && fx.splats.surfaceCount === n0; f++) {
+      const chain = segs();
+      assert.ok(chain.length > 0, "stream drawn while flying");
+      for (const sg of chain) assert.ok(Math.hypot(sg.p.x - from.x, sg.p.y - from.y) < 1e-4, `on the fired ray (frame ${f})`);
+      assert.ok(chain[0].s < 1e-6, "still attached to the nozzle");
+      heads.push(chain[chain.length - 1].head);
       fx.update(1 / 60, viewer);
     }
-    console.log(`    20 m shot, ball along the ray per frame: ${dists.map((d) => d.toFixed(2)).join(" → ")}`);
-    assert.ok(dists[0] < 0.1, "frame 0 at the muzzle");
-    assert.ok(dists[1] > dists[0] && dists[1] < 15, "2nd frame out of the barrel, well short of the impact");
-    assert.ok(dists.length >= 2, `seen ≥ 2 frames (${dists.length})`);
-    assert.ok(dists.length <= 3, "20 m lands in ≤ 3 frames (hitscan feel)");
-    for (let k = 1; k < dists.length; k++) assert.ok(dists[k] > dists[k - 1], "always forward");
+    console.log(`    20 m shot, jet front per frame: ${heads.map((d) => d.toFixed(2)).join(" → ")}`);
+    assert.ok(heads[0] <= 0.25, "frame 0: paint just out of the barrel");
+    assert.ok(heads.length >= 2 && heads.length <= 3, `20 m lands in ${heads.length} frames (hitscan feel)`);
+    for (let k = 1; k < heads.length; k++) assert.ok(heads[k] > heads[k - 1], "always forward");
     assert.ok(fx.splats.surfaceCount > n0, "splat on arrival");
     fx.clearAll();
   });
 
-  await test("no max range: a 150 m shot still lands in ≤ 6 frames (0.1 s), splat at the far wall", () => {
-    const balls = fx.projectiles!;
-    balls.clear();
+  await test("no max range: a 150 m shot still lands in ≤ 6 frames (0.1 s), splat at the far wall, bounded detail", () => {
+    const jets = fx.projectiles!;
+    jets.clear();
     const from = new THREE.Vector3(0.3, -0.2, -0.6), to = new THREE.Vector3(0.3, -0.2, -150.6);
     const n0 = fx.splats.surfaceCount;
     fx.spawn(from, to, new THREE.Color(1, 1, 0), { normal: new THREE.Vector3(0, 0, 1), seed: 3 });
     fx.update(0, viewer);
-    // Frames until the splat lands (the ball then squashes on the wall a few more frames).
-    let frames = 0;
-    while (fx.splats.surfaceCount === n0 && frames < 20) { fx.update(1 / 60, viewer); frames++; }
-    console.log(`    150 m shot: splat after ${frames} frames`);
+    let frames = 0, maxSeg = 0;
+    while (fx.splats.surfaceCount === n0 && frames < 20) { fx.update(1 / 60, viewer); maxSeg = Math.max(maxSeg, jets.mesh.count); frames++; }
+    console.log(`    150 m shot: splat after ${frames} frames, ≤ ${maxSeg} segments`);
     assert.ok(fx.splats.surfaceCount > n0, "splat 150 m away");
     assert.ok(frames <= 6, `150 m in ${frames} frames`);
+    assert.ok(maxSeg <= 96, "segment count bounded per jet");
     fx.clearAll();
   });
 
-  await test("trail: short, faint, lighter ball colour, never longer than the path flown", () => {
-    const balls = fx.projectiles!;
-    balls.clear();
-    const from = new THREE.Vector3(0.3, -0.2, -0.6), to = new THREE.Vector3(0.3, -0.2, -30.6);
-    const col = fx.colorOf(1, new THREE.Color());
-    fx.spawn(from, to, col, null);
-    fx.update(0, viewer);
-    assert.equal(balls.trail!.count, 0, "no trail at the muzzle (nothing flown yet)");
-    let seen = 0;
-    for (let f = 0; f < 5; f++) {
-      fx.update(1 / 60, viewer);
-      if (balls.trail!.count === 0) continue;
-      seen++;
-      const m = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
-      balls.trail!.getMatrixAt(0, m);
-      m.decompose(p, q, s);
-      assert.ok(s.z <= p.distanceTo(from) + 1e-4, "never pokes back into the gun");
-      assert.ok(s.x < ballAt(0).r, "thinner than the ball");
-      const tc = new THREE.Color();
-      balls.trail!.getColorAt(0, tc);
-      assert.ok(tc.r >= col.r && tc.g >= col.g && tc.b >= col.b && tc.b > col.b, "ball colour, lifted toward white");
-    }
-    assert.ok(seen >= 1, "trail visible in flight");
-    assert.ok((balls.trail!.material as THREE.Material).opacity <= 0.5, "faint");
-    balls.clear();
-  });
-
   await test("glued to the gun while strafing (2 frames on the live muzzle), then on the fired ray", () => {
-    const balls = fx.projectiles!;
-    balls.clear();
+    const jets = fx.projectiles!;
+    jets.clear();
     const muzzle = new THREE.Vector3(0.3, -0.2, -0.6);
     const from = muzzle.clone(), to = new THREE.Vector3(0.3, -0.2, -40.6);
     fx.spawn(from, to, new THREE.Color(0, 1, 0), null, (out) => { out.copy(muzzle); return true; });
-    // Distance of the ball to the line start → impact.
-    const offLine = (start: THREE.Vector3) =>
-      new THREE.Line3(start, to).closestPointToPoint(ballAt(0).p, false, new THREE.Vector3()).distanceTo(ballAt(0).p);
     fx.update(0, viewer);
     muzzle.x += 0.25; // strafe during the frame
     fx.update(1 / 60, viewer);
     const glued = muzzle.clone();
-    assert.ok(offLine(glued) < 1e-4, "on the line LIVE muzzle → impact");
-    assert.ok(offLine(from) > 0.1, "not left behind on the old muzzle line");
+    assert.ok(segs()[0].p.distanceTo(glued) < 1e-4, "stream starts at the LIVE muzzle");
+    assert.ok(segs()[0].p.distanceTo(from) > 0.1, "not left behind on the old muzzle");
     muzzle.x += 0.25;
     fx.update(1 / 60, viewer);
-    assert.ok(offLine(glued) < 1e-4, "then flies the fired ray (anchor released)");
-    assert.ok(offLine(muzzle) > 1e-3, "no longer follows the muzzle");
-    balls.clear();
+    assert.ok(segs()[0].p.distanceTo(glued) < 1e-4, "then stays on the fired ray (anchor released)");
+    jets.clear();
+  });
+
+  await test("liquid life: tail drains into the impact, splash droplets in the jet colour, then everything is freed", () => {
+    const jets = fx.projectiles!;
+    jets.clear();
+    const col = fx.colorOf(1, new THREE.Color());
+    const from = new THREE.Vector3(0, 1.4, 0), to = new THREE.Vector3(0, 1.4, -10);
+    fx.spawn(from, to, col, { normal: new THREE.Vector3(0, 0, 1), seed: 9 });
+    fx.update(0, viewer);
+    let tail = 0, drained = false, maxDrops = 0;
+    const dc = new THREE.Color();
+    for (let f = 0; f < 30; f++) {
+      fx.update(1 / 60, viewer);
+      const chain = segs();
+      if (chain.length > 0) {
+        assert.ok(chain[0].tail >= tail - 1e-6, "the tail only moves toward the impact");
+        tail = chain[0].tail;
+        if (tail > 1) drained = true;
+      }
+      if (jets.drops.count > 0) {
+        maxDrops = Math.max(maxDrops, jets.dropCount);
+        jets.drops.getColorAt(0, dc);
+        assert.ok(same(dc, col), "droplets = the jet colour");
+      }
+    }
+    console.log(`    10 m shot: tail drained to ${tail.toFixed(2)} m, up to ${maxDrops} droplets`);
+    assert.ok(drained, "the stream detaches from the nozzle and drains");
+    assert.ok(maxDrops >= 10, "splash crown on impact");
+    assert.equal(jets.activeCount, 0, `jet freed after its life (${jets.lifetime.toFixed(2)} s)`);
+    assert.equal(jets.mesh.count, 0, "nothing drawn once drained");
+    for (let f = 0; f < 60; f++) fx.update(1 / 60, viewer);
+    assert.equal(jets.dropCount, 0, "droplets gone");
+    assert.equal(jets.drops.count, 0);
+    // A miss (sky) pours into the void: no splat, no splash.
+    const n0 = fx.splats.surfaceCount;
+    fx.spawn(from, to, col, null);
+    for (let f = 0; f < 30; f++) fx.update(1 / 60, viewer);
+    assert.equal(fx.splats.surfaceCount, n0, "miss: no splat");
+    assert.equal(jets.dropCount, 0, "miss: no splash");
+    fx.clearAll();
+  });
+
+  await test("sustained fire: 600 shots/min for 2 s stays within the pools, idle = nothing drawn", () => {
+    const jets = fx.projectiles!;
+    jets.clear();
+    const col = fx.colorOf(3, new THREE.Color());
+    let peakJets = 0, peakSeg = 0;
+    for (let f = 0; f < 120; f++) {
+      if (f % 6 === 0) fx.spawn(new THREE.Vector3(0.3, 1.2, -0.6), new THREE.Vector3(0.5, 1.2, -25), col, { normal: new THREE.Vector3(0, 0, 1), seed: f });
+      fx.update(1 / 60, viewer);
+      peakJets = Math.max(peakJets, jets.activeCount);
+      peakSeg = Math.max(peakSeg, jets.mesh.count);
+    }
+    console.log(`    2 s burst: ≤ ${peakJets} jets / ${peakSeg} segments alive`);
+    assert.ok(peakJets >= 2, "pulses overlap: a continuous paint stream");
+    assert.ok(peakJets <= 4 && peakSeg < 400, "bounded cost");
+    for (let f = 0; f < 90; f++) fx.update(1 / 60, viewer);
+    assert.equal(jets.mesh.count + jets.drops.count, 0, "idle: no instance drawn");
+    fx.clearAll();
   });
 
   await test("splats: seeded (same shape everywhere), merged under sustained fire, cleared only by clearAll()", () => {
@@ -534,7 +562,7 @@ try {
     assert.ok(added <= 8, "merged (no quad pile-up)");
     fx.clearAll();
     assert.equal(fx.splats.surfaceCount, 0);
-    assert.equal(worldScene.children.filter((o) => (o as THREE.InstancedMesh).isInstancedMesh).length, 3, "+3 draw calls total (balls, trails, splats — no halo by default)");
+    assert.equal(worldScene.children.filter((o) => (o as THREE.InstancedMesh).isInstancedMesh).length, 3, "+3 draw calls total (paint jets, droplets, splats)");
   });
 
   await test("character paint: visual raycast on the posed Potato body, per-vertex paint, cleared at death, detach restores", () => {
