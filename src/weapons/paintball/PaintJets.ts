@@ -3,8 +3,9 @@ import type { PaintSplats } from "./PaintSplats";
 import type { PaintHit } from "./PaintballProjectiles";
 
 /**
- * Live muzzle of the shooter (WORLD). Returns false once the weapon is gone
- * (switch, death, hidden avatar): the jet then keeps its last start point.
+ * Live muzzle of the shooter (WORLD), read EVERY update for the whole life
+ * of the jet. Returns false once the weapon is gone (switch, death, hidden
+ * avatar): the jet then keeps its last start point.
  */
 export type PaintballAnchor = (out: THREE.Vector3) => boolean;
 
@@ -33,8 +34,6 @@ export interface PaintJetsOptions {
  */
 const MIN_FLIGHT = 2 / 60;
 const MAX_FLIGHT = 0.1;
-/** Updates during which the jet start follows the live muzzle (then: the fired ray). */
-const ANCHOR_FRAMES = 2;
 /** Time (s) the stream stays attached to the nozzle before its tail leaves (pulsed paint gun). */
 const EMIT = 0.05;
 /** Time (s) the detached tail takes to drain from the nozzle into the impact. */
@@ -255,8 +254,10 @@ diffuseColor.rgb = mix(diffuseColor.rgb, min(diffuseColor.rgb * 1.15 + 0.02, vec
  *     falling under gravity), drips while the stream pours in, and the
  *     persistent splat / character paint exactly like the balls did
  *     (PaintSplats, seeded → identical on every client).
- *   - GLUED TO THE GUN: the first updates read the shooter's LIVE muzzle,
- *     then the stream stays on the fired ray (a camera turn never bends it).
+ *   - GLUED TO THE GUN: every update the stream starts at the shooter's LIVE
+ *     muzzle and runs straight to the fixed hitscan impact — running,
+ *     strafing or turning never leaves the stream beside / behind the
+ *     camera (a fast turn swings it around the impact, like a hose).
  * 2 InstancedMeshes shared by every shooter (stream, droplets): 2 draw
  * calls, no per-frame allocation, zero work when nothing flies.
  */
@@ -516,14 +517,14 @@ export class PaintJets {
       // earlier in the same frame, advancing it now would first show the
       // stream already metres away from the gun.
       const t = this.frames[i] === 0 ? this.t[i] : (this.t[i] += dt);
-      // First updates: the stream starts at the LIVE muzzle — it never lags
-      // behind a moving shooter. Then it stays on the fired ray.
+      // The stream starts at the LIVE muzzle for its WHOLE life (not only the
+      // first frames): the FP start point is a world point ~0.7 m in front of
+      // the eye that only lines up with the drawn barrel for the CURRENT
+      // camera pose — frozen, running / turning would leave it beside, then
+      // behind the camera (seen huge up close). Weapon gone → last point kept.
       const anchor = this.anchors[i];
-      if (anchor) {
-        if (this.frames[i] < ANCHOR_FRAMES && anchor(_a)) {
-          this.a[i3] = _a.x; this.a[i3 + 1] = _a.y; this.a[i3 + 2] = _a.z;
-        }
-        if (this.frames[i] + 1 >= ANCHOR_FRAMES) this.anchors[i] = null;
+      if (anchor && anchor(_a)) {
+        this.a[i3] = _a.x; this.a[i3 + 1] = _a.y; this.a[i3 + 2] = _a.z;
       }
       if (this.frames[i] < 255) this.frames[i]++;
 
@@ -539,7 +540,6 @@ export class PaintJets {
       const sHead = h0 + (len - h0) * Math.pow(u, this.ease);
       if (u >= 1 && !this.arrived[i]) {
         this.arrived[i] = 1;
-        this.anchors[i] = null;
         this.arrive(i);
       }
       // Tail: attached to the nozzle, then drains into the impact.

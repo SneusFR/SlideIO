@@ -447,21 +447,52 @@ try {
     fx.clearAll();
   });
 
-  await test("glued to the gun while strafing (2 frames on the live muzzle), then on the fired ray", () => {
+  await test("glued to the gun for the WHOLE jet life while running / strafing, straight to the fixed impact", () => {
     const jets = fx.projectiles!;
     jets.clear();
     const muzzle = new THREE.Vector3(0.3, -0.2, -0.6);
-    const from = muzzle.clone(), to = new THREE.Vector3(0.3, -0.2, -40.6);
-    fx.spawn(from, to, new THREE.Color(0, 1, 0), null, (out) => { out.copy(muzzle); return true; });
+    const from = muzzle.clone(), to = new THREE.Vector3(0.3, -0.2, -20.6);
+    const n0 = fx.splats.surfaceCount;
+    fx.spawn(from, to, new THREE.Color(0, 1, 0), { normal: new THREE.Vector3(0, 0, 1), seed: 5 }, (out) => { out.copy(muzzle); return true; });
     fx.update(0, viewer);
-    muzzle.x += 0.25; // strafe during the frame
-    fx.update(1 / 60, viewer);
-    const glued = muzzle.clone();
-    assert.ok(segs()[0].p.distanceTo(glued) < 1e-4, "stream starts at the LIVE muzzle");
-    assert.ok(segs()[0].p.distanceTo(from) > 0.1, "not left behind on the old muzzle");
+    let frames = 0, arrivedFrame = -1;
+    // Run forward (9.5 m/s) + strafe every frame until the jet is freed.
+    while (jets.activeCount > 0 && frames < 30) {
+      muzzle.z -= 9.5 / 60;
+      muzzle.x += 0.05;
+      fx.update(1 / 60, viewer);
+      frames++;
+      if (arrivedFrame < 0 && fx.splats.surfaceCount > n0) arrivedFrame = frames;
+      const chain = segs();
+      if (chain.length === 0) continue;
+      const dir = to.clone().sub(muzzle).normalize();
+      const q = new THREE.Quaternion();
+      const m = new THREE.Matrix4();
+      jets.mesh.getMatrixAt(0, m);
+      m.decompose(new THREE.Vector3(), q, new THREE.Vector3());
+      const axis = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+      assert.ok(axis.dot(dir) > 1 - 1e-4, `frame ${frames}: stream runs from the LIVE muzzle to the impact`);
+      const start = muzzle.clone().addScaledVector(dir, chain[0].s);
+      assert.ok(chain[0].p.distanceTo(start) < 1e-3, `frame ${frames}: stream start on the live muzzle line (never left behind)`);
+      if (chain[0].tail === 0) assert.ok(chain[0].p.distanceTo(muzzle) < 1e-3, `frame ${frames}: attached tail sits AT the live muzzle`);
+    }
+    assert.ok(arrivedFrame > 0 && arrivedFrame <= 3, `the splat still lands with the hitscan (frame ${arrivedFrame})`);
+    assert.ok(frames > arrivedFrame + 3, "the anchor kept following after the arrival");
+    assert.equal(jets.activeCount, 0, "jet freed after its life");
+    fx.clearAll();
+
+    // Weapon gone (anchor → false): the start stays on the last known muzzle.
+    let valid = true;
+    muzzle.set(0.3, -0.2, -0.6);
+    fx.spawn(muzzle.clone(), to, new THREE.Color(0, 1, 0), null, (out) => { if (!valid) return false; out.copy(muzzle); return true; });
+    fx.update(0, viewer);
     muzzle.x += 0.25;
     fx.update(1 / 60, viewer);
-    assert.ok(segs()[0].p.distanceTo(glued) < 1e-4, "then stays on the fired ray (anchor released)");
+    const last = muzzle.clone();
+    valid = false;
+    muzzle.x += 5;
+    fx.update(1 / 60, viewer);
+    assert.ok(segs()[0].p.distanceTo(last) < 1e-4, "weapon gone: the stream keeps its last start point");
     jets.clear();
   });
 
