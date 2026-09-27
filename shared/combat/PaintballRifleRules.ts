@@ -8,11 +8,14 @@
  * recomputes the ray, remote clients replay the visual ball + splat.
  *
  * Reference: src/weapons/paintball/PaintballSpread.ts (pack). Damage,
- * range, capacity, bloom and the PRNG / draw order of `ballDirection` are
- * IDENTICAL (checked by scripts/test-paintball-rifle.mts). One deliberate
- * difference (same as the Popcorn Shotgun): the cone's "up" axis is the
- * camera up WITHOUT roll (derived from forward + world Y) — the server only
- * receives the forward direction, a rolled up axis would break the parity.
+ * capacity, bloom and the PRNG / draw order of `ballDirection` are
+ * IDENTICAL (checked by scripts/test-paintball-rifle.mts). Two deliberate
+ * differences:
+ *   - the cone's "up" axis is the camera up WITHOUT roll (derived from
+ *     forward + world Y) — same as the Popcorn Shotgun: the server only
+ *     receives the forward direction, a rolled up axis would break parity;
+ *   - NO maximum range (the pack uses 45 m): a ball flies until the first
+ *     wall / player / the map bounds, like the Hex Sniper tongue.
  */
 
 export interface PaintballVec3 {
@@ -26,8 +29,14 @@ export const PaintballRifleConfig = {
   capacity: 32,
   /** Minimum seconds between two balls (600 rpm — the authored fire loop). */
   fireInterval: 0.1,
-  /** Beyond this distance a ball hits nothing (m). */
-  maxRange: 45,
+  /**
+   * NO weapon range by design: the first wall / player / the map bounds
+   * stop the ball. This is only the ray length (m), longer than the
+   * diagonal of every map (asserted by scripts/test-paintball-rifle.mts)
+   * — same value as the Hex Sniper tongue. A ball that hits nothing (sky)
+   * vanishes at this distance.
+   */
+  maxRange: 400,
   /** Flat damage of one BODY ball (no distance falloff). */
   bodyDamage: 12,
   /** Head multiplier (→ 18). */

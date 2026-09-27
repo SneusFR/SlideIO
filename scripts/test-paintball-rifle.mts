@@ -44,12 +44,26 @@ try {
   const P = R.PaintballRifleConfig;
   const profileJson = JSON.parse(fs.readFileSync(`${project}/src/assets/potato/WeaponProfile_PaintballRifle.json`, "utf8"));
 
-  await test("shared rules == pack reference PaintballSpread (damage, range, capacity, bloom, ball direction)", () => {
+  await test("shared rules == pack reference PaintballSpread (damage, capacity, bloom, ball direction); NO max range", async () => {
     assert.equal(P.bodyDamage, REF.DAMAGE_BODY);
     assert.equal(P.headMultiplier, REF.HEADSHOT_MULTIPLIER);
     assert.equal(R.paintballDamage(false), 12);
     assert.equal(R.paintballDamage(true), 18);
-    assert.equal(P.maxRange, REF.MAX_RANGE);
+    // Deliberate difference with the pack (45 m): no weapon range — the ray
+    // is longer than the 3D diagonal of EVERY map (walls / bounds stop it).
+    const { MAP_REGISTRY } = await server.ssrLoadModule("/shared/map/MapRegistry.ts");
+    for (const def of Object.values(MAP_REGISTRY) as { name: string; colliderBoxes: number[][] }[]) {
+      const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (const b of def.colliderBoxes) {
+        for (let k = 0; k < 3; k++) {
+          lo[k] = Math.min(lo[k], b[k] - b[k + 3] / 2);
+          hi[k] = Math.max(hi[k], b[k] + b[k + 3] / 2);
+        }
+      }
+      const diag = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+      console.log(`    ${def.name}: diagonal ${diag.toFixed(0)} m < ray ${P.maxRange} m`);
+      assert.ok(P.maxRange > diag, `${def.name}: the ball crosses the whole map`);
+    }
     assert.equal(P.capacity, REF.CAPACITY);
     assert.equal(P.fireInterval, REF.FIRE_INTERVAL);
     assert.equal(P.spreadMinDeg, REF.SPREAD_MIN_DEG);
@@ -395,6 +409,22 @@ try {
     assert.ok(dists.length <= 6, "lands in ≤ 6 frames");
     for (let k = 1; k < dists.length; k++) assert.ok(dists[k] > dists[k - 1], "always forward");
     assert.ok(fx.splats.surfaceCount > n0, "splat on arrival");
+    fx.clearAll();
+  });
+
+  await test("no max range: a 150 m shot still lands in ≤ 6 frames (0.1 s), splat at the far wall", () => {
+    const balls = fx.projectiles!;
+    balls.clear();
+    const from = new THREE.Vector3(0.3, -0.2, -0.6), to = new THREE.Vector3(0.3, -0.2, -150.6);
+    const n0 = fx.splats.surfaceCount;
+    fx.spawn(from, to, new THREE.Color(1, 1, 0), { normal: new THREE.Vector3(0, 0, 1), seed: 3 });
+    fx.update(0, viewer);
+    // Frames until the splat lands (the ball then squashes on the wall a few more frames).
+    let frames = 0;
+    while (fx.splats.surfaceCount === n0 && frames < 20) { fx.update(1 / 60, viewer); frames++; }
+    console.log(`    150 m shot: splat after ${frames} frames`);
+    assert.ok(fx.splats.surfaceCount > n0, "splat 150 m away");
+    assert.ok(frames <= 6, `150 m in ${frames} frames`);
     fx.clearAll();
   });
 

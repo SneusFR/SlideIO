@@ -44,7 +44,8 @@ export interface PaintballBallsOptions {
 
 /**
  * Flight time bounds (s): ≥ 4 frames (the ball is always seen leaving the
- * barrel: muzzle → ~1 m out → mid → impact), ≤ 6 frames (45 m).
+ * barrel: muzzle → ~1 m out → mid → impact), ≤ 6 frames whatever the
+ * distance (no weapon range: a 150 m shot still lands in 0.1 s).
  */
 const MIN_FLIGHT = 4 / 60;
 const MAX_FLIGHT = 0.1;
@@ -102,8 +103,9 @@ const _axis = new THREE.Vector3();
  *   - BIG (18 cm), never smaller on screen than ≈ 0.4° (a far ball is
  *     scaled up);
  *   - TRACER SPEED (400 m/s) with a bounded flight time: ≥ 4 frames (a
- *     point-blank ball is still seen leaving the barrel), ≤ 0.1 s (a 45 m
- *     shot lands in 6 frames) — the splat appears practically with the hit;
+ *     point-blank ball is still seen leaving the barrel), ≤ 0.1 s (any
+ *     longer shot lands in 6 frames — no weapon range) — the splat appears
+ *     practically with the hit;
  *   - a short, faint tapered trail (0.3 m, lighter ball colour), never
  *     longer than the path already flown (never pokes into the gun / camera);
  *   - GLUED TO THE GUN, THEN STRAIGHT: on its first update the line start is

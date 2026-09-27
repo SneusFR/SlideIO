@@ -22,6 +22,7 @@ import {
   paintballBallDirection,
   paintballDamage,
 } from "../../../shared/combat/PaintballRifleRules";
+import { PaintballRifleState, resolvePaintballFire } from "./PaintballRifleServer";
 
 interface Recorded {
   actions: any[];
@@ -1094,11 +1095,28 @@ test("paintball: body ball = 12 immediately, head ball = 18", () => {
   assert.strictEqual(paintballDamage(true), 18);
 });
 
-test("paintball: server ray = shared ballDirection (same seed + spread), range 45 m, spread clamped", () => {
+test("paintball: NO max range — a player 150 m away is hit (12), wall first still blocks", () => {
+  const st = new PaintballRifleState();
+  const eye = { x: 0, y: 0.9 + PLAYER_EYE_OFFSET, z: 0 };
+  const far = { id: "B", x: 0, y: 0.9, z: -150 };
+  const chest = dirTo(eye, { x: 0, y: 0.9, z: -150 });
+  const r = resolvePaintballFire(st, 1_000_000, eye, chest, 1, 0, [far], "A", []);
+  assert.ok(r.accepted);
+  assert.ok(r.victim && r.victim.targetId === "B", "hit at 150 m (the pack's 45 m cap is gone)");
+  assert.strictEqual(r.victim!.amount, 12, "no distance falloff");
+  // A wall in front of him still stops the ball (map bounds / walls = the only limit).
+  const wall: [number, number, number, number, number, number][] = [[0, 2, -100, 20, 4, 1]];
+  const r2 = resolvePaintballFire(st, 1_000_200, eye, chest, 2, 0, [far], "A", wall);
+  assert.strictEqual(r2.victim, null, "wall in front → no hit");
+  assert.ok(Math.abs(r2.endPoint.z - -99.5) < 1e-6, "ball stops on the wall face");
+  assert.ok(PB.maxRange >= 400, "ray covers every map diagonal");
+});
+
+test("paintball: server ray = shared ballDirection (same seed + spread), sky end point = ray length, spread clamped", () => {
   const { wm, rec, addPlayer, advance } = makeWorld();
   const a = addPlayer("A", -40, 0.9, 16);
   wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
-  const aim = { x: 0, y: 1, z: 0 }; // sky: the end point is the 45 m point
+  const aim = { x: 0, y: 1, z: 0 }; // sky: nothing to hit, the end point is the end of the ray
   fire(wm, a, WeaponActionType.PAINTBALL_FIRE, eyeOf(a), aim, { sd: 777, sp: 2.2 });
   const c = paintFires(rec)[0];
   const d = paintballBallDirection(aim, 2.2, 777, { x: 0, y: 0, z: 0 });

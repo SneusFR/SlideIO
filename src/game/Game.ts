@@ -711,7 +711,7 @@ export class Game {
 
     // ---- PAINTBALL RIFLE (primary alternative — equipped from the Loadout
     // menu): LMB HELD = automatic seeded hitscan balls (600 rpm, 12 body /
-    // 18 head, 45 m), 32 balls, R = hopper swap (auto on a dry fire), RMB =
+    // 18 head, no max range), 32 balls, R = hopper swap (auto on a dry fire), RMB =
     // tight hip aim, F = one-hand inspection. Presentation = shared FP arms
     // + the pack's controller (hopper physics); visual balls, splats and
     // character paint = ONE PaintballFX for every shooter.
