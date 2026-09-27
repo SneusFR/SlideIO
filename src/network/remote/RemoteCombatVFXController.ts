@@ -181,6 +181,8 @@ export class RemoteCombatVFXController {
   onBasketProjectile: ((ev: WeaponActionConfirmedEvent) => void) | null = null;
   /** POPCORN SHOTGUN: remote players' fire / reload confirms (wired by the Game). */
   onPopcornAction: ((ev: WeaponActionConfirmedEvent) => void) | null = null;
+  /** PAINTBALL RIFLE: remote players' fire / reload confirms (wired by the Game). */
+  onPaintballAction: ((ev: WeaponActionConfirmedEvent) => void) | null = null;
 
   private elapsed = 0;
   private disposed = false;
@@ -469,6 +471,13 @@ export class RemoteCombatVFXController {
         // Popcorn Shotgun: TP clips + weapon clip + shared visual popcorns
         // + positional SFX are owned by the Game (single projectile pool).
         this.onPopcornAction?.(ev);
+        return;
+      case WeaponActionType.PAINTBALL_FIRE:
+      case WeaponActionType.PAINTBALL_RELOAD:
+      case WeaponActionType.PAINTBALL_RELOAD_CANCEL:
+        // Paintball Rifle: TP clips + weapon clip + shared visual balls /
+        // paint + positional SFX are owned by the Game (single FX instance).
+        this.onPaintballAction?.(ev);
         return;
       default:
         return; // unknown action — silently ignored

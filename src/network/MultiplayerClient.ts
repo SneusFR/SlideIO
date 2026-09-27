@@ -374,8 +374,12 @@ export class MultiplayerClient {
       /** View time (server ms) at which the shooter SAW the targets —
        *  the server rewinds its lag-comp history to this exact time. */
       vt?: number;
-      /** PopcornShotgun pellet seed (uint32, sent verbatim). */
+      /** PopcornShotgun pellet seed / PaintballRifle ball seed (uint32, sent verbatim). */
       sd?: number;
+      /** PaintballRifle spread cone (degrees, 1/1000 — already quantized). */
+      sp?: number;
+      /** PaintballRifle paint colour index (hopper palette). */
+      pc?: number;
     } = {},
   ): void {
     if (!this.room) return;
@@ -390,6 +394,8 @@ export class MultiplayerClient {
       ...(data.pi !== undefined ? { pi: data.pi } : {}),
       ...(data.vt !== undefined ? { vt: Math.round(data.vt) } : {}),
       ...(data.sd !== undefined ? { sd: data.sd >>> 0 } : {}),
+      ...(data.sp !== undefined ? { sp: round3(data.sp) } : {}),
+      ...(data.pc !== undefined ? { pc: data.pc | 0 } : {}),
     });
   }
 
@@ -554,6 +560,9 @@ export class MultiplayerClient {
         // PopcornShotgun: pellet seed + server ammo after the action.
         ...(typeof message.sd === "number" ? { sd: message.sd } : {}),
         ...(typeof message.am === "number" ? { am: message.am } : {}),
+        // PaintballRifle: spread cone + paint colour of the ball.
+        ...(typeof message.sp === "number" ? { sp: message.sp } : {}),
+        ...(typeof message.pc === "number" ? { pc: message.pc } : {}),
       });
     });
     room.onMessage("HIT_CONFIRMED", (message: Partial<HitConfirmedEvent>) => {

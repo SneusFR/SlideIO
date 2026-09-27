@@ -104,6 +104,11 @@ export class MultiplayerGameController {
     this.vfx.onPopcornAction = fn;
   }
 
+  /** PAINTBALL RIFLE: remote players' fire / reload confirms. */
+  set onRemotePaintballAction(fn: ((event: WeaponActionConfirmedEvent) => void) | null) {
+    this.vfx.onPaintballAction = fn;
+  }
+
   private readonly statsSource = new NetworkStatsSource();
   /** Local alive state as told BY THE SERVER (never by local HP math). */
   private localAlive = true;

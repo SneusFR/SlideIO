@@ -36,5 +36,7 @@ export enum KillMethod {
   GOOFY_BASKET = "GOOFY_BASKET",
   /** POPCORN SHOTGUN pellets (one summed hit per shot and per victim). */
   POPCORN_SHOTGUN = "POPCORN_SHOTGUN",
+  /** PAINTBALL RIFLE balls (hitscan, 12 body / 18 head, no special medal). */
+  PAINTBALL_RIFLE = "PAINTBALL_RIFLE",
   ENVIRONMENT = "ENVIRONMENT",
 }

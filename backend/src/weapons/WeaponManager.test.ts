@@ -17,6 +17,11 @@ import {
   popcornRayVsPlayer,
   popcornShotDamage,
 } from "../../../shared/combat/PopcornShotgunRules";
+import {
+  PaintballRifleConfig,
+  paintballBallDirection,
+  paintballDamage,
+} from "../../../shared/combat/PaintballRifleRules";
 
 interface Recorded {
   actions: any[];
@@ -1055,6 +1060,155 @@ test("popcorn: wrong weapon / missing seed / invalid seed refused", () => {
   fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), { x: 0, y: 1, z: 0 }, { sd: -3 });
   fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), { x: 0, y: 1, z: 0 }, { sd: 1.5 });
   assert.strictEqual(popcornFires(rec).length, 0);
+});
+
+// ---------------------------------------------------------------------
+// PAINTBALL RIFLE (automatic hitscan, 12 / 18, 32 balls, hopper swap)
+// ---------------------------------------------------------------------
+
+const PB = PaintballRifleConfig;
+const paintFires = (rec: Recorded) => rec.actions.filter((e) => e.action === WeaponActionType.PAINTBALL_FIRE);
+
+test("paintball: body ball = 12 immediately, head ball = 18", () => {
+  const { wm, rec, addPlayer, advance } = makeWorld();
+  const a = addPlayer("A", -40, 0.9, 16);
+  const b = addPlayer("B", -40, 0.9, 10); // 6 m, open ground
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
+  const chest = dirTo(eyeOf(a), { x: -40, y: 0.9, z: 10 });
+  fire(wm, a, WeaponActionType.PAINTBALL_FIRE, eyeOf(a), chest, { sd: 1, sp: 0 });
+  assert.strictEqual(b.health, 200 - 12, "hitscan: damage at the shot time");
+  assert.strictEqual(rec.hits.length, 1);
+  assert.strictEqual(rec.hits[0].ev.hitZone, "BODY");
+  const conf = paintFires(rec);
+  assert.strictEqual(conf.length, 1);
+  assert.strictEqual(conf[0].sd, 1);
+  assert.strictEqual(conf[0].am, PB.capacity - 1);
+  assert.strictEqual(conf[0].tid, "B", "victim id confirmed (remote paint)");
+  assert.ok(typeof conf[0].hx === "number", "end point confirmed");
+  advance(100);
+  const head = dirTo(eyeOf(a), { x: -40, y: 0.9 + 0.66, z: 10 });
+  fire(wm, a, WeaponActionType.PAINTBALL_FIRE, eyeOf(a), head, { sd: 2, sp: 0 });
+  assert.strictEqual(rec.hits[1].ev.hitZone, "HEAD");
+  assert.strictEqual(rec.hits[1].ev.damageDealt, 18);
+  assert.strictEqual(paintballDamage(false), 12);
+  assert.strictEqual(paintballDamage(true), 18);
+});
+
+test("paintball: server ray = shared ballDirection (same seed + spread), range 45 m, spread clamped", () => {
+  const { wm, rec, addPlayer, advance } = makeWorld();
+  const a = addPlayer("A", -40, 0.9, 16);
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
+  const aim = { x: 0, y: 1, z: 0 }; // sky: the end point is the 45 m point
+  fire(wm, a, WeaponActionType.PAINTBALL_FIRE, eyeOf(a), aim, { sd: 777, sp: 2.2 });
+  const c = paintFires(rec)[0];
+  const d = paintballBallDirection(aim, 2.2, 777, { x: 0, y: 0, z: 0 });
+  const o = eyeOf(a);
+  assert.ok(Math.abs(c.hx - (o.x + d.x * PB.maxRange)) < 1e-9 && Math.abs(c.hz - (o.z + d.z * PB.maxRange)) < 1e-9);
+  assert.strictEqual(c.sp, 2.2);
+  advance(100);
+  fire(wm, a, WeaponActionType.PAINTBALL_FIRE, eyeOf(a), aim, { sd: 5, sp: 50 });
+  assert.strictEqual(paintFires(rec)[1].sp, PB.spreadMaxDeg, "huge cone clamped");
+});
+
+test("paintball: cadence ≥ 0.1 s (jitter-tolerant, never above 600 rpm), 32 balls, empty refused", () => {
+  const { wm, rec, addPlayer, advance } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
+  const up = { x: 0, y: 1, z: 0 };
+  let s = 1;
+  const shoot = () => fire(wm, a, WeaponActionType.PAINTBALL_FIRE, eyeOf(a), up, { sd: s++ });
+  shoot();
+  shoot();
+  assert.strictEqual(paintFires(rec).length, 1, "spam refused");
+  advance(50); // 0.05 s: beyond the 0.04 s jitter tolerance → refused
+  shoot();
+  assert.strictEqual(paintFires(rec).length, 1);
+  advance(40); // 0.09 s since the first ball: 10 ms early → accepted (jitter)
+  shoot();
+  assert.strictEqual(paintFires(rec).length, 2);
+  // Sustained 90 ms spam: the 40 ms debt runs out → throttled to ≤ 600 rpm.
+  let accepted = 0;
+  for (let i = 0; i < 10; i++) {
+    advance(90);
+    const before = paintFires(rec).length;
+    shoot();
+    if (paintFires(rec).length > before) accepted++;
+  }
+  assert.ok(accepted < 10, `sustained 90 ms spam is throttled (${accepted}/10)`);
+  // Drain the hopper at 600 rpm.
+  while (paintFires(rec).length < PB.capacity) {
+    advance(100);
+    shoot();
+  }
+  assert.strictEqual(paintFires(rec).at(-1).am, 0, "32 balls");
+  advance(100);
+  shoot();
+  assert.strictEqual(paintFires(rec).length, PB.capacity, "empty hopper refused");
+});
+
+test("paintball: hopper swap gates 1.52 / 2.10 s, cancel before the click keeps the ammo", () => {
+  const { wm, rec, addPlayer, advance } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
+  const up = { x: 0, y: 1, z: 0 };
+  let s = 1;
+  const shoot = () => fire(wm, a, WeaponActionType.PAINTBALL_FIRE, eyeOf(a), up, { sd: s++ });
+  const act = (action: string) => fire(wm, a, action, eyeOf(a), up);
+  act(WeaponActionType.PAINTBALL_RELOAD);
+  assert.strictEqual(rec.actions.filter((e) => e.action === WeaponActionType.PAINTBALL_RELOAD).length, 0, "full: no reload");
+  for (let i = 0; i < 5; i++) {
+    shoot();
+    advance(100);
+  }
+  assert.strictEqual(paintFires(rec).at(-1).am, 27);
+  act(WeaponActionType.PAINTBALL_RELOAD);
+  advance(1000);
+  act(WeaponActionType.PAINTBALL_RELOAD_CANCEL);
+  advance(500);
+  shoot();
+  assert.strictEqual(paintFires(rec).at(-1).am, 26, "cancel before 1.52 s keeps 27");
+  advance(100);
+  act(WeaponActionType.PAINTBALL_RELOAD);
+  advance(1900);
+  const n = paintFires(rec).length;
+  shoot();
+  assert.strictEqual(paintFires(rec).length, n, "refused before readyToFire (2.10 s)");
+  advance(150);
+  shoot();
+  assert.strictEqual(paintFires(rec).at(-1).am, PB.capacity - 1, "full hopper after the click");
+  advance(100);
+  shoot();
+  act(WeaponActionType.PAINTBALL_RELOAD);
+  advance(1600);
+  act(WeaponActionType.PAINTBALL_RELOAD_CANCEL);
+  advance(100);
+  shoot();
+  assert.strictEqual(paintFires(rec).at(-1).am, PB.capacity - 1, "cancel after 1.52 s = full hopper");
+  // Weapon swap mid-reload = cancel (before the click keeps the ammo).
+  for (let i = 0; i < 3; i++) {
+    advance(100);
+    shoot();
+  }
+  act(WeaponActionType.PAINTBALL_RELOAD);
+  advance(500);
+  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
+  advance(3000);
+  shoot();
+  assert.strictEqual(paintFires(rec).at(-1).am, PB.capacity - 5, "swap before the click kept the ammo");
+});
+
+test("paintball: wrong weapon / missing or invalid seed refused", () => {
+  const { wm, rec, addPlayer } = makeWorld();
+  const a = addPlayer("A", 3, 0.9, 16);
+  const up = { x: 0, y: 1, z: 0 };
+  wm.handleEquip(a, NetworkWeaponId.POPCORN_SHOTGUN);
+  fire(wm, a, WeaponActionType.PAINTBALL_FIRE, eyeOf(a), up, { sd: 1 });
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
+  fire(wm, a, WeaponActionType.PAINTBALL_FIRE, eyeOf(a), up);
+  fire(wm, a, WeaponActionType.PAINTBALL_FIRE, eyeOf(a), up, { sd: -3 });
+  fire(wm, a, WeaponActionType.PAINTBALL_FIRE, eyeOf(a), up, { sd: 2.5 });
+  assert.strictEqual(paintFires(rec).length, 0);
 });
 
 console.log(`\n${passed} weapon tests passed`);

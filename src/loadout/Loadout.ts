@@ -9,6 +9,7 @@ import { PoisonConfig as pz } from "../weapons/poison/PoisonConfig";
 import { HexSniperConfig as hx } from "../weapons/hexsniper/HexSniperConfig";
 import { NetworkWeaponConfig } from "../../shared/combat/NetworkWeapons";
 import { PopcornShotgunConfig as pc } from "../../shared/combat/PopcornShotgunRules";
+import { PaintballRifleConfig as pb } from "../../shared/combat/PaintballRifleRules";
 
 /** GoofyBasket gameplay numbers come from the SHARED client/server config. */
 const gb = NetworkWeaponConfig.goofyBasket;
@@ -28,7 +29,8 @@ export type PrimaryWeaponId =
   | "POISON_SPRAYER"
   | "HEX_SNIPER"
   | "GOOFY_BASKET"
-  | "POPCORN_SHOTGUN";
+  | "POPCORN_SHOTGUN"
+  | "PAINTBALL_RIFLE";
 export type KillstreakId = "NONE" | "MOLE_STRIKE" | "ORBITAL_SCAN" | "NOVA_STRIKE";
 
 /** Exactly three equippable killstreak slots (keys W / X / C in game). */
@@ -92,7 +94,8 @@ export function loadLoadout(): LoadoutSelection {
         parsed.primary === "POISON_SPRAYER" ||
         parsed.primary === "HEX_SNIPER" ||
         parsed.primary === "GOOFY_BASKET" ||
-        parsed.primary === "POPCORN_SHOTGUN"
+        parsed.primary === "POPCORN_SHOTGUN" ||
+        parsed.primary === "PAINTBALL_RIFLE"
           ? parsed.primary
           : "PLASMA_RIFLE",
       killstreaks,
@@ -493,6 +496,47 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
         name: "VISÉE SERRÉE & INSPECTION",
         description:
           "Clic droit : l'arme se serre contre le corps sans cacher le viseur (même dispersion). F : inspection à une main (visuel uniquement).",
+        stats: [{ label: "INSPECTION", value: "3,6 s" }],
+      },
+    ],
+  },
+  {
+    id: "PAINTBALL_RIFLE",
+    name: "PAINTBALL RIFLE",
+    tagline: "Fusil automatique à billes de peinture",
+    summary:
+      `Un fusil de paintball façon AK, à deux mains et automatique : ${pb.capacity} billes de trois couleurs roulent dans le réservoir transparent. Chaque bille touche instantanément et laisse sa couleur : les taches restent sur les murs, et un joueur garde la peinture sur lui jusqu'à sa mort.`,
+    ratings: { power: 55, precision: 70, difficulty: 35 },
+    abilities: [
+      {
+        trigger: "CLIC GAUCHE — MAINTENIR",
+        name: "RAFALE DE PEINTURE",
+        description:
+          `Tir automatique : une bille toutes les ${pb.fireInterval} s tant que la gâchette est tenue. Chaque bille touche au moment du tir, sans atténuation avec la distance. La dispersion s'ouvre pendant la rafale et se referme dès qu'on relâche. Une tête fait ×${pb.headMultiplier}.`,
+        stats: [
+          { label: "DÉGÂTS", value: `${pb.bodyDamage} PV` },
+          { label: "TÊTE", value: `${pb.bodyDamage * pb.headMultiplier} PV` },
+          { label: "CADENCE", value: `${Math.round(60 / pb.fireInterval)} / min` },
+          { label: "PORTÉE", value: `${pb.maxRange} m` },
+          { label: "DISPERSION", value: `${pb.spreadMinDeg}° → ${pb.spreadMaxDeg}°` },
+        ],
+      },
+      {
+        trigger: "TOUCHE R — OU TIR À VIDE",
+        name: "CHANGEMENT DE RÉSERVOIR",
+        description:
+          "Le pouce libère le réservoir vide, qui tombe ; un réservoir plein est clipsé, une tape dessus, puis le levier d'armement. Changer d'arme avant le clic annule la recharge.",
+        stats: [
+          { label: "BILLES", value: `${pb.capacity}` },
+          { label: "MUNITIONS PRÊTES", value: `${pb.timeline.reloadAmmoRefilled} s` },
+          { label: "TIR POSSIBLE", value: `${pb.timeline.reloadReady} s` },
+        ],
+      },
+      {
+        trigger: "CLIC DROIT — MAINTENIR / TOUCHE F",
+        name: "VISÉE SERRÉE & INSPECTION",
+        description:
+          "Clic droit : l'arme se serre contre le corps et la dispersion minimale se resserre. F : inspection à une main, on voit les billes rouler dans le réservoir (visuel uniquement).",
         stats: [{ label: "INSPECTION", value: "3,6 s" }],
       },
     ],

@@ -35,6 +35,17 @@ import {
   startPopcornReload,
   cancelPopcornReload,
 } from "./PopcornShotgunServer";
+import {
+  sanitizePaintballSeed,
+  sanitizePaintballColor,
+  quantizePaintballSpread,
+} from "../../../shared/combat/PaintballRifleRules";
+import {
+  PaintballRifleState,
+  resolvePaintballFire,
+  startPaintballReload,
+  cancelPaintballReload,
+} from "./PaintballRifleServer";
 import { DamageResult } from "../combat/DamageResult";
 import { NetworkPlayer } from "../schemas/NetworkPlayer";
 import { MAP_COLLIDER_BOXES, type ColliderBox } from "../../../shared/map/MapColliders";
@@ -238,6 +249,8 @@ class PlayerWeaponState {
   basketThrow: BasketThrowState | null = null;
   // Popcorn Shotgun (server-owned ammo / cadence / reload clock)
   popcorn = new PopcornShotgunState();
+  // Paintball Rifle (server-owned ammo / cadence / hopper swap clock)
+  paintball = new PaintballRifleState();
 }
 
 /** IO the room provides — WeaponManager stays free of Colyseus types. */
@@ -423,6 +436,8 @@ export class WeaponManager {
     // unchanged (local parity: controller.cancelReload()). Ammo persists
     // across weapon swaps, like the local controller instance.
     cancelPopcornReload(s.popcorn, this.host.now());
+    // Same rule for the paintball hopper swap (cancel before the click).
+    cancelPaintballReload(s.paintball, this.host.now());
     s.weapon = rawWeapon;
     s.skin = skin;
     player.weapon = rawWeapon; // synced schema state → all clients
@@ -563,6 +578,19 @@ export class WeaponManager {
         if (s.weapon !== NetworkWeaponId.POPCORN_SHOTGUN) return;
         if (!cancelPopcornReload(s.popcorn, this.host.now())) return;
         this.confirmPopcorn(player, action, seq, this.eyePos(player), dir ?? UP, s.popcorn.ammo);
+        return;
+      case WeaponActionType.PAINTBALL_FIRE:
+        this.handlePaintballFire(player, s, seq, origin, dir, msg);
+        return;
+      case WeaponActionType.PAINTBALL_RELOAD:
+        if (s.weapon !== NetworkWeaponId.PAINTBALL_RIFLE) return;
+        if (!startPaintballReload(s.paintball, this.host.now())) return;
+        this.confirmPaintball(player, action, seq, this.eyePos(player), dir ?? UP, s.paintball.ammo);
+        return;
+      case WeaponActionType.PAINTBALL_RELOAD_CANCEL:
+        if (s.weapon !== NetworkWeaponId.PAINTBALL_RIFLE) return;
+        if (!cancelPaintballReload(s.paintball, this.host.now())) return;
+        this.confirmPaintball(player, action, seq, this.eyePos(player), dir ?? UP, s.paintball.ammo);
         return;
       default:
         return; // unknown action — silently refused
@@ -963,6 +991,103 @@ export class WeaponManager {
       dz: dir.z,
       ...(hit ? { hx: hit.x, hy: hit.y, hz: hit.z } : {}),
       ...(seed !== undefined ? { sd: seed } : {}),
+      am: ammo,
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // PAINTBALL RIFLE — automatic hitscan, one seeded ball per message
+  // ------------------------------------------------------------------
+
+  /**
+   * PAINTBALL_FIRE: validate ammo / cadence (≥ 0.1 s) / swap gate, rebuild
+   * the ball direction from the client's seed + spread + aim (shared rule
+   * — identical on every client), hitscan it against the lag-compensated
+   * targets and apply the damage IMMEDIATELY (12 body / 18 head, no
+   * falloff). Every accepted ball is confirmed (sd + sp + am + end point +
+   * victim id) so remotes replay the same visual ball and paint.
+   */
+  private handlePaintballFire(
+    player: NetworkPlayer,
+    s: PlayerWeaponState,
+    seq: number,
+    origin: Vec3 | null,
+    dir: Vec3 | null,
+    msg: WeaponActionMessage,
+  ): void {
+    if (s.weapon !== NetworkWeaponId.PAINTBALL_RIFLE || !origin || !dir) return;
+    const seed = sanitizePaintballSeed(msg.sd);
+    if (seed === null) return;
+    const spread = quantizePaintballSpread(msg.sp);
+    const result = resolvePaintballFire(
+      s.paintball,
+      this.host.now(),
+      origin,
+      dir,
+      seed,
+      spread,
+      this.rewindTargets(player.id, this.resolveRewindTime(msg)),
+      player.id,
+      this.mapBoxes,
+    );
+    if (!result.accepted) return;
+    this.confirmPaintball(
+      player,
+      WeaponActionType.PAINTBALL_FIRE,
+      seq,
+      origin,
+      dir,
+      result.ammoLeft,
+      seed,
+      spread,
+      result.endPoint,
+      result.victim?.targetId,
+      sanitizePaintballColor(msg.pc),
+    );
+    const v = result.victim;
+    if (v) {
+      this.dealDamage(
+        player,
+        v.targetId,
+        v.amount,
+        DamageType.PAINTBALL_RIFLE,
+        v.headshot ? HitZone.HEAD : HitZone.BODY,
+        NetworkWeaponId.PAINTBALL_RIFLE,
+      );
+    }
+  }
+
+  /** Paintball confirm: the regular confirm + seed / spread / ammo / victim. */
+  private confirmPaintball(
+    player: NetworkPlayer,
+    action: string,
+    seq: number,
+    origin: Vec3,
+    dir: Vec3,
+    ammo: number,
+    seed?: number,
+    spread?: number,
+    hit?: Vec3,
+    victimId?: string,
+    color?: number,
+  ): void {
+    this.host.broadcastAction({
+      playerId: player.id,
+      weapon: NetworkWeaponId.PAINTBALL_RIFLE,
+      action,
+      seq,
+      ts: this.host.now(),
+      ox: origin.x,
+      oy: origin.y,
+      oz: origin.z,
+      dx: dir.x,
+      dy: dir.y,
+      dz: dir.z,
+      ...(hit ? { hx: hit.x, hy: hit.y, hz: hit.z } : {}),
+      ...(seed !== undefined ? { sd: seed } : {}),
+      ...(spread !== undefined ? { sp: spread } : {}),
+      ...(victimId ? { tid: victimId } : {}),
+      ...(color !== undefined ? { pc: color } : {}),
       am: ammo,
     });
   }
@@ -1806,6 +1931,7 @@ export class WeaponManager {
     s.basketChargeStart = 0;
     s.basketThrow = null;
     cancelPopcornReload(s.popcorn, this.host.now()); // a corpse never finishes a reload
+    cancelPaintballReload(s.paintball, this.host.now());
   }
 
   /** Whoever is pulling `victimId` drops the grab (victim died / left). */
@@ -1839,6 +1965,7 @@ export class WeaponManager {
     s.basketChargeStart = 0;
     s.basketThrow = null;
     s.popcorn.reset(); // respawn = full tank (local parity: setAmmo(2))
+    s.paintball.reset(); // respawn = full hopper (local parity: setAmmo(32))
   }
 
   removePlayer(playerId: string): void {

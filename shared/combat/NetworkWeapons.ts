@@ -20,6 +20,7 @@ export enum NetworkWeaponId {
   HEX_SNIPER = "HEX_SNIPER",
   GOOFY_BASKET = "GOOFY_BASKET",
   POPCORN_SHOTGUN = "POPCORN_SHOTGUN",
+  PAINTBALL_RIFLE = "PAINTBALL_RIFLE",
 }
 
 export function isNetworkWeaponId(raw: unknown): raw is NetworkWeaponId {
@@ -105,6 +106,18 @@ export enum WeaponActionType {
   /** POPCORN SHOTGUN: reload interrupted (weapon slot switch…) — before
    *  the refill point the ammo stays unchanged. */
   POPCORN_RELOAD_CANCEL = "POPCORN_RELOAD_CANCEL",
+  /** PAINTBALL RIFLE: one ball (automatic, ≥ 0.1 s apart). `sd` = ball
+   *  seed (uint32), `sp` = spread cone (degrees, bloom), dx/dy/dz = camera
+   *  aim — the server rebuilds the SAME ray (shared/combat/PaintballRifleRules),
+   *  hitscans it (lag-compensated) and applies 12 / 18 (head) at once.
+   *  Confirm: `sd` + `sp` + `am` + hx/hy/hz (end point) + `tid` (victim). */
+  PAINTBALL_FIRE = "PAINTBALL_FIRE",
+  /** PAINTBALL RIFLE: hopper swap started (ammo counts at 1.52 s, fire
+   *  again from 2.10 s — server clock). */
+  PAINTBALL_RELOAD = "PAINTBALL_RELOAD",
+  /** PAINTBALL RIFLE: swap interrupted (weapon switch…) — before the new
+   *  hopper clicks in the ammo stays unchanged. */
+  PAINTBALL_RELOAD_CANCEL = "PAINTBALL_RELOAD_CANCEL",
 }
 
 // ---------------------------------------------------------------------
@@ -542,8 +555,13 @@ export interface WeaponActionMessage {
   /** Obliterreur anchor SLOT (0 = A, 1 = B) — keeps both sides in
    *  lockstep with the local placement alternation. */
   pi?: number;
-  /** POPCORN SHOTGUN: pellet seed (uint32) of a POPCORN_FIRE. */
+  /** POPCORN SHOTGUN: pellet seed (uint32) of a POPCORN_FIRE.
+   *  PAINTBALL RIFLE: ball seed (uint32) of a PAINTBALL_FIRE. */
   sd?: number;
+  /** PAINTBALL RIFLE: spread cone of the ball (degrees, 1/1000 precision). */
+  sp?: number;
+  /** PAINTBALL RIFLE: paint colour index of the ball (hopper palette, 0..7). */
+  pc?: number;
 }
 
 /** Server → all clients: a VALIDATED action to replay (VFX / audio / anim). */
@@ -589,8 +607,14 @@ export interface WeaponActionConfirmedEvent {
    *  clients rebuild the same 12 pellets from `sd` + dx/dy/dz). */
   sd?: number;
   /** POPCORN SHOTGUN: server ammo AFTER the action (0 = last load fired →
-   *  TP FireLast clip; also resyncs the remote tank). */
+   *  TP FireLast clip; also resyncs the remote tank).
+   *  PAINTBALL RIFLE: server ammo after the action (resyncs the hopper). */
   am?: number;
+  /** PAINTBALL RIFLE: spread cone of a confirmed PAINTBALL_FIRE (remote
+   *  clients rebuild the same ball direction from `sd` + `sp` + dx/dy/dz). */
+  sp?: number;
+  /** PAINTBALL RIFLE: paint colour index (same ball colour on every client). */
+  pc?: number;
 }
 
 /**

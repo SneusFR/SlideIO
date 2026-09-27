@@ -27,6 +27,8 @@ export enum DamageType {
   GOOFY_BASKET = "GOOFY_BASKET",
   /** POPCORN SHOTGUN pellets (summed per shot and per victim). */
   POPCORN_SHOTGUN = "POPCORN_SHOTGUN",
+  /** PAINTBALL RIFLE balls (hitscan, 12 body / 18 head per ball). */
+  PAINTBALL_RIFLE = "PAINTBALL_RIFLE",
   MOLE_STRIKE = "MOLE_STRIKE",
   ENVIRONMENT = "ENVIRONMENT",
 }

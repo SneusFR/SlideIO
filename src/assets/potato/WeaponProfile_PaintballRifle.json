@@ -1,0 +1,540 @@
+{
+  "schemaVersion": 1,
+  "id": "PaintballRifle",
+  "compatibleRig": "Potato_Master_Clean_v1",
+  "units": "meter",
+  "assets": {
+    "fpRig": "Potato_FP_CommonArms.glb",
+    "fpPoses": "PaintballRifle_FP_Poses.glb",
+    "tpRig": "Potato_TP_Character.glb",
+    "tpPoses": "PaintballRifle_TP_Poses.glb",
+    "weapon": "PaintballRifle_Weapon.glb"
+  },
+  "camera": {
+    "verticalFovDegrees": 65,
+    "near": 0.01,
+    "far": 100,
+    "axes": "+X right, +Y up, -Z forward",
+    "aspectReference": "16:9",
+    "additionalCameraOffset": [
+      0,
+      0,
+      0
+    ]
+  },
+  "mounts": {
+    "fp": {
+      "poseSpace": "camera",
+      "bone": "Weapon_R",
+      "matrixColumnMajor": [
+        -0.10045616444423111,
+        0.06937951183468885,
+        0.38091354802238664,
+        0.0,
+        0.1010751016201509,
+        0.3845791623103804,
+        -0.043391224274674074,
+        0.0,
+        -0.37375451845736696,
+        0.08535480529521186,
+        -0.11411487517705282,
+        0.0,
+        -0.001430990525645712,
+        -0.001656748611665232,
+        -0.021872953292644715,
+        1.0
+      ],
+      "matrixRows": [
+        [
+          -0.10045616444423111,
+          0.1010751016201509,
+          -0.37375451845736696,
+          -0.001430990525645712
+        ],
+        [
+          0.06937951183468885,
+          0.3845791623103804,
+          0.08535480529521186,
+          -0.001656748611665232
+        ],
+        [
+          0.38091354802238664,
+          -0.043391224274674074,
+          -0.11411487517705282,
+          -0.021872953292644715
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "weaponRootScalePreserved": 0.19,
+      "additionalScale": 0.4000001108803211,
+      "clips": [
+        {
+          "name": "FP_PaintballRifle_Hold",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.022
+        },
+        {
+          "name": "FP_PaintballRifle_Run",
+          "frames": 25,
+          "sampleFps": 30,
+          "duration": 0.8,
+          "loop": true,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.066
+        },
+        {
+          "name": "FP_Aim_PaintballRifle",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.048
+        },
+        {
+          "name": "FP_Raise_PaintballRifle",
+          "frames": 37,
+          "sampleFps": 120,
+          "duration": 0.3,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.047
+        },
+        {
+          "name": "FP_Lower_PaintballRifle",
+          "frames": 37,
+          "sampleFps": 120,
+          "duration": 0.3,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.047
+        },
+        {
+          "name": "FP_Fire_PaintballRifle",
+          "frames": 13,
+          "sampleFps": 120,
+          "duration": 0.1,
+          "loop": true,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.028
+        },
+        {
+          "name": "FP_FireEnd_PaintballRifle",
+          "frames": 19,
+          "sampleFps": 60,
+          "duration": 0.3,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.024
+        },
+        {
+          "name": "FP_Reload_PaintballRifle",
+          "frames": 148,
+          "sampleFps": 60,
+          "duration": 2.45,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 22.573
+        },
+        {
+          "name": "FP_Inspect_PaintballRifle",
+          "frames": 217,
+          "sampleFps": 60,
+          "duration": 3.6,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.086
+        },
+        {
+          "name": "FP_Equip_PaintballRifle",
+          "frames": 34,
+          "sampleFps": 60,
+          "duration": 0.55,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.084
+        },
+        {
+          "name": "FP_Unequip_PaintballRifle",
+          "frames": 22,
+          "sampleFps": 60,
+          "duration": 0.35,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.087
+        }
+      ],
+      "authoring": {
+        "method": "IK per frame with soft joint limits: weapon placed in camera space, right arm solved on Weapon_R, left arm on the live OffhandSocket (foregrip fist fitted on the real hand mesh) / hopper / charging-handle frames",
+        "holdGripCameraSpace": [
+          0.254,
+          -0.281,
+          -0.508
+        ],
+        "holdYawPitchRollDeg": [
+          12.0,
+          0.0,
+          0.0
+        ],
+        "sameChannelSetAsHexSniper": true
+      }
+    },
+    "tp": {
+      "poseSpace": "character",
+      "bone": "Weapon_R",
+      "matrixColumnMajor": [
+        -0.06201392833798684,
+        0.14573272133021561,
+        0.3121155769322014,
+        0.0,
+        0.10817704187213656,
+        0.30932828415013985,
+        -0.12293780670236266,
+        0.0,
+        -0.32703513738647527,
+        0.07468549225597577,
+        -0.09985031826265442,
+        0.0,
+        -0.013753431351279141,
+        -0.01939409501096824,
+        -0.010651379435043892,
+        1.0
+      ],
+      "matrixRows": [
+        [
+          -0.06201392833798684,
+          0.10817704187213656,
+          -0.32703513738647527,
+          -0.013753431351279141
+        ],
+        [
+          0.14573272133021561,
+          0.30932828415013985,
+          0.07468549225597577,
+          -0.01939409501096824
+        ],
+        [
+          0.3121155769322014,
+          -0.12293780670236266,
+          -0.09985031826265442,
+          -0.010651379435043892
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "weaponRootScalePreserved": 0.19,
+      "additionalScale": 0.34999983819701996,
+      "clips": [
+        {
+          "name": "TP_Hold_PaintballRifle",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 1.323
+        },
+        {
+          "name": "TP_Aim_PaintballRifle",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 1.227
+        },
+        {
+          "name": "TP_Raise_PaintballRifle",
+          "frames": 37,
+          "sampleFps": 120,
+          "duration": 0.3,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 1.169
+        },
+        {
+          "name": "TP_Lower_PaintballRifle",
+          "frames": 37,
+          "sampleFps": 120,
+          "duration": 0.3,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 1.169
+        },
+        {
+          "name": "TP_Run_PaintballRifle",
+          "frames": 25,
+          "sampleFps": 30,
+          "duration": 0.8,
+          "loop": true,
+          "channels": 26,
+          "maxLeftHandContactErrorMm": 0.5
+        },
+        {
+          "name": "TP_Fire_PaintballRifle",
+          "frames": 13,
+          "sampleFps": 120,
+          "duration": 0.1,
+          "loop": true,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 1.025
+        },
+        {
+          "name": "TP_FireEnd_PaintballRifle",
+          "frames": 19,
+          "sampleFps": 60,
+          "duration": 0.3,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 1.169
+        },
+        {
+          "name": "TP_Reload_PaintballRifle",
+          "frames": 148,
+          "sampleFps": 60,
+          "duration": 2.45,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 10.148
+        }
+      ],
+      "animatedWeaponSocketCorrection": "Weapon_R translation is keyed at its rest value in every TP clip (resets the HexSniper offset).",
+      "stance": {
+        "alwaysAiming": true,
+        "gunDirection": "straight ahead (character +Z), level, no roll, in hold / aim / run / fire",
+        "spineYawLeanDeg": [
+          -14.16,
+          8.48
+        ],
+        "leftHandSocket": "OffhandSocketTP (the foregrip fist turned 37 deg toward the back: the TP arms are short)",
+        "characterSkinRequired": "Potato_TP_Character.glb v5 (flank / armpit weights repaired \u2014 the file shipped with the Popcorn Shotgun)"
+      }
+    }
+  },
+  "fpClips": {
+    "hold": "FP_PaintballRifle_Hold",
+    "run": "FP_PaintballRifle_Run",
+    "aim": "FP_Aim_PaintballRifle",
+    "raise": "FP_Raise_PaintballRifle",
+    "lower": "FP_Lower_PaintballRifle",
+    "inspect": "FP_Inspect_PaintballRifle",
+    "equip": "FP_Equip_PaintballRifle",
+    "unequip": "FP_Unequip_PaintballRifle"
+  },
+  "fpActions": {
+    "fire": {
+      "clip": "FP_Fire_PaintballRifle",
+      "loop": true
+    },
+    "fireEnd": {
+      "clip": "FP_FireEnd_PaintballRifle",
+      "loop": false
+    },
+    "reload": {
+      "clip": "FP_Reload_PaintballRifle",
+      "loop": false
+    }
+  },
+  "tpClips": {
+    "hold": "TP_Hold_PaintballRifle",
+    "run": "TP_Run_PaintballRifle",
+    "aim": "TP_Aim_PaintballRifle",
+    "raise": "TP_Raise_PaintballRifle",
+    "lower": "TP_Lower_PaintballRifle",
+    "actions": {
+      "fire": {
+        "clip": "TP_Fire_PaintballRifle",
+        "loop": true
+      },
+      "fireEnd": {
+        "clip": "TP_FireEnd_PaintballRifle",
+        "loop": false
+      },
+      "reload": {
+        "clip": "TP_Reload_PaintballRifle",
+        "loop": false
+      }
+    }
+  },
+  "upperBodyMask": [
+    "Hand_L",
+    "Hand_R",
+    "Index_L_1",
+    "Index_R_1",
+    "LowerArm_L",
+    "LowerArm_R",
+    "Middle_L_1",
+    "Middle_R_1",
+    "Plant_Root",
+    "Ring_L_1",
+    "Ring_R_1",
+    "Shoulder_L",
+    "Shoulder_R",
+    "Spine_1",
+    "Thumb_L_1",
+    "Thumb_R_1",
+    "UpperArm_L",
+    "UpperArm_R",
+    "Weapon_R"
+  ],
+  "weaponClips": {
+    "idle": "Idle",
+    "fire": "Fire",
+    "fireEnd": "Fire_End",
+    "reload": "Reload",
+    "reloadTP": "Reload_TP",
+    "inspect": "Inspect",
+    "equip": "Equip"
+  },
+  "actions": {
+    "fire": {
+      "fpClip": "FP_Fire_PaintballRifle",
+      "tpClip": "TP_Fire_PaintballRifle",
+      "weaponClip": "Fire",
+      "loop": true,
+      "interval": 0.1,
+      "roundsPerMinute": 600,
+      "endDuration": 0.3,
+      "endClips": {
+        "fp": "FP_FireEnd_PaintballRifle",
+        "tp": "TP_FireEnd_PaintballRifle",
+        "weapon": "Fire_End"
+      },
+      "recommendedFadeIn": 0.03,
+      "note": "Automatic: the 0.1 s loop (one kick per cycle) runs while shots keep coming; fireEnd settles when they stop."
+    },
+    "reload": {
+      "fpClip": "FP_Reload_PaintballRifle",
+      "tpClip": "TP_Reload_PaintballRifle",
+      "weaponClip": "Reload",
+      "weaponClipTP": "Reload_TP",
+      "duration": 2.45,
+      "recommendedFadeIn": 0.08,
+      "events": {
+        "hopperRelease": 0.4,
+        "hopperDrop": 0.78,
+        "hopperIn": 1.1,
+        "hopperSeat": 1.52,
+        "slap": 1.64,
+        "chargeBack": 1.98,
+        "chargeRelease": 2.03,
+        "readyToFire": 2.1
+      },
+      "leftHand": {
+        "leaveForegrip": 0.06,
+        "onHopper": [
+          0.3,
+          1.52
+        ],
+        "slap": [
+          1.58,
+          1.72
+        ],
+        "chargingHandle": [
+          1.88,
+          2.03
+        ],
+        "backOnForegrip": 2.3
+      },
+      "note": "Hopper swap: release button, the empty hopper is pulled off and dropped (cosmetic falling copy), a full one comes from off screen (FP) / the belt (TP), clicks in, slap, charging handle racked."
+    },
+    "inspect": {
+      "fpClip": "FP_Inspect_PaintballRifle",
+      "weaponClip": "Inspect",
+      "duration": 3.6
+    }
+  },
+  "inspection": {
+    "armsClip": "FP_Inspect_PaintballRifle",
+    "weaponClip": "Inspect",
+    "duration": 3.6,
+    "loop": false,
+    "rightHandIsSoleSupport": true,
+    "leftHandReleaseStarts": 0.12,
+    "leftHandOffGun": [
+      0.42,
+      3.02
+    ],
+    "leftRegripComplete": 3.38,
+    "showcase": {
+      "leftSide": [
+        0.95,
+        1.6
+      ],
+      "topAndHopper": [
+        2.3,
+        2.75
+      ]
+    },
+    "gameplayEvents": []
+  },
+  "paintball": {
+    "hopperNode": "Hopper",
+    "dataIn": "Hopper node extras (GLTFLoader -> userData)",
+    "capacity": 32,
+    "perShot": 1,
+    "colors": "3 paint colours (red / yellow / teal) mixed in the hopper, each ball keeps its colour",
+    "physics": {
+      "firstPersonOnly": true,
+      "fixedStepHz": 60,
+      "maxSubsteps": 3,
+      "iterations": 8,
+      "drawCalls": 1,
+      "shape": "horizontal cylinder + V floor toward the feed",
+      "sleep": "positional drift < 0.002 units over 12 steps",
+      "inertiaScale": 0.5,
+      "maxInertiaG": 2.5
+    },
+    "remote": "No physics: 33 baked layouts (one per ball count) + feed suction animation."
+  },
+  "assetLoading": {
+    "fpRigInstancesPerLocalPlayer": 1,
+    "loadPoseAnimationsOnCommonRig": true,
+    "renderPoseLibraryScene": false,
+    "cloneSkeletonPerInstance": true,
+    "attachWholeWeaponSceneUnderMount": true,
+    "preserveWeaponRootScale": 0.19,
+    "applyMountMatrixOnce": true,
+    "applyLegacyNormalization": false
+  },
+  "render": {
+    "separateFirstPersonScene": true,
+    "clearDepthOnceBeforeArmsAndWeapon": true,
+    "opaqueDepthTest": true,
+    "opaqueDepthWrite": true,
+    "glassRenderOrder": 2,
+    "runtimeDrawCalls": "5 meshes + 1 InstancedMesh (balls)"
+  },
+  "presentationRules": {
+    "straightPose": "Aim",
+    "straightWhile": [
+      "ADS"
+    ],
+    "inspectionOnlyWhen": "Idle, not firing / reloading, no ADS, stationary",
+    "useAuthoredRaiseLowerTransitionsForADS": true,
+    "neverDelayGameplayToFinishVisualTransition": true,
+    "aimNote": "Hip-level 'tight' aim (like the Popcorn Shotgun): the hopper would hide the crosshair in a true ADS."
+  },
+  "sharedCharacterLocomotion": {
+    "clips": [
+      "Run_Goofy",
+      "Jump",
+      "Dash",
+      "Slide"
+    ],
+    "slideGuide": "Potato_Slide_Integration.json"
+  }
+}

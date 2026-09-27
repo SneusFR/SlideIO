@@ -15,6 +15,8 @@ import hexSniperUrl from "../assets/potato/HexSniper_Weapon.glb?url";
 import goofyBasketUrl from "../assets/goofybasket/GoofyBasket_LOD1.glb?url";
 // Popcorn Shotgun = the pack's weapon GLB (low-poly, 180 KB).
 import popcornShotgunUrl from "../assets/potato/PopcornShotgun_Weapon.glb?url";
+// Paintball Rifle = the pack's weapon GLB (low-poly, 340 KB).
+import paintballRifleUrl from "../assets/potato/PaintballRifle_Weapon.glb?url";
 import { getGoofyBasketSkinLibrary } from "../weapons/goofybasket/GoofyBasketSkinRuntime";
 import { DEFAULT_WEAPON_SKIN, isGoofyBasketSkinId, sanitizeWeaponSkin } from "../../shared/combat/WeaponSkins";
 
@@ -39,6 +41,7 @@ const MODEL_URLS: Record<string, string> = {
   HEX_SNIPER: hexSniperUrl,
   GOOFY_BASKET: goofyBasketUrl,
   POPCORN_SHOTGUN: popcornShotgunUrl,
+  PAINTBALL_RIFLE: paintballRifleUrl,
 };
 
 const ICON_SIZE = 384;

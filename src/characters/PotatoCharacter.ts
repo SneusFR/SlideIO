@@ -14,6 +14,8 @@ import { loadGoofyBasketTPClips } from "../weapons/goofybasket/GoofyBasketModel"
 import { GoofyBasketProfile } from "../weapons/goofybasket/GoofyBasketProfile";
 import { loadPopcornShotgunTPClips } from "../weapons/popcorn/PopcornShotgunModel";
 import { PopcornShotgunProfile } from "../weapons/profiles/PopcornShotgunProfile";
+import { loadPaintballRifleTPClips } from "../weapons/paintball/PaintballRifleModel";
+import { PaintballRifleProfile } from "../weapons/profiles/PaintballRifleProfile";
 // POTATO character pack (src/assets/potato) — the common third-person model
 // for remote players AND bots. One GLB carries mesh + skeleton + the four
 // locomotion clips (Run_Goofy / Jump / Dash / Slide, all in place — no root
@@ -185,9 +187,15 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       console.error("PopcornShotgun: TP pose library failed to load", err);
       return [] as THREE.AnimationClip[];
     }),
-  ]).then(([gltf, posesGltf, maulClips, basketClips, popcornClips]: [
+    // Paintball Rifle TP pose library (clips only) — same failure policy.
+    loadPaintballRifleTPClips().catch((err) => {
+      console.error("PaintballRifle: TP pose library failed to load", err);
+      return [] as THREE.AnimationClip[];
+    }),
+  ]).then(([gltf, posesGltf, maulClips, basketClips, popcornClips, paintballClips]: [
     GLTF,
     GLTF,
+    THREE.AnimationClip[],
     THREE.AnimationClip[],
     THREE.AnimationClip[],
     THREE.AnimationClip[],
@@ -472,10 +480,57 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       };
     }
 
+    // ---- Paintball Rifle TP profile set (PaintballRifle_TP_Poses.glb) ----
+    // Same TWO-HAND "always aiming" construction as the Popcorn Shotgun
+    // (identical upperBodyMask: arms + fingers, shoulders, Spine_1 bladed
+    // 3/4, Plant_Root, Weapon_R). Fire is a LOOPING layer (0.1 s, one kick
+    // per ball) started on the first ball of a burst, FireEnd a one-shot
+    // layer at the release, Reload the hopper swap layer — all over the
+    // lower-body locomotion (a player firing while running keeps running).
+    let paintballrifle: ArmedProfileClips | null = null;
+    const pbTp = PaintballRifleProfile.tpClips!;
+    const pbHoldSrc = byName(paintballClips, pbTp.hold);
+    const pbRunSrc = byName(paintballClips, pbTp.run);
+    if (pbHoldSrc && pbRunSrc && PaintballRifleProfile.upperBodyMask) {
+      const mask = new Set<string>(PaintballRifleProfile.upperBodyMask);
+      const pbHold = overlayClip(idle, pbHoldSrc, `${pbHoldSrc.name}_Full`);
+      const pbRun = overlayClip(run, pbRunSrc, `${pbRunSrc.name}_Full`);
+      const masked = (base: THREE.AnimationClip) => buildMaskedVariant(base, pbHoldSrc, mask, "_PaintballRifle");
+      const pbJumpVariants = jumpVariants.map(masked);
+      const pbDash = masked(dash);
+      const pbSlide = masked(slide);
+      const actions: ArmedProfileClips["actions"] = {};
+      for (const [key, def] of Object.entries(pbTp.actions ?? {})) {
+        const clip = byName(paintballClips, def.clip);
+        if (clip) actions[key] = { clip: keepBones(clip, mask, "_Layer"), loop: def.loop, layered: true };
+      }
+      paintballrifle = {
+        hold: pbHold,
+        run: pbRun,
+        jump: pbJumpVariants[0],
+        jumpVariants: pbJumpVariants,
+        dash: pbDash,
+        slide: pbSlide,
+        equip: null,
+        unequip: null,
+        inspect: null,
+        lowerBody: {
+          hold: stripBones(pbHold, mask, "_Lower"),
+          run: stripBones(pbRun, mask, "_Lower"),
+          jump: stripBones(pbJumpVariants[0], mask, "_Lower"),
+          jumpVariants: pbJumpVariants.map((c) => stripBones(c, mask, "_Lower")),
+          dash: stripBones(pbDash, mask, "_Lower"),
+          slide: stripBones(pbSlide, mask, "_Lower"),
+        },
+        actions,
+      };
+    }
+
     const profiles: Record<string, ArmedProfileClips> = {};
     if (brickmaul) profiles.brickmaul = brickmaul;
     if (goofybasket) profiles[GoofyBasketProfile.id] = goofybasket;
     if (popcornshotgun) profiles[PopcornShotgunProfile.id] = popcornshotgun;
+    if (paintballrifle) profiles[PaintballRifleProfile.id] = paintballrifle;
 
     const clips: RemoteCharacterClips = {
       idle,

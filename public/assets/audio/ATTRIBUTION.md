@@ -152,6 +152,15 @@ Le whoosh de lancer du Goofy Basket est un **layer de sons CC0 déjà présents*
 
 Le clic du couvercle réutilise `ui/ui_click_plop_01.mp3` (déjà listé plus haut).
 
+## Paintball Rifle
+
+| Fichier local | Titre original | Freesound ID | Licence | Source |
+|---|---|---|---|---|
+| `paintball/paintball_shot_01.mp3` | paintball_shoot2.wav | 98190 | CC0 | https://freesound.org/s/98190/ |
+| `paintball/paintball_charge_01.mp3` | Gun Cocking Sound 2.wav | 632822 | CC0 | https://freesound.org/s/632822/ |
+
+Le clic à vide réutilise `popcorn/popcorn_dry_fire_01.mp3`, les clics du réservoir `ui/ui_click_plop_01.mp3` (déjà listés plus haut).
+
 ## Hits (confirmation de dégâts)
 
 | Fichier local | Titre original | Freesound ID | Licence | Source |

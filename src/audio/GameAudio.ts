@@ -48,6 +48,10 @@ export const AUDIO_MANIFEST: Record<string, string> = {
   popcorn_pop: `${A}/popcorn/popcorn_pop_01.mp3`,
   popcorn_dry_fire: `${A}/popcorn/popcorn_dry_fire_01.mp3`,
   popcorn_lid_click: `${A}/ui/ui_click_plop_01.mp3`,
+  // Paintball Rifle (compressed-air shot / charging handle — CC0, see ATTRIBUTION.md;
+  // dry click + hopper clicks reuse popcorn_dry_fire / ui_click_plop)
+  paintball_shot: `${A}/paintball/paintball_shot_01.mp3`,
+  paintball_charge: `${A}/paintball/paintball_charge_01.mp3`,
   // Hex Sniper (tongue whip / wet grab / jaws / eating — CC0, see ATTRIBUTION.md)
   hex_tongue_whip: `${A}/hexsniper/hex_tongue_whip_01.mp3`,
   hex_tongue_out: `${A}/hexsniper/hex_tongue_out_01.mp3`,
@@ -730,6 +734,62 @@ export class GameAudio {
         maxInstances: 5,
       });
     }
+  }
+
+  // ------------------------------------------------------------------
+  // PAINTBALL RIFLE (CC0 air shot / cocking sample + existing clicks)
+  // ------------------------------------------------------------------
+
+  /** Compressed-air "pfft" (600 rpm: few voices, light pitch wobble). */
+  paintballShot(): void {
+    audio.play("paintball_shot", { bus: "weapons", volume: 0.55, volumeVar: 0.06, rate: 1.05, rateVar: 0.06, maxInstances: 4 });
+  }
+
+  /** Empty hopper: dry trigger click. */
+  paintballDryFire(): void {
+    audio.play("popcorn_dry_fire", { bus: "weapons", volume: 0.55, rate: 1.2, rateVar: 0.04, throttleMs: 120 });
+  }
+
+  /** Hopper release button / new hopper clicked in (plastic clicks). */
+  paintballHopperClick(seat: boolean): void {
+    audio.play("popcorn_lid_click", { bus: "weapons", volume: seat ? 0.6 : 0.4, rate: seat ? 0.85 : 1.3, rateVar: 0.04, throttleMs: 60 });
+  }
+
+  /** Empty hopper dropped (dull plastic knock). */
+  paintballHopperDrop(): void {
+    audio.play("popcorn_dry_fire", { bus: "weapons", volume: 0.3, rate: 0.55, rateVar: 0.05, delay: 0.18 });
+  }
+
+  /** Palm slap on the hopper (balls rattle). */
+  paintballSlap(): void {
+    for (let i = 0; i < 4; i++) {
+      audio.play("popcorn_dry_fire", {
+        bus: "weapons",
+        volume: 0.14,
+        rate: 2.2,
+        rateVar: 0.35,
+        delay: i * 0.025 + Math.random() * 0.02,
+        maxInstances: 6,
+      });
+    }
+  }
+
+  /** Charging handle racked back (sample) / released (short click). */
+  paintballCharge(release: boolean): void {
+    if (release) audio.play("popcorn_lid_click", { bus: "weapons", volume: 0.5, rate: 0.75, rateVar: 0.04, throttleMs: 60 });
+    else audio.play("paintball_charge", { bus: "weapons", volume: 0.55, rate: 1.15, rateVar: 0.03, duration: 0.45, throttleMs: 120 });
+  }
+
+  /** Remote shooter: spatialized air shot at the shooter position. */
+  paintballShotAt(pos: THREE.Vector3): void {
+    audio.playAt("paintball_shot", pos, { bus: "weapons", volume: 0.7, rate: 1.05, rateVar: 0.06, refDistance: 6, maxInstances: 6 });
+  }
+
+  /** Remote hopper swap: release click, seat click, charging handle. */
+  paintballReloadAt(pos: THREE.Vector3): void {
+    audio.playAt("popcorn_lid_click", pos, { bus: "weapons", volume: 0.45, rate: 1.3, delay: 0.4, refDistance: 5, maxInstances: 4 });
+    audio.playAt("popcorn_lid_click", pos, { bus: "weapons", volume: 0.55, rate: 0.85, delay: 1.52, refDistance: 5, maxInstances: 4 });
+    audio.playAt("paintball_charge", pos, { bus: "weapons", volume: 0.5, rate: 1.15, delay: 1.98, duration: 0.45, refDistance: 5, maxInstances: 3 });
   }
 
   // ------------------------------------------------------------------

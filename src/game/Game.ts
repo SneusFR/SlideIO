@@ -65,6 +65,10 @@ import {
   popcornPelletDirections,
   popcornRayVsPlayer,
 } from "../../shared/combat/PopcornShotgunRules";
+import { PaintballRifleWeapon } from "../weapons/paintball/PaintballRifleWeapon";
+import { PaintballRifleHUD } from "../ui/PaintballRifleHUD";
+import { PaintballRifleConfig as paintballCfg, paintballBallDirection } from "../../shared/combat/PaintballRifleRules";
+import type { PaintHit } from "../weapons/paintball/PaintballProjectiles";
 import { ViewmodelSystem } from "../weapons/viewmodel/ViewmodelSystem";
 import { MusicSelectorHUD } from "../ui/MusicSelectorHUD";
 import { KillstreakManager, KILLSTREAK_SLOT_CODES } from "../killstreaks/KillstreakManager";
@@ -171,7 +175,7 @@ export class Game {
    */
   private activeSlot: "PRIMARY" | "MELEE" = "PRIMARY";
   /** Owner of the shared FP arms right now (exactly one advances the mixer). */
-  private fpOwner: "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" | "POPCORN_SHOTGUN" = "NONE";
+  private fpOwner: "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" | "POPCORN_SHOTGUN" | "PAINTBALL_RIFLE" = "NONE";
   /** True during the maul's Unequip transition back to the primary. */
   private slotSwitchPending = false;
   /** FP maul inspection running (slot 2, F key). */
@@ -236,6 +240,19 @@ export class Game {
   private readonly popcornFloorRay = new THREE.Raycaster();
   private readonly popcornVec = new THREE.Vector3();
   private readonly popcornVec2 = new THREE.Vector3();
+
+  // ---- PAINTBALL RIFLE (32-ball automatic hitscan — shared FP arms) ----
+  private paintballRifle: PaintballRifleWeapon;
+  private paintballHud: PaintballRifleHUD;
+  /** Remote paintball replay scratch (allocated once). */
+  private readonly paintballRay = new THREE.Raycaster();
+  private readonly paintballDir = new THREE.Vector3();
+  private readonly paintballFrom = new THREE.Vector3();
+  private readonly paintballTo = new THREE.Vector3();
+  private readonly paintballOrigin = new THREE.Vector3();
+  private readonly paintballColor = new THREE.Color();
+  private readonly paintballGroundRay = new THREE.Raycaster();
+  private readonly paintballGroundOrigin = new THREE.Vector3();
   private readonly basketVec = new THREE.Vector3();
   private readonly basketVec2 = new THREE.Vector3();
   private readonly basketVec3 = new THREE.Vector3();
@@ -502,6 +519,7 @@ export class Game {
       this.hexSniper.reset(); // a downed shooter releases the tongue
       this.goofyBasket.reset(); // a downed shooter drops its charge / unreleased throw
       this.popcornShotgun.cancelReload(); // knocked down mid-reload: undone before 1.75 s
+      this.paintballRifle.cancelReload(); // knocked down mid-swap: undone before 1.52 s
       this.meleeHoldPending = false;
     };
 
@@ -691,6 +709,20 @@ export class Game {
     this.popcornHud = new PopcornShotgunHUD(popcornCfg.shots);
     this.popcornRay.firstHitOnly = true;
 
+    // ---- PAINTBALL RIFLE (primary alternative — equipped from the Loadout
+    // menu): LMB HELD = automatic seeded hitscan balls (600 rpm, 12 body /
+    // 18 head, 45 m), 32 balls, R = hopper swap (auto on a dry fire), RMB =
+    // tight hip aim, F = one-hand inspection. Presentation = shared FP arms
+    // + the pack's controller (hopper physics); visual balls, splats and
+    // character paint = ONE PaintballFX for every shooter.
+    this.paintballRifle = new PaintballRifleWeapon(this.fpsCamera.camera, this.scene, this.viewmodelSystem);
+    this.paintballRifle.owner = this.playerCombatant;
+    this.paintballRifle.feedback = this.hitFeedback;
+    this.paintballRifle.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
+    this.paintballHud = new PaintballRifleHUD(paintballCfg.capacity);
+    this.paintballRay.firstHitOnly = true;
+    this.paintballGroundRay.firstHitOnly = true;
+
     // ---- Audio: pure observation of existing gameplay events ----
     this.gameAudio = new GameAudio();
     this.movement.sfx = this.gameAudio.movementSfx;
@@ -749,6 +781,17 @@ export class Game {
       onLidClose: () => this.gameAudio.popcornLid(false),
       onPop: () => this.gameAudio.popcornPop(),
     };
+    // Paintball Rifle: pack §6 callbacks → SFX (the HUD polls the weapon).
+    this.paintballRifle.sfx = {
+      onShot: () => this.gameAudio.paintballShot(),
+      onDryFire: () => this.gameAudio.paintballDryFire(),
+      onHopperRelease: () => this.gameAudio.paintballHopperClick(false),
+      onHopperDrop: () => this.gameAudio.paintballHopperDrop(),
+      onAmmoRefilled: () => this.gameAudio.paintballHopperClick(true),
+      onSlap: () => this.gameAudio.paintballSlap(),
+      onChargeBack: () => this.gameAudio.paintballCharge(false),
+      onChargeRelease: () => this.gameAudio.paintballCharge(true),
+    };
 
     this.playerCombatant.health.onDamaged = (amount, attacker) => {
       this.combatHud.notifyDamage(amount, this.damageAngleFrom(attacker));
@@ -796,6 +839,7 @@ export class Game {
       this.hexSniper.reset(); // tongue released mid-flight/pull, clean Idle
       this.goofyBasket.reset(); // charge / unreleased throw dropped, ball hidden (flying balls keep going)
       this.popcornShotgun.reset(); // reload dropped, full tank for the respawn (server does the same)
+      this.paintballRifle.reset(); // swap dropped, full hopper for the respawn (server does the same)
       this.movement.stopHexPull(); // dying while reeled: the grab is gone
       this.meleeHoldPending = false;
       // Death mid-burrow: instant cleanup WITHOUT the AoE, then every
@@ -842,6 +886,10 @@ export class Game {
       this.corpses,
     );
     this.botManager.onBotKilled = (bot, killer, method, hitZone) => {
+      // PAINTBALL: a dead player loses ALL his paint (the corpse clone shares
+      // the painted geometry, so it is cleared too — the bot respawns clean).
+      const botModel = bot.model.characterModel;
+      if (botModel) this.paintballRifle.fx.clearPaintUnder(botModel);
       if (killer === this.playerCombatant) {
         this.combatHud.notifyKill();
         // LOCAL PLAYER kill only (bot-vs-bot never touches the combo):
@@ -865,7 +913,28 @@ export class Game {
     // Leaderboard roster: new bots join with 0/0/0; Escape-menu removal
     // deletes the row WITHOUT counting a death for anyone.
     this.botManager.onBotAdded = (bot) => this.matchStats.register(bot, `BOT ${bot.id + 1}`);
-    this.botManager.onBotRemoved = (bot) => this.matchStats.unregister(bot.id);
+    this.botManager.onBotRemoved = (bot) => {
+      this.matchStats.unregister(bot.id);
+      // Paintball: stop tracking the removed bot's body (paint buffers freed).
+      const botModel = bot.model.characterModel;
+      if (botModel) this.paintballRifle.fx.detachUnder(botModel);
+    };
+    // PAINTBALL (solo): a ball that hits a bot paints its REAL skinned body
+    // (visual raycast on the clone); the bot's damage flash follows the
+    // per-bot paint materials.
+    this.paintballRifle.resolveCharacterRoot = (combatant) => {
+      const bot = this.botManager.bots.find((b) => b === combatant);
+      return bot?.model.characterModel ?? null;
+    };
+    this.paintballRifle.fx.onPaintMaterials = (body, previous, next) => {
+      for (const bot of this.botManager.bots) {
+        const root = bot.model.characterModel;
+        if (root && isDescendant(body, root)) {
+          bot.model.replaceBodyMaterials(previous, next);
+          return;
+        }
+      }
+    };
     this.botsMenu = new BotsMenu((count) => {
       if (this.multiplayer) return; // bots stay disabled in multiplayer
       this.botManager.setBotCount(count);
@@ -957,6 +1026,7 @@ export class Game {
       ),
       this.hexSniper.ready,
       this.popcornShotgun.ready,
+      this.paintballRifle.ready,
     ]);
 
     // 2. Transient visuals that never exist at rest: a thrown-revolver
@@ -966,6 +1036,8 @@ export class Game {
     // Popcorn Shotgun visual pool: one popcorn far below the map (its
     // instanced program compiles now, never on the first shot).
     this.popcornShotgun.beginWarmUp(far);
+    // Paintball Rifle: one visual ball + one surface splat (both programs).
+    this.paintballRifle.beginWarmUp(far);
     const temp: THREE.Object3D[] = [];
     try {
       const template = await loadRevolverTemplate();
@@ -983,6 +1055,7 @@ export class Game {
     // (medkit + coin GLBs + additive halo sprites: programs AND textures
     // never seen before). Warm both far below the map right now.
     let releaseCorpseMats: (() => void) | null = null;
+    let paintedWarm: THREE.Object3D | null = null;
     // CHARACTER OUTFIT (Potato Astronaut): the suit materials (vertex-color
     // PBR, transparent visor, their outline hulls, and their corpse fade
     // clones) are programs the base character never compiles. Dress one
@@ -1014,6 +1087,13 @@ export class Game {
       }
       releaseCorpseMats = this.corpses.warmUp(corpse);
       temp.push(corpse);
+      // PAINTBALL: the painted skin (patched body material) is a program
+      // the base character never compiles — one living clone wears it.
+      const painted = skeletonClone(asset.template);
+      painted.position.copy(far);
+      this.paintballRifle.fx.warmCharacter(painted);
+      paintedWarm = painted;
+      temp.push(painted);
     } catch {
       /* character asset failed — nothing to warm */
     }
@@ -1088,6 +1168,7 @@ export class Game {
       if (prevOwner === "HEX_SNIPER") this.hexSniper.releasePresentation();
       if (prevOwner === "GOOFY_BASKET") this.goofyBasket.releasePresentation();
       if (prevOwner === "POPCORN_SHOTGUN") this.popcornShotgun.releasePresentation();
+      if (prevOwner === "PAINTBALL_RIFLE") this.paintballRifle.releasePresentation();
       await this.hammerViewmodel.equip(false);
       this.viewmodelSystem.setVisible(true);
       this.viewmodelSystem.syncCamera(this.fpsCamera.camera);
@@ -1096,6 +1177,7 @@ export class Game {
       if (prevOwner === "HEX_SNIPER") this.hexSniper.takePresentation();
       if (prevOwner === "GOOFY_BASKET") this.goofyBasket.takePresentation();
       if (prevOwner === "POPCORN_SHOTGUN") this.popcornShotgun.takePresentation();
+      if (prevOwner === "PAINTBALL_RIFLE") this.paintballRifle.takePresentation();
     }
     this.viewmodelSystem.setVisible(fpWasVisible);
 
@@ -1135,6 +1217,8 @@ export class Game {
     releaseCorpseMats?.();
     this.shockwave.update(10);
     this.popcornShotgun.endWarmUp();
+    this.paintballRifle.endWarmUp();
+    if (paintedWarm) this.paintballRifle.fx.detachUnder(paintedWarm);
     this.particles.update(10);
 
     // 5. Audio buffers decode in the background (no gesture required).
@@ -1163,6 +1247,7 @@ export class Game {
       this.hexSniper.reset(); // unequip cancels any tongue/bite in progress
       this.goofyBasket.reset(); // charge dropped; flying balls keep their lifecycle
       this.popcornShotgun.reset(); // fresh full tank
+      this.paintballRifle.reset(); // fresh full hopper
     }
     // COSMETICS: the equipped skin of the primary. Applied on the held ball
     // instance in place — a skin change ALONE is NOT a weapon change (no
@@ -1211,7 +1296,7 @@ export class Game {
    *   - otherwise                           → nobody (legacy viewmodels)
    * Exactly one owner advances the arms mixer per frame.
    */
-  private desiredFpOwner(): "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" | "POPCORN_SHOTGUN" {
+  private desiredFpOwner(): "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" | "POPCORN_SHOTGUN" | "PAINTBALL_RIFLE" {
     if (this.meleeWeapon === "HAMMER") {
       if (this.activeSlot === "MELEE" || this.slotSwitchPending) return "HAMMER";
       if (this.hammer.isBusy) return "HAMMER"; // temporary melee override
@@ -1219,6 +1304,7 @@ export class Game {
     if (this.primaryWeapon === "HEX_SNIPER" && this.activeSlot === "PRIMARY") return "HEX_SNIPER";
     if (this.primaryWeapon === "GOOFY_BASKET" && this.activeSlot === "PRIMARY") return "GOOFY_BASKET";
     if (this.primaryWeapon === "POPCORN_SHOTGUN" && this.activeSlot === "PRIMARY") return "POPCORN_SHOTGUN";
+    if (this.primaryWeapon === "PAINTBALL_RIFLE" && this.activeSlot === "PRIMARY") return "PAINTBALL_RIFLE";
     return "NONE";
   }
 
@@ -1232,6 +1318,7 @@ export class Game {
     if (this.fpOwner === "GOOFY_BASKET") this.goofyBasket.releasePresentation();
     // Weapon switch: an unfinished reload is cancelled (pack §3) inside.
     if (this.fpOwner === "POPCORN_SHOTGUN") this.popcornShotgun.releasePresentation();
+    if (this.fpOwner === "PAINTBALL_RIFLE") this.paintballRifle.releasePresentation();
     if (this.fpOwner === "HAMMER") {
       this.hammerInspecting = false;
       this.hammerViewmodel.hide();
@@ -1247,6 +1334,8 @@ export class Game {
       this.goofyBasket.takePresentation();
     } else if (want === "POPCORN_SHOTGUN") {
       this.popcornShotgun.takePresentation(); // real Equip clip
+    } else if (want === "PAINTBALL_RIFLE") {
+      this.paintballRifle.takePresentation(); // real Equip clip
     }
     this.syncNetworkMeleeShown();
   }
@@ -1473,6 +1562,33 @@ export class Game {
     // the server owns the damage (HIT_CONFIRMED drives the hitmarkers).
     this.popcornShotgun.networkAuthority = true;
     this.multiplayer.onRemotePopcornAction = (event) => this.handleRemotePopcornAction(event);
+    // ---- PAINTBALL RIFLE (server-authoritative ammo / hitscan / damage) ----
+    // Shooter side: the ball is predicted (clips, hopper, visual ball + paint
+    // on the local raycast); the server owns the damage (HIT_CONFIRMED).
+    // Remote avatars: paint cleared at death / respawn (every client),
+    // detached when they leave; a dropped TP hopper bounces on the floor.
+    this.paintballRifle.networkAuthority = true;
+    this.multiplayer.onRemotePaintballAction = (event) => this.handleRemotePaintballAction(event);
+    remotes.onPaintClear = (model) => this.paintballRifle.fx.clearPaintUnder(model);
+    remotes.onPaintDetach = (model) => this.paintballRifle.fx.detachUnder(model);
+    remotes.groundY = (x, z) => this.paintballGroundY(x, z);
+    // Local predicted ball vs the remote avatars (shared server volumes):
+    // it lands on the player the server will hit, never on the wall behind.
+    this.paintballRifle.resolveRemoteHit = (origin, dir, maxDist) => {
+      let best = maxDist;
+      let bestId: string | null = null;
+      remotes.forEachVisible((id, center) => {
+        const r = popcornRayVsPlayer(origin, dir, center, best);
+        if (r && r.t < best) {
+          best = r.t;
+          bestId = id;
+        }
+      });
+      if (bestId === null) return null;
+      return { distance: best, root: remotes.getCharacterModel(bestId) };
+    };
+    // New session: no splat / paint from the solo sandbox or an old match.
+    this.paintballRifle.fx.clearAll();
     // Victim side: reel toward the attacker's DISPLAYED position through
     // our own character controller (server HEX_PULL start/stop).
     this.multiplayer.onHexPull = (event) => {
@@ -1528,6 +1644,10 @@ export class Game {
     this.popcornShotgun.networkAuthority = false; // back to local damage (solo / bots)
     this.popcornShotgun.reset();
     this.popcornShotgun.projectiles?.clear(); // no popcorn from the old session left on the floor
+    this.paintballRifle.networkAuthority = false; // back to local damage (solo / bots)
+    this.paintballRifle.resolveRemoteHit = null;
+    this.paintballRifle.reset();
+    this.paintballRifle.fx.clearAll(); // the old match's splats never leak into solo
     this.goofyBasket.networkAuthority = false;
     this.goofyBasket.projectiles.networkAuthority = false;
     this.goofyBasket.reset();
@@ -1941,6 +2061,7 @@ export class Game {
       const hexEquipped = primaryHeld && this.primaryWeapon === "HEX_SNIPER";
       const basketEquipped = primaryHeld && this.primaryWeapon === "GOOFY_BASKET";
       const popcornEquipped = primaryHeld && this.primaryWeapon === "POPCORN_SHOTGUN";
+      const paintballEquipped = primaryHeld && this.primaryWeapon === "PAINTBALL_RIFLE";
       // KNOCKED DOWN (§ ragdoll) blocks EVERY weapon — exactly like a
       // ragdolled bot never fires. In-flight projectiles / explosions of
       // course keep ticking; only NEW actions are gated.
@@ -1961,7 +2082,8 @@ export class Game {
         !poisonEquipped &&
         !hexEquipped &&
         !basketEquipped &&
-        !popcornEquipped;
+        !popcornEquipped &&
+        !paintballEquipped;
       this.rifle.setViewmodelHidden(
         !primaryHeld ||
           this.hammer.isBusy ||
@@ -2141,6 +2263,27 @@ export class Game {
         sliding: this.movement.state === MoveState.SLIDING,
         speed: this.movement.horizontalSpeed,
       });
+      // PAINTBALL RIFLE: LMB HELD = automatic balls (0.1 s, hitscan), R =
+      // hopper swap (auto on a dry fire), RMB tight hip aim, F inspection
+      // (terminal interaction keeps priority on F). The FP arms mixer
+      // advances ONLY while it owns them; the weapon clips + hopper run in
+      // postCameraUpdate after the FP camera sync (render scope below).
+      this.paintballRifle.setViewmodelHidden(
+        !paintballEquipped || this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
+      );
+      this.paintballRifle.update(dt, {
+        fireHeld: paintballEquipped && this.input.pointerLocked && this.input.isMouseDown(0),
+        reloadPressed: paintballEquipped && this.input.wasPressed("KeyR"),
+        inspectPressed: paintballEquipped && !this.interactNearby && this.input.wasPressed("KeyF"),
+        aimHeld: paintballEquipped && this.input.isMouseDown(2),
+        canAct: paintballEquipped && playerAlive && !meleeBlocked && this.input.pointerLocked,
+        hittables: this.hittables,
+        grounded: this.movement.grounded,
+        verticalVelocity: this.movement.velocity.y,
+        jumpSequence: this.movement.jumpSequence,
+        sliding: this.movement.state === MoveState.SLIDING,
+        speed: this.movement.horizontalSpeed,
+      });
 
       // LANCE on slot 2: held at rest between attacks (legacy viewmodel).
       this.spearViewmodel.setHeld(
@@ -2187,6 +2330,8 @@ export class Game {
     this.poisonHud.update(this.poison);
     this.popcornHud.setVisible(this.primaryWeapon === "POPCORN_SHOTGUN");
     this.popcornHud.update(this.popcornShotgun);
+    this.paintballHud.setVisible(this.primaryWeapon === "PAINTBALL_RIFLE");
+    this.paintballHud.update(this.paintballRifle);
     this.combatHud.update(dt, this.playerCombatant.health, this.playerDeathTimer);
     // Knockdown banner (§ ragdoll): down → "KNOCKED DOWN", recoverable →
     // pulsing "PRESS SPACE TO GET UP" (a death always hides it).
@@ -2241,6 +2386,9 @@ export class Game {
     // the game (dt = 0 in the Escape menu: nothing advances).
     this.viewmodelSystem.syncCamera(cam);
     this.popcornShotgun.postCameraUpdate(running ? dt : 0);
+    // PAINTBALL RIFLE (pack order): rifle.update AFTER syncCamera (the
+    // hopper reads the final world pose), then the shared visual balls.
+    this.paintballRifle.postCameraUpdate(running ? dt : 0);
     try {
       // LOW preset: the shadow map is STATIC (baked once at load — see
       // warmUpRendering). No per-frame refresh: the caster re-render was the
@@ -2524,7 +2672,8 @@ export class Game {
       this.primaryWeapon !== "REVOLVER" &&
       this.primaryWeapon !== "BASS_BLASTER" &&
       this.primaryWeapon !== "POISON_SPRAYER" &&
-      this.primaryWeapon !== "POPCORN_SHOTGUN";
+      this.primaryWeapon !== "POPCORN_SHOTGUN" &&
+      this.primaryWeapon !== "PAINTBALL_RIFLE";
     if (fellOut || manualRespawn) {
       // Suicide / kill plane → normal death + respawn flow.
       this.playerCombatant.health.kill(null);
@@ -2653,6 +2802,91 @@ export class Game {
     this.popcornShotgun.onNetFire = (seed) => this.netSendAimedAction(WeaponActionType.POPCORN_FIRE, undefined, undefined, seed);
     this.popcornShotgun.onNetReload = () => this.netSendAimedAction(WeaponActionType.POPCORN_RELOAD);
     this.popcornShotgun.onNetReloadCancel = () => this.netSendAimedAction(WeaponActionType.POPCORN_RELOAD_CANCEL);
+
+    // PAINTBALL RIFLE: every predicted ball is reported with its seed +
+    // spread + colour (the server rebuilds the same ray and owns the damage);
+    // hopper swap start / cancel keep the server ammo clock in step.
+    this.paintballRifle.onNetFire = (seed, spread, colorIndex) =>
+      this.netSendAimedAction(WeaponActionType.PAINTBALL_FIRE, undefined, undefined, seed, spread, colorIndex);
+    this.paintballRifle.onNetReload = () => this.netSendAimedAction(WeaponActionType.PAINTBALL_RELOAD);
+    this.paintballRifle.onNetReloadCancel = () => this.netSendAimedAction(WeaponActionType.PAINTBALL_RELOAD_CANCEL);
+  }
+
+  /**
+   * Remote players' Paintball Rifle confirms: weapon clip + TP fire loop /
+   * FireEnd / reload (driven by the TP controller the SAME frame),
+   * spatialized SFX, and the COSMETIC ball rebuilt from the server seed +
+   * spread + aim: visual raycast on the map, then the paint target — the
+   * victim named by the server (`tid`, or the local player), painted on
+   * its real skinned body; a wall gets the seeded persistent splat. The
+   * ball leaves the remote's REAL muzzle. Never damage.
+   */
+  private handleRemotePaintballAction(event: WeaponActionConfirmedEvent): void {
+    const remotes = this.multiplayer?.remotes;
+    if (!remotes) return;
+    const ammo = typeof event.am === "number" ? event.am : null;
+    const shooterPos = this.paintballOrigin.set(event.ox, event.oy, event.oz);
+    if (event.action === WeaponActionType.PAINTBALL_RELOAD_CANCEL) {
+      remotes.paintballReloadCancel(event.playerId, ammo);
+      return;
+    }
+    if (event.action === WeaponActionType.PAINTBALL_RELOAD) {
+      remotes.paintballAction(event.playerId, "reload", ammo, remotes.elapsedSince(event.ts));
+      this.gameAudio.paintballReloadAt(shooterPos);
+      return;
+    }
+    if (event.action !== WeaponActionType.PAINTBALL_FIRE) return;
+    remotes.paintballAction(event.playerId, "fire", ammo, 0);
+    this.gameAudio.paintballShotAt(shooterPos);
+    const fx = this.paintballRifle.fx;
+    if (typeof event.sd !== "number") return;
+
+    // Same ray as the server: the confirm carries the server-normalized aim
+    // at full precision + the quantized spread — used AS IS.
+    const seed = event.sd >>> 0;
+    const spread = typeof event.sp === "number" ? event.sp : paintballCfg.spreadMinDeg;
+    const dir = paintballBallDirection({ x: event.dx, y: event.dy, z: event.dz }, spread, seed, this.paintballDir);
+    fx.colorOf(typeof event.pc === "number" ? event.pc : 0, this.paintballColor);
+
+    // Impact = the server end point (hx/hy/hz); fallback: range point.
+    const to = this.paintballTo;
+    if (typeof event.hx === "number") to.set(event.hx, event.hy ?? 0, event.hz ?? 0);
+    else to.copy(shooterPos).addScaledVector(dir, paintballCfg.maxRange);
+    const dist = shooterPos.distanceTo(to);
+
+    let paint: PaintHit | null = null;
+    const victimId = event.tid;
+    if (victimId) {
+      const localId = this.multiplayerClient?.sessionId ?? null;
+      const root = victimId === localId ? null : remotes.getCharacterModel(victimId);
+      if (root) paint = fx.characterHit(root, shooterPos, dir, to);
+      // The LOCAL player is never painted on his own screen (no body in FP).
+    } else if (dist < paintballCfg.maxRange - 0.05) {
+      // Server says wall: the REAL map mesh gives the exact point + normal.
+      this.paintballRay.set(shooterPos, dir);
+      this.paintballRay.near = 0;
+      this.paintballRay.far = Math.min(paintballCfg.maxRange, dist + 1.5);
+      const hits = this.paintballRay.intersectObjects(this.staticHittables, true);
+      if (hits.length > 0) {
+        to.copy(hits[0].point);
+        paint = fx.surfaceHit(hits[0], dir, seed);
+      }
+    }
+    // The real ball leaves the remote's REAL muzzle and stays on its gun
+    // line while he moves (live anchor), then flies straight to the impact.
+    const shooterId = event.playerId;
+    if (!remotes.getPaintballMuzzle(shooterId, this.paintballFrom)) this.paintballFrom.copy(shooterPos);
+    fx.spawn(this.paintballFrom, to, this.paintballColor, paint, (out) => remotes.getPaintballMuzzle(shooterId, out));
+  }
+
+  /** Floor height under a world point (static map) — dropped TP hoppers bounce on it. */
+  private paintballGroundY(x: number, z: number): number {
+    this.paintballGroundOrigin.set(x, 60, z);
+    this.paintballGroundRay.set(this.paintballGroundOrigin, DOWN);
+    this.paintballGroundRay.near = 0;
+    this.paintballGroundRay.far = 200;
+    const hits = this.paintballGroundRay.intersectObjects(this.staticHittables, true);
+    return hits.length > 0 ? hits[0].point.y : -1e6;
   }
 
   /**
@@ -2854,8 +3088,12 @@ export class Game {
     action: string,
     extraPoint?: THREE.Vector3,
     pointIndex?: number,
-    /** PopcornShotgun pellet seed (POPCORN_FIRE only). */
+    /** PopcornShotgun pellet seed (POPCORN_FIRE) / PaintballRifle ball seed (PAINTBALL_FIRE). */
     seed?: number,
+    /** PaintballRifle spread cone (degrees, quantized). */
+    spread?: number,
+    /** PaintballRifle paint colour index. */
+    colorIndex?: number,
   ): void {
     if (!this.multiplayer || !this.multiplayerClient?.isConnected) return;
     const cam = this.fpsCamera.camera;
@@ -2876,6 +3114,8 @@ export class Game {
       ...(pointIndex !== undefined ? { pi: pointIndex } : {}),
       ...(vt !== null ? { vt } : {}),
       ...(seed !== undefined ? { sd: seed } : {}),
+      ...(spread !== undefined ? { sp: spread } : {}),
+      ...(colorIndex !== undefined ? { pc: colorIndex } : {}),
     });
   }
 
@@ -3030,6 +3270,18 @@ export class Game {
   }
 }
 
+const DOWN = new THREE.Vector3(0, -1, 0);
+
+/** True when `node` is `root` or one of its descendants. */
+function isDescendant(node: THREE.Object3D, root: THREE.Object3D): boolean {
+  let o: THREE.Object3D | null = node;
+  while (o) {
+    if (o === root) return true;
+    o = o.parent;
+  }
+  return false;
+}
+
 /** Server DamageType string → the local KillMethod driving kill medals. */
 function networkKillMethod(damageType: string): KillMethod {
   switch (damageType) {
@@ -3055,6 +3307,8 @@ function networkKillMethod(damageType: string): KillMethod {
       return KillMethod.GOOFY_BASKET;
     case "POPCORN_SHOTGUN":
       return KillMethod.POPCORN_SHOTGUN;
+    case "PAINTBALL_RIFLE":
+      return KillMethod.PAINTBALL_RIFLE;
     default:
       return KillMethod.PLASMA;
   }

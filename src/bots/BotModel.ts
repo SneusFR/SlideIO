@@ -524,6 +524,32 @@ export class BotModel {
     this.outfit.setSelection(selection);
   }
 
+  /** Skinned character clone (null until the shared asset resolves) — paint target. */
+  get characterModel(): THREE.Object3D | null {
+    return this.model;
+  }
+
+  /**
+   * A body mesh got new private materials (Paintball Rifle paint patch —
+   * clones of the bot's own clones): the damage flash follows the new ones,
+   * and they are disposed with the bot like every owned material.
+   */
+  replaceBodyMaterials(previous: THREE.Material[], next: THREE.Material[]): void {
+    for (const mat of previous) {
+      this.unregisterFlashMaterial(mat);
+      // Paint clones leaving the body are disposed by their owner (paint
+      // detach) — never a second time here. The bot's own clones stay owned.
+      if (mat.userData.corpsePoolEphemeral) {
+        const i = this.ownedMats.indexOf(mat);
+        if (i >= 0) this.ownedMats.splice(i, 1);
+      }
+    }
+    for (const mat of next) {
+      this.registerFlashMaterial(mat);
+      if (!this.ownedMats.includes(mat)) this.ownedMats.push(mat);
+    }
+  }
+
   /** Join the damage-flash list (authored emissive remembered). */
   private registerFlashMaterial(mat: THREE.Material): void {
     if (this.flashMats.includes(mat)) return;

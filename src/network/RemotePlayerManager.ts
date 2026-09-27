@@ -342,7 +342,11 @@ class RemotePlayer {
       this.weapons.maulReset();
       this.weapons.basketReset();
       this.weapons.popcornReset();
+      this.weapons.paintballReset();
+      // PAINTBALL: the dead player loses ALL his paint on every client (the
+      // corpse clone shares the painted geometry — cleared with it).
       if (this.group.visible) this.onDied?.(this);
+      this.onPaintClear?.(this.model);
       this.alive = false;
       this.group.visible = false;
     } else if (!this.alive && isAlive) {
@@ -368,6 +372,8 @@ class RemotePlayer {
     this.weapons.maulReset(); // respawn = teleport: phases dropped, pupils reset
     this.weapons.basketReset();
     this.weapons.popcornReset(); // respawn = full tank (server resets its ammo too)
+    this.weapons.paintballReset(); // respawn = full hopper
+    this.onPaintClear?.(this.model); // safety: a respawned player never carries paint
   }
 
   /** Sample the buffer at renderTime (server ms) and drive visuals. */
@@ -528,11 +534,22 @@ class RemotePlayer {
   setOutfit(encoded: string): void {
     if (encoded === this.outfitKey) return;
     this.outfitKey = encoded;
+    // Paint first: the body gets its original geometry back so the outfit
+    // masks / restores the REAL base geometry (paint is re-attached on the
+    // next hit when the body is undressed).
+    this.onPaintDetach?.(this.model);
     this.outfit.setSelection(decodeCharacterCosmetics(encoded));
   }
 
+  /** Paint hooks (PAINTBALL RIFLE — wired by the manager, visual only). */
+  onPaintClear: ((model: THREE.Object3D) => void) | null = null;
+  onPaintDetach: ((model: THREE.Object3D) => void) | null = null;
+
   /** Remove from the scene. Shared template resources are NOT disposed. */
   dispose(scene: THREE.Scene): void {
+    // Paint first: the body gets its original geometry / material back
+    // before the outfit restores its own references.
+    this.onPaintDetach?.(this.model);
     // Outfit FIRST: restores the clone's base geometry references and frees
     // its private materials (any corpse snapshot already owns its own copy).
     this.outfit.dispose();
@@ -664,6 +681,15 @@ export class RemotePlayerManager {
   private readonly anomalies: NetworkAnomaly[] = [];
   private lastAnomalyConsoleAt = 0;
 
+  /**
+   * PAINTBALL RIFLE visual hooks (wired by the Game): a remote player's
+   * paint is removed at death / respawn (every client) and detached when
+   * he leaves; `groundY` lets a dropped TP hopper bounce on the floor.
+   */
+  onPaintClear: ((model: THREE.Object3D) => void) | null = null;
+  onPaintDetach: ((model: THREE.Object3D) => void) | null = null;
+  groundY: ((x: number, z: number) => number) | null = null;
+
   constructor(private readonly scene: THREE.Scene) {}
 
   /** Feed the local camera position (TP skin aura distance budget). */
@@ -754,6 +780,10 @@ export class RemotePlayerManager {
           this.scene,
           this.viewer,
         );
+        remote.onPaintClear = (model) => this.onPaintClear?.(model);
+        remote.onPaintDetach = (model) => this.onPaintDetach?.(model);
+        remote.weapons.paintballDropParent = this.scene;
+        remote.weapons.paintballGroundY = this.groundY;
         this.remotes.set(p.id, remote);
         this.scene.add(remote.group);
         remote.attachDebugMarker(this.scene);
@@ -896,6 +926,41 @@ export class RemotePlayerManager {
     if (!muzzle) return false;
     muzzle.getWorldPosition(out);
     return true;
+  }
+
+  // ---- PAINTBALL RIFLE remote replay (server-confirmed) ----
+
+  /** PAINTBALL_FIRE / PAINTBALL_RELOAD → weapon clip + TP clip the same frame. */
+  paintballAction(sessionId: string, action: "fire" | "reload", ammoAfter: number | null, elapsed: number): boolean {
+    return this.remotes.get(sessionId)?.weapons.paintballAction(action, ammoAfter, elapsed) ?? false;
+  }
+
+  paintballReloadCancel(sessionId: string, ammoAfter: number | null): void {
+    this.remotes.get(sessionId)?.weapons.paintballReloadCancel(ammoAfter);
+  }
+
+  /**
+   * World position of a remote rifle's REAL muzzle (visual ball origin) —
+   * false when the avatar is hidden / the rifle not attached.
+   */
+  getPaintballMuzzle(sessionId: string, out: THREE.Vector3): boolean {
+    const remote = this.remotes.get(sessionId);
+    if (!remote || !remote.alive || !remote.group.visible) return false;
+    const muzzle = remote.weapons.paintballMuzzle;
+    if (!muzzle) return false;
+    muzzle.updateWorldMatrix(true, false);
+    muzzle.getWorldPosition(out);
+    return true;
+  }
+
+  /**
+   * Skinned character clone of a VISIBLE, alive remote avatar — the
+   * visual paint target of a ball that hit him (null otherwise).
+   */
+  getCharacterModel(sessionId: string): THREE.Object3D | null {
+    const remote = this.remotes.get(sessionId);
+    if (!remote || !remote.alive || !remote.group.visible) return null;
+    return remote.model;
   }
 
   /** A confirmed melee action → real melee GLB in hand + swing anim. */

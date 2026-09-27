@@ -18,6 +18,9 @@ import { GoofyBasketRemotePresentation } from "../../weapons/goofybasket/GoofyBa
 import { PopcornShotgunProfile, POPCORN_SHOTGUN_TIMELINE } from "../../weapons/profiles/PopcornShotgunProfile";
 import { PopcornShotgunController } from "../../weapons/popcorn/PopcornShotgunController";
 import { loadPopcornShotgunGltf } from "../../weapons/popcorn/PopcornShotgunModel";
+import { PaintballRifleProfile, PAINTBALL_RIFLE_TIMELINE } from "../../weapons/profiles/PaintballRifleProfile";
+import { PaintballRifleController } from "../../weapons/paintball/PaintballRifleController";
+import { loadPaintballRifleGltf } from "../../weapons/paintball/PaintballRifleModel";
 // Real weapon GLBs (same optimized assets as the local viewmodels/menu).
 import rifleUrl from "../../assets/voidrifle_opt.glb?url";
 import spearUrl from "../../assets/lance_opt.glb?url";
@@ -201,6 +204,7 @@ export function preloadRemoteWeaponTemplates(): Promise<void> {
   jobs.push(loadRemoteHexSniper()); // animated path (shared GLB cache)
   jobs.push(loadBrickMaulGltf()); // Brick Maul (profile path, shared cache)
   jobs.push(loadPopcornShotgunGltf()); // Popcorn Shotgun (profile path, shared with FP)
+  jobs.push(loadPaintballRifleGltf()); // Paintball Rifle (profile path, shared with FP)
   return Promise.all(jobs).then(() => undefined);
 }
 
@@ -301,6 +305,16 @@ export class RemoteWeaponController {
   private popcornMount: THREE.Group | null = null;
   /** Server ammo known before the weapon is attached (applied at attach). */
   private popcornAmmo: number | null = null;
+
+  // ---- PAINTBALL RIFLE dedicated state (profile TP mount + TP controller) ----
+  /** TP presentation controller (no physics: 33 baked hopper layouts). */
+  private paintball: PaintballRifleController | null = null;
+  private paintballMount: THREE.Group | null = null;
+  /** Server ammo known before the weapon is attached (applied at attach). */
+  private paintballAmmo: number | null = null;
+  /** World parent of the dropped hopper + ground height (wired by RemotePlayer). */
+  paintballDropParent: THREE.Object3D | null = null;
+  paintballGroundY: ((x: number, z: number) => number) | null = null;
 
   // Procedural swing state (SPEAR legacy path only)
   private swingTimer = -1;
@@ -545,6 +559,59 @@ export class RemoteWeaponController {
     return this.popcorn?.muzzle ?? null;
   }
 
+  // ---- PAINTBALL RIFLE visual replication (server-confirmed events) ----
+
+  /**
+   * PAINTBALL_FIRE / PAINTBALL_RELOAD confirmed by the server: the weapon
+   * clip (controller.playRemote) and the avatar's TP clip start THE SAME
+   * FRAME. Fire: the controller raises onBurstStart on the first ball of a
+   * burst (TP "fire" LOOP layer) and onBurstEnd 0.16 s after the last one
+   * (TP "fireEnd") — wired at attach. Never refused for a local mismatch.
+   * Returns false when the rifle is not displayed (nothing replayed).
+   */
+  paintballAction(action: "fire" | "reload", ammoAfter: number | null, elapsed: number): boolean {
+    const c = this.paintball;
+    if (!c) {
+      if (ammoAfter !== null) this.paintballAmmo = ammoAfter;
+      return false;
+    }
+    c.playRemote(action);
+    // Server authority on the hopper level (a missed confirm never drifts).
+    if (action === "fire" && ammoAfter !== null && c.ammo !== ammoAfter) c.setAmmo(ammoAfter);
+    if (action === "reload") {
+      const startAt = Math.max(0, elapsed);
+      this.onProfileAction?.("reload", { startAt, fadeIn: 0.08 });
+      // Late confirm: advance the weapon clip by the same offset as the TP clip.
+      if (startAt > 0) c.update(startAt);
+    }
+    return true;
+  }
+
+  /** PAINTBALL_RELOAD_CANCEL (weapon swap mid-reload): undo before the click. */
+  paintballReloadCancel(ammoAfter: number | null): void {
+    if (ammoAfter !== null) this.paintballAmmo = ammoAfter;
+    const c = this.paintball;
+    if (!c) return;
+    if (c.reloading) {
+      c.cancelReload();
+      this.onProfileAction?.(null, {});
+    }
+    if (ammoAfter !== null) c.setAmmo(ammoAfter);
+  }
+
+  /** Death / respawn: drop the replayed action, full hopper (server resets it too). */
+  paintballReset(): void {
+    this.paintballAmmo = null;
+    if (!this.paintball) return;
+    this.paintball.setAmmo(this.paintball.capacity);
+    this.onProfileAction?.(null, {});
+  }
+
+  /** Displayed rifle's muzzle node (visual ball origin), or null. */
+  get paintballMuzzle(): THREE.Object3D | null {
+    return this.paintball?.muzzle ?? null;
+  }
+
   /** Far / invisible avatars: suspend the cosmetic pupils, reset on resume. */
   setCosmeticSuspended(suspended: boolean): void {
     if (this.cosmeticSuspended === suspended) return;
@@ -593,6 +660,9 @@ export class RemoteWeaponController {
     // Popcorn Shotgun: weapon clips (pump / lid) + baked tank pops. Cheap:
     // the tank uploads instances only while something animates.
     this.popcorn?.update(dt);
+    // Paintball Rifle: weapon clips + baked hopper layouts + fire-loop end
+    // detection (onBurstEnd → TP FireEnd) + the dropped hopper.
+    this.paintball?.update(dt);
     if (this.overrideId) {
       this.overrideTimer -= dt;
       if (this.overrideTimer <= 0) {
@@ -680,6 +750,10 @@ export class RemoteWeaponController {
       this.popcorn.muzzle.getWorldPosition(out);
       return true;
     }
+    if (this.paintball) {
+      this.paintball.muzzle.getWorldPosition(out);
+      return true;
+    }
     if (!this.grip) return false;
     this.grip.getWorldPosition(out);
     return true;
@@ -735,6 +809,19 @@ export class RemoteWeaponController {
         })
         .catch((err) => {
           if (import.meta.env.DEV) console.warn("[RemoteWeapon] PopcornShotgun load failed", err);
+        });
+      return;
+    }
+    if (target === NetworkWeaponId.PAINTBALL_RIFLE) {
+      // Profile path: whole weapon scene + TP controller, authored TP mount.
+      void loadPaintballRifleGltf()
+        .then((gltf) => {
+          if (this.disposed || token !== this.loadToken) return;
+          this.detach();
+          this.attachPaintballRifle(gltf);
+        })
+        .catch((err) => {
+          if (import.meta.env.DEV) console.warn("[RemoteWeapon] PaintballRifle load failed", err);
         });
       return;
     }
@@ -919,6 +1006,47 @@ export class RemoteWeaponController {
     this.onArmedChanged?.(PopcornShotgunProfile.id);
   }
 
+  /**
+   * PAINTBALL RIFLE remote attach (pack §5): TP controller (firstPerson
+   * false — baked hopper layouts, no physics) under the character's
+   * Weapon_R through the authored TP mount (applied ONCE, root keeps its
+   * 0.19). The controller picks Reload_TP itself; its burst events drive
+   * the avatar's TP fire loop / fireEnd layers. The avatar switches to the
+   * "PaintballRifle" TP pose set.
+   */
+  private attachPaintballRifle(gltf: GLTF): void {
+    const socket = this.characterModel.getObjectByName("Weapon_R");
+    if (!socket) {
+      if (import.meta.env.DEV) console.warn("[RemoteWeapon] Weapon_R socket not found — cannot attach PAINTBALL_RIFLE");
+      return;
+    }
+    let controller: PaintballRifleController;
+    try {
+      controller = new PaintballRifleController(gltf, {
+        firstPerson: false,
+        timeline: PAINTBALL_RIFLE_TIMELINE,
+        // The dropped empty hopper falls in the world and bounces on the floor.
+        dropParent: this.paintballDropParent ?? this.effectsParent,
+        groundY: this.paintballGroundY,
+        events: {
+          onBurstStart: () => this.onProfileAction?.("fire", { fadeIn: 0.03 }),
+          onBurstEnd: () => this.onProfileAction?.("fireEnd", { fadeIn: 0.04 }),
+        },
+      });
+    } catch (err) {
+      if (import.meta.env.DEV) console.warn("[RemoteWeapon] PaintballRifle controller failed", err);
+      return;
+    }
+    const mount = createWeaponMount("PaintballRifleTPMount", PaintballRifleProfile.tpMount);
+    socket.add(mount);
+    mount.add(controller.object);
+    if (this.paintballAmmo !== null) controller.setAmmo(this.paintballAmmo);
+    this.paintball = controller;
+    this.paintballMount = mount;
+    this.displayed = NetworkWeaponId.PAINTBALL_RIFLE;
+    this.onArmedChanged?.(PaintballRifleProfile.id);
+  }
+
   // ---- HEX SNIPER remote tongue visuals (server-confirmed replay) ----
 
   hexTongueBegin(tip: THREE.Vector3): void {
@@ -1030,6 +1158,18 @@ export class RemoteWeaponController {
       this.popcorn = null;
       this.popcornMount?.removeFromParent();
       this.popcornMount = null;
+      this.displayed = null;
+      this.onProfileAction?.(null, {});
+      this.onArmedChanged?.(null);
+    }
+    // Paintball Rifle profile path cleanup: the instance (mixer, hopper
+    // InstancedMesh, dropped hoppers) goes; shared GLB resources stay cached.
+    if (this.paintball) {
+      this.paintballAmmo = this.paintball.ammo; // survives a re-attach (melee override)
+      this.paintball.dispose();
+      this.paintball = null;
+      this.paintballMount?.removeFromParent();
+      this.paintballMount = null;
       this.displayed = null;
       this.onProfileAction?.(null, {});
       this.onArmedChanged?.(null);
