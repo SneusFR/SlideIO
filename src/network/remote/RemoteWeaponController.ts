@@ -24,6 +24,9 @@ import { loadPaintballRifleGltf } from "../../weapons/paintball/PaintballRifleMo
 import { WaterFamasProfile, WATER_FAMAS_TIMELINE } from "../../weapons/profiles/WaterFamasProfile";
 import { WaterFamasController } from "../../weapons/waterfamas/WaterFamasController";
 import { loadWaterFamasGltf } from "../../weapons/waterfamas/WaterFamasModel";
+import { FrisbeeLauncherProfile, FRISBEE_LAUNCHER_TIMELINE } from "../../weapons/profiles/FrisbeeLauncherProfile";
+import { FrisbeeLauncherController, type FrisbeeCageDrop } from "../../weapons/frisbee/FrisbeeLauncherController";
+import { loadFrisbeeLauncherGltf } from "../../weapons/frisbee/FrisbeeLauncherModel";
 // Real weapon GLBs (same optimized assets as the local viewmodels/menu).
 import rifleUrl from "../../assets/voidrifle_opt.glb?url";
 import spearUrl from "../../assets/lance_opt.glb?url";
@@ -209,6 +212,7 @@ export function preloadRemoteWeaponTemplates(): Promise<void> {
   jobs.push(loadPopcornShotgunGltf()); // Popcorn Shotgun (profile path, shared with FP)
   jobs.push(loadPaintballRifleGltf()); // Paintball Rifle (profile path, shared with FP)
   jobs.push(loadWaterFamasGltf()); // Water FAMAS (profile path, shared with FP)
+  jobs.push(loadFrisbeeLauncherGltf()); // Frisbee Launcher (profile path, shared with FP)
   return Promise.all(jobs).then(() => undefined);
 }
 
@@ -319,6 +323,15 @@ export class RemoteWeaponController {
   /** World parent of the dropped hopper + ground height (wired by RemotePlayer). */
   paintballDropParent: THREE.Object3D | null = null;
   paintballGroundY: ((x: number, z: number) => number) | null = null;
+
+  // ---- FRISBEE LAUNCHER dedicated state (profile TP mount + TP controller) ----
+  /** TP presentation controller (its onCageDrop hands the empty cage to the world copy). */
+  private frisbee: FrisbeeLauncherController | null = null;
+  private frisbeeMount: THREE.Group | null = null;
+  /** Server ammo known before the weapon is attached (applied at attach): deck loaded + discs in the cage. */
+  private frisbeeAmmo: { deck: boolean; cage: number } | null = null;
+  /** A cage was thrown away by the displayed launcher (wired by the Game: DroppedCages.spawn). */
+  onFrisbeeCageDrop: ((drop: FrisbeeCageDrop) => void) | null = null;
 
   // ---- WATER FAMAS dedicated state (profile TP mount + TP controller) ----
   /** TP presentation controller (its onJet events drive the visible jets). */
@@ -623,6 +636,69 @@ export class RemoteWeaponController {
     return this.paintball?.muzzle ?? null;
   }
 
+  // ---- FRISBEE LAUNCHER visual replication (server-confirmed events) ----
+
+  /**
+   * FRISBEE_FIRE / FRISBEE_RELOAD confirmed by the server: the weapon clip
+   * (controller.playRemote) and the avatar's TP clip start THE SAME FRAME.
+   * fire: `cage` = discs in the shooter's cage AT the shot -> TP "fire" (throw +
+   * re-cock) when cage > 0, "fireLast" otherwise. reload: `deckLoaded` -> TP
+   * "reload" (deck loaded) or "reloadEmpty". Never refused for a local mismatch.
+   * Returns false when the launcher is not displayed (nothing replayed).
+   */
+  frisbeeAction(
+    action: "fire" | "reload",
+    state: { aiming?: boolean; cage: number; deckLoaded: boolean },
+    elapsed: number,
+  ): boolean {
+    const c = this.frisbee;
+    if (!c) {
+      this.frisbeeAmmo = { deck: action === "fire" ? false : state.deckLoaded, cage: state.cage };
+      return false;
+    }
+    if (action === "fire") {
+      c.playRemote("fire", { aiming: state.aiming, cage: state.cage });
+      this.onProfileAction?.(state.cage > 0 ? "fire" : "fireLast", { fadeIn: 0.03 });
+      return true;
+    }
+    c.playRemote("reload", { cage: state.cage, deckLoaded: state.deckLoaded });
+    const startAt = Math.max(0, elapsed);
+    this.onProfileAction?.(state.deckLoaded ? "reload" : "reloadEmpty", { startAt, fadeIn: 0.08 });
+    // Late confirm: advance the weapon clip by the same offset as the TP clip.
+    if (startAt > 0) c.update(startAt);
+    return true;
+  }
+
+  /** FRISBEE_RELOAD_CANCEL (weapon swap mid-swap): undo before cageIn, server state applied. */
+  frisbeeReloadCancel(state: { cage: number; deckLoaded: boolean }): void {
+    this.frisbeeAmmo = { deck: state.deckLoaded, cage: state.cage };
+    const c = this.frisbee;
+    if (!c) return;
+    if (c.reloading) {
+      c.cancelAction();
+      this.onProfileAction?.(null, {});
+    }
+    c.setAmmo(state.deckLoaded, state.cage);
+  }
+
+  /** Death / respawn: drop the replayed action, loaded deck + full cage (server resets it too). */
+  frisbeeReset(): void {
+    this.frisbeeAmmo = null;
+    if (!this.frisbee) return;
+    this.frisbee.setAmmo(true, this.frisbee.cageCapacity);
+    this.onProfileAction?.(null, {});
+  }
+
+  /** World position of the visible disc's start on the displayed launcher (its LaunchSocket), or null. */
+  get frisbeeLaunchSocket(): THREE.Object3D | null {
+    return this.frisbee?.launchSocket ?? null;
+  }
+
+  /** Disc / cage templates of the displayed launcher (for the shared FrisbeeProjectiles / DroppedCages). */
+  get frisbeeController(): FrisbeeLauncherController | null {
+    return this.frisbee;
+  }
+
   // ---- WATER FAMAS visual replication (server-confirmed events) ----
 
   /**
@@ -742,6 +818,9 @@ export class RemoteWeaponController {
     this.paintball?.update(dt);
     // Water FAMAS: weapon clips + the water of the tank.
     this.famas?.update(dt);
+    // Frisbee Launcher: weapon clips + cage discs (after the avatar's animation + updateMatrixWorld:
+    // the controller reads the cage's world matrix to hand it to the dropped copy).
+    this.frisbee?.update(dt);
     if (this.overrideId) {
       this.overrideTimer -= dt;
       if (this.overrideTimer <= 0) {
@@ -837,6 +916,10 @@ export class RemoteWeaponController {
       this.famas.muzzle.getWorldPosition(out);
       return true;
     }
+    if (this.frisbee) {
+      this.frisbee.launchSocket.getWorldPosition(out);
+      return true;
+    }
     if (!this.grip) return false;
     this.grip.getWorldPosition(out);
     return true;
@@ -918,6 +1001,19 @@ export class RemoteWeaponController {
         })
         .catch((err) => {
           if (import.meta.env.DEV) console.warn("[RemoteWeapon] WaterFamas load failed", err);
+        });
+      return;
+    }
+    if (target === NetworkWeaponId.FRISBEE_LAUNCHER) {
+      // Profile path: whole weapon scene + TP controller, authored TP mount.
+      void loadFrisbeeLauncherGltf()
+        .then((gltf) => {
+          if (this.disposed || token !== this.loadToken) return;
+          this.detach();
+          this.attachFrisbeeLauncher(gltf);
+        })
+        .catch((err) => {
+          if (import.meta.env.DEV) console.warn("[RemoteWeapon] FrisbeeLauncher load failed", err);
         });
       return;
     }
@@ -1180,6 +1276,43 @@ export class RemoteWeaponController {
     this.onArmedChanged?.(WaterFamasProfile.id);
   }
 
+  /**
+   * FRISBEE LAUNCHER remote attach: TP controller (firstPerson false) under the
+   * character's Weapon_R through the authored TP mount (applied ONCE, the root
+   * keeps its own 0.19). The empty cage the avatar throws away during a reload is
+   * handed to the Game (onFrisbeeCageDrop -> DroppedCages.spawn); the visible disc
+   * starts at frisbeeLaunchSocket. The avatar switches to the "FrisbeeLauncher" TP
+   * pose set (two hands, right on the grip, left on the foregrip).
+   */
+  private attachFrisbeeLauncher(gltf: GLTF): void {
+    const socket = this.characterModel.getObjectByName("Weapon_R");
+    if (!socket) {
+      if (import.meta.env.DEV) console.warn("[RemoteWeapon] Weapon_R socket not found — cannot attach FRISBEE_LAUNCHER");
+      return;
+    }
+    let controller: FrisbeeLauncherController;
+    try {
+      controller = new FrisbeeLauncherController(gltf, {
+        firstPerson: false,
+        timeline: FRISBEE_LAUNCHER_TIMELINE,
+        events: {
+          onCageDrop: (d) => this.onFrisbeeCageDrop?.(d),
+        },
+      });
+    } catch (err) {
+      if (import.meta.env.DEV) console.warn("[RemoteWeapon] FrisbeeLauncher controller failed", err);
+      return;
+    }
+    const mount = createWeaponMount("FrisbeeLauncherTPMount", FrisbeeLauncherProfile.tpMount);
+    socket.add(mount);
+    mount.add(controller.object);
+    if (this.frisbeeAmmo !== null) controller.setAmmo(this.frisbeeAmmo.deck, this.frisbeeAmmo.cage);
+    this.frisbee = controller;
+    this.frisbeeMount = mount;
+    this.displayed = NetworkWeaponId.FRISBEE_LAUNCHER;
+    this.onArmedChanged?.(FrisbeeLauncherProfile.id);
+  }
+
   // ---- HEX SNIPER remote tongue visuals (server-confirmed replay) ----
 
   hexTongueBegin(tip: THREE.Vector3): void {
@@ -1303,6 +1436,18 @@ export class RemoteWeaponController {
       this.paintball = null;
       this.paintballMount?.removeFromParent();
       this.paintballMount = null;
+      this.displayed = null;
+      this.onProfileAction?.(null, {});
+      this.onArmedChanged?.(null);
+    }
+    // Frisbee Launcher profile path cleanup: the instance (mixer, cage discs) goes;
+    // shared GLB resources stay cached.
+    if (this.frisbee) {
+      this.frisbeeAmmo = { deck: this.frisbee.deckLoaded, cage: this.frisbee.cageCount }; // survives a re-attach
+      this.frisbee.dispose();
+      this.frisbee = null;
+      this.frisbeeMount?.removeFromParent();
+      this.frisbeeMount = null;
       this.displayed = null;
       this.onProfileAction?.(null, {});
       this.onArmedChanged?.(null);

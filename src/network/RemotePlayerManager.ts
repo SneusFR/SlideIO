@@ -11,6 +11,7 @@ import { AdaptiveInterpolationDelay } from "./interpolation/AdaptiveInterpolatio
 import { RemotePlayerAnimationController } from "./remote/RemotePlayerAnimationController";
 import { NetworkMovementState, sanitizeNetworkMovementState } from "./NetworkMovementState";
 import { RemoteWeaponController } from "./remote/RemoteWeaponController";
+import type { FrisbeeCageDrop, FrisbeeLauncherController } from "../weapons/frisbee/FrisbeeLauncherController";
 import type { NetworkPlayerInfo } from "./MultiplayerClient";
 import { CorpseManager } from "../ragdoll/CorpseManager";
 import { netTrace, NET_TRACE_ENABLED } from "./diagnostics/NetTrace";
@@ -344,6 +345,7 @@ class RemotePlayer {
       this.weapons.popcornReset();
       this.weapons.paintballReset();
       this.weapons.famasReset();
+      this.weapons.frisbeeReset();
       // PAINTBALL / WATER FAMAS: the dead player loses ALL his paint / is dry again on every client (the
       // corpse clone shares the painted geometry — cleared with it).
       if (this.group.visible) this.onDied?.(this);
@@ -375,6 +377,7 @@ class RemotePlayer {
     this.weapons.popcornReset(); // respawn = full tank (server resets its ammo too)
     this.weapons.paintballReset(); // respawn = full hopper
     this.weapons.famasReset(); // respawn = full tank
+    this.weapons.frisbeeReset(); // respawn = loaded deck + full cage
     this.onPaintClear?.(this.model); // safety: a respawned player never carries paint
   }
 
@@ -691,6 +694,8 @@ export class RemotePlayerManager {
   onPaintClear: ((model: THREE.Object3D) => void) | null = null;
   onPaintDetach: ((model: THREE.Object3D) => void) | null = null;
   groundY: ((x: number, z: number) => number) | null = null;
+  /** FRISBEE LAUNCHER: a remote avatar threw its empty cage away (wired by the Game: DroppedCages.spawn). */
+  onFrisbeeCageDrop: ((drop: FrisbeeCageDrop) => void) | null = null;
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -786,6 +791,7 @@ export class RemotePlayerManager {
         remote.onPaintDetach = (model) => this.onPaintDetach?.(model);
         remote.weapons.paintballDropParent = this.scene;
         remote.weapons.paintballGroundY = this.groundY;
+        remote.weapons.onFrisbeeCageDrop = (drop) => this.onFrisbeeCageDrop?.(drop);
         this.remotes.set(p.id, remote);
         this.scene.add(remote.group);
         remote.attachDebugMarker(this.scene);
@@ -939,6 +945,41 @@ export class RemotePlayerManager {
 
   paintballReloadCancel(sessionId: string, ammoAfter: number | null): void {
     this.remotes.get(sessionId)?.weapons.paintballReloadCancel(ammoAfter);
+  }
+
+  // ---- FRISBEE LAUNCHER remote replay (server-confirmed) ----
+
+  /** FRISBEE_FIRE / FRISBEE_RELOAD -> weapon clip + TP clip the same frame. */
+  frisbeeAction(
+    sessionId: string,
+    action: "fire" | "reload",
+    state: { aiming?: boolean; cage: number; deckLoaded: boolean },
+    elapsed: number,
+  ): boolean {
+    return this.remotes.get(sessionId)?.weapons.frisbeeAction(action, state, elapsed) ?? false;
+  }
+
+  frisbeeReloadCancel(sessionId: string, state: { cage: number; deckLoaded: boolean }): void {
+    this.remotes.get(sessionId)?.weapons.frisbeeReloadCancel(state);
+  }
+
+  /**
+   * World position of a remote launcher's REAL LaunchSocket (the visible disc starts there) —
+   * false when the avatar is hidden / the launcher is not attached.
+   */
+  getFrisbeeLaunchPoint(sessionId: string, out: THREE.Vector3): boolean {
+    const remote = this.remotes.get(sessionId);
+    if (!remote || !remote.alive || !remote.group.visible) return false;
+    const socket = remote.weapons.frisbeeLaunchSocket;
+    if (!socket) return false;
+    socket.updateWorldMatrix(true, false);
+    socket.getWorldPosition(out);
+    return true;
+  }
+
+  /** The displayed launcher's controller (disc / cage templates for the shared pools), or null. */
+  getFrisbeeController(sessionId: string): FrisbeeLauncherController | null {
+    return this.remotes.get(sessionId)?.weapons.frisbeeController ?? null;
   }
 
   // ---- WATER FAMAS remote replay (server-confirmed) ----

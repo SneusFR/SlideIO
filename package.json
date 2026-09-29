@@ -9,6 +9,7 @@
     "test:popcorn": "npx --prefix backend tsx scripts/test-popcorn-shotgun.mts",
     "test:paintball": "npx --prefix backend tsx scripts/test-paintball-rifle.mts",
     "test:famas": "npx --prefix backend tsx scripts/test-water-famas.mts",
+    "test:frisbee": "npx --prefix backend tsx scripts/test-frisbee-launcher.mts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },

@@ -52,6 +52,12 @@ export const AUDIO_MANIFEST: Record<string, string> = {
   // dry click + hopper clicks reuse popcorn_dry_fire / ui_click_plop)
   paintball_shot: `${A}/paintball/paintball_shot_01.mp3`,
   paintball_charge: `${A}/paintball/paintball_charge_01.mp3`,
+  // Frisbee Launcher (elastic twang / disc whirl / plastic latch / band snap — CC0, see ATTRIBUTION.md;
+  // dry click + bounces reuse popcorn_dry_fire / basket_bounce)
+  frisbee_twang: `${A}/frisbee/frisbee_twang_01.mp3`,
+  frisbee_whirl: `${A}/frisbee/frisbee_whirl_01.mp3`,
+  frisbee_latch: `${A}/frisbee/frisbee_latch_01.mp3`,
+  frisbee_band: `${A}/frisbee/frisbee_band_01.mp3`,
   // Hex Sniper (tongue whip / wet grab / jaws / eating — CC0, see ATTRIBUTION.md)
   hex_tongue_whip: `${A}/hexsniper/hex_tongue_whip_01.mp3`,
   hex_tongue_out: `${A}/hexsniper/hex_tongue_out_01.mp3`,
@@ -864,6 +870,68 @@ export class GameAudio {
       audio.playAt("popcorn_pop", pos, { bus: "weapons", volume: 0.14, rate: 0.7 + Math.random() * 0.5, delay: 1.44 + i * 0.085, duration: 0.1, refDistance: 5, maxInstances: 8 });
     }
     audio.playAt("popcorn_lid_click", pos, { bus: "weapons", volume: 0.5, rate: 0.8, delay: 2.86, refDistance: 5, maxInstances: 4 });
+  }
+
+  // ------------------------------------------------------------------
+  // FRISBEE LAUNCHER (CC0 twang / whirl / latch / band samples + existing
+  // plastic clicks and the basketball bounces for the disc knocks)
+  // ------------------------------------------------------------------
+
+  /** The elastic cord snaps and the disc leaves: low twang + the whirl of the disc. */
+  frisbeeShot(): void {
+    audio.play("frisbee_twang", { bus: "weapons", volume: 0.6, volumeVar: 0.05, rate: 0.85, rateVar: 0.04, duration: 0.55, maxInstances: 3 });
+    audio.play("frisbee_band", { bus: "weapons", volume: 0.35, rate: 0.9, delay: 0.005, maxInstances: 3 });
+    audio.play("frisbee_whirl", { bus: "weapons", volume: 0.4, rate: 1.1, rateVar: 0.05, duration: 0.6, delay: 0.03, maxInstances: 4 });
+  }
+
+  /** Empty deck: small trigger click. */
+  frisbeeDryFire(): void {
+    audio.play("popcorn_dry_fire", { bus: "weapons", volume: 0.5, rate: 1.15, rateVar: 0.04, throttleMs: 120 });
+  }
+
+  /** Sled latch (click-clack) of the automatic re-cock. */
+  frisbeeCocked(): void {
+    audio.play("frisbee_latch", { bus: "weapons", volume: 0.5, rate: 1.2, rateVar: 0.04, duration: 0.35, throttleMs: 80 });
+  }
+
+  /** A disc slides out of the cage (`seated` = the plastic "clac" on the deck). */
+  frisbeeDisc(seated: boolean): void {
+    if (seated) audio.play("popcorn_lid_click", { bus: "weapons", volume: 0.5, rate: 0.85, rateVar: 0.04, throttleMs: 60 });
+    else audio.play("frisbee_whirl", { bus: "weapons", volume: 0.18, rate: 1.6, rateVar: 0.05, duration: 0.18, throttleMs: 60 });
+  }
+
+  /** Cage swap: release click + slide (`out`), big enclenchement click (`in`). */
+  frisbeeCage(kind: "out" | "in"): void {
+    if (kind === "out") audio.play("frisbee_latch", { bus: "weapons", volume: 0.4, rate: 1.05, rateVar: 0.04, duration: 0.4, throttleMs: 80 });
+    else audio.play("frisbee_latch", { bus: "weapons", volume: 0.65, rate: 0.8, rateVar: 0.03, duration: 0.45, throttleMs: 80 });
+  }
+
+  /** The empty cage hits the ground ~0.3 s after it is thrown away (plastic clack). */
+  frisbeeCageDropAt(pos: THREE.Vector3): void {
+    audio.playAt("popcorn_lid_click", pos, { bus: "weapons", volume: 0.55, rate: 0.7, delay: 0.3, refDistance: 5, maxInstances: 4 });
+  }
+
+  /** Disc knock on the scenery (plastic "tok"), louder when fast; spatialized at the contact. */
+  frisbeeBounce(pos: THREE.Vector3, speed: number): void {
+    const k = Math.min(1, speed / 34);
+    audio.playAt("popcorn_lid_click", pos, { bus: "impacts", volume: 0.25 + 0.5 * k, rate: 0.9 + 0.4 * (1 - k), rateVar: 0.06, throttleMs: 40, maxInstances: 6, refDistance: 6, maxDistance: 60 });
+  }
+
+  /** A disc touches a player: soft rubbery boing at the contact. */
+  frisbeeHitAt(pos: THREE.Vector3): void {
+    audio.playAt("frisbee_band", pos, { bus: "impacts", volume: 0.5, rate: 0.8, rateVar: 0.05, throttleMs: 60, maxInstances: 4, refDistance: 6, maxDistance: 60 });
+  }
+
+  /** Remote shooter: spatialized shot at the shooter position. */
+  frisbeeShotAt(pos: THREE.Vector3): void {
+    audio.playAt("frisbee_twang", pos, { bus: "weapons", volume: 0.7, rate: 0.85, rateVar: 0.04, duration: 0.55, refDistance: 8, maxInstances: 4 });
+    audio.playAt("frisbee_whirl", pos, { bus: "weapons", volume: 0.4, rate: 1.1, duration: 0.6, delay: 0.03, refDistance: 8, maxInstances: 4 });
+  }
+
+  /** Remote cage swap on the authored clock (release, drop clack, click-in). */
+  frisbeeReloadAt(pos: THREE.Vector3): void {
+    audio.playAt("frisbee_latch", pos, { bus: "weapons", volume: 0.35, rate: 1.05, delay: 0.4, duration: 0.4, refDistance: 5, maxInstances: 4 });
+    audio.playAt("frisbee_latch", pos, { bus: "weapons", volume: 0.55, rate: 0.8, delay: 1.1, duration: 0.45, refDistance: 5, maxInstances: 4 });
   }
 
   // ------------------------------------------------------------------

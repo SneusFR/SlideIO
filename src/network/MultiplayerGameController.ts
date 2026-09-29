@@ -109,6 +109,11 @@ export class MultiplayerGameController {
     this.vfx.onPaintballAction = fn;
   }
 
+  /** FRISBEE LAUNCHER: remote players' fire / reload confirms + disc corrections (BOUNCE / HIT / END). */
+  set onRemoteFrisbeeAction(fn: ((event: WeaponActionConfirmedEvent) => void) | null) {
+    this.vfx.onFrisbeeAction = fn;
+  }
+
   /** WATER FAMAS: remote players' per-jet fire / reload confirms. */
   set onRemoteWaterFamasAction(fn: ((event: WeaponActionConfirmedEvent) => void) | null) {
     this.vfx.onWaterFamasAction = fn;

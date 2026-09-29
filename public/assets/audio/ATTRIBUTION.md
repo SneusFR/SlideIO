@@ -174,3 +174,12 @@ Le clic à vide réutilise `popcorn/popcorn_dry_fire_01.mp3`, les clics du rése
 | Fichier local | Titre original | Freesound ID | Licence | Source |
 |---|---|---|---|---|
 | `kills/kill_confirm_01.mp3` | Level Up | 442943 | CC0 | https://freesound.org/s/442943/ |
+
+## Frisbee Launcher
+
+| Fichier local | Titre original | Freesound ID | Licence | Source |
+|---|---|---|---|---|
+| `frisbee/frisbee_twang_01.mp3` | Twang 1 | 540083 | CC0 | https://freesound.org/s/540083/ |
+| `frisbee/frisbee_whirl_01.mp3` | Whirling Flying Disc Toy | 807248 | CC0 | https://freesound.org/s/807248/ |
+| `frisbee/frisbee_latch_01.mp3` | Satisfying Plastic Handle Unlock | 448393 | CC0 | https://freesound.org/s/448393/ |
+| `frisbee/frisbee_band_01.mp3` | Rubber Band Snap.wav | 187354 | CC0 | https://freesound.org/s/187354/ |

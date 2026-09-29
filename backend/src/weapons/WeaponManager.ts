@@ -18,6 +18,9 @@ import {
   BASKET_ACTION_BOUNCE,
   BASKET_ACTION_REST,
   BASKET_ACTION_END,
+  FRISBEE_ACTION_BOUNCE,
+  FRISBEE_ACTION_HIT,
+  FRISBEE_ACTION_END,
   goofyBasketLevelForHold,
 } from "../../../shared/combat/NetworkWeapons";
 import { DEFAULT_WEAPON_SKIN, sanitizeWeaponSkin } from "../../../shared/combat/WeaponSkins";
@@ -56,6 +59,19 @@ import {
   startWaterFamasReload,
   cancelWaterFamasReload,
 } from "./WaterFamasServer";
+import {
+  FrisbeeLauncherConfig as FL,
+  frisbeeDirection,
+  sanitizeFrisbeeSeed,
+} from "../../../shared/combat/FrisbeeLauncherRules";
+import { SharedFrisbeeSim, type FrisbeeHitEvent } from "../../../shared/combat/FrisbeeSim";
+import {
+  FrisbeeLauncherState,
+  resolveFrisbeeFire,
+  startFrisbeeReload,
+  cancelFrisbeeReload,
+  createFrisbeeCast,
+} from "./FrisbeeLauncherServer";
 import { DamageResult } from "../combat/DamageResult";
 import { NetworkPlayer } from "../schemas/NetworkPlayer";
 import { MAP_COLLIDER_BOXES, type ColliderBox } from "../../../shared/map/MapColliders";
@@ -263,6 +279,19 @@ class PlayerWeaponState {
   paintball = new PaintballRifleState();
   // Water FAMAS (server-owned ammo / burst cadence / refill clock)
   waterFamas = new WaterFamasState();
+  // Frisbee Launcher (server-owned ammo = deck + cage / cadence / cage swap clock)
+  frisbee = new FrisbeeLauncherState();
+}
+
+/** One in-flight FRISBEE LAUNCHER disc (server-simulated, shared 1/120 s fixed step). */
+interface FrisbeeDisc {
+  id: number;
+  ownerId: string;
+  sim: SharedFrisbeeSim;
+  /** Shooter view delay (now − viewTime) captured at fire time (already clamped). */
+  viewDelayMs: number;
+  /** Time debt (s) still to simulate (fixed steps, caught up over the ticks). */
+  acc: number;
 }
 
 /** IO the room provides — WeaponManager stays free of Colyseus types. */
@@ -307,6 +336,9 @@ export class WeaponManager {
   private readonly basketProjectiles: BasketProjectile[] = [];
   /** Monotonic GoofyBasket projectile / throw id (room-wide). */
   private nextBasketId = 1;
+  private readonly frisbees: FrisbeeDisc[] = [];
+  /** Monotonic Frisbee Launcher disc id (room-wide). */
+  private nextFrisbeeId = 1;
 
   /**
    * @param mapBoxes the room's map collision world (shared MapRegistry) —
@@ -452,6 +484,9 @@ export class WeaponManager {
     cancelPaintballReload(s.paintball, this.host.now());
     // Water FAMAS: leaving mid-refill keeps the old ammo (before the pour ends).
     cancelWaterFamasReload(s.waterFamas, this.host.now());
+    // Frisbee Launcher: an unfinished cage swap is undone before cageIn; a re-cock in
+    // progress is completed (the disc ends on the deck). Discs in flight keep flying.
+    s.frisbee.cancel(this.host.now());
     s.weapon = rawWeapon;
     s.skin = skin;
     player.weapon = rawWeapon; // synced schema state → all clients
@@ -619,6 +654,29 @@ export class WeaponManager {
         if (!cancelWaterFamasReload(s.waterFamas, this.host.now())) return;
         this.confirmWaterFamas(player, action, seq, this.eyePos(player), dir ?? UP, s.waterFamas.ammo);
         return;
+      case WeaponActionType.FRISBEE_FIRE:
+        this.handleFrisbeeFire(player, s, seq, origin, dir, msg);
+        return;
+      case WeaponActionType.FRISBEE_RELOAD: {
+        if (s.weapon !== NetworkWeaponId.FRISBEE_LAUNCHER) return;
+        const r = startFrisbeeReload(s.frisbee, this.host.now());
+        if (!r.started) return;
+        this.confirmFrisbee(player, action, seq, this.eyePos(player), dir ?? UP, {
+          am: s.frisbee.ammo,
+          cg: r.cageBefore,
+          dk: r.deckBefore ? 1 : 0,
+        });
+        return;
+      }
+      case WeaponActionType.FRISBEE_RELOAD_CANCEL:
+        if (s.weapon !== NetworkWeaponId.FRISBEE_LAUNCHER) return;
+        if (!cancelFrisbeeReload(s.frisbee, this.host.now())) return;
+        this.confirmFrisbee(player, action, seq, this.eyePos(player), dir ?? UP, {
+          am: s.frisbee.ammo,
+          cg: s.frisbee.cage,
+          dk: s.frisbee.deck ? 1 : 0,
+        });
+        return;
       default:
         return; // unknown action — silently refused
     }
@@ -647,6 +705,7 @@ export class WeaponManager {
     this.tickProjectiles(dt);
     this.tickBassProjectiles(dt);
     this.tickBasketProjectiles(dt);
+    this.tickFrisbees(dt);
   }
 
   // ------------------------------------------------------------------
@@ -1020,6 +1079,188 @@ export class WeaponManager {
       ...(seed !== undefined ? { sd: seed } : {}),
       am: ammo,
     });
+  }
+
+  // ------------------------------------------------------------------
+  // FRISBEE LAUNCHER — one real disc per shot, shared fixed-step flight,
+  // bounces on the scenery, damage + knockback on the FIRST player touched
+  // ------------------------------------------------------------------
+
+  /**
+   * FRISBEE_FIRE: validate the deck / cadence / cage-swap gate, rebuild the
+   * launch direction from the client's seed + aim (shared rule — identical on
+   * every client) and create the disc at the validated EYE origin. The disc is
+   * then simulated by tickFrisbees() with the SHARED SharedFrisbeeSim. Every
+   * accepted shot is confirmed (sd + pc + pid + am + cg + FINAL direction) so
+   * the clients replay the same disc and the TP fire / fireLast clip.
+   */
+  private handleFrisbeeFire(
+    player: NetworkPlayer,
+    s: PlayerWeaponState,
+    seq: number,
+    origin: Vec3 | null,
+    dir: Vec3 | null,
+    msg: WeaponActionMessage,
+  ): void {
+    if (s.weapon !== NetworkWeaponId.FRISBEE_LAUNCHER || !origin || !dir) return;
+    const seed = sanitizeFrisbeeSeed(msg.sd);
+    if (seed === null) return;
+    const result = resolveFrisbeeFire(s.frisbee, this.host.now());
+    if (!result.accepted) return;
+    const aiming = msg.pc === 1;
+    const launchDir = frisbeeDirection(dir, aiming, seed, { x: 0, y: 0, z: 0 });
+    const id = this.nextFrisbeeId++;
+    if (this.frisbees.length >= FL.maxDiscs) {
+      const old = this.frisbees.shift();
+      if (old) {
+        const p = old.sim.pos;
+        this.frisbeeEvent(old.ownerId, FRISBEE_ACTION_END, p, UP, { pid: old.id, hx: p.x, hy: p.y, hz: p.z });
+      }
+    }
+    this.frisbees.push({
+      id,
+      ownerId: player.id,
+      sim: new SharedFrisbeeSim(id, origin, launchDir, player.id),
+      viewDelayMs: this.host.now() - this.resolveRewindTime(msg),
+      acc: 0,
+    });
+    s.inspecting = false;
+    this.confirmFrisbee(player, WeaponActionType.FRISBEE_FIRE, seq, origin, launchDir, {
+      sd: seed,
+      pc: aiming ? 1 : 0,
+      pid: id,
+      am: result.ammoAfter,
+      cg: result.cageAtShot,
+    });
+  }
+
+  /** Advance every disc by FIXED steps (time debt kept, like the client), apply touches, broadcast corrections. */
+  private tickFrisbees(dt: number): void {
+    if (this.frisbees.length === 0) return;
+    const step = FL.simStep;
+    for (let i = this.frisbees.length - 1; i >= 0; i--) {
+      const d = this.frisbees[i];
+      d.acc = Math.min(d.acc + dt, 0.5);
+      const targets = this.rewindTargets(d.ownerId, this.host.now() - d.viewDelayMs);
+      const cast = createFrisbeeCast(targets, this.mapBoxes);
+      let n = 0;
+      while (d.acc >= step && n++ < 36 && d.sim.alive) {
+        d.acc -= step;
+        const hits: FrisbeeHitEvent[] = [];
+        let bounceSpeed = 0;
+        const bounceNormal: Vec3 = { x: 0, y: 1, z: 0 };
+        d.sim.step(cast, {
+          onHit: (e) => hits.push(e),
+          onBounce: (_id, _point, normal, speed) => {
+            bounceSpeed = speed;
+            bounceNormal.x = normal.x;
+            bounceNormal.y = normal.y;
+            bounceNormal.z = normal.z;
+          },
+        });
+        for (const h of hits) this.applyFrisbeeHit(d, h);
+        // A slow disc sliding on the floor is not worth a message (the client simulates the same
+        // rest); a real bounce (> 3 m/s) corrects the client copy.
+        if (bounceSpeed > 3) {
+          this.frisbeeEvent(d.ownerId, FRISBEE_ACTION_BOUNCE, d.sim.pos, d.sim.vel, {
+            pid: d.id,
+            bn: d.sim.bounces,
+            hx: bounceNormal.x,
+            hy: bounceNormal.y,
+            hz: bounceNormal.z,
+          });
+        }
+      }
+      if (!d.sim.alive) {
+        const p = d.sim.pos;
+        this.frisbeeEvent(d.ownerId, FRISBEE_ACTION_END, p, UP, { pid: d.id, hx: p.x, hy: p.y, hz: p.z });
+        this.frisbees.splice(i, 1);
+      }
+    }
+  }
+
+  /**
+   * ONE touch per disc (the sim clears canDamage): damage 45 body / 68 head
+   * (x0.6 after a bounce) + a small knockback impulse on the victim (same
+   * host.sendImpulse path as the hammer / spear / hex bite). A dead shooter
+   * deals nothing (basket rule).
+   */
+  private applyFrisbeeHit(d: FrisbeeDisc, e: FrisbeeHitEvent): void {
+    const owner = this.host.getPlayer(d.ownerId);
+    if (owner && owner.isAlive) {
+      const result = this.dealDamage(
+        owner,
+        e.target,
+        e.damage,
+        DamageType.FRISBEE_LAUNCHER,
+        e.headshot ? HitZone.HEAD : HitZone.BODY,
+        NetworkWeaponId.FRISBEE_LAUNCHER,
+      );
+      // A small push, never a stun: skipped on a kill (the ragdoll takes over).
+      const victim = this.host.getPlayer(e.target);
+      if (result.applied && !result.victimDied && victim && victim.isAlive) this.host.sendImpulse(e.target, e.impulse);
+    }
+    this.frisbeeEvent(d.ownerId, FRISBEE_ACTION_HIT, d.sim.pos, d.sim.vel, {
+      pid: d.id,
+      tid: e.target,
+      hx: e.point.x,
+      hy: e.point.y,
+      hz: e.point.z,
+    });
+  }
+
+  /** Frisbee confirm: the regular confirm + seed / aim flag / disc id / ammo / cage / deck flag. */
+  private confirmFrisbee(
+    player: NetworkPlayer,
+    action: string,
+    seq: number,
+    origin: Vec3,
+    dir: Vec3,
+    extra: Partial<Pick<WeaponActionConfirmedEvent, "sd" | "pc" | "pid" | "am" | "cg" | "dk">>,
+  ): void {
+    this.host.broadcastAction({
+      playerId: player.id,
+      weapon: NetworkWeaponId.FRISBEE_LAUNCHER,
+      action,
+      seq,
+      ts: this.host.now(),
+      ox: origin.x,
+      oy: origin.y,
+      oz: origin.z,
+      dx: dir.x,
+      dy: dir.y,
+      dz: dir.z,
+      ...extra,
+    });
+  }
+
+  /** Server-only Frisbee broadcast (dx/dy/dz carry a VELOCITY, not a unit dir). */
+  private frisbeeEvent(
+    ownerId: string,
+    action: string,
+    pos: Vec3,
+    vel: Vec3,
+    extra: Partial<Pick<WeaponActionConfirmedEvent, "pid" | "bn" | "hx" | "hy" | "hz" | "tid">>,
+  ): void {
+    this.host.broadcastAction({
+      playerId: ownerId,
+      weapon: NetworkWeaponId.FRISBEE_LAUNCHER,
+      action,
+      seq: 0,
+      ts: this.host.now(),
+      ox: pos.x,
+      oy: pos.y,
+      oz: pos.z,
+      dx: vel.x,
+      dy: vel.y,
+      dz: vel.z,
+      ...extra,
+    });
+  }
+
+  /** Live Frisbee Launcher discs (tests / diagnostics). */
+  get frisbeeCount(): number {
+    return this.frisbees.length;
   }
 
   // ------------------------------------------------------------------
@@ -2061,6 +2302,7 @@ export class WeaponManager {
     cancelPopcornReload(s.popcorn, this.host.now()); // a corpse never finishes a reload
     cancelPaintballReload(s.paintball, this.host.now());
     cancelWaterFamasReload(s.waterFamas, this.host.now());
+    s.frisbee.cancel(this.host.now()); // a corpse never finishes a cage swap
   }
 
   /** Whoever is pulling `victimId` drops the grab (victim died / left). */
@@ -2096,6 +2338,7 @@ export class WeaponManager {
     s.popcorn.reset(); // respawn = full tank (local parity: setAmmo(2))
     s.paintball.reset(); // respawn = full hopper (local parity: setAmmo(32))
     s.waterFamas.reset(); // respawn = full tank (local parity: setAmmo(9))
+    s.frisbee.reset(); // respawn = loaded deck + full cage (local parity: setAmmo(true, 5))
   }
 
   removePlayer(playerId: string): void {
@@ -2115,6 +2358,10 @@ export class WeaponManager {
     }
     for (let i = this.bassProjectiles.length - 1; i >= 0; i--) {
       if (this.bassProjectiles[i].ownerId === playerId) this.bassProjectiles.splice(i, 1);
+    }
+    // The discs of a leaving player are dropped silently (clients expire theirs on their own clock).
+    for (let i = this.frisbees.length - 1; i >= 0; i--) {
+      if (this.frisbees[i].ownerId === playerId) this.frisbees.splice(i, 1);
     }
   }
 

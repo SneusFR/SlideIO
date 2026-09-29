@@ -29,6 +29,9 @@ import {
   BASKET_ACTION_BOUNCE,
   BASKET_ACTION_REST,
   BASKET_ACTION_END,
+  FRISBEE_ACTION_BOUNCE,
+  FRISBEE_ACTION_HIT,
+  FRISBEE_ACTION_END,
 } from "../../../shared/combat/NetworkWeapons";
 import { HexSniperConfig as hexCfg } from "../../weapons/hexsniper/HexSniperConfig";
 import { loadRemoteWeaponTemplate } from "./RemoteWeaponController";
@@ -185,6 +188,8 @@ export class RemoteCombatVFXController {
   onPaintballAction: ((ev: WeaponActionConfirmedEvent) => void) | null = null;
   /** WATER FAMAS: remote players' per-jet fire / reload confirms (wired by the Game). */
   onWaterFamasAction: ((ev: WeaponActionConfirmedEvent) => void) | null = null;
+  /** FRISBEE LAUNCHER: remote players' fire / reload confirms + disc BOUNCE / HIT / END corrections (wired by the Game). */
+  onFrisbeeAction: ((ev: WeaponActionConfirmedEvent) => void) | null = null;
 
   private elapsed = 0;
   private disposed = false;
@@ -487,6 +492,16 @@ export class RemoteCombatVFXController {
         // Water FAMAS: TP clips + weapon clip + shared visible jets / wet marks
         // + positional SFX are owned by the Game (single WaterJets / WetMarks).
         this.onWaterFamasAction?.(ev);
+        return;
+      case WeaponActionType.FRISBEE_FIRE:
+      case WeaponActionType.FRISBEE_RELOAD:
+      case WeaponActionType.FRISBEE_RELOAD_CANCEL:
+      case FRISBEE_ACTION_BOUNCE:
+      case FRISBEE_ACTION_HIT:
+      case FRISBEE_ACTION_END:
+        // Frisbee Launcher: TP clips + weapon clip + the shared disc pool + positional SFX are
+        // owned by the Game (single FrisbeeProjectiles / DroppedCages instance).
+        this.onFrisbeeAction?.(ev);
         return;
       default:
         return; // unknown action — silently ignored

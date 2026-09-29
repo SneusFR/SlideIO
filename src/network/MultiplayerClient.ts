@@ -565,6 +565,9 @@ export class MultiplayerClient {
         ...(typeof message.pc === "number" ? { pc: message.pc } : {}),
         // WaterFamas: jet index (0..2) of a confirmed WATER_FAMAS_FIRE.
         ...(typeof message.pi === "number" ? { pi: message.pi } : {}),
+        // FrisbeeLauncher: discs in the shooter's cage at the action + deck-loaded flag.
+        ...(typeof message.cg === "number" ? { cg: message.cg } : {}),
+        ...(typeof message.dk === "number" ? { dk: message.dk } : {}),
       });
     });
     room.onMessage("HIT_CONFIRMED", (message: Partial<HitConfirmedEvent>) => {

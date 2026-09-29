@@ -22,6 +22,7 @@ export enum NetworkWeaponId {
   POPCORN_SHOTGUN = "POPCORN_SHOTGUN",
   PAINTBALL_RIFLE = "PAINTBALL_RIFLE",
   WATER_FAMAS = "WATER_FAMAS",
+  FRISBEE_LAUNCHER = "FRISBEE_LAUNCHER",
 }
 
 export function isNetworkWeaponId(raw: unknown): raw is NetworkWeaponId {
@@ -134,7 +135,35 @@ export enum WeaponActionType {
   /** WATER FAMAS: refill interrupted (weapon switch…) — before the end of the
    *  pour the ammo stays unchanged. */
   WATER_FAMAS_RELOAD_CANCEL = "WATER_FAMAS_RELOAD_CANCEL",
+  /** FRISBEE LAUNCHER: one disc (a real PROJECTILE, not a hitscan). `sd` = shot
+   *  seed (uint32), `pc` = 1 when the shot was taken aiming, ox/oy/oz = camera
+   *  eye, dx/dy/dz = camera aim — the server rebuilds the SAME launch direction
+   *  (shared/combat/FrisbeeLauncherRules), simulates the disc with the shared
+   *  fixed-step FrisbeeSim and owns every touch (damage + knockback).
+   *  Confirm: `sd` + `pc` + `pid` (server disc id) + `am` (ammo after) + `cg`
+   *  (discs in the shooter's cage AT the shot) + dx/dy/dz = FINAL direction. */
+  FRISBEE_FIRE = "FRISBEE_FIRE",
+  /** FRISBEE LAUNCHER: cage swap started (cage full at 0.71 s, fire again from
+   *  1.30 s / 2.40 s when the deck was empty — server clock). Confirm: `am`,
+   *  `cg` (cage before), `dk` (1 = deck loaded before). */
+  FRISBEE_RELOAD = "FRISBEE_RELOAD",
+  /** FRISBEE LAUNCHER: swap interrupted (weapon switch…) — before the new cage
+   *  clicks in (1.10 s) the ammo stays unchanged. */
+  FRISBEE_RELOAD_CANCEL = "FRISBEE_RELOAD_CANCEL",
 }
+
+// ---------------------------------------------------------------------
+// FRISBEE LAUNCHER — server → clients action ids (NEVER sent by clients).
+// A disc in flight is simulated on the server AND replayed on every client
+// (same seed, same 1/120 s step); these events only CORRECT the client copy.
+// ---------------------------------------------------------------------
+
+/** Disc bounced on the scenery: pid, bn (1-based), ox/oy/oz = position, dx/dy/dz = velocity, hx/hy/hz = normal. */
+export const FRISBEE_ACTION_BOUNCE = "FRISBEE_BOUNCE";
+/** Disc touched a player (soft rebound): pid, tid, ox/oy/oz = position, dx/dy/dz = velocity, hx/hy/hz = touch point. */
+export const FRISBEE_ACTION_HIT = "FRISBEE_HIT";
+/** Disc is over (rest / expiry): pid, hx/hy/hz = final position. */
+export const FRISBEE_ACTION_END = "FRISBEE_END";
 
 // ---------------------------------------------------------------------
 // HEX SNIPER — server → clients action ids (NEVER sent by clients).
@@ -635,6 +664,11 @@ export interface WeaponActionConfirmedEvent {
   pc?: number;
   /** WATER FAMAS: jet index (0..2) of a confirmed WATER_FAMAS_FIRE. */
   pi?: number;
+  /** FRISBEE LAUNCHER: discs in the shooter's CAGE at the moment of the action
+   *  (remote replay picks the same clip: fire vs fireLast, reload vs reloadEmpty). */
+  cg?: number;
+  /** FRISBEE LAUNCHER: 1 = the deck was loaded before the action. */
+  dk?: number;
 }
 
 /**

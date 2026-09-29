@@ -11,6 +11,7 @@ import { NetworkWeaponConfig } from "../../shared/combat/NetworkWeapons";
 import { PopcornShotgunConfig as pc } from "../../shared/combat/PopcornShotgunRules";
 import { PaintballRifleConfig as pb } from "../../shared/combat/PaintballRifleRules";
 import { WaterFamasConfig as wf } from "../../shared/combat/WaterFamasRules";
+import { FrisbeeLauncherConfig as fl } from "../../shared/combat/FrisbeeLauncherRules";
 
 /** GoofyBasket gameplay numbers come from the SHARED client/server config. */
 const gb = NetworkWeaponConfig.goofyBasket;
@@ -32,7 +33,8 @@ export type PrimaryWeaponId =
   | "GOOFY_BASKET"
   | "POPCORN_SHOTGUN"
   | "PAINTBALL_RIFLE"
-  | "WATER_FAMAS";
+  | "WATER_FAMAS"
+  | "FRISBEE_LAUNCHER";
 export type KillstreakId = "NONE" | "MOLE_STRIKE" | "ORBITAL_SCAN" | "NOVA_STRIKE";
 
 /** Exactly three equippable killstreak slots (keys W / X / C in game). */
@@ -98,7 +100,8 @@ export function loadLoadout(): LoadoutSelection {
         parsed.primary === "GOOFY_BASKET" ||
         parsed.primary === "POPCORN_SHOTGUN" ||
         parsed.primary === "PAINTBALL_RIFLE" ||
-        parsed.primary === "WATER_FAMAS"
+        parsed.primary === "WATER_FAMAS" ||
+        parsed.primary === "FRISBEE_LAUNCHER"
           ? parsed.primary
           : "PLASMA_RIFLE",
       killstreaks,
@@ -581,6 +584,47 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
         name: "VISÉE SERRÉE & INSPECTION",
         description:
           "Clic droit : l'arme se serre contre le corps et la dispersion diminue. F : inspection à une main, le réservoir vu d'en haut avec trois secousses (visuel uniquement).",
+        stats: [{ label: "INSPECTION", value: "3,6 s" }],
+      },
+    ],
+  },
+  {
+    id: "FRISBEE_LAUNCHER",
+    name: "LANCE-FRISBEE",
+    tagline: "Arbalète à frisbees qui rebondissent",
+    summary:
+      `Une arbalète cartoon à deux mains qui lance de vrais frisbees avec une corde élastique : ${fl.capacity} disques (1 sur le pont + ${fl.cageCapacity} dans la cage). Le disque vole, plane et rebondit sur les murs ; il fait des dégâts et pousse un peu le joueur touché. Après chaque tir l'arme se réarme toute seule.`,
+    ratings: { power: 70, precision: 60, difficulty: 55 },
+    abilities: [
+      {
+        trigger: "CLIC GAUCHE — UN DISQUE PAR APPUI",
+        name: "FRISBEE",
+        description:
+          `Un appui = un disque lancé depuis l'œil à ${fl.tuning.speed} m/s (dispersion ${fl.spreadHipDeg}°, ${fl.spreadAimDeg}° en visée). Il plane, rebondit jusqu'à ${fl.tuning.maxBounces} fois sur le décor et disparaît après ${fl.tuning.lifetime} s. Un seul contact par disque : ${fl.tuning.damageBody} PV au corps, ×${fl.tuning.headshotMultiplier} à la tête, ×${fl.tuning.bouncedDamageScale} après un rebond sur un mur. Pas de dégâts sous ${fl.tuning.minDamageSpeed} m/s.`,
+        stats: [
+          { label: "DÉGÂTS", value: `${fl.tuning.damageBody} PV` },
+          { label: "TÊTE", value: `${Math.round(fl.tuning.damageBody * fl.tuning.headshotMultiplier)} PV` },
+          { label: "APRÈS REBOND", value: `${Math.round(fl.tuning.damageBody * fl.tuning.bouncedDamageScale)} / ${Math.round(fl.tuning.damageBody * fl.tuning.headshotMultiplier * fl.tuning.bouncedDamageScale)} PV` },
+          { label: "RECUL", value: `${fl.tuning.knockback} m/s + ${fl.tuning.knockbackUp} m/s` },
+          { label: "CADENCE", value: `${fl.timeline.fire.readyToFire} s` },
+        ],
+      },
+      {
+        trigger: "TOUCHE R — OU TIR À VIDE",
+        name: "CHANGEMENT DE CAGE",
+        description:
+          "La cage vide est tirée vers le bas et jetée au sol ; on en prend une pleine à la ceinture et on l'enclenche. Si le pont est vide, le réarmement suit. Changer d'arme avant le déclic annule la recharge.",
+        stats: [
+          { label: "CAGE", value: `${fl.cageCapacity} disques` },
+          { label: "CAGE PLEINE", value: `${fl.timeline.reload.cageSwap} s` },
+          { label: "TIR POSSIBLE", value: `${fl.timeline.reload.readyToFire} s / ${fl.timeline.reloadEmpty.readyToFire} s` },
+        ],
+      },
+      {
+        trigger: "CLIC DROIT — MAINTENIR / TOUCHE F",
+        name: "VISÉE & INSPECTION",
+        description:
+          "Clic droit : le pont et le disque sous le viseur, dispersion minimale. F : inspection à deux mains, le flanc gauche puis le pont vu d'en haut (visuel uniquement).",
         stats: [{ label: "INSPECTION", value: "3,6 s" }],
       },
     ],

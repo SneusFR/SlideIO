@@ -1,0 +1,626 @@
+{
+  "schemaVersion": 1,
+  "id": "FrisbeeLauncher",
+  "compatibleRig": "Potato_Master_Clean_v1",
+  "units": "meter",
+  "assets": {
+    "fpRig": "Potato_FP_CommonArms.glb",
+    "fpPoses": "FrisbeeLauncher_FP_Poses.glb",
+    "tpRig": "Potato_TP_Character.glb",
+    "tpPoses": "FrisbeeLauncher_TP_Poses.glb",
+    "weapon": "FrisbeeLauncher_Weapon.glb"
+  },
+  "camera": {
+    "verticalFovDegrees": 65,
+    "near": 0.01,
+    "far": 100,
+    "axes": "+X right, +Y up, -Z forward",
+    "aspectReference": "16:9",
+    "additionalCameraOffset": [
+      0,
+      0,
+      0
+    ]
+  },
+  "mounts": {
+    "fp": {
+      "poseSpace": "camera",
+      "bone": "Weapon_R",
+      "matrixColumnMajor": [
+        -0.10045616444423111,
+        0.06937951183468885,
+        0.38091354802238664,
+        0.0,
+        0.1010751016201509,
+        0.3845791623103804,
+        -0.043391224274674074,
+        0.0,
+        -0.37375451845736696,
+        0.08535480529521186,
+        -0.11411487517705282,
+        0.0,
+        -0.001430990525645712,
+        -0.001656748611665232,
+        -0.021872953292644715,
+        1.0
+      ],
+      "matrixRows": [
+        [
+          -0.10045616444423111,
+          0.1010751016201509,
+          -0.37375451845736696,
+          -0.001430990525645712
+        ],
+        [
+          0.06937951183468885,
+          0.3845791623103804,
+          0.08535480529521186,
+          -0.001656748611665232
+        ],
+        [
+          0.38091354802238664,
+          -0.043391224274674074,
+          -0.11411487517705282,
+          -0.021872953292644715
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "weaponRootScalePreserved": 0.19,
+      "additionalScale": 0.4000001108803211,
+      "clips": [
+        {
+          "name": "FP_FrisbeeLauncher_Hold",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.009
+        },
+        {
+          "name": "FP_FrisbeeLauncher_Run",
+          "frames": 25,
+          "sampleFps": 30,
+          "duration": 0.8,
+          "loop": true,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.076
+        },
+        {
+          "name": "FP_Aim_FrisbeeLauncher",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.111
+        },
+        {
+          "name": "FP_Raise_FrisbeeLauncher",
+          "frames": 37,
+          "sampleFps": 120,
+          "duration": 0.3,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.11
+        },
+        {
+          "name": "FP_Lower_FrisbeeLauncher",
+          "frames": 37,
+          "sampleFps": 120,
+          "duration": 0.3,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.11
+        },
+        {
+          "name": "FP_Fire_FrisbeeLauncher",
+          "frames": 96,
+          "sampleFps": 60,
+          "duration": 1.58,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 2.805
+        },
+        {
+          "name": "FP_FireAim_FrisbeeLauncher",
+          "frames": 96,
+          "sampleFps": 60,
+          "duration": 1.58,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 2.805
+        },
+        {
+          "name": "FP_FireLast_FrisbeeLauncher",
+          "frames": 31,
+          "sampleFps": 60,
+          "duration": 0.5,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.009
+        },
+        {
+          "name": "FP_FireLastAim_FrisbeeLauncher",
+          "frames": 31,
+          "sampleFps": 60,
+          "duration": 0.5,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.111
+        },
+        {
+          "name": "FP_Reload_FrisbeeLauncher",
+          "frames": 85,
+          "sampleFps": 60,
+          "duration": 1.4,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.188
+        },
+        {
+          "name": "FP_ReloadEmpty_FrisbeeLauncher",
+          "frames": 150,
+          "sampleFps": 60,
+          "duration": 2.48,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 2.805
+        },
+        {
+          "name": "FP_Inspect_FrisbeeLauncher",
+          "frames": 217,
+          "sampleFps": 60,
+          "duration": 3.6,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.186
+        },
+        {
+          "name": "FP_Equip_FrisbeeLauncher",
+          "frames": 34,
+          "sampleFps": 60,
+          "duration": 0.55,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.008
+        },
+        {
+          "name": "FP_Unequip_FrisbeeLauncher",
+          "frames": 22,
+          "sampleFps": 60,
+          "duration": 0.35,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.0
+        }
+      ],
+      "authoring": {
+        "method": "IK per frame: weapon placed in camera space, right arm solved on Weapon_R (pistol grip), left arm on the vertical foregrip (Paintball Rifle fitted fist); off the grip (re-cocking, cage swap) the left arm is solved under natural limits (skin-seen twists, elbows down/out, shoulder slide) and its free-air moves are joint-space blends between contact poses; the launcher placements at the contact keys were searched for a natural arm + the action on screen (opt/search_keys.py)",
+        "holdGripCameraSpace": [
+          0.195,
+          -0.272,
+          -0.4
+        ],
+        "holdYawPitchRollDeg": [
+          14.0,
+          2.0,
+          -6.0
+        ],
+        "sameChannelSetAsHexSniper": true
+      }
+    },
+    "tp": {
+      "poseSpace": "character",
+      "bone": "Weapon_R",
+      "matrixColumnMajor": [
+        -0.06201392833798684,
+        0.14573272133021561,
+        0.3121155769322014,
+        0.0,
+        0.10817704187213656,
+        0.30932828415013985,
+        -0.12293780670236266,
+        0.0,
+        -0.32703513738647527,
+        0.07468549225597577,
+        -0.09985031826265442,
+        0.0,
+        -0.013753431351279141,
+        -0.01939409501096824,
+        -0.010651379435043892,
+        1.0
+      ],
+      "matrixRows": [
+        [
+          -0.06201392833798684,
+          0.10817704187213656,
+          -0.32703513738647527,
+          -0.013753431351279141
+        ],
+        [
+          0.14573272133021561,
+          0.30932828415013985,
+          0.07468549225597577,
+          -0.01939409501096824
+        ],
+        [
+          0.3121155769322014,
+          -0.12293780670236266,
+          -0.09985031826265442,
+          -0.010651379435043892
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "weaponRootScalePreserved": 0.19,
+      "additionalScale": 0.34999983819701996,
+      "clips": [
+        {
+          "name": "TP_Hold_FrisbeeLauncher",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.019
+        },
+        {
+          "name": "TP_Aim_FrisbeeLauncher",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.018
+        },
+        {
+          "name": "TP_Raise_FrisbeeLauncher",
+          "frames": 37,
+          "sampleFps": 120,
+          "duration": 0.3,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.018
+        },
+        {
+          "name": "TP_Lower_FrisbeeLauncher",
+          "frames": 37,
+          "sampleFps": 120,
+          "duration": 0.3,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.018
+        },
+        {
+          "name": "TP_Run_FrisbeeLauncher",
+          "frames": 25,
+          "sampleFps": 30,
+          "duration": 0.8,
+          "loop": true,
+          "channels": 26,
+          "maxLeftHandContactErrorMm": 0.052
+        },
+        {
+          "name": "TP_FireLast_FrisbeeLauncher",
+          "frames": 31,
+          "sampleFps": 60,
+          "duration": 0.5,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.021
+        },
+        {
+          "name": "TP_Fire_FrisbeeLauncher",
+          "frames": 48,
+          "sampleFps": 30,
+          "duration": 1.58,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 13.338
+        },
+        {
+          "name": "TP_Reload_FrisbeeLauncher",
+          "frames": 43,
+          "sampleFps": 30,
+          "duration": 1.4,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 12.653
+        },
+        {
+          "name": "TP_ReloadEmpty_FrisbeeLauncher",
+          "frames": 75,
+          "sampleFps": 30,
+          "duration": 2.48,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 13.338
+        }
+      ],
+      "animatedWeaponSocketCorrection": "Weapon_R translation is keyed at its rest value in every TP clip (resets the HexSniper offset).",
+      "stance": {
+        "twoHanded": true,
+        "alwaysAiming": true,
+        "gunDirection": "straight ahead (character +Z), level, in hold / aim / run",
+        "gripCharacterSpace": [
+          -0.0162,
+          0.524,
+          0.1863
+        ],
+        "spineYawLeanDeg": [
+          -4.53,
+          -1.32
+        ],
+        "foregripHandYawSlide": [
+          18.127,
+          -0.12
+        ],
+        "characterSkinRequired": "Potato_TP_Character.glb v5 (flank / armpit weights repaired \u2014 the file shipped with the Popcorn Shotgun)"
+      }
+    }
+  },
+  "fpClips": {
+    "hold": "FP_FrisbeeLauncher_Hold",
+    "run": "FP_FrisbeeLauncher_Run",
+    "aim": "FP_Aim_FrisbeeLauncher",
+    "raise": "FP_Raise_FrisbeeLauncher",
+    "lower": "FP_Lower_FrisbeeLauncher",
+    "inspect": "FP_Inspect_FrisbeeLauncher",
+    "equip": "FP_Equip_FrisbeeLauncher",
+    "unequip": "FP_Unequip_FrisbeeLauncher"
+  },
+  "fpActions": {
+    "fire": {
+      "clip": "FP_Fire_FrisbeeLauncher",
+      "loop": false
+    },
+    "fireAim": {
+      "clip": "FP_FireAim_FrisbeeLauncher",
+      "loop": false
+    },
+    "fireLast": {
+      "clip": "FP_FireLast_FrisbeeLauncher",
+      "loop": false
+    },
+    "fireLastAim": {
+      "clip": "FP_FireLastAim_FrisbeeLauncher",
+      "loop": false
+    },
+    "reload": {
+      "clip": "FP_Reload_FrisbeeLauncher",
+      "loop": false
+    },
+    "reloadEmpty": {
+      "clip": "FP_ReloadEmpty_FrisbeeLauncher",
+      "loop": false
+    }
+  },
+  "tpClips": {
+    "hold": "TP_Hold_FrisbeeLauncher",
+    "run": "TP_Run_FrisbeeLauncher",
+    "aim": "TP_Aim_FrisbeeLauncher",
+    "raise": "TP_Raise_FrisbeeLauncher",
+    "lower": "TP_Lower_FrisbeeLauncher",
+    "actions": {
+      "fire": {
+        "clip": "TP_Fire_FrisbeeLauncher",
+        "loop": false
+      },
+      "fireLast": {
+        "clip": "TP_FireLast_FrisbeeLauncher",
+        "loop": false
+      },
+      "reload": {
+        "clip": "TP_Reload_FrisbeeLauncher",
+        "loop": false
+      },
+      "reloadEmpty": {
+        "clip": "TP_ReloadEmpty_FrisbeeLauncher",
+        "loop": false
+      }
+    }
+  },
+  "upperBodyMask": [
+    "Hand_L",
+    "Hand_R",
+    "Index_L_1",
+    "Index_R_1",
+    "LowerArm_L",
+    "LowerArm_R",
+    "Middle_L_1",
+    "Middle_R_1",
+    "Plant_Root",
+    "Ring_L_1",
+    "Ring_R_1",
+    "Shoulder_L",
+    "Shoulder_R",
+    "Spine_1",
+    "Thumb_L_1",
+    "Thumb_R_1",
+    "UpperArm_L",
+    "UpperArm_R",
+    "Weapon_R"
+  ],
+  "weaponClips": {
+    "idle": "Idle",
+    "idleEmpty": "IdleEmpty",
+    "fire": "Fire",
+    "fireLast": "FireLast",
+    "reload": "Reload",
+    "reloadEmpty": "ReloadEmpty",
+    "reloadTP": "Reload_TP",
+    "reloadEmptyTP": "ReloadEmpty_TP",
+    "inspect": "Inspect",
+    "inspectEmpty": "InspectEmpty",
+    "equip": "Equip",
+    "equipEmpty": "EquipEmpty"
+  },
+  "actions": {
+    "fire": {
+      "fpClip": "FP_Fire_FrisbeeLauncher",
+      "fpClipAim": "FP_FireAim_FrisbeeLauncher",
+      "tpClip": "TP_Fire_FrisbeeLauncher",
+      "weaponClip": "Fire",
+      "loop": false,
+      "duration": 1.58,
+      "events": {
+        "shot": 0.0,
+        "cocked": 0.7,
+        "discTaken": 0.95,
+        "discSeated": 1.29,
+        "readyToFire": 1.5
+      },
+      "recommendedFadeIn": 0.03,
+      "note": "The loaded disc is thrown at t=0 (projectile), then the automatic re-cock: the left hand pulls the sled back (cocked), takes the next disc out of the cage (discTaken) and lays it on the deck (discSeated). Next shot allowed from readyToFire (the end of the clip is the hand going back to the foregrip)."
+    },
+    "fireLast": {
+      "fpClip": "FP_FireLast_FrisbeeLauncher",
+      "fpClipAim": "FP_FireLastAim_FrisbeeLauncher",
+      "tpClip": "TP_FireLast_FrisbeeLauncher",
+      "weaponClip": "FireLast",
+      "loop": false,
+      "duration": 0.5,
+      "events": {
+        "shot": 0.0,
+        "readyToReload": 0.25
+      },
+      "note": "The cage is empty: the last disc is thrown, the launcher stays uncocked and empty."
+    },
+    "reload": {
+      "fpClip": "FP_Reload_FrisbeeLauncher",
+      "tpClip": "TP_Reload_FrisbeeLauncher",
+      "weaponClip": "Reload",
+      "weaponClipTP": "Reload_TP",
+      "duration": 1.4,
+      "events": {
+        "cageOut": 0.4,
+        "cageDrop": 0.45,
+        "cageSwap": 0.71,
+        "cageIn": 1.1,
+        "readyToFire": 1.3
+      },
+      "recommendedFadeIn": 0.08,
+      "note": "Deck loaded: the empty cage is pulled down and thrown away (cageDrop: FP it falls out of the view in the clip; TP the Cage node is handed to a world-space copy, DroppedCages), a full cage (5 discs) comes out of the belt pouch (off screen in FP) and is pushed in (click)."
+    },
+    "reloadEmpty": {
+      "fpClip": "FP_ReloadEmpty_FrisbeeLauncher",
+      "tpClip": "TP_ReloadEmpty_FrisbeeLauncher",
+      "weaponClip": "ReloadEmpty",
+      "weaponClipTP": "ReloadEmpty_TP",
+      "duration": 2.48,
+      "events": {
+        "cageOut": 0.4,
+        "cageDrop": 0.45,
+        "cageSwap": 0.71,
+        "cageIn": 1.1,
+        "cocked": 1.6,
+        "discTaken": 1.85,
+        "discSeated": 2.19,
+        "readyToFire": 2.4
+      },
+      "recommendedFadeIn": 0.08,
+      "note": "Deck empty: cage swap, then the re-cock (sled pulled back, a disc from the new cage laid on the deck)."
+    },
+    "inspect": {
+      "fpClip": "FP_Inspect_FrisbeeLauncher",
+      "weaponClip": "Inspect",
+      "weaponClipEmpty": "InspectEmpty",
+      "duration": 3.6
+    }
+  },
+  "inspection": {
+    "armsClip": "FP_Inspect_FrisbeeLauncher",
+    "weaponClip": "Inspect",
+    "duration": 3.6,
+    "loop": false,
+    "twoHanded": true,
+    "showcase": {
+      "leftSide": [
+        0.95,
+        1.6
+      ],
+      "deckFromAbove": [
+        2.25,
+        2.75
+      ]
+    },
+    "gameplayEvents": []
+  },
+  "droppedCage": {
+    "event": "cageDrop",
+    "fpFallsOutOfViewInClip": true,
+    "fpHiddenAt": 0.696,
+    "tpHandOverAt": 0.45,
+    "tpNodeHiddenAt": 0.467,
+    "newCageAppearsAtFP": 0.78,
+    "newCageAppearsAtTP": 0.82,
+    "fpLeftArmOutOfView": [
+      0.53,
+      0.87
+    ],
+    "newCageGrowSeconds": 0.06,
+    "note": "The weapon Cage node never vanishes in view: FP it leaves the screen before it is hidden and the new one appears off screen; TP the thrown cage becomes a world prop (DroppedCages) that falls, lies on the ground and sinks after a few seconds."
+  },
+  "discs": {
+    "deckNode": "DiscDeck",
+    "handNode": "DiscHand",
+    "cageNode": "Cage",
+    "cageDiscNodes": [
+      "CageDisc0",
+      "CageDisc1",
+      "CageDisc2",
+      "CageDisc3",
+      "CageDisc4"
+    ],
+    "cageCapacity": 5,
+    "capacity": 6,
+    "launchSocket": "LaunchSocket",
+    "projectileTemplate": "DiscDeck (mesh, weapon units: radius 1.10)"
+  },
+  "assetLoading": {
+    "fpRigInstancesPerLocalPlayer": 1,
+    "loadPoseAnimationsOnCommonRig": true,
+    "renderPoseLibraryScene": false,
+    "cloneSkeletonPerInstance": true,
+    "attachWholeWeaponSceneUnderMount": true,
+    "preserveWeaponRootScale": 0.19,
+    "applyMountMatrixOnce": true,
+    "applyLegacyNormalization": false
+  },
+  "render": {
+    "separateFirstPersonScene": true,
+    "clearDepthOnceBeforeArmsAndWeapon": true,
+    "opaqueDepthTest": true,
+    "opaqueDepthWrite": true,
+    "runtimeDrawCalls": "9 meshes + 5 cage discs + the flying discs (1 each + trail)"
+  },
+  "presentationRules": {
+    "straightPose": "Aim",
+    "straightWhile": [
+      "ADS"
+    ],
+    "inspectionOnlyWhen": "Idle, not firing / reloading, no ADS, stationary",
+    "useAuthoredRaiseLowerTransitionsForADS": true,
+    "neverDelayGameplayToFinishVisualTransition": true,
+    "aimNote": "ADS = crossbow sight picture: the deck and the disc under the crosshair, the limbs across the screen."
+  },
+  "sharedCharacterLocomotion": {
+    "clips": [
+      "Run_Goofy",
+      "Jump",
+      "Dash",
+      "Slide"
+    ],
+    "slideGuide": "Potato_Slide_Integration.json"
+  }
+}

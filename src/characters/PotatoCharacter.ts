@@ -18,6 +18,8 @@ import { loadPaintballRifleTPClips } from "../weapons/paintball/PaintballRifleMo
 import { PaintballRifleProfile } from "../weapons/profiles/PaintballRifleProfile";
 import { loadWaterFamasTPClips } from "../weapons/waterfamas/WaterFamasModel";
 import { WaterFamasProfile } from "../weapons/profiles/WaterFamasProfile";
+import { loadFrisbeeLauncherTPClips } from "../weapons/frisbee/FrisbeeLauncherModel";
+import { FrisbeeLauncherProfile } from "../weapons/profiles/FrisbeeLauncherProfile";
 // POTATO character pack (src/assets/potato) — the common third-person model
 // for remote players AND bots. One GLB carries mesh + skeleton + the four
 // locomotion clips (Run_Goofy / Jump / Dash / Slide, all in place — no root
@@ -199,9 +201,15 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       console.error("WaterFamas: TP pose library failed to load", err);
       return [] as THREE.AnimationClip[];
     }),
-  ]).then(([gltf, posesGltf, maulClips, basketClips, popcornClips, paintballClips, famasClips]: [
+    // Frisbee Launcher TP pose library (clips only) — same failure policy.
+    loadFrisbeeLauncherTPClips().catch((err) => {
+      console.error("FrisbeeLauncher: TP pose library failed to load", err);
+      return [] as THREE.AnimationClip[];
+    }),
+  ]).then(([gltf, posesGltf, maulClips, basketClips, popcornClips, paintballClips, famasClips, frisbeeClips]: [
     GLTF,
     GLTF,
+    THREE.AnimationClip[],
     THREE.AnimationClip[],
     THREE.AnimationClip[],
     THREE.AnimationClip[],
@@ -581,12 +589,59 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       };
     }
 
+    // ---- Frisbee Launcher TP profile set (FrisbeeLauncher_TP_Poses.glb) ----
+    // TWO-HAND crossbow (right hand on the pistol grip, left on the foregrip), same
+    // construction as the Popcorn Shotgun / Paintball Rifle sets: the authored
+    // upperBodyMask is the hold layer, everything else comes from the unarmed
+    // locomotion. Fire (throw + automatic re-cock, 1.58 s), FireLast, Reload and
+    // ReloadEmpty are ONE-SHOT layers over the lower-body locomotion (a player
+    // firing or swapping the cage while running keeps running).
+    let frisbeelauncher: ArmedProfileClips | null = null;
+    const flTp = FrisbeeLauncherProfile.tpClips!;
+    const flHoldSrc = byName(frisbeeClips, flTp.hold);
+    const flRunSrc = byName(frisbeeClips, flTp.run);
+    if (flHoldSrc && flRunSrc && FrisbeeLauncherProfile.upperBodyMask) {
+      const mask = new Set<string>(FrisbeeLauncherProfile.upperBodyMask);
+      const flHold = overlayClip(idle, flHoldSrc, `${flHoldSrc.name}_Full`);
+      const flRun = overlayClip(run, flRunSrc, `${flRunSrc.name}_Full`);
+      const masked = (base: THREE.AnimationClip) => buildMaskedVariant(base, flHoldSrc, mask, "_FrisbeeLauncher");
+      const flJumpVariants = jumpVariants.map(masked);
+      const flDash = masked(dash);
+      const flSlide = masked(slide);
+      const actions: ArmedProfileClips["actions"] = {};
+      for (const [key, def] of Object.entries(flTp.actions ?? {})) {
+        const clip = byName(frisbeeClips, def.clip);
+        if (clip) actions[key] = { clip: keepBones(clip, mask, "_Layer"), loop: def.loop, layered: true };
+      }
+      frisbeelauncher = {
+        hold: flHold,
+        run: flRun,
+        jump: flJumpVariants[0],
+        jumpVariants: flJumpVariants,
+        dash: flDash,
+        slide: flSlide,
+        equip: null,
+        unequip: null,
+        inspect: null,
+        lowerBody: {
+          hold: stripBones(flHold, mask, "_Lower"),
+          run: stripBones(flRun, mask, "_Lower"),
+          jump: stripBones(flJumpVariants[0], mask, "_Lower"),
+          jumpVariants: flJumpVariants.map((c) => stripBones(c, mask, "_Lower")),
+          dash: stripBones(flDash, mask, "_Lower"),
+          slide: stripBones(flSlide, mask, "_Lower"),
+        },
+        actions,
+      };
+    }
+
     const profiles: Record<string, ArmedProfileClips> = {};
     if (brickmaul) profiles.brickmaul = brickmaul;
     if (goofybasket) profiles[GoofyBasketProfile.id] = goofybasket;
     if (popcornshotgun) profiles[PopcornShotgunProfile.id] = popcornshotgun;
     if (paintballrifle) profiles[PaintballRifleProfile.id] = paintballrifle;
     if (waterfamas) profiles[WaterFamasProfile.id] = waterfamas;
+    if (frisbeelauncher) profiles[FrisbeeLauncherProfile.id] = frisbeelauncher;
 
     const clips: RemoteCharacterClips = {
       idle,

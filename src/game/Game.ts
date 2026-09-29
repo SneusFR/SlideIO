@@ -73,6 +73,9 @@ import { WaterFamasWeapon } from "../weapons/waterfamas/WaterFamasWeapon";
 import { WaterFamasHUD } from "../ui/WaterFamasHUD";
 import { WaterFamasConfig as famasCfg } from "../../shared/combat/WaterFamasRules";
 import type { WaterJetHit } from "../weapons/waterfamas/WaterJets";
+import { FrisbeeLauncherWeapon } from "../weapons/frisbee/FrisbeeLauncherWeapon";
+import { FrisbeeLauncherHUD } from "../ui/FrisbeeLauncherHUD";
+import { FrisbeeLauncherConfig as frisbeeCfg } from "../../shared/combat/FrisbeeLauncherRules";
 import { ViewmodelSystem } from "../weapons/viewmodel/ViewmodelSystem";
 import { MusicSelectorHUD } from "../ui/MusicSelectorHUD";
 import { KillstreakManager, KILLSTREAK_SLOT_CODES } from "../killstreaks/KillstreakManager";
@@ -115,6 +118,9 @@ import {
   BASKET_ACTION_BOUNCE,
   BASKET_ACTION_REST,
   BASKET_ACTION_END,
+  FRISBEE_ACTION_BOUNCE,
+  FRISBEE_ACTION_HIT,
+  FRISBEE_ACTION_END,
 } from "../../shared/combat/NetworkWeapons";
 import type {
   HitConfirmedEvent,
@@ -180,7 +186,7 @@ export class Game {
    */
   private activeSlot: "PRIMARY" | "MELEE" = "PRIMARY";
   /** Owner of the shared FP arms right now (exactly one advances the mixer). */
-  private fpOwner: "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" | "POPCORN_SHOTGUN" | "PAINTBALL_RIFLE" | "WATER_FAMAS" = "NONE";
+  private fpOwner: "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" | "POPCORN_SHOTGUN" | "PAINTBALL_RIFLE" | "WATER_FAMAS" | "FRISBEE_LAUNCHER" = "NONE";
   /** True during the maul's Unequip transition back to the primary. */
   private slotSwitchPending = false;
   /** FP maul inspection running (slot 2, F key). */
@@ -268,6 +274,17 @@ export class Game {
   private readonly famasFrom = new THREE.Vector3();
   private readonly famasTo = new THREE.Vector3();
   private readonly famasOrigin = new THREE.Vector3();
+
+  // ---- FRISBEE LAUNCHER (6-disc two-hand crossbow, REAL bouncing projectile — shared FP arms) ----
+  private frisbeeLauncher: FrisbeeLauncherWeapon;
+  private frisbeeHud: FrisbeeLauncherHUD;
+  /** Remote / server disc replay scratch (allocated once). */
+  private readonly frisbeeVec = new THREE.Vector3();
+  private readonly frisbeeVec2 = new THREE.Vector3();
+  private readonly frisbeeVec3 = new THREE.Vector3();
+  private readonly frisbeeDir = new THREE.Vector3();
+  private readonly frisbeeFrom = new THREE.Vector3();
+  private readonly frisbeeCenter = new THREE.Vector3();
   private readonly basketVec = new THREE.Vector3();
   private readonly basketVec2 = new THREE.Vector3();
   private readonly basketVec3 = new THREE.Vector3();
@@ -536,6 +553,7 @@ export class Game {
       this.popcornShotgun.cancelReload(); // knocked down mid-reload: undone before 1.75 s
       this.paintballRifle.cancelReload(); // knocked down mid-swap: undone before 1.52 s
       this.waterFamas.cancelReload(); // knocked down mid-refill: undone before the end of the pour
+      this.frisbeeLauncher.cancelReload(); // knocked down mid-swap: undone before the click
       this.meleeHoldPending = false;
     };
 
@@ -752,6 +770,27 @@ export class Game {
     this.famasHud = new WaterFamasHUD(famasCfg.capacity);
     this.famasRay.firstHitOnly = true;
 
+    // ---- FRISBEE LAUNCHER (primary alternative — equipped from the Loadout menu):
+    // LMB PRESS = ONE disc (a REAL projectile: 34 m/s, glides, bounces 3x, 45 body / 68 head,
+    // x0.6 after a bounce + a small knockback), automatic re-cock after each shot, 6 discs
+    // (deck + 5-disc cage), R = cage swap (auto on a dry fire), RMB = sight picture, F =
+    // two-hand inspection. Presentation = shared FP arms + the pack's controller; the discs
+    // in flight and the thrown cages = ONE pool for every shooter.
+    this.frisbeeLauncher = new FrisbeeLauncherWeapon(this.fpsCamera.camera, this.scene, this.viewmodelSystem, this.physics);
+    this.frisbeeLauncher.owner = this.playerCombatant;
+    this.frisbeeLauncher.feedback = this.hitFeedback;
+    this.frisbeeLauncher.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
+    this.frisbeeHud = new FrisbeeLauncherHUD(frisbeeCfg.cageCapacity);
+    // SOLO targets: every alive bot as the shared server capsule (the local player is the owner).
+    this.frisbeeLauncher.setTargets({
+      forEach: (cb) => {
+        for (const bot of this.botManager.bots) {
+          if (!bot.health.alive) continue;
+          cb("bot:" + bot.id, bot.getPosition(this.frisbeeCenter), bot);
+        }
+      },
+    });
+
     // ---- Audio: pure observation of existing gameplay events ----
     this.gameAudio = new GameAudio();
     this.movement.sfx = this.gameAudio.movementSfx;
@@ -836,6 +875,18 @@ export class Game {
       onHingeClose: () => this.gameAudio.famasClick(false),
       onCapScrewed: () => this.gameAudio.famasCap("screwed"),
     };
+    // Frisbee Launcher: pack §6 callbacks → SFX (the HUD polls the weapon).
+    this.frisbeeLauncher.sfx = {
+      onShot: () => this.gameAudio.frisbeeShot(),
+      onDryFire: () => this.gameAudio.frisbeeDryFire(),
+      onCocked: () => this.gameAudio.frisbeeCocked(),
+      onDiscTaken: () => this.gameAudio.frisbeeDisc(false),
+      onDiscSeated: () => this.gameAudio.frisbeeDisc(true),
+      onCageOut: () => this.gameAudio.frisbeeCage("out"),
+      onCageIn: () => this.gameAudio.frisbeeCage("in"),
+      onBounce: (point, speed) => this.gameAudio.frisbeeBounce(point, speed),
+    };
+    this.frisbeeLauncher.onLocalCageDrop = (point) => this.gameAudio.frisbeeCageDropAt(point);
 
     this.playerCombatant.health.onDamaged = (amount, attacker) => {
       this.combatHud.notifyDamage(amount, this.damageAngleFrom(attacker));
@@ -885,6 +936,7 @@ export class Game {
       this.popcornShotgun.reset(); // reload dropped, full tank for the respawn (server does the same)
       this.paintballRifle.reset(); // swap dropped, full hopper for the respawn (server does the same)
       this.waterFamas.reset(); // refill dropped, full tank for the respawn (server does the same)
+      this.frisbeeLauncher.reset(); // swap dropped, loaded deck + full cage for the respawn (server does the same)
       this.movement.stopHexPull(); // dying while reeled: the grab is gone
       this.meleeHoldPending = false;
       // Death mid-burrow: instant cleanup WITHOUT the AoE, then every
@@ -1082,6 +1134,7 @@ export class Game {
       this.popcornShotgun.ready,
       this.paintballRifle.ready,
       this.waterFamas.ready,
+      this.frisbeeLauncher.ready,
     ]);
 
     // 2. Transient visuals that never exist at rest: a thrown-revolver
@@ -1095,6 +1148,8 @@ export class Game {
     this.paintballRifle.beginWarmUp(far);
     // Water FAMAS: one visible jet + its splash (both programs).
     this.waterFamas.beginWarmUp(far);
+    // Frisbee Launcher: one visible disc (its program compiles now, never on the first shot).
+    this.frisbeeLauncher.beginWarmUp(far);
     const temp: THREE.Object3D[] = [];
     try {
       const template = await loadRevolverTemplate();
@@ -1227,6 +1282,7 @@ export class Game {
       if (prevOwner === "POPCORN_SHOTGUN") this.popcornShotgun.releasePresentation();
       if (prevOwner === "PAINTBALL_RIFLE") this.paintballRifle.releasePresentation();
       if (prevOwner === "WATER_FAMAS") this.waterFamas.releasePresentation();
+      if (prevOwner === "FRISBEE_LAUNCHER") this.frisbeeLauncher.releasePresentation();
       await this.hammerViewmodel.equip(false);
       this.viewmodelSystem.setVisible(true);
       this.viewmodelSystem.syncCamera(this.fpsCamera.camera);
@@ -1237,6 +1293,7 @@ export class Game {
       if (prevOwner === "POPCORN_SHOTGUN") this.popcornShotgun.takePresentation();
       if (prevOwner === "PAINTBALL_RIFLE") this.paintballRifle.takePresentation();
       if (prevOwner === "WATER_FAMAS") this.waterFamas.takePresentation();
+      if (prevOwner === "FRISBEE_LAUNCHER") this.frisbeeLauncher.takePresentation();
     }
     this.viewmodelSystem.setVisible(fpWasVisible);
 
@@ -1278,6 +1335,7 @@ export class Game {
     this.popcornShotgun.endWarmUp();
     this.paintballRifle.endWarmUp();
     this.waterFamas.endWarmUp();
+    this.frisbeeLauncher.endWarmUp();
     if (paintedWarm) this.paintballRifle.fx.detachUnder(paintedWarm);
     this.particles.update(10);
 
@@ -1309,6 +1367,7 @@ export class Game {
       this.popcornShotgun.reset(); // fresh full tank
       this.paintballRifle.reset(); // fresh full hopper
       this.waterFamas.reset(); // fresh full tank
+      this.frisbeeLauncher.reset(); // fresh loaded deck + full cage
     }
     // COSMETICS: the equipped skin of the primary. Applied on the held ball
     // instance in place — a skin change ALONE is NOT a weapon change (no
@@ -1357,7 +1416,7 @@ export class Game {
    *   - otherwise                           → nobody (legacy viewmodels)
    * Exactly one owner advances the arms mixer per frame.
    */
-  private desiredFpOwner(): "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" | "POPCORN_SHOTGUN" | "PAINTBALL_RIFLE" | "WATER_FAMAS" {
+  private desiredFpOwner(): "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" | "POPCORN_SHOTGUN" | "PAINTBALL_RIFLE" | "WATER_FAMAS" | "FRISBEE_LAUNCHER" {
     if (this.meleeWeapon === "HAMMER") {
       if (this.activeSlot === "MELEE" || this.slotSwitchPending) return "HAMMER";
       if (this.hammer.isBusy) return "HAMMER"; // temporary melee override
@@ -1367,6 +1426,7 @@ export class Game {
     if (this.primaryWeapon === "POPCORN_SHOTGUN" && this.activeSlot === "PRIMARY") return "POPCORN_SHOTGUN";
     if (this.primaryWeapon === "PAINTBALL_RIFLE" && this.activeSlot === "PRIMARY") return "PAINTBALL_RIFLE";
     if (this.primaryWeapon === "WATER_FAMAS" && this.activeSlot === "PRIMARY") return "WATER_FAMAS";
+    if (this.primaryWeapon === "FRISBEE_LAUNCHER" && this.activeSlot === "PRIMARY") return "FRISBEE_LAUNCHER";
     return "NONE";
   }
 
@@ -1382,6 +1442,7 @@ export class Game {
     if (this.fpOwner === "POPCORN_SHOTGUN") this.popcornShotgun.releasePresentation();
     if (this.fpOwner === "PAINTBALL_RIFLE") this.paintballRifle.releasePresentation();
     if (this.fpOwner === "WATER_FAMAS") this.waterFamas.releasePresentation();
+    if (this.fpOwner === "FRISBEE_LAUNCHER") this.frisbeeLauncher.releasePresentation();
     if (this.fpOwner === "HAMMER") {
       this.hammerInspecting = false;
       this.hammerViewmodel.hide();
@@ -1401,6 +1462,8 @@ export class Game {
       this.paintballRifle.takePresentation(); // real Equip clip
     } else if (want === "WATER_FAMAS") {
       this.waterFamas.takePresentation(); // real Equip clip
+    } else if (want === "FRISBEE_LAUNCHER") {
+      this.frisbeeLauncher.takePresentation(); // real Equip clip
     }
     this.syncNetworkMeleeShown();
   }
@@ -1699,6 +1762,23 @@ export class Game {
     // sound AT THE JET; HIT_CONFIRMED then only adds the damage number.
     this.waterFamas.onPredictedRemoteHit = (zone) => this.showFamasHitFeedback(zone);
     this.waterFamas.fx.clearAll();
+    // ---- FRISBEE LAUNCHER (server-authoritative ammo / cadence / flight / touches / knockback) ----
+    // Shooter side: each disc is PREDICTED (visual only, no damage); the server simulates the SAME disc,
+    // owns the touch (HIT_CONFIRMED gives the hitmarker) and the knockback (APPLY_IMPULSE, handled by
+    // the generic impulse hook above). Remote avatars are the predicted contact volumes (the SHARED
+    // server capsule / head sphere) so a local disc stops where the server's will. Other players' discs
+    // are replayed from their FIRE confirm; BOUNCE / HIT / END only correct the copies.
+    this.frisbeeLauncher.networkAuthority = true;
+    this.frisbeeLauncher.clear();
+    this.frisbeeLauncher.setTargets({
+      forEach: (cb) => remotes.forEachVisible((id, center) => cb(id, center, null)),
+    });
+    this.multiplayer.onRemoteFrisbeeAction = (event) => this.handleRemoteFrisbeeAction(event);
+    // A remote avatar throws its empty cage: the world copy takes over its exact pose and speed.
+    remotes.onFrisbeeCageDrop = (drop) => {
+      this.frisbeeLauncher.spawnRemoteCage(drop);
+      if (drop.world) this.gameAudio.frisbeeCageDropAt(this.frisbeeVec.setFromMatrixPosition(drop.world));
+    };
     // Victim side: reel toward the attacker's DISPLAYED position through
     // our own character controller (server HEX_PULL start/stop).
     this.multiplayer.onHexPull = (event) => {
@@ -1764,6 +1844,17 @@ export class Game {
     this.waterFamas.onPredictedRemoteHit = null;
     this.waterFamas.reset();
     this.waterFamas.fx.clearAll(); // the old match's wet marks never leak into solo
+    this.frisbeeLauncher.networkAuthority = false; // back to local damage (solo / bots)
+    this.frisbeeLauncher.reset();
+    this.frisbeeLauncher.clear(); // no disc / cage of the old session left in the world
+    this.frisbeeLauncher.setTargets({
+      forEach: (cb) => {
+        for (const bot of this.botManager.bots) {
+          if (!bot.health.alive) continue;
+          cb("bot:" + bot.id, bot.getPosition(this.frisbeeCenter), bot);
+        }
+      },
+    });
     this.goofyBasket.networkAuthority = false;
     this.goofyBasket.projectiles.networkAuthority = false;
     this.goofyBasket.reset();
@@ -2179,6 +2270,7 @@ export class Game {
       const popcornEquipped = primaryHeld && this.primaryWeapon === "POPCORN_SHOTGUN";
       const paintballEquipped = primaryHeld && this.primaryWeapon === "PAINTBALL_RIFLE";
       const famasEquipped = primaryHeld && this.primaryWeapon === "WATER_FAMAS";
+    const frisbeeEquipped = primaryHeld && this.primaryWeapon === "FRISBEE_LAUNCHER";
       // KNOCKED DOWN (§ ragdoll) blocks EVERY weapon — exactly like a
       // ragdolled bot never fires. In-flight projectiles / explosions of
       // course keep ticking; only NEW actions are gated.
@@ -2201,7 +2293,8 @@ export class Game {
         !basketEquipped &&
         !popcornEquipped &&
         !paintballEquipped &&
-        !famasEquipped;
+        !famasEquipped &&
+        !frisbeeEquipped;
       this.rifle.setViewmodelHidden(
         !primaryHeld ||
           this.hammer.isBusy ||
@@ -2426,6 +2519,26 @@ export class Game {
         speed: this.movement.horizontalSpeed,
       });
 
+      // FRISBEE LAUNCHER: LMB PRESS = ONE disc (never re-fires while held: the edge, not the level),
+      // R = cage swap (auto on a dry fire), RMB sight picture, F inspection (terminal interaction
+      // keeps priority on F). The FP arms mixer advances ONLY while it owns them; the weapon clips,
+      // the discs in flight and the thrown cages run in postCameraUpdate after the FP camera sync.
+      this.frisbeeLauncher.setViewmodelHidden(
+        !frisbeeEquipped || this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
+      );
+      this.frisbeeLauncher.update(dt, {
+        firePressed: frisbeeEquipped && this.input.pointerLocked && this.input.wasMousePressed(0),
+        reloadPressed: frisbeeEquipped && this.input.wasPressed("KeyR"),
+        inspectPressed: frisbeeEquipped && !this.interactNearby && this.input.wasPressed("KeyF"),
+        aimHeld: frisbeeEquipped && this.input.isMouseDown(2),
+        canAct: frisbeeEquipped && playerAlive && !meleeBlocked && this.input.pointerLocked,
+        grounded: this.movement.grounded,
+        verticalVelocity: this.movement.velocity.y,
+        jumpSequence: this.movement.jumpSequence,
+        sliding: this.movement.state === MoveState.SLIDING,
+        speed: this.movement.horizontalSpeed,
+      });
+
       // LANCE on slot 2: held at rest between attacks (legacy viewmodel).
       this.spearViewmodel.setHeld(
         this.meleeWeapon === "SPEAR" && this.activeSlot === "MELEE" && playerAlive && !this.moleStrike.active,
@@ -2475,6 +2588,8 @@ export class Game {
     this.paintballHud.update(this.paintballRifle);
     this.famasHud.setVisible(this.primaryWeapon === "WATER_FAMAS");
     this.famasHud.update(this.waterFamas);
+    this.frisbeeHud.setVisible(this.primaryWeapon === "FRISBEE_LAUNCHER");
+    this.frisbeeHud.update(this.frisbeeLauncher);
     this.combatHud.update(dt, this.playerCombatant.health, this.playerDeathTimer);
     // Knockdown banner (§ ragdoll): down → "KNOCKED DOWN", recoverable →
     // pulsing "PRESS SPACE TO GET UP" (a death always hides it).
@@ -2536,6 +2651,8 @@ export class Game {
     // reads the final world pose; jets 1 / 2 are cast from the FINAL camera),
     // then jets + wet marks (WaterFamasFX.update, once per frame).
     this.waterFamas.postCameraUpdate(running ? dt : 0);
+    // FRISBEE LAUNCHER (pack order): controller AFTER syncCamera, then the shared discs + thrown cages.
+    this.frisbeeLauncher.postCameraUpdate(running ? dt : 0);
     try {
       // LOW preset: the shadow map is STATIC (baked once at load — see
       // warmUpRendering). No per-frame refresh: the caster re-render was the
@@ -2821,7 +2938,8 @@ export class Game {
       this.primaryWeapon !== "POISON_SPRAYER" &&
       this.primaryWeapon !== "POPCORN_SHOTGUN" &&
       this.primaryWeapon !== "PAINTBALL_RIFLE" &&
-      this.primaryWeapon !== "WATER_FAMAS";
+      this.primaryWeapon !== "WATER_FAMAS" &&
+      this.primaryWeapon !== "FRISBEE_LAUNCHER";
     if (fellOut || manualRespawn) {
       // Suicide / kill plane → normal death + respawn flow.
       this.playerCombatant.health.kill(null);
@@ -2968,7 +3086,78 @@ export class Game {
       this.netSendAimedAction(WeaponActionType.WATER_FAMAS_FIRE, undefined, jet, seed, undefined, aiming ? 1 : 0);
     this.waterFamas.onNetReload = () => this.netSendAimedAction(WeaponActionType.WATER_FAMAS_RELOAD);
     this.waterFamas.onNetReloadCancel = () => this.netSendAimedAction(WeaponActionType.WATER_FAMAS_RELOAD_CANCEL);
+
+    // FRISBEE LAUNCHER: each disc is reported with its seed (`sd`) and the ADS flag (`pc`): the server
+    // rebuilds the same launch direction, simulates the SAME disc (shared 1/120 s step) and owns every
+    // touch (damage + knockback). Cage swap start / cancel keep the server clock in step.
+    this.frisbeeLauncher.onNetFire = (seed, aiming) =>
+      this.netSendAimedAction(WeaponActionType.FRISBEE_FIRE, undefined, undefined, seed, undefined, aiming ? 1 : 0);
+    this.frisbeeLauncher.onNetReload = () => this.netSendAimedAction(WeaponActionType.FRISBEE_RELOAD);
+    this.frisbeeLauncher.onNetReloadCancel = () => this.netSendAimedAction(WeaponActionType.FRISBEE_RELOAD_CANCEL);
   }
+
+  /**
+   * Disc corrections of the server (BOUNCE / HIT / END), for OUR discs and for the other players'
+   * (the pool maps the server disc id to its local copy). The local sim already predicts the same
+   * flight: these only re-snap a copy that drifted.
+   */
+  private applyFrisbeeDiscEvent(event: WeaponActionConfirmedEvent): void {
+    if (typeof event.pid !== "number") return;
+    const pos = this.frisbeeVec.set(event.ox, event.oy, event.oz);
+    const vel = this.frisbeeVec2.set(event.dx, event.dy, event.dz);
+    switch (event.action) {
+      case FRISBEE_ACTION_BOUNCE:
+        this.frisbeeLauncher.onServerBounce(event.pid, pos, vel, event.bn ?? 0);
+        return;
+      case FRISBEE_ACTION_HIT:
+        this.frisbeeLauncher.onServerHit(event.pid, pos, vel);
+        this.gameAudio.frisbeeHitAt(this.frisbeeVec3.set(event.hx ?? event.ox, event.hy ?? event.oy, event.hz ?? event.oz));
+        return;
+      case FRISBEE_ACTION_END:
+        this.frisbeeLauncher.onServerEnd(event.pid);
+        return;
+    }
+  }
+
+  /**
+   * Remote players' Frisbee Launcher confirms: weapon clip + TP fire / fireLast / reload / reloadEmpty
+   * (driven by the TP controller THE SAME frame), spatialized SFX, and the disc itself: the SAME
+   * projectile as the server's (origin = the validated eye, FINAL direction used AS IS), the visible
+   * disc leaving the remote's REAL LaunchSocket. Never damage.
+   */
+  private handleRemoteFrisbeeAction(event: WeaponActionConfirmedEvent): void {
+    const remotes = this.multiplayer?.remotes;
+    if (!remotes) return;
+    if (
+      event.action === FRISBEE_ACTION_BOUNCE ||
+      event.action === FRISBEE_ACTION_HIT ||
+      event.action === FRISBEE_ACTION_END
+    ) {
+      this.applyFrisbeeDiscEvent(event);
+      return;
+    }
+    const cage = typeof event.cg === "number" ? event.cg : 0;
+    const deckLoaded = event.dk === 1;
+    const shooterPos = this.frisbeeVec.set(event.ox, event.oy, event.oz);
+    if (event.action === WeaponActionType.FRISBEE_RELOAD_CANCEL) {
+      remotes.frisbeeReloadCancel(event.playerId, { cage, deckLoaded });
+      return;
+    }
+    if (event.action === WeaponActionType.FRISBEE_RELOAD) {
+      remotes.frisbeeAction(event.playerId, "reload", { cage, deckLoaded }, remotes.elapsedSince(event.ts));
+      this.gameAudio.frisbeeReloadAt(shooterPos);
+      return;
+    }
+    if (event.action !== WeaponActionType.FRISBEE_FIRE) return;
+    remotes.frisbeeAction(event.playerId, "fire", { aiming: event.pc === 1, cage, deckLoaded: true }, 0);
+    this.gameAudio.frisbeeShotAt(shooterPos);
+    if (typeof event.pid !== "number") return;
+    const dir = this.frisbeeDir.set(event.dx, event.dy, event.dz).normalize();
+    const from = remotes.getFrisbeeLaunchPoint(event.playerId, this.frisbeeFrom) ? this.frisbeeFrom : null;
+    this.frisbeeLauncher.spawnRemote(event.pid, event.playerId, shooterPos, dir, from, remotes.elapsedSince(event.ts));
+  }
+
+
 
   /**
    * Remote players' Water FAMAS confirms (one per JET): weapon clip + TP
@@ -3291,6 +3480,10 @@ export class Game {
       this.handleLocalBasketConfirmed(event);
       return;
     }
+    if (event.weapon === "FRISBEE_LAUNCHER") {
+      this.handleLocalFrisbeeConfirmed(event);
+      return;
+    }
     if (event.weapon !== "HEX_SNIPER") return;
     switch (event.action) {
       case HEX_ACTION_TONGUE_HIT:
@@ -3304,6 +3497,15 @@ export class Game {
         this.hexSniper.onNetworkBite();
         break;
     }
+  }
+
+  /** Our OWN Frisbee confirms: the FIRE links the predicted disc to the server id; BOUNCE / HIT / END correct it. */
+  private handleLocalFrisbeeConfirmed(event: WeaponActionConfirmedEvent): void {
+    if (event.action === WeaponActionType.FRISBEE_FIRE) {
+      if (typeof event.pid === "number") this.frisbeeLauncher.onLocalFireConfirmed(event.pid, event.sd);
+      return;
+    }
+    this.applyFrisbeeDiscEvent(event);
   }
 
   /** Send one aimed WEAPON_ACTION (camera eye origin + facing direction). */
@@ -3559,6 +3761,8 @@ function networkKillMethod(damageType: string): KillMethod {
       return KillMethod.PAINTBALL_RIFLE;
     case "WATER_FAMAS":
       return KillMethod.WATER_FAMAS;
+    case "FRISBEE_LAUNCHER":
+      return KillMethod.FRISBEE_LAUNCHER;
     default:
       return KillMethod.PLASMA;
   }

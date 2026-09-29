@@ -19,6 +19,8 @@ import popcornShotgunUrl from "../assets/potato/PopcornShotgun_Weapon.glb?url";
 import paintballRifleUrl from "../assets/potato/PaintballRifle_Weapon.glb?url";
 // Water FAMAS = the pack's weapon GLB (low-poly vertex colours, 420 KB).
 import waterFamasUrl from "../assets/potato/WaterFamas_Weapon.glb?url";
+// Frisbee Launcher = the pack's weapon GLB (low-poly vertex colours, cage + discs included).
+import frisbeeLauncherUrl from "../assets/potato/FrisbeeLauncher_Weapon.glb?url";
 import { getGoofyBasketSkinLibrary } from "../weapons/goofybasket/GoofyBasketSkinRuntime";
 import { DEFAULT_WEAPON_SKIN, isGoofyBasketSkinId, sanitizeWeaponSkin } from "../../shared/combat/WeaponSkins";
 
@@ -45,6 +47,7 @@ const MODEL_URLS: Record<string, string> = {
   POPCORN_SHOTGUN: popcornShotgunUrl,
   PAINTBALL_RIFLE: paintballRifleUrl,
   WATER_FAMAS: waterFamasUrl,
+  FRISBEE_LAUNCHER: frisbeeLauncherUrl,
 };
 
 const ICON_SIZE = 384;
