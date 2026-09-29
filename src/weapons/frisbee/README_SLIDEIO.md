@@ -19,7 +19,7 @@ Doc technique du pack : `INTEGRATION.md` (même dossier). Prompt d'origine, rend
 
 ## Gameplay (validé)
 
-- **Un disque par appui** (front montant, jamais de tir auto). Lancé depuis l'**œil** à 34 m/s, dispersion 0,6° (0,15° en visée). Le disque visible part du `LaunchSocket` de l'arme et rejoint la trajectoire en ~0,1 s.
+- **Un disque par appui** (front montant, jamais de tir auto). Lancé depuis l'**œil** à 102 m/s (34 dans le pack, x3 : le joueur à pleine vitesse dépassait le disque), dispersion 0,6° (0,15° en visée). Le disque visible part du `LaunchSocket` de l'arme et rejoint la trajectoire en ~0,1 s.
 - **Vrai projectile** : pas fixe **1/120 s**, plane, freine, rebondit 3 fois sur le décor, se pose, disparaît (3,5 s max). 24 disques max pour toute la partie.
 - **Dégâts (100 PV) : 45 au corps, 68 à la tête (×1,5), ×0,6 après un rebond sur un mur (27 / 41).** Aucun dégât sous 8 m/s ni après le budget de rebonds. **Une seule touche par disque.** 2 disques au corps = 90 (pas de kill), 1 tête + 1 corps = kill.
 - **Recul (knockback)** : 2,5 m/s horizontal dans le sens du disque + 0,8 m/s vers le haut, ajouté à la vitesse du joueur touché par le **mécanisme existant** (`host.sendImpulse` → `APPLY_IMPULSE` → `PlayerCombatant.applyImpulse`, comme le marteau / la lance / la morsure Hex). Pas de recul sur un kill (le ragdoll prend le relais). Constantes : `FrisbeeLauncherConfig.tuning` dans `shared/combat/FrisbeeLauncherRules.ts`.

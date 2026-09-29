@@ -6,6 +6,7 @@ import { Health, Combatant } from "../combat/Combatant";
 import { BotManager } from "../bots/BotManager";
 import { Bot } from "../bots/Bot";
 import { ComboConfig as comboCfg } from "../combo/ComboConfig";
+import { FrisbeeLauncherConfig } from "../../shared/combat/FrisbeeLauncherRules";
 
 const A = "/assets/audio";
 
@@ -913,7 +914,7 @@ export class GameAudio {
 
   /** Disc knock on the scenery (plastic "tok"), louder when fast; spatialized at the contact. */
   frisbeeBounce(pos: THREE.Vector3, speed: number): void {
-    const k = Math.min(1, speed / 34);
+    const k = Math.min(1, speed / FrisbeeLauncherConfig.tuning.speed);
     audio.playAt("popcorn_lid_click", pos, { bus: "impacts", volume: 0.25 + 0.5 * k, rate: 0.9 + 0.4 * (1 - k), rateVar: 0.06, throttleMs: 40, maxInstances: 6, refDistance: 6, maxDistance: 60 });
   }
 

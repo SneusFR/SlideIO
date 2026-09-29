@@ -60,7 +60,9 @@ export const FrisbeeLauncherConfig = {
   spreadHipDeg: 0.6,
   spreadAimDeg: 0.15,
   tuning: {
-    speed: 34,
+    // Launch speed (m/s), x3 of the pack's 34 on request (the player's top speed outran the disc). Server AND clients
+    // read it; the lift / trail / spin scale with speed / this value, so the flight keeps its look at any speed.
+    speed: 102,
     // Radius (m) of the disc: collision sphere on the server AND on every client, and the visible size of
     // the flying disc (FrisbeeLauncherWeapon reads it) -> the hitbox always matches what is drawn.
     // Pack value 0.12 -> 0.4 on request (the disc on the weapon model is far bigger than the pack's projectile).

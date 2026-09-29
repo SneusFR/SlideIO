@@ -148,10 +148,11 @@ try {
     }
   });
 
-  await test("flight: 34 m/s, ONE touch per disc (45 / 68, knockback 2.5 + 0.8), x0.6 after a bounce, bounce budget, end of life", () => {
+  await test("flight: 102 m/s, ONE touch per disc (45 / 68, knockback 2.5 + 0.8), x0.6 after a bounce, bounce budget, end of life", () => {
     const body: any[] = [];
     const s1 = new S.SharedFrisbeeSim(1, { x: 0, y: 1.0, z: 0 }, { x: 0, y: 0, z: -1 }, "A");
-    assert.ok(Math.abs(Math.hypot(s1.vel.x, s1.vel.y, s1.vel.z) - 34) < 1e-9, "launch speed 34 m/s");
+    assert.equal(F.tuning.speed, 102, "launch speed = 3 x the pack's 34 m/s");
+    assert.ok(Math.abs(Math.hypot(s1.vel.x, s1.vel.y, s1.vel.z) - F.tuning.speed) < 1e-9, "launch speed 102 m/s");
     const wc = worldCast([{ id: "P", x: 0, y: 0.9, z: -8 }]);
     for (let i = 0; i < 240; i++) s1.step(wc, { onHit: (e: any) => body.push(e) });
     assert.equal(body.length, 1, "ONE touch per disc");

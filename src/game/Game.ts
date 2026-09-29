@@ -771,7 +771,7 @@ export class Game {
     this.famasRay.firstHitOnly = true;
 
     // ---- FRISBEE LAUNCHER (primary alternative — equipped from the Loadout menu):
-    // LMB PRESS = ONE disc (a REAL projectile: 34 m/s, glides, bounces 3x, 45 body / 68 head,
+    // LMB PRESS = ONE disc (a REAL projectile: 102 m/s, glides, bounces 3x, 45 body / 68 head,
     // x0.6 after a bounce + a small knockback), automatic re-cock after each shot, 6 discs
     // (deck + 5-disc cage), R = cage swap (auto on a dry fire), RMB = sight picture, F =
     // two-hand inspection. Presentation = shared FP arms + the pack's controller; the discs
