@@ -17,7 +17,7 @@ export interface FrisbeeTimeline {
 }
 /** Minimal structural view of the common ViewmodelSystem (no import-path coupling). */
 export interface FrisbeeViewmodelLike {
-    playAction(key: string, options?: { startAt?: number; fadeIn?: number; exitFade?: number; onFinished?: () => void }): boolean;
+    playAction(key: string, options?: { startAt?: number; fadeIn?: number; exitFade?: number; timeScale?: number; onFinished?: () => void }): boolean;
     cancelAction(immediate?: boolean): void;
     startInspect(onDone: (cancelled: boolean) => void): boolean;
     cancelInspect(): void;
@@ -54,6 +54,11 @@ export interface FrisbeeLauncherOptions {
     recoil?: number;
     /** Discs in the cage at creation (default: full). */
     startCage?: number;
+    /**
+     * Playback rate of the cage swaps ("reload" / "reloadEmpty"): arms clip, weapon clip and the controller clock all
+     * run at this rate (default 1). The timeline stays in CLIP time. Shots / re-cocks are never sped up.
+     */
+    reloadSpeed?: number;
 }
 /** State handed by the network for a remote replay. */
 export interface FrisbeeRemoteState {
@@ -90,6 +95,8 @@ export class FrisbeeLauncherController {
     private readonly firstPerson: boolean;
     private readonly clips: Record<string, THREE.AnimationAction>;
     private readonly recoil: number;
+    /** Playback rate of the cage swaps (1 = authored speed). */
+    readonly reloadSpeed: number;
     private readonly cageDiscs: THREE.Object3D[];
     private readonly slotY: number[];
     private current: THREE.AnimationAction | null = null;
@@ -117,6 +124,7 @@ export class FrisbeeLauncherController {
         this.ev = options.events ?? {};
         this.firstPerson = options.firstPerson;
         this.recoil = options.recoil ?? 0.06;
+        this.reloadSpeed = Math.max(0.05, options.reloadSpeed ?? 1);
         this.object = gltf.scene.clone(true);
         this.object.traverse((o) => {
             const mesh = o as THREE.Mesh;
@@ -322,9 +330,10 @@ export class FrisbeeLauncherController {
             // a late / interrupted callback of an older action must not end this one
             const done = () => { if (token === this.token)
                 (onFinished ?? (() => this.actionDone()))(); };
-            let ok = this.vm.playAction(vmKey, { fadeIn, exitFade: 0.15, onFinished: done });
+            const timeScale = mode === "reload" ? this.reloadSpeed : 1;
+            let ok = this.vm.playAction(vmKey, { fadeIn, exitFade: 0.15, timeScale, onFinished: done });
             if (!ok && vmKey.endsWith("Aim"))
-                ok = this.vm.playAction(vmKey.slice(0, -3), { fadeIn, exitFade: 0.15, onFinished: done });
+                ok = this.vm.playAction(vmKey.slice(0, -3), { fadeIn, exitFade: 0.15, timeScale, onFinished: done });
             this.vmDriven = ok;
         }
     }
@@ -443,8 +452,11 @@ export class FrisbeeLauncherController {
     /** Per frame (same dt as the ViewmodelSystem), AFTER the FP camera sync / the TP character update (TP: after the
      *  character's matrixWorld is updated, the dropped cage hand-over reads the cage's world matrix). */
     update(dt: number): void {
-        this.mixer.update(dt);
-        this.clock += dt;
+        // Cage swaps run reloadSpeed x faster: the weapon mixer AND the clip-time clock advance together (the arms clip
+        // is sped up by start()); every other action keeps the authored speed.
+        const rate = this.mode === "reload" ? this.reloadSpeed : 1;
+        this.mixer.update(dt * rate);
+        this.clock += dt * rate;
         if (!this.firstPerson)
             this.trackCage(dt);
         const tl = this.tl;

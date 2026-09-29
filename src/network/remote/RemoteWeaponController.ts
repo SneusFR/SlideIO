@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { NetworkWeaponId, isNetworkWeaponId } from "../../../shared/combat/NetworkWeapons";
 import { sanitizeWeaponSkin } from "../../../shared/combat/WeaponSkins";
+import { FrisbeeLauncherConfig } from "../../../shared/combat/FrisbeeLauncherRules";
 import { createWeaponMount } from "../../weapons/profiles/WeaponProfile";
 import { HexSniperProfile } from "../../weapons/profiles/HexSniperProfile";
 import { loadHexSniperGltf } from "../../weapons/hexsniper/HexSniperModel";
@@ -662,8 +663,14 @@ export class RemoteWeaponController {
       return true;
     }
     c.playRemote("reload", { cage: state.cage, deckLoaded: state.deckLoaded });
+    // The swap plays reloadSpeed x faster: the TP clip starts at the elapsed CLIP time (real time x rate) and plays at
+    // that rate; the weapon controller applies the same rate itself (update() below advances it by elapsed x rate).
     const startAt = Math.max(0, elapsed);
-    this.onProfileAction?.(state.deckLoaded ? "reload" : "reloadEmpty", { startAt, fadeIn: 0.08 });
+    this.onProfileAction?.(state.deckLoaded ? "reload" : "reloadEmpty", {
+      startAt: startAt * c.reloadSpeed,
+      fadeIn: 0.08,
+      timeScale: c.reloadSpeed,
+    });
     // Late confirm: advance the weapon clip by the same offset as the TP clip.
     if (startAt > 0) c.update(startAt);
     return true;
@@ -1295,6 +1302,7 @@ export class RemoteWeaponController {
       controller = new FrisbeeLauncherController(gltf, {
         firstPerson: false,
         timeline: FRISBEE_LAUNCHER_TIMELINE,
+        reloadSpeed: FrisbeeLauncherConfig.reloadSpeed,
         events: {
           onCageDrop: (d) => this.onFrisbeeCageDrop?.(d),
         },

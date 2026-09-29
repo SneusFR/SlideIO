@@ -43,16 +43,16 @@ try {
   const F = R.FrisbeeLauncherConfig;
   const profileJson = JSON.parse(fs.readFileSync(`${project}/src/assets/potato/WeaponProfile_FrisbeeLauncher.json`, "utf8"));
 
-  await test("shared rules == pack reference (capacity, tuning, cones, PRNG); damage 45 / 68 / 27 / 41", () => {
+  await test("shared rules == pack reference (capacity, tuning, cones, PRNG); damage 75 / 100 / 45 / 60", () => {
     assert.equal(F.capacity, REF.FRISBEE_LAUNCHER.capacity);
     assert.equal(F.cageCapacity, REF.FRISBEE_LAUNCHER.cageCapacity);
     assert.equal(F.spreadHipDeg, REF.FRISBEE_LAUNCHER.spreadHipDeg);
     assert.equal(F.spreadAimDeg, REF.FRISBEE_LAUNCHER.spreadAimDeg);
     assert.deepEqual(F.tuning, PRJ.FRISBEE_TUNING, "the shared tuning IS the pack tuning");
-    assert.equal(R.frisbeeDamage(false, false), 45);
-    assert.equal(R.frisbeeDamage(true, false), 68);
-    assert.equal(R.frisbeeDamage(false, true), 27);
-    assert.equal(R.frisbeeDamage(true, true), 41);
+    assert.equal(R.frisbeeDamage(false, false), 75);
+    assert.equal(R.frisbeeDamage(true, false), 100);
+    assert.equal(R.frisbeeDamage(false, true), 45);
+    assert.equal(R.frisbeeDamage(true, true), 60);
     const a = new THREE.Vector3();
     for (const seed of [1, 42, 123456789, 4294967295]) {
       for (const aiming of [false, true]) {
@@ -148,7 +148,7 @@ try {
     }
   });
 
-  await test("flight: 102 m/s, ONE touch per disc (45 / 68, knockback 2.5 + 0.8), x0.6 after a bounce, bounce budget, end of life", () => {
+  await test("flight: 102 m/s, ONE touch per disc (75 / 100, knockback 2.5 + 0.8), x0.6 after a bounce, bounce budget, end of life", () => {
     const body: any[] = [];
     const s1 = new S.SharedFrisbeeSim(1, { x: 0, y: 1.0, z: 0 }, { x: 0, y: 0, z: -1 }, "A");
     assert.equal(F.tuning.speed, 102, "launch speed = 3 x the pack's 34 m/s");
@@ -156,7 +156,7 @@ try {
     const wc = worldCast([{ id: "P", x: 0, y: 0.9, z: -8 }]);
     for (let i = 0; i < 240; i++) s1.step(wc, { onHit: (e: any) => body.push(e) });
     assert.equal(body.length, 1, "ONE touch per disc");
-    assert.equal(body[0].damage, 45);
+    assert.equal(body[0].damage, 75);
     assert.equal(body[0].headshot, false);
     assert.ok(Math.abs(body[0].impulse.y - 0.8) < 1e-12, "0.8 m/s up");
     assert.ok(Math.abs(Math.hypot(body[0].impulse.x, body[0].impulse.z) - 2.5) < 1e-9, "2.5 m/s horizontal");
@@ -164,7 +164,7 @@ try {
     const head: any[] = [];
     const s2 = new S.SharedFrisbeeSim(2, { x: 0, y: 1.75, z: 0 }, { x: 0, y: 0, z: -1 }, "A");
     for (let i = 0; i < 240; i++) s2.step(wc, { onHit: (e: any) => head.push(e) });
-    assert.equal(head[0].damage, 68);
+    assert.equal(head[0].damage, 100);
     assert.equal(head[0].headshot, true);
     // a wall bounce first, then a player on the way BACK (scan the lateral offset: the disc drifts sideways): x0.6
     let found = 0;
@@ -177,7 +177,7 @@ try {
       if (bounced.length === 0) continue;
       assert.ok(bounces >= 1, "the wall bounced the disc before the touch");
       assert.ok(bounced[0].bounces >= 1);
-      assert.ok(bounced[0].damage === 27 || bounced[0].damage === 41, `bounced touch = 27 / 41 (${bounced[0].damage})`);
+      assert.ok(bounced[0].damage === 45 || bounced[0].damage === 60, `bounced touch = 45 / 60 (${bounced[0].damage})`);
       found++;
     }
     assert.ok(found > 0, "at least one placement is touched after the bounce");
@@ -233,6 +233,7 @@ try {
   const fp = new FrisbeeLauncherController(weaponGltf, {
     firstPerson: true,
     timeline: PROF.FRISBEE_LAUNCHER_TIMELINE,
+    reloadSpeed: F.reloadSpeed,
     events: {
       onShot: (aiming: boolean) => ev.push(aiming ? "shotAim" : "shot"),
       onDryFire: () => ev.push("dry"),
@@ -306,28 +307,29 @@ try {
     assert.deepEqual(ev, ["dry"]);
   });
 
-  await test("FP: cage swap on a loaded deck: cage full at 0.71 s, the empty cage is dropped (FP: no world matrix), fire from 1.30 s", () => {
+  await test("FP: cage swap on a loaded deck: x1.5: cage full at 0.47 s, the empty cage is dropped (FP: no world matrix), fire from 0.87 s", () => {
     fp.setAmmo(true, 2);
     ev.length = 0;
     drops.length = 0;
     assert.ok(fp.canReload && fp.reload());
     assert.equal(fp.currentAction, "reload");
-    step(0.5);
+    assert.equal(F.reloadSpeed, 1.5);
+    step(0.35); // clip time 0.53 s: cageOut (0.40) + cageDrop (0.45) played, cageSwap (0.71) not yet
     assert.ok(ev.includes("cageOut") && ev.includes("cageDrop"));
     assert.equal(drops[0].world, null, "FP: the clip already drops the cage off screen");
     assert.equal(drops[0].discs, 2, "the cage was thrown with its 2 remaining discs");
     assert.equal(fp.cageCount, 2);
-    step(0.3); // 0.80 s: cageSwap (0.71 s)
+    step(0.2); // 0.55 s real = 0.83 s clip: cageSwap (0.71 clip = 0.47 real)
     assert.equal(fp.cageCount, 5);
     assert.ok(!fp.canFire);
-    step(0.55); // 1.35 s
-    assert.ok(fp.canFire, "fire again from readyToFire 1.30 s");
-    step(0.2);
+    step(0.35); // 0.90 s real: readyToFire 1.30 clip = 0.87 real
+    assert.ok(fp.canFire, "fire again from readyToFire 0.87 s (x1.5)");
+    step(0.1); // 1.00 s: the swap (1.40 clip = 0.93 real) is over
     assert.ok(ev.includes("cageIn") && ev.includes("reloadEnd"));
     assert.ok(!fp.canReload, "full cage + loaded deck: reload refused");
   });
 
-  await test("FP: cage swap on an EMPTY deck = reloadEmpty (swap + re-cock), disc on the deck at 2.19 s", () => {
+  await test("FP: cage swap on an EMPTY deck = reloadEmpty (swap + re-cock), disc on the deck at 2.19 s clip time (1.46 s real at x1.5)", () => {
     fp.setAmmo(false, 1);
     ev.length = 0;
     assert.ok(fp.reload());
@@ -344,13 +346,13 @@ try {
     step(3.0);
     fp.setAmmo(true, 2);
     assert.ok(fp.reload());
-    step(0.9); // past cageSwap, before cageIn
+    step(0.6); // past cageSwap (0.47 real), before cageIn (0.73 real)
     fp.cancelAction();
     assert.equal(fp.cageCount, 2, "the old cage is given back before the click");
     step(0.3);
     fp.setAmmo(true, 2);
     assert.ok(fp.reload());
-    step(1.2); // after cageIn
+    step(0.8); // after cageIn (0.73 real), before the end (0.93 real)
     fp.cancelAction();
     assert.equal(fp.cageCount, 5, "after the click the new cage stays");
     step(1.0);
@@ -389,6 +391,7 @@ try {
     const remote = new FrisbeeLauncherController(weaponGltf, {
       firstPerson: false,
       timeline: PROF.FRISBEE_LAUNCHER_TIMELINE,
+    reloadSpeed: F.reloadSpeed,
       events: {
         onShot: () => tpEv.push("shot"),
         onCocked: () => tpEv.push("cocked"),
@@ -460,13 +463,13 @@ try {
     cages.dispose();
   });
 
-  await test("loadout: FRISBEE_LAUNCHER is a primary with 45 / 68 / 27-41 stats and a 3D icon", async () => {
+  await test("loadout: FRISBEE_LAUNCHER is a primary with 75 / 100 / 45-60 stats and a 3D icon", async () => {
     const L = await server.ssrLoadModule("/src/loadout/Loadout.ts");
     const item = L.PRIMARY_ITEMS.find((i: any) => i.id === "FRISBEE_LAUNCHER");
     assert.ok(item, "primary catalogue entry");
     assert.equal(item.name, "LANCE-FRISBEE");
     const stats = item.abilities[0].stats.map((s: any) => s.value).join(" | ");
-    assert.ok(stats.includes("45 PV") && stats.includes("68 PV") && stats.includes("27 / 41 PV"), stats);
+    assert.ok(stats.includes("75 PV") && stats.includes("100 PV") && stats.includes("45 / 60 PV"), stats);
     const wi = fs.readFileSync(`${project}/src/menu/WeaponIconRenderer.ts`, "utf8");
     assert.ok(/FRISBEE_LAUNCHER: frisbeeLauncherUrl/.test(wi));
   });

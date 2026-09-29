@@ -40,7 +40,7 @@ export enum KillMethod {
   PAINTBALL_RIFLE = "PAINTBALL_RIFLE",
   /** WATER FAMAS jets (hitscan, 23 body / 34.5 head per jet, no special medal). */
   WATER_FAMAS = "WATER_FAMAS",
-  /** FRISBEE LAUNCHER bouncing disc (projectile, 45 body / 68 head, no special medal). */
+  /** FRISBEE LAUNCHER bouncing disc (projectile, 75 body / 100 head, no special medal). */
   FRISBEE_LAUNCHER = "FRISBEE_LAUNCHER",
   ENVIRONMENT = "ENVIRONMENT",
 }

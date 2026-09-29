@@ -15,11 +15,17 @@
  * roll), like the Popcorn Shotgun / Paintball Rifle / Water FAMAS — the server
  * only receives the forward direction, a rolled axis would break parity.
  *
- * DAMAGE (validated with the project owner, players have 100 HP):
- * 45 body, x1.5 head (68), x0.6 after at least one bounce on the scenery
- * (27 / 41). No damage under 8 m/s or after the bounce budget is spent. One
+ * DAMAGE (set by the project owner, players have 100 HP):
+ * 75 body, 100 head (x100/75), x0.6 after at least one bounce on the scenery
+ * (45 / 60). No damage under 8 m/s or after the bounce budget is spent. One
  * hit per disc. Knockback on the victim: 2.5 m/s horizontal along the disc +
  * 0.8 m/s up.
+ *
+ * RELOAD SPEED: the authored `timeline` below is in CLIP time. A cage swap runs
+ * `reloadSpeed` times faster than the clip (x1.5 on request): the server, the
+ * controller clock and the FP / TP clips all apply the SAME factor, so a swap
+ * lasts `timeline.reload.* / reloadSpeed` real seconds. Shots / re-cock after a
+ * shot are NOT sped up.
  */
 
 export interface FrisbeeVec3 {
@@ -59,6 +65,11 @@ export const FrisbeeLauncherConfig = {
   /** Aim spread (degrees): the disc is accurate. */
   spreadHipDeg: 0.6,
   spreadAimDeg: 0.15,
+  /**
+   * Playback / gameplay rate of the cage swaps (`reload` and `reloadEmpty`), x1.5 on request.
+   * Real duration of a swap = authored timeline / reloadSpeed (1.40 s -> 0.93 s, 2.48 s -> 1.65 s).
+   */
+  reloadSpeed: 1.5,
   tuning: {
     // Launch speed (m/s), x3 of the pack's 34 on request (the player's top speed outran the disc). Server AND clients
     // read it; the lift / trail / spin scale with speed / this value, so the flight keeps its look at any speed.
@@ -76,8 +87,9 @@ export const FrisbeeLauncherConfig = {
     lifetime: 3.5,
     restSpeed: 1.2,
     playerRestitution: 0.35,
-    damageBody: 45,
-    headshotMultiplier: 1.5,
+    // 75 body / 100 head (100 / 75 -> exactly 100 after rounding), x0.6 after a bounce -> 45 / 60. Head = one-shot kill at 100 HP.
+    damageBody: 75,
+    headshotMultiplier: 100 / 75,
     bouncedDamageScale: 0.6,
     minDamageSpeed: 8,
     knockback: 2.5,
@@ -111,7 +123,7 @@ export const FrisbeeLauncherConfig = {
 const C = FrisbeeLauncherConfig;
 const DEG = Math.PI / 180;
 
-/** Damage of one disc touch (rounded like the pack: 45 / 68 / 27 / 41). */
+/** Damage of one disc touch (rounded like the pack: 75 / 100 / 45 / 60). */
 export function frisbeeDamage(headshot: boolean, bounced: boolean, tuning: FrisbeeTuning = C.tuning): number {
   return Math.round(
     tuning.damageBody * (headshot ? tuning.headshotMultiplier : 1) * (bounced ? tuning.bouncedDamageScale : 1),

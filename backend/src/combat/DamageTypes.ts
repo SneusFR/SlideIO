@@ -31,7 +31,7 @@ export enum DamageType {
   PAINTBALL_RIFLE = "PAINTBALL_RIFLE",
   /** WATER FAMAS jets (hitscan, 23 body / 34.5 head per jet, 3-jet bursts). */
   WATER_FAMAS = "WATER_FAMAS",
-  /** FRISBEE LAUNCHER bouncing disc (projectile: 45 body / 68 head, x0.6 after a bounce, + knockback). */
+  /** FRISBEE LAUNCHER bouncing disc (projectile: 75 body / 100 head, x0.6 after a bounce, + knockback). */
   FRISBEE_LAUNCHER = "FRISBEE_LAUNCHER",
   MOLE_STRIKE = "MOLE_STRIKE",
   ENVIRONMENT = "ENVIRONMENT",

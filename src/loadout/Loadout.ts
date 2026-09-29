@@ -616,8 +616,8 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
           "La cage vide est tirée vers le bas et jetée au sol ; on en prend une pleine à la ceinture et on l'enclenche. Si le pont est vide, le réarmement suit. Changer d'arme avant le déclic annule la recharge.",
         stats: [
           { label: "CAGE", value: `${fl.cageCapacity} disques` },
-          { label: "CAGE PLEINE", value: `${fl.timeline.reload.cageSwap} s` },
-          { label: "TIR POSSIBLE", value: `${fl.timeline.reload.readyToFire} s / ${fl.timeline.reloadEmpty.readyToFire} s` },
+          { label: "CAGE PLEINE", value: `${(fl.timeline.reload.cageSwap / fl.reloadSpeed).toFixed(2)} s` },
+          { label: "TIR POSSIBLE", value: `${(fl.timeline.reload.readyToFire / fl.reloadSpeed).toFixed(2)} s / ${(fl.timeline.reloadEmpty.readyToFire / fl.reloadSpeed).toFixed(2)} s` },
         ],
       },
       {

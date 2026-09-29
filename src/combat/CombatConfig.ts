@@ -6,7 +6,7 @@
 export const CombatConfig = {
   // ---- Health ----
   playerMaxHealth: 100,
-  botMaxHealth: 70, // lower than the player: bots die in ~1.3s of sustained beam
+  botMaxHealth: 100, // same as the player (was 70)
 
   // ---- Bots ----
   maxBotCount: 8,

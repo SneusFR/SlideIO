@@ -16,6 +16,7 @@ import { HitTarget, pointAt } from "./HitDetection";
  *   fireLast    : cage empty at the shot -> stays empty (no re-cock).
  *   reload      : (deck loaded) cageSwap 0.71 s (cage = 5), cageIn 1.10 s, ready 1.30 s.
  *   reloadEmpty : (deck empty) the same + re-cock (discTaken 1.85 s, discSeated 2.19 s), ready 2.40 s.
+ * (reload / reloadEmpty times are CLIP time: divided by F.reloadSpeed = x1.5 in real time -> ready 0.87 s / 1.60 s.)
  * A cancel (weapon switch / death) before cageIn keeps the old cage; after it the
  * new cage stays and a disc already taken for the re-cock goes back into it. An
  * interrupted re-cock after a shot is COMPLETED (the disc ends on the deck).
@@ -75,7 +76,10 @@ export class FrisbeeLauncherState {
   /** Advance the running action to `now`: the authored events apply their ammo effect. */
   settle(now: number): void {
     if (!this.action) return;
-    const elapsed = (now - this.actionStartedAt) / 1000;
+    // The cage swaps run `reloadSpeed` times faster than their authored clip: the elapsed CLIP time is what the
+    // authored events are compared to (shots / re-cocks after a shot keep the authored speed).
+    const swap = this.action === "reload" || this.action === "reloadEmpty";
+    const elapsed = ((now - this.actionStartedAt) / 1000) * (swap ? F.reloadSpeed : 1);
     const T = F.timeline;
     if (this.action === "fire") {
       this.once("discTaken", elapsed, T.fire.discTaken, () => this.take());
@@ -171,9 +175,9 @@ export function resolveFrisbeeFire(st: FrisbeeLauncherState, now: number): Frisb
       st.action === "fire"
         ? T.fire.readyToFire
         : st.action === "reload"
-          ? T.reload.readyToFire
+          ? T.reload.readyToFire / F.reloadSpeed // swaps run reloadSpeed x faster than their clip
           : st.action === "reloadEmpty"
-            ? T.reloadEmpty.readyToFire
+            ? T.reloadEmpty.readyToFire / F.reloadSpeed
             : Infinity;
     if (elapsed < ready * 1000 - tolMs) return REFUSED;
     st.complete(); // firing again cuts the end of the clip (local parity: finishReload / finishFire)

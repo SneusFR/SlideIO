@@ -526,7 +526,7 @@ export class RemotePlayerAnimationController {
    */
   private playInspectLayer(
     layer: THREE.AnimationAction,
-    options: { startAt?: number; fadeIn?: number; exitFade?: number; onFinished?: () => void },
+    options: { startAt?: number; fadeIn?: number; exitFade?: number; timeScale?: number; onFinished?: () => void },
     /** Priority action layer: replaces a running layer / full override (an attack wins). */
     priority: boolean,
   ): boolean {
@@ -557,7 +557,7 @@ export class RemotePlayerAnimationController {
     const isLoop = layer.loop !== THREE.LoopOnce;
     const start = Math.max(0, options.startAt ?? 0);
     layer.time = isLoop ? start % layer.getClip().duration : Math.min(start, layer.getClip().duration - 1e-3);
-    layer.setEffectiveTimeScale(1).setEffectiveWeight(1);
+    layer.setEffectiveTimeScale(Math.max(0.05, options.timeScale ?? 1)).setEffectiveWeight(1);
     layer.paused = false;
     if (fade > 0) layer.fadeIn(fade);
     layer.play();

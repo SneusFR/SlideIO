@@ -1180,7 +1180,7 @@ export class WeaponManager {
   }
 
   /**
-   * ONE touch per disc (the sim clears canDamage): damage 45 body / 68 head
+   * ONE touch per disc (the sim clears canDamage): damage 75 body / 100 head
    * (x0.6 after a bounce) + a small knockback impulse on the victim (same
    * host.sendImpulse path as the hammer / spear / hex bite). A dead shooter
    * deals nothing (basket rule).

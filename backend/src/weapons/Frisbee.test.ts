@@ -96,22 +96,24 @@ const AHEAD = { x: 0, y: 0, z: 1 };
 
 // ---------------------------------------------------------------------
 
-test("frisbee: damage rule 45 body / 68 head / 27 / 41 after a bounce, 100 HP scale", () => {
-  assert.strictEqual(frisbeeDamage(false, false), 45);
-  assert.strictEqual(frisbeeDamage(true, false), 68);
-  assert.strictEqual(frisbeeDamage(false, true), 27);
-  assert.strictEqual(frisbeeDamage(true, true), 41);
+test("frisbee: damage rule 75 body / 100 head / 45 / 60 after a bounce, 100 HP scale", () => {
+  assert.strictEqual(frisbeeDamage(false, false), 75);
+  assert.strictEqual(frisbeeDamage(true, false), 100);
+  assert.strictEqual(frisbeeDamage(false, true), 45);
+  assert.strictEqual(frisbeeDamage(true, true), 60);
+  assert.strictEqual(FL.reloadSpeed, 1.5, "cage swaps run x1.5 faster");
   assert.strictEqual(FL.capacity, 6);
   assert.strictEqual(FL.cageCapacity, 5);
-  assert.strictEqual(2 * frisbeeDamage(false, false), 90, "2 body discs = no kill");
-  assert.ok(frisbeeDamage(true, false) + frisbeeDamage(false, false) >= 100, "1 head + 1 body = kill");
+  assert.ok(frisbeeDamage(true, false) >= 100, "1 head disc = kill");
+  assert.ok(frisbeeDamage(false, false) < 100, "1 body disc = no kill");
+  assert.ok(2 * frisbeeDamage(false, false) >= 100, "2 body discs = kill");
   assert.strictEqual(sanitizeFrisbeeSeed(-1), null);
   assert.strictEqual(sanitizeFrisbeeSeed(1.5), null);
   assert.strictEqual(sanitizeFrisbeeSeed("x"), null);
   assert.strictEqual(sanitizeFrisbeeSeed(42), 42);
 });
 
-test("frisbee: a body touch = 45 once + knockback along the disc (2.5 horizontal, 0.8 up), one touch per disc", () => {
+test("frisbee: a body touch = 75 once + knockback along the disc (2.5 horizontal, 0.8 up), one touch per disc", () => {
   const { wm, actions, hits, impulses, addPlayer, run } = makeWorld();
   const a = addPlayer("A", 0, 0.9, 0);
   const b = addPlayer("B", 0, 0.9, 10);
@@ -120,7 +122,7 @@ test("frisbee: a body touch = 45 once + knockback along the disc (2.5 horizontal
   assert.strictEqual(fires(actions).length, 1);
   assert.strictEqual(wm.frisbeeCount, 1);
   run(1.0);
-  assert.strictEqual(b.health, 100 - 45, "45 to the body, once");
+  assert.strictEqual(b.health, 100 - 75, "75 to the body, once");
   assert.strictEqual(hits.length, 1, "attacker gets HIT_CONFIRMED");
   assert.strictEqual(hits[0].ev.hitZone, "BODY");
   assert.strictEqual(impulses.length, 1, "knockback sent once");
@@ -131,14 +133,15 @@ test("frisbee: a body touch = 45 once + knockback along the disc (2.5 horizontal
   assert.strictEqual(a.health, 100, "the shooter is never hit by its own disc");
 });
 
-test("frisbee: a head touch = 68", () => {
+test("frisbee: a head touch = 100 (one-shot kill)", () => {
   const { wm, hits, addPlayer, run } = makeWorld();
   const a = addPlayer("A", 0, 0.9, 0);
   const b = addPlayer("B", 0, 0.9, 10);
   wm.handleEquip(a, NetworkWeaponId.FRISBEE_LAUNCHER);
   send(wm, a, FIRE, dirTo(eyeOf(a), { x: 0, y: 1.8, z: 10 }), { sd: 9 });
   run(1.0);
-  assert.strictEqual(b.health, 100 - 68);
+  assert.strictEqual(b.health, 0, "100 to the head: killed in one disc");
+  assert.strictEqual(b.isAlive, false);
   assert.strictEqual(hits[0].ev.hitZone, "HEAD");
 });
 
@@ -201,7 +204,7 @@ test("frisbee: cadence 1.50 s, re-cock 6 discs (deck + cage 5), the last shot le
   assert.strictEqual(fires(actions).length, 6, "empty deck: refused (dry fire)");
 });
 
-test("frisbee: reload gates (cage full at 0.71 s, fire again from 1.30 s; empty deck = reloadEmpty 2.40 s)", () => {
+test("frisbee: reload gates (x1.5: cage full at 0.47 s, fire again from 0.87 s; empty deck = reloadEmpty 1.60 s)", () => {
   const { wm, actions, addPlayer, advance } = makeWorld();
   const a = addPlayer("A", 0, 0.9, 0);
   wm.handleEquip(a, NetworkWeaponId.FRISBEE_LAUNCHER);
@@ -214,19 +217,19 @@ test("frisbee: reload gates (cage full at 0.71 s, fire again from 1.30 s; empty 
   send(wm, a, RELOAD, AHEAD);
   assert.strictEqual(reloads().length, 1);
   assert.strictEqual(reloads()[0].cg, 4, "cage before = 4");
-  assert.strictEqual(reloads()[0].dk, 1, "deck loaded before -> reload (1.40 s)");
+  assert.strictEqual(reloads()[0].dk, 1, "deck loaded before -> reload (0.93 s at x1.5)");
   send(wm, a, RELOAD, AHEAD);
   assert.strictEqual(reloads().length, 1, "already swapping");
-  advance(1000);
+  advance(600);
   send(wm, a, FIRE, AHEAD, { sd: 2 });
-  assert.strictEqual(fires(actions).length, 1, "refused before readyToFire (1.30 s)");
-  advance(400); // 1.40 s
+  assert.strictEqual(fires(actions).length, 1, "refused before readyToFire (1.30 s / 1.5 = 0.87 s)");
+  advance(300); // 0.90 s
   send(wm, a, FIRE, AHEAD, { sd: 3 });
   assert.strictEqual(fires(actions).length, 2, "accepted after the swap");
   assert.strictEqual(fires(actions)[1].cg, 5, "the new cage holds 5");
 });
 
-test("frisbee: reloadEmpty on an empty deck (cage swap + re-cock), tir from 2.40 s", () => {
+test("frisbee: reloadEmpty on an empty deck (cage swap + re-cock), tir from 1.60 s (2.40 s / 1.5)", () => {
   const { wm, actions, addPlayer, advance } = makeWorld();
   const a = addPlayer("A", 0, 0.9, 0);
   wm.handleEquip(a, NetworkWeaponId.FRISBEE_LAUNCHER);
@@ -239,10 +242,10 @@ test("frisbee: reloadEmpty on an empty deck (cage swap + re-cock), tir from 2.40
   const r = actions.filter((e) => e.action === RELOAD);
   assert.strictEqual(r.length, 1);
   assert.strictEqual(r[0].dk, 0, "deck empty -> reloadEmpty");
-  advance(2000);
+  advance(1400);
   send(wm, a, FIRE, AHEAD, { sd: 50 });
-  assert.strictEqual(fires(actions).length, 6, "refused before 2.40 s");
-  advance(450);
+  assert.strictEqual(fires(actions).length, 6, "refused before 1.60 s");
+  advance(200);
   send(wm, a, FIRE, AHEAD, { sd: 51 });
   assert.strictEqual(fires(actions).length, 7, "accepted at readyToFire of reloadEmpty");
   assert.strictEqual(fires(actions)[6].cg, 4, "the re-cock took a disc from the new cage (5 -> 4)");
@@ -255,19 +258,19 @@ test("frisbee: cancel a swap before cageIn keeps the old cage; after cageIn the 
   send(wm, a, FIRE, AHEAD, { sd: 1 });
   advance(1600); // cage 4
   send(wm, a, RELOAD, AHEAD);
-  advance(400); // < cageSwap (0.71 s)
+  advance(300); // < cageSwap (0.71 s / 1.5 = 0.47 s)
   send(wm, a, CANCEL, AHEAD);
   const c1 = actions.filter((e) => e.action === CANCEL);
   assert.strictEqual(c1.length, 1);
   assert.strictEqual(c1[0].cg, 4, "before the swap the old cage is kept");
   advance(200);
   send(wm, a, RELOAD, AHEAD);
-  advance(900); // past cageSwap (0.71 s) but before cageIn (1.10 s)
+  advance(600); // past cageSwap (0.47 s) but before cageIn (0.73 s)
   send(wm, a, CANCEL, AHEAD);
   assert.strictEqual(actions.filter((e) => e.action === CANCEL)[1].cg, 4, "the old cage is given back before the click");
   advance(200);
   send(wm, a, RELOAD, AHEAD);
-  advance(1200); // after cageIn
+  advance(800); // after cageIn (0.73 s), before the end (0.93 s)
   send(wm, a, CANCEL, AHEAD);
   assert.strictEqual(actions.filter((e) => e.action === CANCEL)[2].cg, 5, "after the click the new cage stays");
   // weapon switch mid re-cock: completed, disc on the deck

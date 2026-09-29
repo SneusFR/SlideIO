@@ -127,6 +127,7 @@ export class FrisbeeLauncherWeapon {
       this.controller = new FrisbeeLauncherController(gltf, {
         firstPerson: true,
         timeline: FRISBEE_LAUNCHER_TIMELINE,
+        reloadSpeed: F.reloadSpeed,
         events: {
           onShot: (aiming) => this.onShot(aiming),
           onDryFire: () => this.sfx.onDryFire?.(),
@@ -468,7 +469,7 @@ export class FrisbeeLauncherWeapon {
   // ------------------------------------------------------------------
 
   /**
-   * A disc of this client's simulation touched a player. SOLO: the damage is applied HERE (45 / 68,
+   * A disc of this client's simulation touched a player. SOLO: the damage is applied HERE (75 / 100,
    * x0.6 after a bounce) + a small knockback. MULTIPLAYER: nothing — the server owns the touch
    * (HIT_CONFIRMED gives the hitmarker); the local disc just rebounds softly and marks itself spent.
    */

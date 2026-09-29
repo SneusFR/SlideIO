@@ -310,13 +310,14 @@ export class ViewmodelSystem {
    * @param key        profile fpActions key
    * @param startAt    entry time inside the clip (e.g. 0.10 s for Slam_Land)
    * @param fadeIn     blend from the current pose (0–0.03 s at a real impact)
+   * @param timeScale  playback rate (default 1 = authored speed)
    * @param onFinished for one-shot clips: fired when the clip ends (never
    *                   for loops; never after cancel / replacement)
    * Returns false when the key is unknown or no weapon is equipped.
    */
   playAction(
     key: string,
-    options: { startAt?: number; fadeIn?: number; exitFade?: number; onFinished?: () => void } = {},
+    options: { startAt?: number; fadeIn?: number; exitFade?: number; timeScale?: number; onFinished?: () => void } = {},
   ): boolean {
     const action = this.actionClips.get(key);
     if (!action || !this.mixer) return false;
@@ -330,7 +331,9 @@ export class ViewmodelSystem {
     const fadeIn = options.fadeIn ?? 0.1;
     action.reset();
     action.time = Math.max(0, options.startAt ?? 0);
-    action.setEffectiveTimeScale(1).setEffectiveWeight(1);
+    // Optional playback rate (default 1 = authored speed, e.g. the x1.5 Frisbee cage swap). The end test in update()
+    // reads the clip's local time, so it stays exact at any rate.
+    action.setEffectiveTimeScale(Math.max(0.05, options.timeScale ?? 1)).setEffectiveWeight(1);
     if (this.current && this.current !== action) {
       if (fadeIn > 0) this.current.fadeOut(fadeIn);
       else this.current.stop(); // hard cut at a real impact
