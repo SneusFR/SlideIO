@@ -16,6 +16,8 @@ import { loadPopcornShotgunTPClips } from "../weapons/popcorn/PopcornShotgunMode
 import { PopcornShotgunProfile } from "../weapons/profiles/PopcornShotgunProfile";
 import { loadPaintballRifleTPClips } from "../weapons/paintball/PaintballRifleModel";
 import { PaintballRifleProfile } from "../weapons/profiles/PaintballRifleProfile";
+import { loadWaterFamasTPClips } from "../weapons/waterfamas/WaterFamasModel";
+import { WaterFamasProfile } from "../weapons/profiles/WaterFamasProfile";
 // POTATO character pack (src/assets/potato) — the common third-person model
 // for remote players AND bots. One GLB carries mesh + skeleton + the four
 // locomotion clips (Run_Goofy / Jump / Dash / Slide, all in place — no root
@@ -192,9 +194,15 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       console.error("PaintballRifle: TP pose library failed to load", err);
       return [] as THREE.AnimationClip[];
     }),
-  ]).then(([gltf, posesGltf, maulClips, basketClips, popcornClips, paintballClips]: [
+    // Water FAMAS TP pose library (clips only) — same failure policy.
+    loadWaterFamasTPClips().catch((err) => {
+      console.error("WaterFamas: TP pose library failed to load", err);
+      return [] as THREE.AnimationClip[];
+    }),
+  ]).then(([gltf, posesGltf, maulClips, basketClips, popcornClips, paintballClips, famasClips]: [
     GLTF,
     GLTF,
+    THREE.AnimationClip[],
     THREE.AnimationClip[],
     THREE.AnimationClip[],
     THREE.AnimationClip[],
@@ -526,11 +534,59 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       };
     }
 
+    // ---- Water FAMAS TP profile set (WaterFamas_TP_Poses.glb) ----
+    // ONE-HANDED pistol grip (right hand only, at chest height): the left arm
+    // hangs along the belly and swings while running. Same construction as
+    // the other profile sets: the authored upperBodyMask (Spine_1 + Weapon_R
+    // + the arms) is the hold layer, everything else comes from the unarmed
+    // locomotion. Fire is a ONE-SHOT layer (a burst of 3 jets, 0.42 s — NOT a
+    // loop), Reload the refill layer (bottle taken from the belt) — both over
+    // the lower-body locomotion (a player firing while running keeps running).
+    let waterfamas: ArmedProfileClips | null = null;
+    const wfTp = WaterFamasProfile.tpClips!;
+    const wfHoldSrc = byName(famasClips, wfTp.hold);
+    const wfRunSrc = byName(famasClips, wfTp.run);
+    if (wfHoldSrc && wfRunSrc && WaterFamasProfile.upperBodyMask) {
+      const mask = new Set<string>(WaterFamasProfile.upperBodyMask);
+      const wfHold = overlayClip(idle, wfHoldSrc, `${wfHoldSrc.name}_Full`);
+      const wfRun = overlayClip(run, wfRunSrc, `${wfRunSrc.name}_Full`);
+      const masked = (base: THREE.AnimationClip) => buildMaskedVariant(base, wfHoldSrc, mask, "_WaterFamas");
+      const wfJumpVariants = jumpVariants.map(masked);
+      const wfDash = masked(dash);
+      const wfSlide = masked(slide);
+      const actions: ArmedProfileClips["actions"] = {};
+      for (const [key, def] of Object.entries(wfTp.actions ?? {})) {
+        const clip = byName(famasClips, def.clip);
+        if (clip) actions[key] = { clip: keepBones(clip, mask, "_Layer"), loop: def.loop, layered: true };
+      }
+      waterfamas = {
+        hold: wfHold,
+        run: wfRun,
+        jump: wfJumpVariants[0],
+        jumpVariants: wfJumpVariants,
+        dash: wfDash,
+        slide: wfSlide,
+        equip: null,
+        unequip: null,
+        inspect: null,
+        lowerBody: {
+          hold: stripBones(wfHold, mask, "_Lower"),
+          run: stripBones(wfRun, mask, "_Lower"),
+          jump: stripBones(wfJumpVariants[0], mask, "_Lower"),
+          jumpVariants: wfJumpVariants.map((c) => stripBones(c, mask, "_Lower")),
+          dash: stripBones(wfDash, mask, "_Lower"),
+          slide: stripBones(wfSlide, mask, "_Lower"),
+        },
+        actions,
+      };
+    }
+
     const profiles: Record<string, ArmedProfileClips> = {};
     if (brickmaul) profiles.brickmaul = brickmaul;
     if (goofybasket) profiles[GoofyBasketProfile.id] = goofybasket;
     if (popcornshotgun) profiles[PopcornShotgunProfile.id] = popcornshotgun;
     if (paintballrifle) profiles[PaintballRifleProfile.id] = paintballrifle;
+    if (waterfamas) profiles[WaterFamasProfile.id] = waterfamas;
 
     const clips: RemoteCharacterClips = {
       idle,

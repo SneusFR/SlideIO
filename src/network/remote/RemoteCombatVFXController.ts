@@ -183,6 +183,8 @@ export class RemoteCombatVFXController {
   onPopcornAction: ((ev: WeaponActionConfirmedEvent) => void) | null = null;
   /** PAINTBALL RIFLE: remote players' fire / reload confirms (wired by the Game). */
   onPaintballAction: ((ev: WeaponActionConfirmedEvent) => void) | null = null;
+  /** WATER FAMAS: remote players' per-jet fire / reload confirms (wired by the Game). */
+  onWaterFamasAction: ((ev: WeaponActionConfirmedEvent) => void) | null = null;
 
   private elapsed = 0;
   private disposed = false;
@@ -478,6 +480,13 @@ export class RemoteCombatVFXController {
         // Paintball Rifle: TP clips + weapon clip + shared visual balls /
         // paint + positional SFX are owned by the Game (single FX instance).
         this.onPaintballAction?.(ev);
+        return;
+      case WeaponActionType.WATER_FAMAS_FIRE:
+      case WeaponActionType.WATER_FAMAS_RELOAD:
+      case WeaponActionType.WATER_FAMAS_RELOAD_CANCEL:
+        // Water FAMAS: TP clips + weapon clip + shared visible jets / wet marks
+        // + positional SFX are owned by the Game (single WaterJets / WetMarks).
+        this.onWaterFamasAction?.(ev);
         return;
       default:
         return; // unknown action — silently ignored

@@ -21,6 +21,9 @@ import { loadPopcornShotgunGltf } from "../../weapons/popcorn/PopcornShotgunMode
 import { PaintballRifleProfile, PAINTBALL_RIFLE_TIMELINE } from "../../weapons/profiles/PaintballRifleProfile";
 import { PaintballRifleController } from "../../weapons/paintball/PaintballRifleController";
 import { loadPaintballRifleGltf } from "../../weapons/paintball/PaintballRifleModel";
+import { WaterFamasProfile, WATER_FAMAS_TIMELINE } from "../../weapons/profiles/WaterFamasProfile";
+import { WaterFamasController } from "../../weapons/waterfamas/WaterFamasController";
+import { loadWaterFamasGltf } from "../../weapons/waterfamas/WaterFamasModel";
 // Real weapon GLBs (same optimized assets as the local viewmodels/menu).
 import rifleUrl from "../../assets/voidrifle_opt.glb?url";
 import spearUrl from "../../assets/lance_opt.glb?url";
@@ -205,6 +208,7 @@ export function preloadRemoteWeaponTemplates(): Promise<void> {
   jobs.push(loadBrickMaulGltf()); // Brick Maul (profile path, shared cache)
   jobs.push(loadPopcornShotgunGltf()); // Popcorn Shotgun (profile path, shared with FP)
   jobs.push(loadPaintballRifleGltf()); // Paintball Rifle (profile path, shared with FP)
+  jobs.push(loadWaterFamasGltf()); // Water FAMAS (profile path, shared with FP)
   return Promise.all(jobs).then(() => undefined);
 }
 
@@ -315,6 +319,13 @@ export class RemoteWeaponController {
   /** World parent of the dropped hopper + ground height (wired by RemotePlayer). */
   paintballDropParent: THREE.Object3D | null = null;
   paintballGroundY: ((x: number, z: number) => number) | null = null;
+
+  // ---- WATER FAMAS dedicated state (profile TP mount + TP controller) ----
+  /** TP presentation controller (its onJet events drive the visible jets). */
+  private famas: WaterFamasController | null = null;
+  private famasMount: THREE.Group | null = null;
+  /** Server ammo known before the weapon is attached (applied at attach). */
+  private famasAmmo: number | null = null;
 
   // Procedural swing state (SPEAR legacy path only)
   private swingTimer = -1;
@@ -612,6 +623,72 @@ export class RemoteWeaponController {
     return this.paintball?.muzzle ?? null;
   }
 
+  // ---- WATER FAMAS visual replication (server-confirmed events) ----
+
+  /**
+   * WATER_FAMAS_FIRE (jet 0 of a burst) / WATER_FAMAS_RELOAD confirmed by the
+   * server: the weapon clip (controller.playRemote) and the avatar's TP clip
+   * start THE SAME FRAME. A burst = the TP "fire" one-shot + the weapon's
+   * burst clip. The later jets (1, 2) are confirmed one by one by the server
+   * and only resync the tank level (famasSyncAmmo). The VISIBLE jets and
+   * their sounds are driven by each per-jet confirm (Game), not by the
+   * controller's own timer — one source per jet, never a double spawn.
+   * Never refused for a local mismatch. Returns false when the FAMAS is not
+   * displayed.
+   */
+  famasAction(action: "fire" | "reload", aiming: boolean, ammoAfter: number | null, elapsed: number): boolean {
+    const c = this.famas;
+    if (!c) {
+      if (ammoAfter !== null) this.famasAmmo = ammoAfter;
+      return false;
+    }
+    if (action === "fire") {
+      c.playRemote("fire", aiming);
+      // Server authority on the tank level: jet 0 already left (ammo - 1).
+      if (ammoAfter !== null && c.ammo !== ammoAfter) c.setAmmo(ammoAfter);
+      return true;
+    }
+    c.playRemote("reload");
+    const startAt = Math.max(0, elapsed);
+    this.onProfileAction?.("reload", { startAt, fadeIn: 0.08 });
+    // Late confirm: advance the weapon clip by the same offset as the TP clip.
+    if (startAt > 0) c.update(startAt);
+    return true;
+  }
+
+  /** WATER_FAMAS_RELOAD_CANCEL (weapon swap mid-refill): undo before the end of the pour. */
+  famasReloadCancel(ammoAfter: number | null): void {
+    if (ammoAfter !== null) this.famasAmmo = ammoAfter;
+    const c = this.famas;
+    if (!c) return;
+    if (c.reloading) {
+      c.cancelReload();
+      this.onProfileAction?.(null, {});
+    }
+    if (ammoAfter !== null) c.setAmmo(ammoAfter);
+  }
+
+  /** Jets 1 / 2 of a burst: resync the tank with the server (never restarts a burst). */
+  famasSyncAmmo(ammoAfter: number): void {
+    this.famasAmmo = ammoAfter;
+    const c = this.famas;
+    if (c && !c.firing && !c.reloading && c.ammo !== ammoAfter) c.setAmmo(ammoAfter);
+  }
+
+  /** Death / respawn: drop the replayed action, full tank (server resets it too). */
+  famasReset(): void {
+    this.famasAmmo = null;
+    if (!this.famas) return;
+    this.famas.setAmmo(this.famas.capacity);
+    this.famas.tank.resetMotion();
+    this.onProfileAction?.(null, {});
+  }
+
+  /** Displayed FAMAS's muzzle node (visible jet origin), or null. */
+  get famasMuzzle(): THREE.Object3D | null {
+    return this.famas?.muzzle ?? null;
+  }
+
   /** Far / invisible avatars: suspend the cosmetic pupils, reset on resume. */
   setCosmeticSuspended(suspended: boolean): void {
     if (this.cosmeticSuspended === suspended) return;
@@ -663,6 +740,8 @@ export class RemoteWeaponController {
     // Paintball Rifle: weapon clips + baked hopper layouts + fire-loop end
     // detection (onBurstEnd → TP FireEnd) + the dropped hopper.
     this.paintball?.update(dt);
+    // Water FAMAS: weapon clips + the water of the tank.
+    this.famas?.update(dt);
     if (this.overrideId) {
       this.overrideTimer -= dt;
       if (this.overrideTimer <= 0) {
@@ -754,6 +833,10 @@ export class RemoteWeaponController {
       this.paintball.muzzle.getWorldPosition(out);
       return true;
     }
+    if (this.famas) {
+      this.famas.muzzle.getWorldPosition(out);
+      return true;
+    }
     if (!this.grip) return false;
     this.grip.getWorldPosition(out);
     return true;
@@ -822,6 +905,19 @@ export class RemoteWeaponController {
         })
         .catch((err) => {
           if (import.meta.env.DEV) console.warn("[RemoteWeapon] PaintballRifle load failed", err);
+        });
+      return;
+    }
+    if (target === NetworkWeaponId.WATER_FAMAS) {
+      // Profile path: whole weapon scene + TP controller, authored TP mount.
+      void loadWaterFamasGltf()
+        .then((gltf) => {
+          if (this.disposed || token !== this.loadToken) return;
+          this.detach();
+          this.attachWaterFamas(gltf);
+        })
+        .catch((err) => {
+          if (import.meta.env.DEV) console.warn("[RemoteWeapon] WaterFamas load failed", err);
         });
       return;
     }
@@ -1047,6 +1143,43 @@ export class RemoteWeaponController {
     this.onArmedChanged?.(PaintballRifleProfile.id);
   }
 
+  /**
+   * WATER FAMAS remote attach: TP controller (firstPerson false) under the
+   * character's Weapon_R through the authored TP mount (applied ONCE, the
+   * root keeps its own 0.19). Its `onBurstStart` drives the avatar's TP
+   * "fire" one-shot layer. The visible jets are spawned by the Game from each
+   * per-jet server confirm. The avatar switches to the "WaterFamas" TP pose
+   * set (one hand, left arm along the body).
+   */
+  private attachWaterFamas(gltf: GLTF): void {
+    const socket = this.characterModel.getObjectByName("Weapon_R");
+    if (!socket) {
+      if (import.meta.env.DEV) console.warn("[RemoteWeapon] Weapon_R socket not found — cannot attach WATER_FAMAS");
+      return;
+    }
+    let controller: WaterFamasController;
+    try {
+      controller = new WaterFamasController(gltf, {
+        firstPerson: false,
+        timeline: WATER_FAMAS_TIMELINE,
+        events: {
+          onBurstStart: () => this.onProfileAction?.("fire", { fadeIn: 0.03 }),
+        },
+      });
+    } catch (err) {
+      if (import.meta.env.DEV) console.warn("[RemoteWeapon] WaterFamas controller failed", err);
+      return;
+    }
+    const mount = createWeaponMount("WaterFamasTPMount", WaterFamasProfile.tpMount);
+    socket.add(mount);
+    mount.add(controller.object);
+    if (this.famasAmmo !== null) controller.setAmmo(this.famasAmmo);
+    this.famas = controller;
+    this.famasMount = mount;
+    this.displayed = NetworkWeaponId.WATER_FAMAS;
+    this.onArmedChanged?.(WaterFamasProfile.id);
+  }
+
   // ---- HEX SNIPER remote tongue visuals (server-confirmed replay) ----
 
   hexTongueBegin(tip: THREE.Vector3): void {
@@ -1170,6 +1303,18 @@ export class RemoteWeaponController {
       this.paintball = null;
       this.paintballMount?.removeFromParent();
       this.paintballMount = null;
+      this.displayed = null;
+      this.onProfileAction?.(null, {});
+      this.onArmedChanged?.(null);
+    }
+    // Water FAMAS profile path cleanup: the instance (mixer, tank water) goes;
+    // shared GLB resources stay cached.
+    if (this.famas) {
+      this.famasAmmo = this.famas.ammo; // survives a re-attach (melee override)
+      this.famas.dispose();
+      this.famas = null;
+      this.famasMount?.removeFromParent();
+      this.famasMount = null;
       this.displayed = null;
       this.onProfileAction?.(null, {});
       this.onArmedChanged?.(null);

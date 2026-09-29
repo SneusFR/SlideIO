@@ -793,6 +793,80 @@ export class GameAudio {
   }
 
   // ------------------------------------------------------------------
+  // WATER FAMAS (no dedicated sample: the compressed-air "pfft" of the
+  // paintball shot, pitched up and layered with a soft click, reads as a
+  // pressurised water squirt; clicks are the existing plastic ones)
+  // ------------------------------------------------------------------
+
+  /** One water jet "pssht" (3 per burst, 75 ms apart: few voices, pitch wobble). */
+  famasJet(k = 0): void {
+    audio.play("paintball_shot", {
+      bus: "weapons",
+      volume: 0.42 - k * 0.03,
+      volumeVar: 0.05,
+      rate: 1.55 + k * 0.06,
+      rateVar: 0.06,
+      duration: 0.16,
+      maxInstances: 6,
+    });
+  }
+
+  /** Empty tank: small click + a dull "pff". */
+  famasDryFire(): void {
+    audio.play("popcorn_dry_fire", { bus: "weapons", volume: 0.5, rate: 1.3, rateVar: 0.04, throttleMs: 120 });
+    audio.play("paintball_shot", { bus: "weapons", volume: 0.16, rate: 0.9, duration: 0.12, delay: 0.03, throttleMs: 120 });
+  }
+
+  /** Cap thread (creak) / cap popped off / hinge & bottle plastic clicks / final screw "clac". */
+  famasCap(kind: "grab" | "off" | "screwed"): void {
+    if (kind === "grab") audio.play("popcorn_lid_click", { bus: "weapons", volume: 0.3, rate: 1.6, rateVar: 0.05, throttleMs: 60 });
+    else if (kind === "off") audio.play("popcorn_pop", { bus: "weapons", volume: 0.3, rate: 1.4, rateVar: 0.05, duration: 0.2, throttleMs: 80 });
+    else audio.play("popcorn_lid_click", { bus: "weapons", volume: 0.55, rate: 0.8, rateVar: 0.04, throttleMs: 60 });
+  }
+
+  famasClick(open: boolean): void {
+    audio.play("popcorn_lid_click", { bus: "weapons", volume: 0.45, rate: open ? 1.25 : 0.95, rateVar: 0.04, throttleMs: 80 });
+  }
+
+  famasBottle(): void {
+    audio.play("popcorn_dry_fire", { bus: "weapons", volume: 0.28, rate: 0.7, rateVar: 0.06, throttleMs: 80 });
+  }
+
+  /** Water glugging into the tank (~0.54 s): a few soft bubbles. */
+  famasPour(): void {
+    for (let i = 0; i < 6; i++) {
+      audio.play("popcorn_pop", {
+        bus: "weapons",
+        volume: 0.16,
+        rate: 0.7 + Math.random() * 0.5,
+        duration: 0.1,
+        delay: i * 0.085 + Math.random() * 0.03,
+        maxInstances: 8,
+      });
+    }
+  }
+
+  /** Tank full again. */
+  famasFull(): void {
+    audio.play("popcorn_lid_click", { bus: "weapons", volume: 0.4, rate: 1.9, rateVar: 0.04, throttleMs: 80 });
+  }
+
+  /** Remote shooter: spatialized jet at the shooter position. */
+  famasJetAt(pos: THREE.Vector3, k = 0): void {
+    audio.playAt("paintball_shot", pos, { bus: "weapons", volume: 0.55, rate: 1.55 + k * 0.06, rateVar: 0.06, duration: 0.16, refDistance: 6, maxInstances: 8 });
+  }
+
+  /** Remote refill: cap, pour glugs, final clac (same clock as the animation). */
+  famasReloadAt(pos: THREE.Vector3): void {
+    audio.playAt("popcorn_lid_click", pos, { bus: "weapons", volume: 0.35, rate: 1.6, delay: 0.32, refDistance: 5, maxInstances: 4 });
+    audio.playAt("popcorn_pop", pos, { bus: "weapons", volume: 0.3, rate: 1.4, delay: 0.66, duration: 0.2, refDistance: 5, maxInstances: 4 });
+    for (let i = 0; i < 6; i++) {
+      audio.playAt("popcorn_pop", pos, { bus: "weapons", volume: 0.14, rate: 0.7 + Math.random() * 0.5, delay: 1.44 + i * 0.085, duration: 0.1, refDistance: 5, maxInstances: 8 });
+    }
+    audio.playAt("popcorn_lid_click", pos, { bus: "weapons", volume: 0.5, rate: 0.8, delay: 2.86, refDistance: 5, maxInstances: 4 });
+  }
+
+  // ------------------------------------------------------------------
   // BASS BLASTER (musical SMG — layered from existing SFX; the music
   // fragments themselves are positional grains played by the weapon)
   // ------------------------------------------------------------------

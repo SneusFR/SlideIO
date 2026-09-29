@@ -563,6 +563,8 @@ export class MultiplayerClient {
         // PaintballRifle: spread cone + paint colour of the ball.
         ...(typeof message.sp === "number" ? { sp: message.sp } : {}),
         ...(typeof message.pc === "number" ? { pc: message.pc } : {}),
+        // WaterFamas: jet index (0..2) of a confirmed WATER_FAMAS_FIRE.
+        ...(typeof message.pi === "number" ? { pi: message.pi } : {}),
       });
     });
     room.onMessage("HIT_CONFIRMED", (message: Partial<HitConfirmedEvent>) => {

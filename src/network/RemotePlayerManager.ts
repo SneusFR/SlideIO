@@ -343,7 +343,8 @@ class RemotePlayer {
       this.weapons.basketReset();
       this.weapons.popcornReset();
       this.weapons.paintballReset();
-      // PAINTBALL: the dead player loses ALL his paint on every client (the
+      this.weapons.famasReset();
+      // PAINTBALL / WATER FAMAS: the dead player loses ALL his paint / is dry again on every client (the
       // corpse clone shares the painted geometry — cleared with it).
       if (this.group.visible) this.onDied?.(this);
       this.onPaintClear?.(this.model);
@@ -373,6 +374,7 @@ class RemotePlayer {
     this.weapons.basketReset();
     this.weapons.popcornReset(); // respawn = full tank (server resets its ammo too)
     this.weapons.paintballReset(); // respawn = full hopper
+    this.weapons.famasReset(); // respawn = full tank
     this.onPaintClear?.(this.model); // safety: a respawned player never carries paint
   }
 
@@ -937,6 +939,36 @@ export class RemotePlayerManager {
 
   paintballReloadCancel(sessionId: string, ammoAfter: number | null): void {
     this.remotes.get(sessionId)?.weapons.paintballReloadCancel(ammoAfter);
+  }
+
+  // ---- WATER FAMAS remote replay (server-confirmed) ----
+
+  /** WATER_FAMAS_FIRE (jet 0) / WATER_FAMAS_RELOAD → weapon clip + TP clip the same frame. */
+  famasAction(sessionId: string, action: "fire" | "reload", aiming: boolean, ammoAfter: number | null, elapsed: number): boolean {
+    return this.remotes.get(sessionId)?.weapons.famasAction(action, aiming, ammoAfter, elapsed) ?? false;
+  }
+
+  famasReloadCancel(sessionId: string, ammoAfter: number | null): void {
+    this.remotes.get(sessionId)?.weapons.famasReloadCancel(ammoAfter);
+  }
+
+  /** Jets 1 / 2 of a burst: resync the remote tank with the server. */
+  famasSyncAmmo(sessionId: string, ammoAfter: number): void {
+    this.remotes.get(sessionId)?.weapons.famasSyncAmmo(ammoAfter);
+  }
+
+  /**
+   * World position of a remote FAMAS's REAL muzzle (visible jet origin) —
+   * false when the avatar is hidden / the FAMAS is not attached.
+   */
+  getFamasMuzzle(sessionId: string, out: THREE.Vector3): boolean {
+    const remote = this.remotes.get(sessionId);
+    if (!remote || !remote.alive || !remote.group.visible) return false;
+    const muzzle = remote.weapons.famasMuzzle;
+    if (!muzzle) return false;
+    muzzle.updateWorldMatrix(true, false);
+    muzzle.getWorldPosition(out);
+    return true;
   }
 
   /**

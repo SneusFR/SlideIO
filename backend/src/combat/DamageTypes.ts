@@ -29,6 +29,8 @@ export enum DamageType {
   POPCORN_SHOTGUN = "POPCORN_SHOTGUN",
   /** PAINTBALL RIFLE balls (hitscan, 12 body / 18 head per ball). */
   PAINTBALL_RIFLE = "PAINTBALL_RIFLE",
+  /** WATER FAMAS jets (hitscan, 23 body / 34.5 head per jet, 3-jet bursts). */
+  WATER_FAMAS = "WATER_FAMAS",
   MOLE_STRIKE = "MOLE_STRIKE",
   ENVIRONMENT = "ENVIRONMENT",
 }

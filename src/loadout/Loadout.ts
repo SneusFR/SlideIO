@@ -10,6 +10,7 @@ import { HexSniperConfig as hx } from "../weapons/hexsniper/HexSniperConfig";
 import { NetworkWeaponConfig } from "../../shared/combat/NetworkWeapons";
 import { PopcornShotgunConfig as pc } from "../../shared/combat/PopcornShotgunRules";
 import { PaintballRifleConfig as pb } from "../../shared/combat/PaintballRifleRules";
+import { WaterFamasConfig as wf } from "../../shared/combat/WaterFamasRules";
 
 /** GoofyBasket gameplay numbers come from the SHARED client/server config. */
 const gb = NetworkWeaponConfig.goofyBasket;
@@ -30,7 +31,8 @@ export type PrimaryWeaponId =
   | "HEX_SNIPER"
   | "GOOFY_BASKET"
   | "POPCORN_SHOTGUN"
-  | "PAINTBALL_RIFLE";
+  | "PAINTBALL_RIFLE"
+  | "WATER_FAMAS";
 export type KillstreakId = "NONE" | "MOLE_STRIKE" | "ORBITAL_SCAN" | "NOVA_STRIKE";
 
 /** Exactly three equippable killstreak slots (keys W / X / C in game). */
@@ -95,7 +97,8 @@ export function loadLoadout(): LoadoutSelection {
         parsed.primary === "HEX_SNIPER" ||
         parsed.primary === "GOOFY_BASKET" ||
         parsed.primary === "POPCORN_SHOTGUN" ||
-        parsed.primary === "PAINTBALL_RIFLE"
+        parsed.primary === "PAINTBALL_RIFLE" ||
+        parsed.primary === "WATER_FAMAS"
           ? parsed.primary
           : "PLASMA_RIFLE",
       killstreaks,
@@ -537,6 +540,47 @@ export const PRIMARY_ITEMS: LoadoutItem[] = [
         name: "VISÉE SERRÉE & INSPECTION",
         description:
           "Clic droit : l'arme se serre contre le corps et la dispersion minimale se resserre. F : inspection à une main, on voit les billes rouler dans le réservoir (visuel uniquement).",
+        stats: [{ label: "INSPECTION", value: "3,6 s" }],
+      },
+    ],
+  },
+  {
+    id: "WATER_FAMAS",
+    name: "FAMAS À EAU",
+    tagline: "Pistolet à eau en rafales de 3 jets",
+    summary:
+      `Un FAMAS à eau cartoon, tenu à une main : ${wf.capacity} jets dans un réservoir transparent où l'eau clapote vraiment. Chaque appui lâche une rafale de ${wf.jetsPerBurst} jets bien séparés, chacun touche instantanément. L'eau mouille : les murs gardent une trace qui sèche en quelques secondes, et un joueur touché reste trempé et brillant un moment.`,
+    ratings: { power: 60, precision: 65, difficulty: 45 },
+    abilities: [
+      {
+        trigger: "CLIC GAUCHE — UNE RAFALE PAR APPUI",
+        name: "RAFALE DE 3 JETS",
+        description:
+          `Un appui = ${wf.jetsPerBurst} jets à 0 / 0,075 / 0,15 s (pas de tir automatique en maintenant), une nouvelle rafale ${wf.burstInterval} s après. Chaque jet est un tir instantané depuis le centre de l'écran, avec une légère dispersion qui grandit dans la rafale (${wf.spreadDeg.join("° / ")}°, réduite en visée). Sans atténuation et sans portée maximale (premier obstacle ou limites de la carte). Une tête fait ×${wf.headMultiplier}.`,
+        stats: [
+          { label: "DÉGÂTS / JET", value: `${wf.bodyDamage} PV` },
+          { label: "TÊTE", value: `${wf.bodyDamage * wf.headMultiplier} PV` },
+          { label: "RAFALE", value: `${wf.jetsPerBurst} × ${wf.bodyDamage} PV` },
+          { label: "PORTÉE", value: "ILLIMITÉE" },
+          { label: "RÉSERVOIR", value: `${wf.capacity} jets` },
+        ],
+      },
+      {
+        trigger: "TOUCHE R — OU TIR À VIDE",
+        name: "REMPLISSAGE AU BOUCHON",
+        description:
+          "On dévisse le bouchon arrière en deux quarts de tour, on l'écarte, on verse une bouteille d'eau, puis on referme et on revisse. Changer d'arme avant la fin du versement annule la recharge.",
+        stats: [
+          { label: "JETS", value: `${wf.capacity}` },
+          { label: "MUNITIONS PRÊTES", value: `${wf.timeline.reloadAmmoRefilled} s` },
+          { label: "TIR POSSIBLE", value: `${wf.timeline.reloadReady} s` },
+        ],
+      },
+      {
+        trigger: "CLIC DROIT — MAINTENIR / TOUCHE F",
+        name: "VISÉE SERRÉE & INSPECTION",
+        description:
+          "Clic droit : l'arme se serre contre le corps et la dispersion diminue. F : inspection à une main, le réservoir vu d'en haut avec trois secousses (visuel uniquement).",
         stats: [{ label: "INSPECTION", value: "3,6 s" }],
       },
     ],

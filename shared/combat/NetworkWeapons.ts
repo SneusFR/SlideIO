@@ -21,6 +21,7 @@ export enum NetworkWeaponId {
   GOOFY_BASKET = "GOOFY_BASKET",
   POPCORN_SHOTGUN = "POPCORN_SHOTGUN",
   PAINTBALL_RIFLE = "PAINTBALL_RIFLE",
+  WATER_FAMAS = "WATER_FAMAS",
 }
 
 export function isNetworkWeaponId(raw: unknown): raw is NetworkWeaponId {
@@ -118,6 +119,21 @@ export enum WeaponActionType {
   /** PAINTBALL RIFLE: swap interrupted (weapon switch…) — before the new
    *  hopper clicks in the ammo stays unchanged. */
   PAINTBALL_RELOAD_CANCEL = "PAINTBALL_RELOAD_CANCEL",
+  /** WATER FAMAS: ONE water jet of a 3-jet burst (sent when the jet leaves the
+   *  barrel: 0 / 0.075 / 0.15 s after the pull). `pi` = jet index 0..2,
+   *  `sd` = jet seed (uint32), `pc` = 1 when the burst was started aiming,
+   *  dx/dy/dz = camera aim — the server rebuilds the SAME ray
+   *  (shared/combat/WaterFamasRules), hitscans it (lag-compensated) and
+   *  applies 23 / 34.5 (head) at once.
+   *  Confirm: `sd` + `pi` + `pc` + `am` + hx/hy/hz (end point) + `tid` (victim)
+   *  + dx/dy/dz = the FINAL jet direction (spread applied). */
+  WATER_FAMAS_FIRE = "WATER_FAMAS_FIRE",
+  /** WATER FAMAS: refill started (ammo counts at 1.98 s, fire again from
+   *  2.95 s — server clock). */
+  WATER_FAMAS_RELOAD = "WATER_FAMAS_RELOAD",
+  /** WATER FAMAS: refill interrupted (weapon switch…) — before the end of the
+   *  pour the ammo stays unchanged. */
+  WATER_FAMAS_RELOAD_CANCEL = "WATER_FAMAS_RELOAD_CANCEL",
 }
 
 // ---------------------------------------------------------------------
@@ -560,7 +576,8 @@ export interface WeaponActionMessage {
   sd?: number;
   /** PAINTBALL RIFLE: spread cone of the ball (degrees, 1/1000 precision). */
   sp?: number;
-  /** PAINTBALL RIFLE: paint colour index of the ball (hopper palette, 0..7). */
+  /** PAINTBALL RIFLE: paint colour index of the ball (hopper palette, 0..7).
+   *  WATER FAMAS: 1 = the burst was started aiming (ADS cone). */
   pc?: number;
 }
 
@@ -613,8 +630,11 @@ export interface WeaponActionConfirmedEvent {
   /** PAINTBALL RIFLE: spread cone of a confirmed PAINTBALL_FIRE (remote
    *  clients rebuild the same ball direction from `sd` + `sp` + dx/dy/dz). */
   sp?: number;
-  /** PAINTBALL RIFLE: paint colour index (same ball colour on every client). */
+  /** PAINTBALL RIFLE: paint colour index (same ball colour on every client).
+   *  WATER FAMAS: 1 = the burst was started aiming. */
   pc?: number;
+  /** WATER FAMAS: jet index (0..2) of a confirmed WATER_FAMAS_FIRE. */
+  pi?: number;
 }
 
 /**

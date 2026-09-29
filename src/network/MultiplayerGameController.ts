@@ -109,6 +109,11 @@ export class MultiplayerGameController {
     this.vfx.onPaintballAction = fn;
   }
 
+  /** WATER FAMAS: remote players' per-jet fire / reload confirms. */
+  set onRemoteWaterFamasAction(fn: ((event: WeaponActionConfirmedEvent) => void) | null) {
+    this.vfx.onWaterFamasAction = fn;
+  }
+
   private readonly statsSource = new NetworkStatsSource();
   /** Local alive state as told BY THE SERVER (never by local HP math). */
   private localAlive = true;

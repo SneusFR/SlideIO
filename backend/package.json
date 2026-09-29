@@ -9,7 +9,8 @@
     "build": "tsc",
     "start": "node dist/backend/src/index.js",
     "test:weapons": "tsx src/weapons/WeaponManager.test.ts",
-    "test:basket": "tsx src/weapons/BasketProjectileSim.test.ts"
+    "test:basket": "tsx src/weapons/BasketProjectileSim.test.ts",
+    "test:famas": "tsx src/weapons/WaterFamas.test.ts"
   },
   "dependencies": {
     "@colyseus/schema": "^2.0.30",

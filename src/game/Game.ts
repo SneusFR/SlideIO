@@ -69,6 +69,10 @@ import { PaintballRifleWeapon } from "../weapons/paintball/PaintballRifleWeapon"
 import { PaintballRifleHUD } from "../ui/PaintballRifleHUD";
 import { PaintballRifleConfig as paintballCfg, paintballBallDirection } from "../../shared/combat/PaintballRifleRules";
 import type { PaintHit } from "../weapons/paintball/PaintballProjectiles";
+import { WaterFamasWeapon } from "../weapons/waterfamas/WaterFamasWeapon";
+import { WaterFamasHUD } from "../ui/WaterFamasHUD";
+import { WaterFamasConfig as famasCfg } from "../../shared/combat/WaterFamasRules";
+import type { WaterJetHit } from "../weapons/waterfamas/WaterJets";
 import { ViewmodelSystem } from "../weapons/viewmodel/ViewmodelSystem";
 import { MusicSelectorHUD } from "../ui/MusicSelectorHUD";
 import { KillstreakManager, KILLSTREAK_SLOT_CODES } from "../killstreaks/KillstreakManager";
@@ -176,7 +180,7 @@ export class Game {
    */
   private activeSlot: "PRIMARY" | "MELEE" = "PRIMARY";
   /** Owner of the shared FP arms right now (exactly one advances the mixer). */
-  private fpOwner: "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" | "POPCORN_SHOTGUN" | "PAINTBALL_RIFLE" = "NONE";
+  private fpOwner: "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" | "POPCORN_SHOTGUN" | "PAINTBALL_RIFLE" | "WATER_FAMAS" = "NONE";
   /** True during the maul's Unequip transition back to the primary. */
   private slotSwitchPending = false;
   /** FP maul inspection running (slot 2, F key). */
@@ -254,6 +258,16 @@ export class Game {
   private readonly paintballColor = new THREE.Color();
   private readonly paintballGroundRay = new THREE.Raycaster();
   private readonly paintballGroundOrigin = new THREE.Vector3();
+
+  // ---- WATER FAMAS (9-jet one-handed water burst gun, hitscan per jet — shared FP arms) ----
+  private waterFamas: WaterFamasWeapon;
+  private famasHud: WaterFamasHUD;
+  /** Remote FAMAS jet replay scratch (allocated once). */
+  private readonly famasRay = new THREE.Raycaster();
+  private readonly famasDir = new THREE.Vector3();
+  private readonly famasFrom = new THREE.Vector3();
+  private readonly famasTo = new THREE.Vector3();
+  private readonly famasOrigin = new THREE.Vector3();
   private readonly basketVec = new THREE.Vector3();
   private readonly basketVec2 = new THREE.Vector3();
   private readonly basketVec3 = new THREE.Vector3();
@@ -521,6 +535,7 @@ export class Game {
       this.goofyBasket.reset(); // a downed shooter drops its charge / unreleased throw
       this.popcornShotgun.cancelReload(); // knocked down mid-reload: undone before 1.75 s
       this.paintballRifle.cancelReload(); // knocked down mid-swap: undone before 1.52 s
+      this.waterFamas.cancelReload(); // knocked down mid-refill: undone before the end of the pour
       this.meleeHoldPending = false;
     };
 
@@ -724,6 +739,19 @@ export class Game {
     this.paintballRay.firstHitOnly = true;
     this.paintballGroundRay.firstHitOnly = true;
 
+    // ---- WATER FAMAS (primary alternative — equipped from the Loadout menu):
+    // LMB PRESS = ONE burst of 3 jets (0 / 0.075 / 0.15 s, no auto-fire while
+    // held), each jet its own seeded hitscan (23 body / 34.5 head, no range limit, no
+    // falloff), 9 jets, R = cap refill (auto on a dry fire), RMB = tight hip
+    // aim, F = one-hand inspection. Presentation = shared FP arms + the pack's
+    // controller (live tank water); visible jets, wet marks and wet characters
+    // = ONE WaterFamasFX for every shooter.
+    this.waterFamas = new WaterFamasWeapon(this.fpsCamera.camera, this.scene, this.viewmodelSystem);
+    this.waterFamas.owner = this.playerCombatant;
+    this.waterFamas.feedback = this.hitFeedback;
+    this.famasHud = new WaterFamasHUD(famasCfg.capacity);
+    this.famasRay.firstHitOnly = true;
+
     // ---- Audio: pure observation of existing gameplay events ----
     this.gameAudio = new GameAudio();
     this.movement.sfx = this.gameAudio.movementSfx;
@@ -793,6 +821,21 @@ export class Game {
       onChargeBack: () => this.gameAudio.paintballCharge(false),
       onChargeRelease: () => this.gameAudio.paintballCharge(true),
     };
+    // Water FAMAS: pack §6 callbacks → SFX (the HUD polls the weapon). One
+    // "pssht" per JET (3 per burst), refill events on the authored clock.
+    this.waterFamas.sfx = {
+      onJet: (k) => this.gameAudio.famasJet(k),
+      onDryFire: () => this.gameAudio.famasDryFire(),
+      onCapGrab: () => this.gameAudio.famasCap("grab"),
+      onCapOff: () => this.gameAudio.famasCap("off"),
+      onHingeOpen: () => this.gameAudio.famasClick(true),
+      onBottleIn: () => this.gameAudio.famasBottle(),
+      onPourStart: () => this.gameAudio.famasPour(),
+      onAmmoRefilled: () => this.gameAudio.famasFull(),
+      onBottleOut: () => this.gameAudio.famasBottle(),
+      onHingeClose: () => this.gameAudio.famasClick(false),
+      onCapScrewed: () => this.gameAudio.famasCap("screwed"),
+    };
 
     this.playerCombatant.health.onDamaged = (amount, attacker) => {
       this.combatHud.notifyDamage(amount, this.damageAngleFrom(attacker));
@@ -841,6 +884,7 @@ export class Game {
       this.goofyBasket.reset(); // charge / unreleased throw dropped, ball hidden (flying balls keep going)
       this.popcornShotgun.reset(); // reload dropped, full tank for the respawn (server does the same)
       this.paintballRifle.reset(); // swap dropped, full hopper for the respawn (server does the same)
+      this.waterFamas.reset(); // refill dropped, full tank for the respawn (server does the same)
       this.movement.stopHexPull(); // dying while reeled: the grab is gone
       this.meleeHoldPending = false;
       // Death mid-burrow: instant cleanup WITHOUT the AoE, then every
@@ -891,6 +935,8 @@ export class Game {
       // the painted geometry, so it is cleared too — the bot respawns clean).
       const botModel = bot.model.characterModel;
       if (botModel) this.paintballRifle.fx.clearPaintUnder(botModel);
+      // WATER FAMAS: a dead player is dry again (the bot respawns dry).
+      if (botModel) this.waterFamas.fx.dryUnder(botModel);
       if (killer === this.playerCombatant) {
         this.combatHud.notifyKill();
         // LOCAL PLAYER kill only (bot-vs-bot never touches the combo):
@@ -919,6 +965,13 @@ export class Game {
       // Paintball: stop tracking the removed bot's body (paint buffers freed).
       const botModel = bot.model.characterModel;
       if (botModel) this.paintballRifle.fx.detachUnder(botModel);
+      if (botModel) this.waterFamas.fx.detachUnder(botModel); // wet buffers freed
+    };
+    // WATER FAMAS (solo): a jet that hits a bot wets its REAL skinned body
+    // (visual raycast on the clone).
+    this.waterFamas.resolveCharacterRoot = (combatant) => {
+      const bot = this.botManager.bots.find((b) => b === combatant);
+      return bot?.model.characterModel ?? null;
     };
     // PAINTBALL (solo): a ball that hits a bot paints its REAL skinned body
     // (visual raycast on the clone); the bot's damage flash follows the
@@ -1028,6 +1081,7 @@ export class Game {
       this.hexSniper.ready,
       this.popcornShotgun.ready,
       this.paintballRifle.ready,
+      this.waterFamas.ready,
     ]);
 
     // 2. Transient visuals that never exist at rest: a thrown-revolver
@@ -1039,6 +1093,8 @@ export class Game {
     this.popcornShotgun.beginWarmUp(far);
     // Paintball Rifle: one visual ball + one surface splat (both programs).
     this.paintballRifle.beginWarmUp(far);
+    // Water FAMAS: one visible jet + its splash (both programs).
+    this.waterFamas.beginWarmUp(far);
     const temp: THREE.Object3D[] = [];
     try {
       const template = await loadRevolverTemplate();
@@ -1170,6 +1226,7 @@ export class Game {
       if (prevOwner === "GOOFY_BASKET") this.goofyBasket.releasePresentation();
       if (prevOwner === "POPCORN_SHOTGUN") this.popcornShotgun.releasePresentation();
       if (prevOwner === "PAINTBALL_RIFLE") this.paintballRifle.releasePresentation();
+      if (prevOwner === "WATER_FAMAS") this.waterFamas.releasePresentation();
       await this.hammerViewmodel.equip(false);
       this.viewmodelSystem.setVisible(true);
       this.viewmodelSystem.syncCamera(this.fpsCamera.camera);
@@ -1179,6 +1236,7 @@ export class Game {
       if (prevOwner === "GOOFY_BASKET") this.goofyBasket.takePresentation();
       if (prevOwner === "POPCORN_SHOTGUN") this.popcornShotgun.takePresentation();
       if (prevOwner === "PAINTBALL_RIFLE") this.paintballRifle.takePresentation();
+      if (prevOwner === "WATER_FAMAS") this.waterFamas.takePresentation();
     }
     this.viewmodelSystem.setVisible(fpWasVisible);
 
@@ -1219,6 +1277,7 @@ export class Game {
     this.shockwave.update(10);
     this.popcornShotgun.endWarmUp();
     this.paintballRifle.endWarmUp();
+    this.waterFamas.endWarmUp();
     if (paintedWarm) this.paintballRifle.fx.detachUnder(paintedWarm);
     this.particles.update(10);
 
@@ -1249,6 +1308,7 @@ export class Game {
       this.goofyBasket.reset(); // charge dropped; flying balls keep their lifecycle
       this.popcornShotgun.reset(); // fresh full tank
       this.paintballRifle.reset(); // fresh full hopper
+      this.waterFamas.reset(); // fresh full tank
     }
     // COSMETICS: the equipped skin of the primary. Applied on the held ball
     // instance in place — a skin change ALONE is NOT a weapon change (no
@@ -1297,7 +1357,7 @@ export class Game {
    *   - otherwise                           → nobody (legacy viewmodels)
    * Exactly one owner advances the arms mixer per frame.
    */
-  private desiredFpOwner(): "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" | "POPCORN_SHOTGUN" | "PAINTBALL_RIFLE" {
+  private desiredFpOwner(): "NONE" | "HAMMER" | "HEX_SNIPER" | "GOOFY_BASKET" | "POPCORN_SHOTGUN" | "PAINTBALL_RIFLE" | "WATER_FAMAS" {
     if (this.meleeWeapon === "HAMMER") {
       if (this.activeSlot === "MELEE" || this.slotSwitchPending) return "HAMMER";
       if (this.hammer.isBusy) return "HAMMER"; // temporary melee override
@@ -1306,6 +1366,7 @@ export class Game {
     if (this.primaryWeapon === "GOOFY_BASKET" && this.activeSlot === "PRIMARY") return "GOOFY_BASKET";
     if (this.primaryWeapon === "POPCORN_SHOTGUN" && this.activeSlot === "PRIMARY") return "POPCORN_SHOTGUN";
     if (this.primaryWeapon === "PAINTBALL_RIFLE" && this.activeSlot === "PRIMARY") return "PAINTBALL_RIFLE";
+    if (this.primaryWeapon === "WATER_FAMAS" && this.activeSlot === "PRIMARY") return "WATER_FAMAS";
     return "NONE";
   }
 
@@ -1320,6 +1381,7 @@ export class Game {
     // Weapon switch: an unfinished reload is cancelled (pack §3) inside.
     if (this.fpOwner === "POPCORN_SHOTGUN") this.popcornShotgun.releasePresentation();
     if (this.fpOwner === "PAINTBALL_RIFLE") this.paintballRifle.releasePresentation();
+    if (this.fpOwner === "WATER_FAMAS") this.waterFamas.releasePresentation();
     if (this.fpOwner === "HAMMER") {
       this.hammerInspecting = false;
       this.hammerViewmodel.hide();
@@ -1337,6 +1399,8 @@ export class Game {
       this.popcornShotgun.takePresentation(); // real Equip clip
     } else if (want === "PAINTBALL_RIFLE") {
       this.paintballRifle.takePresentation(); // real Equip clip
+    } else if (want === "WATER_FAMAS") {
+      this.waterFamas.takePresentation(); // real Equip clip
     }
     this.syncNetworkMeleeShown();
   }
@@ -1596,6 +1660,45 @@ export class Game {
     this.paintballRifle.onPredictedRemoteHit = (zone) => this.showPaintballHitFeedback(zone);
     // New session: no splat / paint from the solo sandbox or an old match.
     this.paintballRifle.fx.clearAll();
+    // ---- WATER FAMAS (server-authoritative ammo / burst cadence / hitscan per
+    // jet / damage) ----
+    // Shooter side: each jet is predicted (clips, tank, visible jet + wet mark
+    // on the local raycast); the server owns the damage (HIT_CONFIRMED). Remote
+    // avatars: dry again at death / respawn (every client), detached when they
+    // leave. Every remote jet is replayed from its own confirm.
+    this.waterFamas.networkAuthority = true;
+    this.multiplayer.onRemoteWaterFamasAction = (event) => this.handleRemoteWaterFamasAction(event);
+    const prevClear = remotes.onPaintClear;
+    const prevDetach = remotes.onPaintDetach;
+    remotes.onPaintClear = (model) => {
+      prevClear?.(model);
+      this.waterFamas.fx.dryUnder(model);
+    };
+    remotes.onPaintDetach = (model) => {
+      prevDetach?.(model);
+      this.waterFamas.fx.detachUnder(model);
+    };
+    // Local predicted jet vs the remote avatars (shared server volumes): it
+    // lands on the player the server will hit, never on the wall behind.
+    this.waterFamas.resolveRemoteHit = (origin, dir, maxDist) => {
+      let best = maxDist;
+      let bestId: string | null = null;
+      let bestHead = false;
+      remotes.forEachVisible((id, center) => {
+        const r = popcornRayVsPlayer(origin, dir, center, best);
+        if (r && r.t < best) {
+          best = r.t;
+          bestId = id;
+          bestHead = r.head;
+        }
+      });
+      if (bestId === null) return null;
+      return { distance: best, root: remotes.getCharacterModel(bestId), head: bestHead };
+    };
+    // Hitscan FEEL: each predicted jet hit shows the hitmarker + plays the hit
+    // sound AT THE JET; HIT_CONFIRMED then only adds the damage number.
+    this.waterFamas.onPredictedRemoteHit = (zone) => this.showFamasHitFeedback(zone);
+    this.waterFamas.fx.clearAll();
     // Victim side: reel toward the attacker's DISPLAYED position through
     // our own character controller (server HEX_PULL start/stop).
     this.multiplayer.onHexPull = (event) => {
@@ -1656,6 +1759,11 @@ export class Game {
     this.paintballRifle.onPredictedRemoteHit = null;
     this.paintballRifle.reset();
     this.paintballRifle.fx.clearAll(); // the old match's splats never leak into solo
+    this.waterFamas.networkAuthority = false; // back to local damage (solo / bots)
+    this.waterFamas.resolveRemoteHit = null;
+    this.waterFamas.onPredictedRemoteHit = null;
+    this.waterFamas.reset();
+    this.waterFamas.fx.clearAll(); // the old match's wet marks never leak into solo
     this.goofyBasket.networkAuthority = false;
     this.goofyBasket.projectiles.networkAuthority = false;
     this.goofyBasket.reset();
@@ -2070,6 +2178,7 @@ export class Game {
       const basketEquipped = primaryHeld && this.primaryWeapon === "GOOFY_BASKET";
       const popcornEquipped = primaryHeld && this.primaryWeapon === "POPCORN_SHOTGUN";
       const paintballEquipped = primaryHeld && this.primaryWeapon === "PAINTBALL_RIFLE";
+      const famasEquipped = primaryHeld && this.primaryWeapon === "WATER_FAMAS";
       // KNOCKED DOWN (§ ragdoll) blocks EVERY weapon — exactly like a
       // ragdolled bot never fires. In-flight projectiles / explosions of
       // course keep ticking; only NEW actions are gated.
@@ -2091,7 +2200,8 @@ export class Game {
         !hexEquipped &&
         !basketEquipped &&
         !popcornEquipped &&
-        !paintballEquipped;
+        !paintballEquipped &&
+        !famasEquipped;
       this.rifle.setViewmodelHidden(
         !primaryHeld ||
           this.hammer.isBusy ||
@@ -2292,6 +2402,29 @@ export class Game {
         sliding: this.movement.state === MoveState.SLIDING,
         speed: this.movement.horizontalSpeed,
       });
+      // WATER FAMAS: LMB PRESS = ONE burst of 3 jets (never re-fires while
+      // held: the edge, not the level), R = refill (auto on a dry fire), RMB
+      // tight hip aim, F inspection (terminal interaction keeps priority on
+      // F). The FP arms mixer advances ONLY while it owns them; the weapon
+      // clips + tank water + jets 1 / 2 run in postCameraUpdate after the FP
+      // camera sync (render scope below).
+      this.waterFamas.setViewmodelHidden(
+        !famasEquipped || this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
+      );
+      this.waterFamas.update(dt, {
+        firePressed: famasEquipped && this.input.pointerLocked && this.input.wasMousePressed(0),
+        fireHeld: famasEquipped && this.input.pointerLocked && this.input.isMouseDown(0),
+        reloadPressed: famasEquipped && this.input.wasPressed("KeyR"),
+        inspectPressed: famasEquipped && !this.interactNearby && this.input.wasPressed("KeyF"),
+        aimHeld: famasEquipped && this.input.isMouseDown(2),
+        canAct: famasEquipped && playerAlive && !meleeBlocked && this.input.pointerLocked,
+        hittables: this.hittables,
+        grounded: this.movement.grounded,
+        verticalVelocity: this.movement.velocity.y,
+        jumpSequence: this.movement.jumpSequence,
+        sliding: this.movement.state === MoveState.SLIDING,
+        speed: this.movement.horizontalSpeed,
+      });
 
       // LANCE on slot 2: held at rest between attacks (legacy viewmodel).
       this.spearViewmodel.setHeld(
@@ -2340,6 +2473,8 @@ export class Game {
     this.popcornHud.update(this.popcornShotgun);
     this.paintballHud.setVisible(this.primaryWeapon === "PAINTBALL_RIFLE");
     this.paintballHud.update(this.paintballRifle);
+    this.famasHud.setVisible(this.primaryWeapon === "WATER_FAMAS");
+    this.famasHud.update(this.waterFamas);
     this.combatHud.update(dt, this.playerCombatant.health, this.playerDeathTimer);
     // Knockdown banner (§ ragdoll): down → "KNOCKED DOWN", recoverable →
     // pulsing "PRESS SPACE TO GET UP" (a death always hides it).
@@ -2397,6 +2532,10 @@ export class Game {
     // PAINTBALL RIFLE (pack order): rifle.update AFTER syncCamera (the
     // hopper reads the final world pose), then the shared visual balls.
     this.paintballRifle.postCameraUpdate(running ? dt : 0);
+    // WATER FAMAS (pack order): famas.update AFTER syncCamera (the tank water
+    // reads the final world pose; jets 1 / 2 are cast from the FINAL camera),
+    // then jets + wet marks (WaterFamasFX.update, once per frame).
+    this.waterFamas.postCameraUpdate(running ? dt : 0);
     try {
       // LOW preset: the shadow map is STATIC (baked once at load — see
       // warmUpRendering). No per-frame refresh: the caster re-render was the
@@ -2681,7 +2820,8 @@ export class Game {
       this.primaryWeapon !== "BASS_BLASTER" &&
       this.primaryWeapon !== "POISON_SPRAYER" &&
       this.primaryWeapon !== "POPCORN_SHOTGUN" &&
-      this.primaryWeapon !== "PAINTBALL_RIFLE";
+      this.primaryWeapon !== "PAINTBALL_RIFLE" &&
+      this.primaryWeapon !== "WATER_FAMAS";
     if (fellOut || manualRespawn) {
       // Suicide / kill plane → normal death + respawn flow.
       this.playerCombatant.health.kill(null);
@@ -2818,6 +2958,81 @@ export class Game {
       this.netSendAimedAction(WeaponActionType.PAINTBALL_FIRE, undefined, undefined, seed, spread, colorIndex);
     this.paintballRifle.onNetReload = () => this.netSendAimedAction(WeaponActionType.PAINTBALL_RELOAD);
     this.paintballRifle.onNetReloadCancel = () => this.netSendAimedAction(WeaponActionType.PAINTBALL_RELOAD_CANCEL);
+
+    // WATER FAMAS: EVERY jet of a burst is reported when it leaves the barrel
+    // (0 / 0.075 / 0.15 s after the pull) with its seed (`sd`), its index in
+    // the burst (`pi`) and the ADS flag (`pc`): the server rebuilds the same
+    // ray, hitscans it and owns the damage. Refill start / cancel keep the
+    // server ammo clock in step.
+    this.waterFamas.onNetFire = (seed, jet, aiming) =>
+      this.netSendAimedAction(WeaponActionType.WATER_FAMAS_FIRE, undefined, jet, seed, undefined, aiming ? 1 : 0);
+    this.waterFamas.onNetReload = () => this.netSendAimedAction(WeaponActionType.WATER_FAMAS_RELOAD);
+    this.waterFamas.onNetReloadCancel = () => this.netSendAimedAction(WeaponActionType.WATER_FAMAS_RELOAD_CANCEL);
+  }
+
+  /**
+   * Remote players' Water FAMAS confirms (one per JET): weapon clip + TP
+   * `fire` one-shot (jet 0 only — the burst clip covers the 3 jets) / refill
+   * (driven by the TP controller the SAME frame), spatialized SFX, and the
+   * COSMETIC jet: the confirm carries the FINAL server direction (spread
+   * already applied) and the impact point — used AS IS; the victim named by
+   * the server (`tid`) is wet on its real skinned body, a wall gets the seeded
+   * wet mark (same seed = same mark everywhere). The jet leaves the remote's
+   * REAL muzzle. Never damage.
+   */
+  private handleRemoteWaterFamasAction(event: WeaponActionConfirmedEvent): void {
+    const remotes = this.multiplayer?.remotes;
+    if (!remotes) return;
+    const ammo = typeof event.am === "number" ? event.am : null;
+    const shooterPos = this.famasOrigin.set(event.ox, event.oy, event.oz);
+    if (event.action === WeaponActionType.WATER_FAMAS_RELOAD_CANCEL) {
+      remotes.famasReloadCancel(event.playerId, ammo);
+      return;
+    }
+    if (event.action === WeaponActionType.WATER_FAMAS_RELOAD) {
+      remotes.famasAction(event.playerId, "reload", false, ammo, remotes.elapsedSince(event.ts));
+      this.gameAudio.famasReloadAt(shooterPos);
+      return;
+    }
+    if (event.action !== WeaponActionType.WATER_FAMAS_FIRE) return;
+    const jet = typeof event.pi === "number" ? event.pi : 0;
+    if (jet === 0) remotes.famasAction(event.playerId, "fire", event.pc === 1, ammo, 0);
+    else if (ammo !== null) remotes.famasSyncAmmo(event.playerId, ammo);
+    this.gameAudio.famasJetAt(shooterPos, jet);
+    if (typeof event.sd !== "number") return;
+    const fx = this.waterFamas.fx;
+
+    // Final jet direction: the server-confirmed dx/dy/dz AS IS (never re-run).
+    const dir = this.famasDir.set(event.dx, event.dy, event.dz).normalize();
+    // Impact = the server end point (hx/hy/hz); fallback: range point.
+    const to = this.famasTo;
+    if (typeof event.hx === "number") to.set(event.hx, event.hy ?? 0, event.hz ?? 0);
+    else to.copy(shooterPos).addScaledVector(dir, famasCfg.maxRange);
+    const dist = shooterPos.distanceTo(to);
+
+    let wet: WaterJetHit | null = null;
+    const victimId = event.tid;
+    if (victimId) {
+      const localId = this.multiplayerClient?.sessionId ?? null;
+      const root = victimId === localId ? null : remotes.getCharacterModel(victimId);
+      if (root) wet = fx.characterHit(root, shooterPos, dir, to);
+      // The LOCAL player is never wet on his own screen (no body in FP).
+    } else if (dist < famasCfg.maxRange - 0.05) {
+      // Server says wall: the REAL map mesh gives the exact point + normal.
+      this.famasRay.set(shooterPos, dir);
+      this.famasRay.near = 0;
+      this.famasRay.far = Math.min(famasCfg.maxRange, dist + 1.5);
+      const hits = this.famasRay.intersectObjects(this.staticHittables, true);
+      if (hits.length > 0) {
+        to.copy(hits[0].point);
+        wet = fx.surfaceHit(hits[0], dir, event.sd >>> 0);
+      }
+    }
+    // The visible jet leaves the remote's REAL muzzle and stays on its gun
+    // line while the water leaves the barrel (live anchor).
+    const shooterId = event.playerId;
+    if (!remotes.getFamasMuzzle(shooterId, this.famasFrom)) this.famasFrom.copy(shooterPos);
+    fx.spawn(this.famasFrom, to, wet, (out) => remotes.getFamasMuzzle(shooterId, out));
   }
 
   /**
@@ -3227,6 +3442,9 @@ export class Game {
     // marker one round-trip later, and never the 80 ms plasma throttle (at
     // 600 rpm it would swallow balls). A kill still gets its marker.
     if (event.weapon === NetworkWeaponId.PAINTBALL_RIFLE && !event.killed) return;
+    // WATER FAMAS: same rule — each jet showed its own hitmarker at the jet
+    // (3 per burst, 75 ms apart: never swallowed by the 80 ms throttle).
+    if (event.weapon === NetworkWeaponId.WATER_FAMAS && !event.killed) return;
 
     // Continuous plasma confirms ~20 Hz — keep the feedback readable.
     if (!event.killed && this.elapsed - this.lastNetHitFeedback < 0.08) return;
@@ -3245,6 +3463,11 @@ export class Game {
     this.hitmarkerHud.show(zone);
     if (zone === HitZone.HEAD) this.gameAudio.hitHead();
     else this.gameAudio.hitBody();
+  }
+
+  /** WATER FAMAS predicted remote hit: same instant feedback, EVERY jet. */
+  private showFamasHitFeedback(zone: HitZone): void {
+    this.showPaintballHitFeedback(zone);
   }
 
   /** SERVER-confirmed kill → the full solo kill feedback chain. */
@@ -3334,6 +3557,8 @@ function networkKillMethod(damageType: string): KillMethod {
       return KillMethod.POPCORN_SHOTGUN;
     case "PAINTBALL_RIFLE":
       return KillMethod.PAINTBALL_RIFLE;
+    case "WATER_FAMAS":
+      return KillMethod.WATER_FAMAS;
     default:
       return KillMethod.PLASMA;
   }

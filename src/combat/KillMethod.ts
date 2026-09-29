@@ -38,5 +38,7 @@ export enum KillMethod {
   POPCORN_SHOTGUN = "POPCORN_SHOTGUN",
   /** PAINTBALL RIFLE balls (hitscan, 12 body / 18 head, no special medal). */
   PAINTBALL_RIFLE = "PAINTBALL_RIFLE",
+  /** WATER FAMAS jets (hitscan, 23 body / 34.5 head per jet, no special medal). */
+  WATER_FAMAS = "WATER_FAMAS",
   ENVIRONMENT = "ENVIRONMENT",
 }

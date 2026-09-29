@@ -46,6 +46,16 @@ import {
   startPaintballReload,
   cancelPaintballReload,
 } from "./PaintballRifleServer";
+import {
+  sanitizeWaterFamasSeed,
+  sanitizeWaterFamasJetIndex,
+} from "../../../shared/combat/WaterFamasRules";
+import {
+  WaterFamasState,
+  resolveWaterFamasFire,
+  startWaterFamasReload,
+  cancelWaterFamasReload,
+} from "./WaterFamasServer";
 import { DamageResult } from "../combat/DamageResult";
 import { NetworkPlayer } from "../schemas/NetworkPlayer";
 import { MAP_COLLIDER_BOXES, type ColliderBox } from "../../../shared/map/MapColliders";
@@ -251,6 +261,8 @@ class PlayerWeaponState {
   popcorn = new PopcornShotgunState();
   // Paintball Rifle (server-owned ammo / cadence / hopper swap clock)
   paintball = new PaintballRifleState();
+  // Water FAMAS (server-owned ammo / burst cadence / refill clock)
+  waterFamas = new WaterFamasState();
 }
 
 /** IO the room provides — WeaponManager stays free of Colyseus types. */
@@ -438,6 +450,8 @@ export class WeaponManager {
     cancelPopcornReload(s.popcorn, this.host.now());
     // Same rule for the paintball hopper swap (cancel before the click).
     cancelPaintballReload(s.paintball, this.host.now());
+    // Water FAMAS: leaving mid-refill keeps the old ammo (before the pour ends).
+    cancelWaterFamasReload(s.waterFamas, this.host.now());
     s.weapon = rawWeapon;
     s.skin = skin;
     player.weapon = rawWeapon; // synced schema state → all clients
@@ -591,6 +605,19 @@ export class WeaponManager {
         if (s.weapon !== NetworkWeaponId.PAINTBALL_RIFLE) return;
         if (!cancelPaintballReload(s.paintball, this.host.now())) return;
         this.confirmPaintball(player, action, seq, this.eyePos(player), dir ?? UP, s.paintball.ammo);
+        return;
+      case WeaponActionType.WATER_FAMAS_FIRE:
+        this.handleWaterFamasFire(player, s, seq, origin, dir, msg);
+        return;
+      case WeaponActionType.WATER_FAMAS_RELOAD:
+        if (s.weapon !== NetworkWeaponId.WATER_FAMAS) return;
+        if (!startWaterFamasReload(s.waterFamas, this.host.now())) return;
+        this.confirmWaterFamas(player, action, seq, this.eyePos(player), dir ?? UP, s.waterFamas.ammo);
+        return;
+      case WeaponActionType.WATER_FAMAS_RELOAD_CANCEL:
+        if (s.weapon !== NetworkWeaponId.WATER_FAMAS) return;
+        if (!cancelWaterFamasReload(s.waterFamas, this.host.now())) return;
+        this.confirmWaterFamas(player, action, seq, this.eyePos(player), dir ?? UP, s.waterFamas.ammo);
         return;
       default:
         return; // unknown action — silently refused
@@ -1088,6 +1115,107 @@ export class WeaponManager {
       ...(spread !== undefined ? { sp: spread } : {}),
       ...(victimId ? { tid: victimId } : {}),
       ...(color !== undefined ? { pc: color } : {}),
+      am: ammo,
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // WATER FAMAS — 3-jet burst, ONE seeded hitscan per jet message
+  // ------------------------------------------------------------------
+
+  /**
+   * WATER_FAMAS_FIRE: ONE jet of a burst (`pi` = 0 / 1 / 2). Validates ammo /
+   * burst cadence (>= 0.45 s between burst starts, jets 1 and 2 in order at
+   * 0.075 / 0.15 s) / refill gate, rebuilds the jet direction from the seed +
+   * aim + jet index (shared rule — identical on every client), hitscans it
+   * against the lag-compensated targets (no range limit) and applies the damage
+   * IMMEDIATELY (23 body / 34.5 head, no falloff). Every accepted jet is
+   * confirmed (sd + pi + pc + am + FINAL direction + end point + victim id) so
+   * remotes replay the same visible jet and the same wet mark.
+   */
+  private handleWaterFamasFire(
+    player: NetworkPlayer,
+    s: PlayerWeaponState,
+    seq: number,
+    origin: Vec3 | null,
+    dir: Vec3 | null,
+    msg: WeaponActionMessage,
+  ): void {
+    if (s.weapon !== NetworkWeaponId.WATER_FAMAS || !origin || !dir) return;
+    const seed = sanitizeWaterFamasSeed(msg.sd);
+    const jet = sanitizeWaterFamasJetIndex(msg.pi);
+    if (seed === null || jet === null) return;
+    const aiming = msg.pc === 1;
+    const result = resolveWaterFamasFire(
+      s.waterFamas,
+      this.host.now(),
+      origin,
+      dir,
+      seed,
+      jet,
+      aiming,
+      this.rewindTargets(player.id, this.resolveRewindTime(msg)),
+      player.id,
+      this.mapBoxes,
+    );
+    if (!result.accepted) return;
+    this.confirmWaterFamas(
+      player,
+      WeaponActionType.WATER_FAMAS_FIRE,
+      seq,
+      origin,
+      result.jetDir,
+      result.ammoLeft,
+      seed,
+      jet,
+      aiming,
+      result.endPoint,
+      result.victim?.targetId,
+    );
+    const v = result.victim;
+    if (v) {
+      this.dealDamage(
+        player,
+        v.targetId,
+        v.amount,
+        DamageType.WATER_FAMAS,
+        v.headshot ? HitZone.HEAD : HitZone.BODY,
+        NetworkWeaponId.WATER_FAMAS,
+      );
+    }
+  }
+
+  /** Water FAMAS confirm: the regular confirm + seed / jet index / ADS flag / ammo / victim. */
+  private confirmWaterFamas(
+    player: NetworkPlayer,
+    action: string,
+    seq: number,
+    origin: Vec3,
+    dir: Vec3,
+    ammo: number,
+    seed?: number,
+    jet?: number,
+    aiming?: boolean,
+    hit?: Vec3,
+    victimId?: string,
+  ): void {
+    this.host.broadcastAction({
+      playerId: player.id,
+      weapon: NetworkWeaponId.WATER_FAMAS,
+      action,
+      seq,
+      ts: this.host.now(),
+      ox: origin.x,
+      oy: origin.y,
+      oz: origin.z,
+      dx: dir.x,
+      dy: dir.y,
+      dz: dir.z,
+      ...(hit ? { hx: hit.x, hy: hit.y, hz: hit.z } : {}),
+      ...(seed !== undefined ? { sd: seed } : {}),
+      ...(jet !== undefined ? { pi: jet } : {}),
+      ...(aiming !== undefined ? { pc: aiming ? 1 : 0 } : {}),
+      ...(victimId ? { tid: victimId } : {}),
       am: ammo,
     });
   }
@@ -1932,6 +2060,7 @@ export class WeaponManager {
     s.basketThrow = null;
     cancelPopcornReload(s.popcorn, this.host.now()); // a corpse never finishes a reload
     cancelPaintballReload(s.paintball, this.host.now());
+    cancelWaterFamasReload(s.waterFamas, this.host.now());
   }
 
   /** Whoever is pulling `victimId` drops the grab (victim died / left). */
@@ -1966,6 +2095,7 @@ export class WeaponManager {
     s.basketThrow = null;
     s.popcorn.reset(); // respawn = full tank (local parity: setAmmo(2))
     s.paintball.reset(); // respawn = full hopper (local parity: setAmmo(32))
+    s.waterFamas.reset(); // respawn = full tank (local parity: setAmmo(9))
   }
 
   removePlayer(playerId: string): void {

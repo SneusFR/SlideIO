@@ -1,0 +1,553 @@
+{
+  "schemaVersion": 1,
+  "id": "WaterFamas",
+  "compatibleRig": "Potato_Master_Clean_v1",
+  "units": "meter",
+  "assets": {
+    "fpRig": "Potato_FP_CommonArms.glb",
+    "fpPoses": "WaterFamas_FP_Poses.glb",
+    "tpRig": "Potato_TP_Character.glb",
+    "tpPoses": "WaterFamas_TP_Poses.glb",
+    "weapon": "WaterFamas_Weapon.glb"
+  },
+  "camera": {
+    "verticalFovDegrees": 65,
+    "near": 0.01,
+    "far": 100,
+    "axes": "+X right, +Y up, -Z forward",
+    "aspectReference": "16:9",
+    "additionalCameraOffset": [
+      0,
+      0,
+      0
+    ]
+  },
+  "mounts": {
+    "fp": {
+      "poseSpace": "camera",
+      "bone": "Weapon_R",
+      "matrixColumnMajor": [
+        -0.10045616444423111,
+        0.06937951183468885,
+        0.38091354802238664,
+        0.0,
+        0.1010751016201509,
+        0.3845791623103804,
+        -0.043391224274674074,
+        0.0,
+        -0.37375451845736696,
+        0.08535480529521186,
+        -0.11411487517705282,
+        0.0,
+        -0.001430990525645712,
+        -0.001656748611665232,
+        -0.021872953292644715,
+        1.0
+      ],
+      "matrixRows": [
+        [
+          -0.10045616444423111,
+          0.1010751016201509,
+          -0.37375451845736696,
+          -0.001430990525645712
+        ],
+        [
+          0.06937951183468885,
+          0.3845791623103804,
+          0.08535480529521186,
+          -0.001656748611665232
+        ],
+        [
+          0.38091354802238664,
+          -0.043391224274674074,
+          -0.11411487517705282,
+          -0.021872953292644715
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "weaponRootScalePreserved": 0.19,
+      "additionalScale": 0.4000001108803211,
+      "clips": [
+        {
+          "name": "FP_WaterFamas_Hold",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "FP_WaterFamas_Run",
+          "frames": 25,
+          "sampleFps": 30,
+          "duration": 0.8,
+          "loop": true,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "FP_Aim_WaterFamas",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "FP_Raise_WaterFamas",
+          "frames": 31,
+          "sampleFps": 120,
+          "duration": 0.25,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "FP_Lower_WaterFamas",
+          "frames": 31,
+          "sampleFps": 120,
+          "duration": 0.25,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "FP_Fire_WaterFamas",
+          "frames": 51,
+          "sampleFps": 120,
+          "duration": 0.42,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "FP_FireAim_WaterFamas",
+          "frames": 51,
+          "sampleFps": 120,
+          "duration": 0.42,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "FP_Reload_WaterFamas",
+          "frames": 199,
+          "sampleFps": 60,
+          "duration": 3.3,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.473
+        },
+        {
+          "name": "FP_Inspect_WaterFamas",
+          "frames": 217,
+          "sampleFps": 60,
+          "duration": 3.6,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "FP_Equip_WaterFamas",
+          "frames": 34,
+          "sampleFps": 60,
+          "duration": 0.55,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "FP_Unequip_WaterFamas",
+          "frames": 22,
+          "sampleFps": 60,
+          "duration": 0.35,
+          "loop": false,
+          "channels": 20,
+          "maxLeftHandContactErrorMm": 0.0
+        }
+      ],
+      "authoring": {
+        "method": "IK per frame with soft joint limits: weapon placed in camera space, right arm solved on Weapon_R (pistol grip, one-handed), left arm hanging off screen except in the reload (claw on the cap in 2 wrist strokes with a re-grip, fist on the bottle)",
+        "holdGripCameraSpace": [
+          0.25,
+          -0.255,
+          -0.49
+        ],
+        "holdYawPitchRollDeg": [
+          26.0,
+          7.0,
+          -13.0
+        ],
+        "sameChannelSetAsHexSniper": true
+      }
+    },
+    "tp": {
+      "poseSpace": "character",
+      "bone": "Weapon_R",
+      "matrixColumnMajor": [
+        -0.06201392833798684,
+        0.14573272133021561,
+        0.3121155769322014,
+        0.0,
+        0.10817704187213656,
+        0.30932828415013985,
+        -0.12293780670236266,
+        0.0,
+        -0.32703513738647527,
+        0.07468549225597577,
+        -0.09985031826265442,
+        0.0,
+        -0.013753431351279141,
+        -0.01939409501096824,
+        -0.010651379435043892,
+        1.0
+      ],
+      "matrixRows": [
+        [
+          -0.06201392833798684,
+          0.10817704187213656,
+          -0.32703513738647527,
+          -0.013753431351279141
+        ],
+        [
+          0.14573272133021561,
+          0.30932828415013985,
+          0.07468549225597577,
+          -0.01939409501096824
+        ],
+        [
+          0.3121155769322014,
+          -0.12293780670236266,
+          -0.09985031826265442,
+          -0.010651379435043892
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "weaponRootScalePreserved": 0.19,
+      "additionalScale": 0.34999983819701996,
+      "clips": [
+        {
+          "name": "TP_Hold_WaterFamas",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "TP_Run_WaterFamas",
+          "frames": 25,
+          "sampleFps": 30,
+          "duration": 0.8,
+          "loop": true,
+          "channels": 26,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "TP_Aim_WaterFamas",
+          "frames": 61,
+          "sampleFps": 30,
+          "duration": 2.0,
+          "loop": true,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "TP_Raise_WaterFamas",
+          "frames": 31,
+          "sampleFps": 120,
+          "duration": 0.25,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "TP_Lower_WaterFamas",
+          "frames": 31,
+          "sampleFps": 120,
+          "duration": 0.25,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "TP_Fire_WaterFamas",
+          "frames": 51,
+          "sampleFps": 120,
+          "duration": 0.42,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 0.0
+        },
+        {
+          "name": "TP_Reload_WaterFamas",
+          "frames": 199,
+          "sampleFps": 60,
+          "duration": 3.3,
+          "loop": false,
+          "channels": 19,
+          "maxLeftHandContactErrorMm": 1.378
+        }
+      ],
+      "animatedWeaponSocketCorrection": "Weapon_R translation is keyed at its rest value in every TP clip (resets the HexSniper offset).",
+      "stance": {
+        "oneHanded": true,
+        "gunDirection": "straight ahead (character +Z), level, in hold / aim / run / fire",
+        "gripCharacterSpace": [
+          -0.075,
+          0.43,
+          0.27
+        ],
+        "spineYawLeanDeg": [
+          -6.0,
+          3.0
+        ],
+        "leftArm": "hangs relaxed against the belly (swings in the run); comes to the gun only in the reload",
+        "bottleScaleTP": 1.1429,
+        "characterSkinRequired": "Potato_TP_Character.glb v5 (flank / armpit weights repaired \u2014 the file shipped with the Popcorn Shotgun)"
+      }
+    }
+  },
+  "fpClips": {
+    "hold": "FP_WaterFamas_Hold",
+    "run": "FP_WaterFamas_Run",
+    "aim": "FP_Aim_WaterFamas",
+    "raise": "FP_Raise_WaterFamas",
+    "lower": "FP_Lower_WaterFamas",
+    "inspect": "FP_Inspect_WaterFamas",
+    "equip": "FP_Equip_WaterFamas",
+    "unequip": "FP_Unequip_WaterFamas"
+  },
+  "fpActions": {
+    "fire": {
+      "clip": "FP_Fire_WaterFamas",
+      "loop": false
+    },
+    "fireAim": {
+      "clip": "FP_FireAim_WaterFamas",
+      "loop": false
+    },
+    "reload": {
+      "clip": "FP_Reload_WaterFamas",
+      "loop": false
+    }
+  },
+  "tpClips": {
+    "hold": "TP_Hold_WaterFamas",
+    "run": "TP_Run_WaterFamas",
+    "aim": "TP_Aim_WaterFamas",
+    "raise": "TP_Raise_WaterFamas",
+    "lower": "TP_Lower_WaterFamas",
+    "actions": {
+      "fire": {
+        "clip": "TP_Fire_WaterFamas",
+        "loop": false
+      },
+      "reload": {
+        "clip": "TP_Reload_WaterFamas",
+        "loop": false
+      }
+    }
+  },
+  "upperBodyMask": [
+    "Hand_L",
+    "Hand_R",
+    "Index_L_1",
+    "Index_R_1",
+    "LowerArm_L",
+    "LowerArm_R",
+    "Middle_L_1",
+    "Middle_R_1",
+    "Plant_Root",
+    "Ring_L_1",
+    "Ring_R_1",
+    "Shoulder_L",
+    "Shoulder_R",
+    "Spine_1",
+    "Thumb_L_1",
+    "Thumb_R_1",
+    "UpperArm_L",
+    "UpperArm_R",
+    "Weapon_R"
+  ],
+  "weaponClips": {
+    "idle": "Idle",
+    "fire": "Fire",
+    "reload": "Reload",
+    "reloadTP": "Reload_TP",
+    "inspect": "Inspect",
+    "equip": "Equip"
+  },
+  "actions": {
+    "fire": {
+      "fpClip": "FP_Fire_WaterFamas",
+      "fpClipAim": "FP_FireAim_WaterFamas",
+      "tpClip": "TP_Fire_WaterFamas",
+      "weaponClip": "Fire",
+      "loop": false,
+      "mode": "burst",
+      "jetsPerBurst": 3,
+      "jets": [
+        0.0,
+        0.075,
+        0.15
+      ],
+      "burstDuration": 0.42,
+      "burstInterval": 0.45,
+      "recommendedFadeIn": 0.03,
+      "note": "One trigger pull = one FAMAS burst of 3 water jets (0 / 0.075 / 0.15 s). Each jet is a hitscan raycast done when the controller emits it (onJet). Next burst allowed after burstInterval."
+    },
+    "reload": {
+      "fpClip": "FP_Reload_WaterFamas",
+      "tpClip": "TP_Reload_WaterFamas",
+      "weaponClip": "Reload",
+      "weaponClipTP": "Reload_TP",
+      "duration": 3.3,
+      "recommendedFadeIn": 0.08,
+      "events": {
+        "capGrab": 0.32,
+        "capOff": 0.66,
+        "hingeOpen": 0.7,
+        "bottleIn": 1.1,
+        "pourStart": 1.44,
+        "pourEnd": 1.98,
+        "bottleOut": 2.3,
+        "hingeClose": 2.62,
+        "capScrewed": 2.86,
+        "readyToFire": 2.95
+      },
+      "leftHand": {
+        "onCap": [
+          0.32,
+          0.88
+        ],
+        "unscrewStrokes": [
+          [
+            0.32,
+            0.45
+          ],
+          [
+            0.52,
+            0.66
+          ]
+        ],
+        "bottle": [
+          1.1,
+          2.3
+        ],
+        "closeAndScrew": [
+          2.48,
+          2.86
+        ],
+        "screwStrokes": [
+          [
+            2.62,
+            2.72
+          ],
+          [
+            2.78,
+            2.86
+          ]
+        ],
+        "backDown": 3.25
+      },
+      "note": "Unscrew the rear cap (half a turn, 2 wrist strokes), swing it aside on its retainer, pour a water bottle (off screen then in view in FP, from the belt in TP), close, screw back. Ammo is full at pourEnd."
+    },
+    "inspect": {
+      "fpClip": "FP_Inspect_WaterFamas",
+      "weaponClip": "Inspect",
+      "duration": 3.6,
+      "sloshKicks": [
+        2.28,
+        2.42,
+        2.55
+      ]
+    }
+  },
+  "inspection": {
+    "armsClip": "FP_Inspect_WaterFamas",
+    "weaponClip": "Inspect",
+    "duration": 3.6,
+    "loop": false,
+    "rightHandIsSoleSupport": true,
+    "leftHandStaysDown": true,
+    "showcase": {
+      "leftSide": [
+        0.95,
+        1.55
+      ],
+      "tankFromAbove": [
+        2.2,
+        2.7
+      ],
+      "sloshShakes": [
+        2.25,
+        2.65
+      ]
+    },
+    "gameplayEvents": []
+  },
+  "waterTank": {
+    "node": "Tank",
+    "dataIn": "Tank node extras (GLTFLoader -> userData)",
+    "capacity": 9,
+    "jetsPerShot": 3,
+    "liquid": "Water mesh redrawn by WaterTank.ts: world-space free surface (always level), height solved from the fill, slosh spring 1.6 Hz on the effective gravity, ripples; 2 draw calls + the glass",
+    "level": "emptyLevel + (1 - emptyLevel) * ammo / 9 ; rises during the pour (pourStart -> pourEnd)",
+    "pourStream": "BottleNozzle -> FillPoint during the pour"
+  },
+  "assetLoading": {
+    "fpRigInstancesPerLocalPlayer": 1,
+    "loadPoseAnimationsOnCommonRig": true,
+    "renderPoseLibraryScene": false,
+    "cloneSkeletonPerInstance": true,
+    "attachWholeWeaponSceneUnderMount": true,
+    "preserveWeaponRootScale": 0.19,
+    "applyMountMatrixOnce": true,
+    "applyLegacyNormalization": false
+  },
+  "render": {
+    "separateFirstPersonScene": true,
+    "clearDepthOnceBeforeArmsAndWeapon": true,
+    "opaqueDepthTest": true,
+    "opaqueDepthWrite": true,
+    "glassRenderOrder": 3,
+    "waterRenderOrder": [
+      1,
+      2
+    ],
+    "runtimeDrawCalls": "7 meshes + water surface + pour stream"
+  },
+  "presentationRules": {
+    "straightPose": "Aim",
+    "straightWhile": [
+      "ADS"
+    ],
+    "inspectionOnlyWhen": "Idle, not firing / reloading, no ADS, stationary",
+    "useAuthoredRaiseLowerTransitionsForADS": true,
+    "neverDelayGameplayToFinishVisualTransition": true,
+    "aimNote": "Raised hip aim (one-handed pistol-style): the nozzle comes near the crosshair, the tank stays visible."
+  },
+  "sharedCharacterLocomotion": {
+    "clips": [
+      "Run_Goofy",
+      "Jump",
+      "Dash",
+      "Slide"
+    ],
+    "slideGuide": "Potato_Slide_Integration.json"
+  }
+}
