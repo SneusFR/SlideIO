@@ -4,6 +4,8 @@
  * construction time (innerHTML) — never rebuilt per frame.
  */
 
+import { MedalType } from "../medals/MedalType";
+
 const INK = "#3a2814";
 /** Common outline attributes for every hand-drawn icon. */
 const o = (w: number): string =>
@@ -218,6 +220,39 @@ export function killstreakColor(id: string): string {
   return KS_COLORS[id] ?? "#facc15";
 }
 
+// ---------------------------------------------------------------------------
+// MEDALS (KILL / DOUBLE / HEADSHOT…) — 64×64 art drawn inside the round
+// sticker badge of MedalHUD. Recurring hero: the knocked-out bean.
+// ---------------------------------------------------------------------------
+
+/** A knocked-out bean (X eyes, tongue out) centred on (x, y). The outline
+ *  width is compensated so it stays the same whatever the scale. */
+function koBean(x: number, y: number, s: number, rot: number): string {
+  const k = 1 / s;
+  const w = (n: number): string => o(n * k);
+  return `<g transform="translate(${x} ${y}) rotate(${rot}) scale(${s})">
+    <path d="M0 -19c0-3 1-5 2.5-6.5" fill="none" stroke="${INK}" stroke-width="${4 * k}" stroke-linecap="round"/>
+    <path d="M0 -19c0-3 1-5 2.5-6.5" fill="none" stroke="#6fb536" stroke-width="${1.8 * k}" stroke-linecap="round"/>
+    <path d="M2.5 -25.5c2-4 7-4.5 10-2.5-1.5 4-6.5 5-10 2.5z" fill="#8fd14f" ${w(2)}/>
+    <path d="M0 -20c6 0 9 5 9.5 10 .5 5 6.5 8 6.5 16 0 9-7 14-16 14s-16-5-16-14c0-8 6-11 6.5-16 .5-5 3.5-10 9.5-10z" fill="#e38a4a" ${w(3)}/>
+    <ellipse cx="-6" cy="-11" rx="3.2" ry="1.8" fill="#ffffff" opacity="0.45" transform="rotate(-35 -6 -11)"/>
+    <path d="M-9 -5l5 5m0-5l-5 5M4 -5l5 5m0-5l-5 5" fill="none" ${w(2.4)}/>
+    <path d="M1 6.3v3.2a2 2 0 0 0 4 0v-3.6z" fill="#ff7a8a" ${w(1.6)}/>
+    <path d="M-4.5 7q4.5 -3 9 -0.6" fill="none" ${w(2.2)}/>
+  </g>`;
+}
+
+/** Little 4-point "dizzy" sparkle. */
+function sparkle(x: number, y: number, r: number): string {
+  return `<path d="M${x} ${y - r}Q${x} ${y} ${x + r} ${y}Q${x} ${y} ${x} ${y + r}Q${x} ${y} ${x - r} ${y}Q${x} ${y} ${x} ${y - r}z" fill="#fff6e0" ${o(1.6)}/>`;
+}
+
+/** Thick cartoon stroke: ink under-stroke + coloured stroke on top. */
+function inkLine(d: string, color: string, width: number): string {
+  return `<path d="${d}" fill="none" stroke="${INK}" stroke-width="${width + 3.4}" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="${d}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"/>`;
+}
+
 /** Padlock drawn on locked medallions (two halves → they fly apart on unlock). */
 export const PADLOCK_SVG = `
 <svg class="ks-lock-art" viewBox="0 0 24 26" aria-hidden="true">
@@ -226,3 +261,83 @@ export const PADLOCK_SVG = `
   <rect class="ks-lock-body" x="3" y="11" width="18" height="13" rx="4" fill="#facc15" ${o(2.4)}/>
   <circle cx="12" cy="17" r="2" fill="${INK}"/>
 </svg>`;
+
+// ---------------------------------------------------------------------------
+// MEDAL art (uses koBean / sparkle / inkLine above). Palette = the HUD's:
+// wood, bean orange, sprout green, gold, cream, tomato — no space violet.
+// ---------------------------------------------------------------------------
+const MEDAL_ICONS: Record<MedalType, string> = {
+  [MedalType.KILL]: `
+    ${koBean(32, 36, 1.05, -10)}
+    ${sparkle(12, 15, 6)}${sparkle(52, 12, 5)}${sparkle(56, 31, 3.5)}`,
+  [MedalType.DOUBLE_KILL]: `
+    ${koBean(21, 38, 0.78, -16)}
+    ${koBean(44, 36, 0.78, 14)}
+    ${sparkle(32, 11, 5)}`,
+  [MedalType.TRIPLE_KILL]: `
+    ${koBean(15, 42, 0.6, -20)}
+    ${koBean(49, 42, 0.6, 20)}
+    ${koBean(32, 34, 0.72, 0)}
+    ${sparkle(9, 16, 4)}${sparkle(55, 16, 4)}`,
+  [MedalType.SMASHED]: `
+    <path d="M3 42l7 3M7 32l6 5M61 42l-7 3M57 32l-6 5" fill="none" ${o(3)}/>
+    <ellipse cx="32" cy="51" rx="23" ry="7" fill="#e38a4a" ${O}/>
+    <path d="M22 49l3 3m0-3l-3 3M39 49l3 3m0-3l-3 3" fill="none" ${o(2)}/>
+    <g transform="rotate(-24 34 30)">
+      ${inkLine("M34 29V5", "#c98a4a", 5)}
+      <rect x="17" y="27" width="34" height="16" rx="5" fill="#c98a4a" ${O}/>
+      <rect x="21" y="27" width="4.5" height="16" fill="#8a5c34" ${o(2)}/>
+      <rect x="42.5" y="27" width="4.5" height="16" fill="#8a5c34" ${o(2)}/>
+      <path d="M27 31h12" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" opacity="0.5"/>
+    </g>
+    ${sparkle(54, 20, 5)}${sparkle(10, 20, 4)}`,
+  [MedalType.HOMERUN]: `
+    ${inkLine("M8 14h13M4 23h15M10 32h11", "#fff6e0", 3)}
+    ${inkLine("M7 59L17 52", "#8a5c34", 3.6)}
+    ${inkLine("M17 52L36 39", "#c98a4a", 8)}
+    <circle cx="42" cy="22" r="13" fill="#fff6e0" ${O}/>
+    <path d="M34 12q5 10 0 20M50 12q-5 10 0 20" fill="none" stroke="#e2413a" stroke-width="2.2" stroke-linecap="round"/>
+    <ellipse cx="38" cy="15" rx="3.2" ry="1.8" fill="#ffffff" transform="rotate(-30 38 15)"/>
+    ${sparkle(58, 44, 4)}`,
+  [MedalType.OBLITERATED]: `
+    <circle cx="32" cy="32" r="23" fill="#1c1208" ${O}/>
+    ${inkLine("M32 28a4 4 0 0 1 4 4a8 8 0 0 1-8 8a12 12 0 0 1-12-12a16 16 0 0 1 16-16a20 20 0 0 1 20 20", "#ffb347", 3.4)}
+    <circle cx="32" cy="32" r="3" fill="#fff6e0"/>
+    <rect x="5" y="7" width="7" height="7" rx="2" fill="#ff8a3d" transform="rotate(20 8.5 10.5)" ${o(2)}/>
+    <ellipse cx="55" cy="54" rx="5" ry="3.4" fill="#e38a4a" transform="rotate(-35 55 54)" ${o(2)}/>
+    <rect x="50" y="6" width="5" height="5" rx="1.5" fill="#facc15" transform="rotate(-25 52.5 8.5)" ${o(1.8)}/>`,
+  [MedalType.MOLED]: `
+    ${KS_ICONS.MOLE_STRIKE}
+    ${sparkle(10, 12, 4.5)}${sparkle(54, 13, 4)}`,
+  [MedalType.IMPALED]: `
+    ${koBean(28, 37, 0.95, 18)}
+    ${inkLine("M8 56L46 18", "#b07a3f", 4)}
+    <path d="M44 9l14-5-5 14-7 3-5-5z" fill="#facc15" ${O}/>
+    ${sparkle(12, 14, 4.5)}`,
+  [MedalType.HEADSHOT]: `
+    ${koBean(32, 41, 1, 0)}
+    <circle cx="32" cy="38" r="13" fill="none" stroke="${INK}" stroke-width="6.4"/>
+    <circle cx="32" cy="38" r="13" fill="none" stroke="#e2413a" stroke-width="3"/>
+    ${inkLine("M32 20v6M32 50v6M14 38h6M44 38h6", "#e2413a", 3)}
+    <path d="M51 4l2.6 5.6 6 .7-4.5 4.1 1.3 6-5.4-3-5.4 3 1.3-6-4.5-4.1 6-.7z" fill="#facc15" ${o(2)}/>`,
+};
+
+/** Medal art (one <svg> per medal, pre-rendered once by MedalHUD). */
+export function medalIconSvg(medal: MedalType): string {
+  return `<svg class="md-icon" data-medal="${medal}" viewBox="0 0 64 64" aria-hidden="true">${MEDAL_ICONS[medal]}</svg>`;
+}
+
+/** Notched ribbon tail tucked behind the medal ribbon (fill from CSS). */
+export function ribbonTailSvg(side: "l" | "r"): string {
+  const d = side === "l" ? "M25 2H2l7 13-7 13h23z" : "M1 2h23l-7 13 7 13H1z";
+  return `<svg class="md-tail md-tail-${side}" viewBox="0 0 26 30" preserveAspectRatio="none" aria-hidden="true">
+    <path d="${d}" stroke="${INK}" stroke-width="3" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+  </svg>`;
+}
+
+/** Tier star above the medal disc (KILL = 1, DOUBLE = 2, TRIPLE = 3…). */
+export const MEDAL_STAR_SVG = `
+<svg viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M12 2l3 6.5 7 .8-5.2 4.8 1.5 7L12 17.6 5.7 21.1l1.5-7L2 9.3l7-.8z" fill="#facc15" ${o(2.2)}/>
+</svg>`;
+

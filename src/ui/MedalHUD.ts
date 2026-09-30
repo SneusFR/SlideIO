@@ -1,49 +1,93 @@
 import { MedalType } from "../medals/MedalType";
-import { MedalAssets, MedalConfig as mc } from "../medals/MedalConfig";
+import { MedalStyles, MedalConfig as mc } from "../medals/MedalConfig";
 import { MedalDisplay } from "../medals/MedalManager";
+import { medalIconSvg, MEDAL_STAR_SVG, ribbonTailSvg } from "./hudIcons";
+import { replayAnim } from "./hudKit";
+
+/** Chain length from which the badge goes "hype" (faster rays, bigger pop). */
+const HYPE_CHAIN = 2;
 
 /**
- * Top-center medal display (DOM/CSS — responsive, % based, never covers
- * the crosshair). Uses the REAL medal image assets, preloaded at
- * construction so a kill never triggers an asset load.
+ * Medal display — a "Bean Sticker Arcade" badge (same family as the
+ * killstreak medallions): round parchment disc with the medal art, gold
+ * tier stars on top, a notched ribbon with the name, sunburst rays and a
+ * confetti burst. Sits above the crosshair clear zone, under the
+ * top-centre stack.
  *
- * Presentation (driven by the MedalManager state machine + CSS):
- *   scale 0 → pop/overshoot → settle → visible → fade + drift out
- * with a violet aura (radial glow + drop-shadow) and a quick back-flash.
+ *    ★ ★ ★        ← tier stars (combo medals only)
+ *   ( ◉ art )     ← disc, rim in the medal's accent colour
+ *  <═ LABEL ═>    ← ribbon
+ *
+ * Every node is built ONCE here (all 9 arts pre-rendered, one visible);
+ * show() only swaps classes / text / one CSS variable, and one-shot
+ * animations restart through replayAnim (no forced reflow).
  */
 export class MedalHUD implements MedalDisplay {
   private readonly root = document.getElementById("medal-display") as HTMLDivElement;
-  private readonly img = document.getElementById("medal-img") as HTMLImageElement;
-  private readonly glow = document.getElementById("medal-glow") as HTMLDivElement;
-  private readonly flash = document.getElementById("medal-flash") as HTMLDivElement;
-  /** Keep strong refs so the browser caches every medal image up-front. */
-  private readonly preloaded: HTMLImageElement[] = [];
+  private readonly body: HTMLDivElement;
+  private readonly label: HTMLSpanElement;
+  private readonly arts = new Map<MedalType, SVGElement>();
+
+  private current: MedalType | null = null;
+  private lastStars = -1;
+  private lastHype: boolean | null = null;
 
   constructor() {
     // Configurable animation durations → CSS variables (single source: MedalConfig).
     this.root.style.setProperty("--medal-enter", `${mc.medalEnterDuration}s`);
     this.root.style.setProperty("--medal-exit", `${mc.medalExitDuration}s`);
 
-    for (const url of Object.values(MedalAssets)) {
-      const image = new Image();
-      image.src = url;
-      this.preloaded.push(image);
+    const allMedals = Object.values(MedalType) as MedalType[];
+    this.root.innerHTML = `
+      <div class="md-body">
+        <div class="md-stars">${MEDAL_STAR_SVG.repeat(3)}</div>
+        <div class="md-medallion">
+          <div class="md-rays"></div>
+          <div class="md-disc">
+            <div class="md-art">${allMedals.map((m) => medalIconSvg(m)).join("")}</div>
+          </div>
+          <div class="md-confetti">${"<i></i>".repeat(8)}</div>
+        </div>
+        <div class="md-ribbon">
+          ${ribbonTailSvg("l")}${ribbonTailSvg("r")}
+          <div class="md-plank"><span class="md-label"></span></div>
+        </div>
+      </div>`;
+
+    this.body = this.root.querySelector(".md-body")!;
+    this.label = this.root.querySelector(".md-label")!;
+    for (const svg of this.root.querySelectorAll<SVGElement>(".md-icon")) {
+      this.arts.set(svg.dataset.medal as MedalType, svg);
     }
   }
 
   show(medal: MedalType, chainIndex: number): void {
-    this.img.src = MedalAssets[medal];
+    const style = MedalStyles[medal];
 
-    // Aura slightly more intense as the medal chain grows — kept elegant,
-    // never a giant neon rectangle.
-    const glowAlpha = Math.min(0.35 + chainIndex * 0.06, 0.6);
-    this.root.style.setProperty("--medal-glow-alpha", glowAlpha.toFixed(2));
+    if (medal !== this.current) {
+      if (this.current !== null) this.arts.get(this.current)?.classList.remove("on");
+      this.arts.get(medal)?.classList.add("on");
+      this.current = medal;
+      this.label.textContent = style.label;
+      this.root.style.setProperty("--md", style.color);
+    }
+
+    if (style.stars !== this.lastStars) {
+      if (this.lastStars > 0) this.root.classList.remove(`stars-${this.lastStars}`);
+      if (style.stars > 0) this.root.classList.add(`stars-${style.stars}`);
+      this.lastStars = style.stars;
+    }
+
+    // The badge gets louder as the chain of medals grows.
+    const hype = chainIndex >= HYPE_CHAIN;
+    if (hype !== this.lastHype) {
+      this.root.classList.toggle("hype", hype);
+      this.lastHype = hype;
+    }
 
     this.root.classList.remove("hidden", "exiting");
-    // Retrigger the enter animations even when chaining medals fast.
-    this.restartAnimation(this.img);
-    this.restartAnimation(this.glow);
-    this.restartAnimation(this.flash);
+    // Re-trigger the pop even when medals chain quickly.
+    replayAnim(this.body, "pop");
   }
 
   beginExit(): void {
@@ -53,12 +97,5 @@ export class MedalHUD implements MedalDisplay {
   hide(): void {
     this.root.classList.add("hidden");
     this.root.classList.remove("exiting");
-  }
-
-  /** Force-restart a CSS animation on an element (classic reflow trick). */
-  private restartAnimation(el: HTMLElement): void {
-    el.style.animation = "none";
-    void el.offsetWidth; // reflow
-    el.style.animation = "";
   }
 }

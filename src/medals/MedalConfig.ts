@@ -1,13 +1,4 @@
 import { MedalType } from "./MedalType";
-import killUrl from "../assets/KILL.png";
-import doubleKillUrl from "../assets/doublekill.png";
-import tripleKillUrl from "../assets/triplekill.png";
-import smashedUrl from "../assets/SMASHED.png";
-import homerunUrl from "../assets/homerun.png";
-import obliteratedUrl from "../assets/Oblirated.png";
-import moledUrl from "../assets/Moled.png";
-import impaledUrl from "../assets/Impaled.png";
-import headshotUrl from "../assets/headshot.png";
 import { KillMethod } from "../combat/KillMethod";
 
 /**
@@ -62,19 +53,28 @@ export const SpecialMedalRegistry: Readonly<Partial<Record<KillMethod, MedalType
   [KillMethod.SPEAR_RUSH]: MedalType.IMPALED,
 };
 
+/** How a medal looks in the "Bean Sticker Arcade" HUD. */
+export interface MedalStyle {
+  /** Text printed on the ribbon. */
+  readonly label: string;
+  /** Accent colour (disc rim, ribbon, rays, confetti). */
+  readonly color: string;
+  /** Gold stars above the disc (combo medals: 1 / 2 / 3). 0 = none. */
+  readonly stars: number;
+}
+
 /**
- * MedalType → graphic asset. The real project images are used directly
- * (bundled by Vite); MedalHUD preloads all of them at construction so a
- * kill never triggers an asset load.
+ * MedalType → sticker style. The art itself is vector (hudIcons.ts →
+ * medalIconSvg), pre-rendered once by MedalHUD: no image to load on a kill.
  */
-export const MedalAssets: Readonly<Record<MedalType, string>> = {
-  [MedalType.KILL]: killUrl,
-  [MedalType.DOUBLE_KILL]: doubleKillUrl,
-  [MedalType.TRIPLE_KILL]: tripleKillUrl,
-  [MedalType.SMASHED]: smashedUrl,
-  [MedalType.HOMERUN]: homerunUrl,
-  [MedalType.OBLITERATED]: obliteratedUrl,
-  [MedalType.MOLED]: moledUrl,
-  [MedalType.IMPALED]: impaledUrl,
-  [MedalType.HEADSHOT]: headshotUrl,
+export const MedalStyles: Readonly<Record<MedalType, MedalStyle>> = {
+  [MedalType.KILL]: { label: "KILL!", color: "#a8d94a", stars: 1 },
+  [MedalType.DOUBLE_KILL]: { label: "DOUBLE KILL!", color: "#facc15", stars: 2 },
+  [MedalType.TRIPLE_KILL]: { label: "TRIPLE KILL!", color: "#ff8a3d", stars: 3 },
+  [MedalType.SMASHED]: { label: "SMASHED!", color: "#c98a4a", stars: 0 },
+  [MedalType.HOMERUN]: { label: "HOME RUN!", color: "#5cc8ff", stars: 0 },
+  [MedalType.OBLITERATED]: { label: "OBLITERATED!", color: "#ffb347", stars: 0 },
+  [MedalType.MOLED]: { label: "MOLED!", color: "#a5774a", stars: 0 },
+  [MedalType.IMPALED]: { label: "IMPALED!", color: "#8fd14f", stars: 0 },
+  [MedalType.HEADSHOT]: { label: "HEADSHOT!", color: "#ff5a4e", stars: 0 },
 };

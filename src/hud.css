@@ -1895,6 +1895,298 @@
 }
 
 /* ==========================================================================
+   MEDALS (KILL / DOUBLE KILL / HEADSHOT…) — a sticker badge from the same
+   family as the killstreak medallions: gold tier stars, a parchment disc
+   ringed with the medal accent (--md, set by MedalHUD), a notched ribbon
+   with the name, sunburst rays and a confetti pop. Sits between the
+   top-centre stack and the crosshair clear zone.
+   One-shot anims restart via replayAnim "pop" on .md-body (pop-a / pop-b).
+   ========================================================================== */
+#medal-display {
+  --md: var(--gold);
+  --md-size: clamp(76px, 11vh, 116px);
+  position: absolute;
+  left: 50%;
+  top: 23%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 5;
+}
+#medal-display.hidden { display: none; }
+
+.md-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform-origin: 50% 60%;
+}
+.md-body.pop-a { animation: md-pop-a 0.5s var(--pop) both; }
+.md-body.pop-b { animation: md-pop-b 0.5s var(--pop) both; }
+#medal-display.exiting .md-body { animation: md-out var(--medal-exit, 0.25s) ease-in forwards; }
+
+/* ---- Tier stars (combo medals only), fanned over the disc ---- */
+.md-stars {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  margin-bottom: calc(var(--md-size) * -0.12);
+}
+.md-stars svg {
+  display: none;
+  width: calc(var(--md-size) * 0.26);
+  height: calc(var(--md-size) * 0.26);
+  overflow: visible;
+  filter: drop-shadow(0 2px 0 var(--ink));
+}
+#medal-display.stars-1 .md-stars svg:nth-child(1),
+#medal-display.stars-2 .md-stars svg:nth-child(-n + 2),
+#medal-display.stars-3 .md-stars svg:nth-child(-n + 3) { display: block; }
+.md-stars svg:nth-child(1) { transform: rotate(-14deg); }
+.md-stars svg:nth-child(2) { transform: translateY(-5px) scale(1.18); }
+.md-stars svg:nth-child(3) { transform: rotate(14deg); }
+.md-body.pop-a .md-stars svg { animation: md-star-a 0.45s var(--pop) both; }
+.md-body.pop-b .md-stars svg { animation: md-star-b 0.45s var(--pop) both; }
+.md-body .md-stars svg:nth-child(2) { animation-delay: 0.08s; }
+.md-body .md-stars svg:nth-child(3) { animation-delay: 0.16s; }
+
+/* ---- Medallion: rays + disc + confetti ---- */
+.md-medallion {
+  position: relative;
+  z-index: 1;
+  width: var(--md-size);
+  height: var(--md-size);
+  animation: md-bob 1.3s ease-in-out 0.5s infinite;
+}
+
+.md-rays {
+  position: absolute;
+  inset: -40%;
+  border-radius: 50%;
+  background: repeating-conic-gradient(color-mix(in srgb, var(--md) 55%, #fff6e0) 0 11deg, transparent 11deg 26deg);
+  -webkit-mask: radial-gradient(circle, #000 30%, transparent 68%);
+  mask: radial-gradient(circle, #000 30%, transparent 68%);
+  opacity: 0.6;
+  animation: rays-spin 8s linear infinite;
+}
+.md-body.pop-a .md-rays { animation: md-rays-a 0.6s ease-out, rays-spin 8s linear 0.6s infinite; }
+.md-body.pop-b .md-rays { animation: md-rays-b 0.6s ease-out, rays-spin 8s linear 0.6s infinite; }
+
+.md-disc {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  overflow: hidden;
+  background: radial-gradient(
+    circle at 50% 36%,
+    #fffdf3 0%,
+    color-mix(in srgb, var(--md) 18%, var(--parchment)) 62%,
+    color-mix(in srgb, var(--md) 38%, var(--parchment-lo)) 100%
+  );
+  border: 4px solid var(--ink);
+  box-shadow:
+    0 0 0 4px var(--md),
+    0 0 0 7px var(--ink),
+    0 6px 0 7px rgba(40, 27, 12, 0.85);
+}
+/* Glossy sticker highlight. */
+.md-disc::after {
+  content: "";
+  position: absolute;
+  left: 14%;
+  top: 7%;
+  width: 46%;
+  height: 22%;
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0));
+  transform: rotate(-18deg);
+  pointer-events: none;
+}
+
+.md-art {
+  width: 88%;
+  height: 88%;
+}
+.md-icon {
+  display: none;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.md-icon.on { display: block; }
+.md-body.pop-a .md-art { animation: md-art-a 0.55s var(--spring); }
+.md-body.pop-b .md-art { animation: md-art-b 0.55s var(--spring); }
+
+
+/* ---- Ribbon: accent banner with notched tails, tucked under the disc ---- */
+.md-ribbon {
+  position: relative;
+  z-index: 2;
+  margin-top: calc(var(--md-size) * -0.16);
+  transform: rotate(-2deg);
+}
+.md-plank {
+  position: relative;
+  z-index: 1;
+  padding: 5px 18px 1px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--md) 80%, #ffffff) 0%,
+    var(--md) 48%,
+    color-mix(in srgb, var(--md) 72%, #000000) 100%
+  );
+  border: 3px solid var(--ink);
+  border-radius: 9px;
+  box-shadow: var(--sticker-shadow), inset 0 2px 0 rgba(255, 255, 255, 0.35);
+}
+.md-label {
+  display: block;
+  font-family: var(--hud-font);
+  font-size: clamp(18px, 2.9vh, 28px);
+  line-height: 1.05;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  color: var(--cream);
+  -webkit-text-stroke: 4px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 3px 0 var(--ink);
+}
+.md-tail {
+  position: absolute;
+  top: 9px;
+  width: 24px;
+  height: calc(100% - 6px);
+  z-index: 0;
+  overflow: visible;
+  fill: color-mix(in srgb, var(--md) 62%, #3a2814);
+  filter: drop-shadow(0 3px 0 rgba(40, 27, 12, 0.85));
+}
+.md-tail-l { left: -16px; }
+.md-tail-r { right: -16px; }
+.md-body.pop-a .md-ribbon { animation: md-ribbon-a 0.5s var(--pop) 0.05s both; }
+.md-body.pop-b .md-ribbon { animation: md-ribbon-b 0.5s var(--pop) 0.05s both; }
+
+/* ---- Confetti burst (same recipe as the killstreak unlock) ---- */
+.md-confetti {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+}
+.md-confetti i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 7px;
+  height: 11px;
+  margin: -5px 0 0 -3px;
+  border-radius: 2px;
+  background: var(--md);
+  box-shadow: 0 0 0 1.5px var(--ink);
+  opacity: 0;
+}
+.md-confetti i:nth-child(1) { --cx: -70px; --cy: -48px; --cr: -200deg; background: #ff5fa2; }
+.md-confetti i:nth-child(2) { --cx: -8px; --cy: -80px; --cr: 160deg; background: var(--gold); }
+.md-confetti i:nth-child(3) { --cx: 66px; --cy: -54px; --cr: 240deg; background: #38c6ff; }
+.md-confetti i:nth-child(4) { --cx: 84px; --cy: 6px; --cr: -120deg; }
+.md-confetti i:nth-child(5) { --cx: 58px; --cy: 50px; --cr: 200deg; background: var(--bean); }
+.md-confetti i:nth-child(6) { --cx: -54px; --cy: 52px; --cr: -260deg; background: #ff8a3d; }
+.md-confetti i:nth-child(7) { --cx: -86px; --cy: 2px; --cr: 140deg; }
+.md-confetti i:nth-child(8) { --cx: 20px; --cy: -76px; --cr: -180deg; background: var(--bean); }
+.md-body.pop-a .md-confetti i { animation: md-confetti-a 0.8s cubic-bezier(0.2, 0.8, 0.4, 1) forwards; }
+.md-body.pop-b .md-confetti i { animation: md-confetti-b 0.8s cubic-bezier(0.2, 0.8, 0.4, 1) forwards; }
+
+/* ---- HYPE (3rd+ medal of a chain): louder rays, warm glow, bigger ribbon ---- */
+#medal-display.hype .md-rays { opacity: 0.9; }
+#medal-display.hype .md-disc {
+  box-shadow:
+    0 0 0 4px var(--md),
+    0 0 0 7px var(--ink),
+    0 6px 0 7px rgba(40, 27, 12, 0.85),
+    0 0 26px 10px color-mix(in srgb, var(--md) 55%, transparent);
+}
+#medal-display.hype .md-ribbon { scale: 1.08; }
+
+
+@keyframes md-pop-a {
+  0% { transform: scale(0) rotate(-16deg); opacity: 0; }
+  55% { transform: scale(1.16) rotate(4deg); opacity: 1; }
+  78% { transform: scale(0.95) rotate(-1.5deg); }
+  100% { transform: none; }
+}
+@keyframes md-pop-b {
+  0% { transform: scale(0) rotate(16deg); opacity: 0; }
+  55% { transform: scale(1.16) rotate(-4deg); opacity: 1; }
+  78% { transform: scale(0.95) rotate(1.5deg); }
+  100% { transform: none; }
+}
+@keyframes md-out {
+  from { transform: none; opacity: 1; }
+  to { transform: translateY(-18px) scale(0.82) rotate(-4deg); opacity: 0; }
+}
+@keyframes md-bob {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50% { transform: translateY(-3px) rotate(2deg); }
+}
+/* a / b twins: identical frames, swapped by replayAnim to restart. */
+@keyframes md-rays-a {
+  0% { opacity: 0; transform: scale(0.3); }
+  35% { opacity: 1; transform: scale(1.2); }
+  100% { opacity: 0.6; transform: scale(1); }
+}
+@keyframes md-rays-b {
+  0% { opacity: 0; transform: scale(0.3); }
+  35% { opacity: 1; transform: scale(1.2); }
+  100% { opacity: 0.6; transform: scale(1); }
+}
+@keyframes md-art-a {
+  0% { transform: scale(1.35, 0.7); }
+  40% { transform: scale(0.88, 1.14); }
+  70% { transform: scale(1.05, 0.96); }
+  100% { transform: none; }
+}
+@keyframes md-art-b {
+  0% { transform: scale(1.35, 0.7); }
+  40% { transform: scale(0.88, 1.14); }
+  70% { transform: scale(1.05, 0.96); }
+  100% { transform: none; }
+}
+/* Stars use the individual `translate` / `scale` properties so their
+   resting fan rotation (`transform`) is kept during the pop. */
+@keyframes md-star-a {
+  0% { opacity: 0; translate: 0 14px; scale: 0.2; }
+  100% { opacity: 1; translate: 0 0; scale: 1; }
+}
+@keyframes md-star-b {
+  0% { opacity: 0; translate: 0 14px; scale: 0.2; }
+  100% { opacity: 1; translate: 0 0; scale: 1; }
+}
+@keyframes md-ribbon-a {
+  0% { transform: scaleX(0.2) rotate(-2deg); opacity: 0; }
+  60% { transform: scaleX(1.1) rotate(-2deg); opacity: 1; }
+  100% { transform: rotate(-2deg); }
+}
+@keyframes md-ribbon-b {
+  0% { transform: scaleX(0.2) rotate(-2deg); opacity: 0; }
+  60% { transform: scaleX(1.1) rotate(-2deg); opacity: 1; }
+  100% { transform: rotate(-2deg); }
+}
+@keyframes md-confetti-a {
+  0% { transform: scale(0.4); opacity: 1; }
+  70% { opacity: 1; }
+  100% { transform: translate(var(--cx), var(--cy)) rotate(var(--cr)); opacity: 0; }
+}
+@keyframes md-confetti-b {
+  0% { transform: scale(0.4); opacity: 1; }
+  70% { opacity: 1; }
+  100% { transform: translate(var(--cx), var(--cy)) rotate(var(--cr)); opacity: 0; }
+}
+
+
+/* ==========================================================================
    SCREEN FEEDBACK: vignettes (opacity driven by CombatHUD), directional
    damage "bites", heal / phase glows. Centre always stays clear.
    ========================================================================== */

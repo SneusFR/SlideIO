@@ -1,7 +1,7 @@
 /**
  * All medal identities. Adding a new medal later (QUAD_KILL, AIRSHOT…)
- * only requires a new entry here + an asset mapping in MedalConfig —
- * no logic rewrite anywhere.
+ * only requires a new entry here + a style in MedalConfig (MedalStyles) +
+ * its art in hudIcons.ts (MEDAL_ICONS) — no logic rewrite anywhere.
  */
 export enum MedalType {
   KILL = "KILL",
