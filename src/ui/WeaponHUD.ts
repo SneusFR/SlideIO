@@ -1,73 +1,94 @@
 import { HeatSystem } from "../weapons/HeatSystem";
+import { createGauge, WeaponPlate } from "./hudKit";
+
+const ACCENT = "#a8d94a"; // bean green (menu --mm-green-bright)
 
 /**
- * Weapon HUD: permanent (discreet) heat bar + overheat warning with
- * live cooldown countdown, plus subtle crosshair hit feedback.
- * Reads DOM elements defined in index.html.
+ * Beam weapon HEAT plate — a flame badge + a heat tube that goes green →
+ * orange → red. OVERHEAT happens ON THE PLATE (no sticker over the aim):
+ * the plate shakes and turns red, the ribbon reads "TOO HOT!", the count
+ * shows the live cooling countdown and the badge ring drains with it; on
+ * recovery the ribbon pops "READY!" for a moment.
+ * Also drives the subtle crosshair hit feedback.
  */
 export class WeaponHUD {
-  private readonly hudEl: HTMLElement;
-  private readonly fillEl: HTMLElement;
-  private readonly valueEl: HTMLElement;
-  private readonly warningEl: HTMLElement;
-  private readonly titleEl: HTMLElement;
-  private readonly coolingEl: HTMLElement;
-  private readonly timeEl: HTMLElement;
+  private readonly plate: WeaponPlate;
+  private readonly setLevel: (ratio: number) => void;
   private readonly crosshairEl: HTMLElement;
 
   private readyTimer = 0;
   private wasOverheated = false;
+  private coolTotal = 0;
   private lastPercent = -1;
+  private lastTime = "";
+  private lastHit: boolean | null = null;
+  private visible: boolean | null = null;
 
   constructor() {
-    this.hudEl = document.getElementById("heat-hud")!;
-    this.fillEl = document.getElementById("heat-fill")!;
-    this.valueEl = document.getElementById("heat-value")!;
-    this.warningEl = document.getElementById("overheat-warning")!;
-    this.titleEl = document.getElementById("overheat-title")!;
-    this.coolingEl = document.getElementById("overheat-cooling")!;
-    this.timeEl = document.getElementById("overheat-time")!;
+    this.plate = new WeaponPlate("heat-hud", "HEAT", "heat", ACCENT, null);
+    this.setLevel = createGauge(this.plate.ammo, "heat");
     this.crosshairEl = document.getElementById("crosshair")!;
   }
 
-  update(dt: number, heat: HeatSystem, hittingTarget: boolean): void {
-    const ratio = heat.ratio;
+  /** The heat plate only exists while the heat weapon is equipped. */
+  setVisible(visible: boolean): void {
+    if (visible === this.visible) return;
+    this.visible = visible;
+    this.plate.setVisible(visible);
+    if (visible) this.lastPercent = -1;
+  }
 
-    // Heat bar (only touch the DOM when the value actually changed).
+  update(dt: number, heat: HeatSystem, hittingTarget: boolean): void {
+    // Subtle crosshair hit feedback (independent of the plate).
+    if (hittingTarget !== this.lastHit) {
+      this.lastHit = hittingTarget;
+      this.crosshairEl.classList.toggle("hit", hittingTarget);
+    }
+    if (!this.visible) return;
+
+    const ratio = heat.ratio;
+    const overheated = heat.overheated;
+
+    if (overheated) {
+      if (!this.wasOverheated) {
+        this.wasOverheated = true;
+        this.readyTimer = 0;
+        this.coolTotal = Math.max(0.01, heat.cooldownRemaining);
+        this.plate.setName("TOO HOT!");
+        this.plate.setState("low");
+        this.plate.root.classList.add("overheat");
+        this.plate.stamp("TOO HOT!");
+      }
+      const t = heat.cooldownRemaining.toFixed(1);
+      if (t !== this.lastTime) {
+        this.lastTime = t;
+        this.plate.setCount(`${t}s`);
+      }
+      this.plate.setRing(heat.cooldownRemaining / this.coolTotal);
+      this.setLevel(1);
+      return;
+    }
+
+    if (this.wasOverheated) {
+      // Just recovered: pop READY! briefly on the ribbon.
+      this.wasOverheated = false;
+      this.readyTimer = 0.8;
+      this.lastPercent = -1;
+      this.lastTime = "";
+      this.plate.root.classList.remove("overheat");
+      this.plate.setName("READY!");
+      this.plate.setRing(-1);
+    } else if (this.readyTimer > 0) {
+      this.readyTimer -= dt;
+      if (this.readyTimer <= 0) this.plate.setName();
+    }
+
     const percent = Math.round(ratio * 100);
     if (percent !== this.lastPercent) {
       this.lastPercent = percent;
-      this.fillEl.style.width = `${percent}%`;
-      this.valueEl.textContent = `${percent}%`;
+      this.plate.setCount(`${percent}%`);
+      this.plate.setState(ratio > 0.7 ? "hot" : "");
+      this.setLevel(ratio);
     }
-    this.hudEl.classList.toggle("hot", ratio > 0.7 && !heat.overheated);
-    this.hudEl.classList.toggle("overheated", heat.overheated);
-
-    // Overheat warning + cooldown countdown / READY flash.
-    if (heat.overheated) {
-      this.wasOverheated = true;
-      this.readyTimer = 0;
-      this.warningEl.classList.remove("hidden", "ready");
-      this.titleEl.textContent = "WEAPON OVERHEATED";
-      this.coolingEl.style.display = "";
-      this.timeEl.textContent = heat.cooldownRemaining.toFixed(1);
-    } else if (this.wasOverheated) {
-      // Just recovered: flash READY briefly.
-      this.wasOverheated = false;
-      this.readyTimer = 0.8;
-      this.warningEl.classList.remove("hidden");
-      this.warningEl.classList.add("ready");
-      this.titleEl.textContent = "READY";
-      this.coolingEl.style.display = "none";
-    } else if (this.readyTimer > 0) {
-      this.readyTimer -= dt;
-      if (this.readyTimer <= 0) {
-        this.warningEl.classList.add("hidden");
-        this.warningEl.classList.remove("ready");
-      }
-    }
-
-    // Subtle crosshair hit feedback.
-    this.crosshairEl.classList.toggle("hit", hittingTarget);
   }
 }

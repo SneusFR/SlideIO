@@ -1,250 +1,193 @@
 import { KillstreakManager, KILLSTREAK_SLOT_LABELS } from "../killstreaks/KillstreakManager";
 import { KillstreakState } from "../killstreaks/KillstreakState";
+import { hudFeed } from "./HudFeed";
+import { killstreakColor, killstreakIconSvg, PADLOCK_SVG } from "./hudIcons";
+import { replayAnim } from "./hudKit";
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+/** Gap between two ring notches, in degrees (ring = pathLength 360). */
+const NOTCH_GAP = 9;
+const CONFETTI = 8;
+
+interface Medal {
+  root: HTMLDivElement;
+  ring: SVGSVGElement;
+  art: HTMLDivElement;
+  count: HTMLSpanElement;
+  segs: SVGCircleElement[];
+  /** Id currently drawn (icon + notches are rebuilt only when it changes). */
+  drawnId: string;
+  lastState: string;
+  lastKills: number;
+}
 
 /**
- * Bottom-right killstreak panel: 3 rows (keys W/X/C), each showing the
- * equipped streak, kill progress and state (LOCKED / READY / ACTIVE / SPENT).
- * Self-contained: injects its own CSS, re-renders from manager callbacks
- * wired in Game (manager.onChanged → render, manager.onReady → notifyReady).
+ * KILLSTREAK MEDALLIONS (bottom-right, above the weapon plate) — one big
+ * round medallion per equipped slot (keys W / X / C), empty slots hidden:
+ *
+ *   LOCKED  greyed silhouette + padlock; a notched gold ring (one notch
+ *           per required kill) fills kill after kill, each notch pops in.
+ *   UNLOCK  the padlock bursts in two halves, colours flood back with a
+ *           bounce, sun rays spin behind + confetti, a "READY" sticker
+ *           lands in the top-centre event feed.
+ *   READY   gold rim, gentle float, a shine sweep, and the key cap hops.
+ *   ACTIVE  warm pulsing glow + spinning ring.
+ *   SPENT   washed-out with a "USED" stamp.
+ *
+ * Re-renders from manager callbacks wired in Game (manager.onChanged →
+ * render, manager.onReady → notifyReady). DOM is built once; render only
+ * swaps classes (and rebuilds a medallion when its equipped id changes).
  */
 export class KillstreakHUD {
   private readonly root: HTMLElement;
-  private readonly rows: HTMLElement[] = [];
+  private readonly medals: Medal[] = [];
 
   constructor(private readonly manager: KillstreakManager) {
-    injectStyles();
     this.root = document.createElement("div");
     this.root.id = "killstreak-hud";
-    this.root.className = "hud-card";
-    const header = document.createElement("div");
-    header.className = "hud-card-header";
-    header.innerHTML = `
-      <svg class="hud-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M12 2a8 8 0 0 0-8 8c0 2.9 1.56 5.43 3.89 6.82L8 21h3v-2h2v2h3l.11-4.18A7.99 7.99 0 0 0 20 10a8 8 0 0 0-8-8Zm-3.5 11a2 2 0 1 1 0-4 2 2 0 0 1 0 4Zm7 0a2 2 0 1 1 0-4 2 2 0 0 1 0 4Z" fill="currentColor"/>
-      </svg>
-      <span>KILLSTREAKS</span>
-    `;
-    this.root.appendChild(header);
 
     for (let i = 0; i < 3; i++) {
-      const row = document.createElement("div");
-      row.className = "ks-row";
-      row.innerHTML = `
-        <span class="ks-key">${KILLSTREAK_SLOT_LABELS[i]}</span>
-        <span class="ks-name"></span>
-        <span class="ks-progress"></span>
-        <div class="ks-bar"><div class="ks-fill"></div></div>
-      `;
-      this.rows.push(row);
-      this.root.appendChild(row);
+      const root = document.createElement("div");
+      root.className = "ks-medal empty";
+      root.innerHTML = `
+        <div class="ks-rays"></div>
+        <div class="ks-confetti">${"<i></i>".repeat(CONFETTI)}</div>
+        <div class="ks-disc">
+          <div class="ks-art"></div>
+          <div class="ks-lock">${PADLOCK_SVG}</div>
+          <span class="ks-count"></span>
+          <span class="ks-used">USED</span>
+        </div>
+        <span class="ks-key">${KILLSTREAK_SLOT_LABELS[i]}</span>`;
+      const ring = document.createElementNS(SVG_NS, "svg");
+      ring.setAttribute("class", "ks-ring");
+      ring.setAttribute("viewBox", "0 0 80 80");
+      ring.setAttribute("aria-hidden", "true");
+      root.insertBefore(ring, root.querySelector(".ks-disc"));
+      this.medals.push({
+        root,
+        ring,
+        art: root.querySelector(".ks-art")!,
+        count: root.querySelector(".ks-count")!,
+        segs: [],
+        drawnId: "",
+        lastState: "",
+        lastKills: -1,
+      });
+      this.root.appendChild(root);
     }
 
-    // Mounted INSIDE the bottom-right column, above the ATTACKS card.
+    // Mounted at the TOP of the bottom-right column, above the weapon plate.
     const col = document.getElementById("right-hud-col");
-    const attacks = document.getElementById("attacks-card");
     if (col) {
-      col.insertBefore(this.root, attacks ?? null);
+      col.insertBefore(this.root, col.firstChild);
     } else {
       (document.getElementById("hud") ?? document.body).appendChild(this.root);
     }
     this.render();
   }
 
-  /** Full re-render from manager state (cheap: 3 rows of text/classes). */
+  /** (Re)build the icon + notched ring of a medallion for a new streak id. */
+  private draw(m: Medal, id: string, required: number): void {
+    m.drawnId = id;
+    m.root.style.setProperty("--ks", killstreakColor(id));
+    m.art.innerHTML = killstreakIconSvg(id);
+    while (m.ring.firstChild) m.ring.removeChild(m.ring.firstChild);
+    m.segs = [];
+
+    const track = document.createElementNS(SVG_NS, "circle");
+    track.setAttribute("class", "ks-ring-track");
+    track.setAttribute("cx", "40");
+    track.setAttribute("cy", "40");
+    track.setAttribute("r", "35");
+    m.ring.appendChild(track);
+
+    const n = Math.max(1, required);
+    const span = 360 / n;
+    const len = Math.max(4, span - NOTCH_GAP);
+    for (let s = 0; s < n; s++) {
+      const c = document.createElementNS(SVG_NS, "circle");
+      c.setAttribute("class", "ks-seg");
+      c.setAttribute("cx", "40");
+      c.setAttribute("cy", "40");
+      c.setAttribute("r", "35");
+      c.setAttribute("pathLength", "360");
+      c.setAttribute("stroke-dasharray", `${len} 360`);
+      // Start at 12 o'clock, clockwise; centre the gap between notches.
+      c.setAttribute("transform", `rotate(${-90 + s * span + NOTCH_GAP / 2} 40 40)`);
+      m.ring.appendChild(c);
+      m.segs.push(c);
+    }
+    m.lastKills = -1;
+  }
+
+  /** Full re-render from manager state (cheap: 3 medallions of classes). */
   render(): void {
     for (let i = 0; i < 3; i++) {
       const slot = this.manager.slots[i];
-      const row = this.rows[i];
-      const name = row.querySelector<HTMLElement>(".ks-name")!;
-      const progress = row.querySelector<HTMLElement>(".ks-progress")!;
-      const fill = row.querySelector<HTMLElement>(".ks-fill")!;
-
-      row.classList.remove("empty", "locked", "ready", "active", "spent");
+      const m = this.medals[i];
 
       if (slot.isEmpty || !slot.def) {
-        row.classList.add("empty");
-        name.textContent = "—";
-        progress.textContent = "";
-        fill.style.width = "0%";
+        if (m.lastState !== "empty") {
+          m.lastState = "empty";
+          m.root.className = "ks-medal empty";
+          m.drawnId = "";
+        }
         continue;
       }
 
-      name.textContent = slot.def.shortName;
-      const required = slot.def.requiredKills;
+      const def = slot.def;
+      if (m.drawnId !== def.id) this.draw(m, def.id, def.requiredKills);
 
-      switch (slot.state) {
-        case KillstreakState.LOCKED:
-          row.classList.add("locked");
-          progress.textContent = `${slot.kills}/${required}`;
-          fill.style.width = `${Math.min(100, (slot.kills / required) * 100)}%`;
-          break;
-        case KillstreakState.READY:
-          row.classList.add("ready");
-          progress.textContent = `PRESS ${KILLSTREAK_SLOT_LABELS[i]}`;
-          fill.style.width = "100%";
-          break;
-        case KillstreakState.ACTIVE:
-          row.classList.add("active");
-          progress.textContent = "ACTIVE";
-          fill.style.width = "100%";
-          break;
-        case KillstreakState.SPENT:
-          row.classList.add("spent");
-          progress.textContent = "USED";
-          fill.style.width = "0%";
-          break;
+      const state =
+        slot.state === KillstreakState.LOCKED
+          ? "locked"
+          : slot.state === KillstreakState.READY
+            ? "ready"
+            : slot.state === KillstreakState.ACTIVE
+              ? "active"
+              : "spent";
+      if (state !== m.lastState) {
+        m.lastState = state;
+        m.root.classList.remove("empty", "locked", "ready", "active", "spent");
+        m.root.classList.add(state);
       }
+
+      // Notches: lit up to the kill count (all lit once armed / active).
+      const lit = state === "locked" ? slot.kills : state === "spent" ? 0 : m.segs.length;
+      if (lit !== m.lastKills) {
+        const animate = m.lastKills >= 0 && state === "locked";
+        for (let s = 0; s < m.segs.length; s++) {
+          const on = s < lit;
+          const seg = m.segs[s];
+          if (seg.classList.contains("on") === on) continue;
+          seg.classList.toggle("on", on);
+          // Pop only the notches gained by a kill (not a death reset).
+          if (on && animate) replayAnim(seg, "pop");
+        }
+        m.lastKills = lit;
+      }
+
+      const countText = state === "locked" ? `${slot.kills}/${def.requiredKills}` : "";
+      if (m.count.textContent !== countText) m.count.textContent = countText;
     }
   }
 
-  /** Brief progress flash on the rows that just gained a kill. */
+  /** A kill landed: the charging medallions give a little "gulp". */
   notifyKill(): void {
     for (let i = 0; i < 3; i++) {
       const slot = this.manager.slots[i];
       if (slot.isEmpty || slot.state !== KillstreakState.LOCKED) continue;
-      this.flashClass(this.rows[i], "flash", 260);
+      replayAnim(this.medals[i].ring, "gulp");
     }
   }
 
-  /** Unlock pop animation on the slot that just became READY. */
+  /** Big unlock moment on the slot that just became READY. */
   notifyReady(slotIndex: number): void {
-    const row = this.rows[slotIndex];
-    if (row) this.flashClass(row, "unlock", 700);
+    const m = this.medals[slotIndex];
+    if (!m) return;
+    replayAnim(m.root, "unlock");
+    const def = this.manager.slots[slotIndex]?.def;
+    if (def) hudFeed().push("streak", def.name, `READY [${KILLSTREAK_SLOT_LABELS[slotIndex]}]`);
   }
-
-  private flashClass(el: HTMLElement, cls: string, ms: number): void {
-    el.classList.remove(cls);
-    void el.offsetWidth; // restart the CSS animation
-    el.classList.add(cls);
-    window.setTimeout(() => el.classList.remove(cls), ms);
-  }
-}
-
-let stylesInjected = false;
-
-function injectStyles(): void {
-  if (stylesInjected) return;
-  stylesInjected = true;
-  const style = document.createElement("style");
-  style.textContent = `
-    /* Card chrome (position, background, header) comes from .hud-card /
-       .hud-card-header in style.css — only the violet accent + rows here. */
-    #killstreak-hud {
-      gap: 5px;
-      background: linear-gradient(165deg, rgba(18, 9, 32, 0.6), rgba(8, 4, 14, 0.55));
-      border-color: rgba(168, 85, 247, 0.28);
-      box-shadow:
-        0 0 14px rgba(124, 58, 237, 0.12),
-        inset 0 0 24px rgba(124, 58, 237, 0.06);
-    }
-    #killstreak-hud .hud-card-header {
-      color: rgba(216, 180, 254, 0.85);
-      border-bottom-color: rgba(168, 85, 247, 0.25);
-    }
-    #killstreak-hud .ks-row {
-      display: grid;
-      grid-template-columns: 16px 1fr auto;
-      grid-template-rows: auto 3px;
-      align-items: baseline;
-      column-gap: 8px;
-      row-gap: 3px;
-      min-width: 0;
-      padding: 5px 9px 6px;
-      border-radius: 6px;
-      background: rgba(10, 6, 20, 0.55);
-      border: 1px solid rgba(168, 85, 247, 0.18);
-      transition: border-color 0.2s ease, background 0.2s ease, opacity 0.2s ease;
-    }
-    #killstreak-hud .ks-key {
-      font-size: 10px;
-      font-weight: 800;
-      color: rgba(216, 180, 254, 0.7);
-      border: 1px solid rgba(168, 85, 247, 0.35);
-      border-radius: 3px;
-      text-align: center;
-      line-height: 14px;
-      width: 14px;
-      height: 14px;
-    }
-    #killstreak-hud .ks-name {
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 1.5px;
-      color: #e9d5ff;
-      text-align: left;
-      white-space: nowrap;
-    }
-    #killstreak-hud .ks-progress {
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 1px;
-      color: rgba(216, 180, 254, 0.75);
-      white-space: nowrap;
-    }
-    #killstreak-hud .ks-bar {
-      grid-column: 1 / -1;
-      height: 3px;
-      border-radius: 2px;
-      background: rgba(168, 85, 247, 0.15);
-      overflow: hidden;
-    }
-    #killstreak-hud .ks-fill {
-      height: 100%;
-      width: 0%;
-      border-radius: 2px;
-      background: linear-gradient(90deg, #7c3aed, #c084fc);
-      transition: width 0.25s ease;
-    }
-    /* Empty slot */
-    #killstreak-hud .ks-row.empty { opacity: 0.28; }
-    #killstreak-hud .ks-row.empty .ks-name { color: rgba(233, 213, 255, 0.5); }
-    /* Locked: desaturated, progress visible */
-    #killstreak-hud .ks-row.locked { opacity: 0.75; }
-    #killstreak-hud .ks-row.locked .ks-name { color: rgba(233, 213, 255, 0.75); }
-    /* Ready: violet glow + pulse */
-    #killstreak-hud .ks-row.ready {
-      border-color: rgba(192, 132, 252, 0.9);
-      background: rgba(52, 18, 82, 0.72);
-      box-shadow: 0 0 14px rgba(168, 85, 247, 0.45);
-      animation: ks-ready-pulse 1.4s ease-in-out infinite;
-    }
-    #killstreak-hud .ks-row.ready .ks-progress { color: #f3e8ff; }
-    #killstreak-hud .ks-row.ready .ks-fill {
-      background: linear-gradient(90deg, #a855f7, #f0abfc);
-    }
-    /* Active: bright highlight */
-    #killstreak-hud .ks-row.active {
-      border-color: rgba(240, 171, 252, 1);
-      background: rgba(88, 28, 135, 0.8);
-      box-shadow: 0 0 18px rgba(216, 180, 254, 0.6);
-    }
-    #killstreak-hud .ks-row.active .ks-progress { color: #ffffff; }
-    /* Spent */
-    #killstreak-hud .ks-row.spent { opacity: 0.4; }
-    #killstreak-hud .ks-row.spent .ks-name {
-      text-decoration: line-through;
-      color: rgba(233, 213, 255, 0.55);
-    }
-    /* Kill flash on locked rows */
-    #killstreak-hud .ks-row.flash {
-      animation: ks-kill-flash 0.26s ease-out;
-    }
-    /* Unlock pop when a streak becomes READY */
-    #killstreak-hud .ks-row.unlock {
-      animation: ks-unlock-pop 0.7s cubic-bezier(0.2, 1.6, 0.4, 1);
-    }
-    @keyframes ks-ready-pulse {
-      0%, 100% { box-shadow: 0 0 10px rgba(168, 85, 247, 0.35); }
-      50% { box-shadow: 0 0 20px rgba(192, 132, 252, 0.65); }
-    }
-    @keyframes ks-kill-flash {
-      0% { background: rgba(168, 85, 247, 0.5); }
-      100% { background: rgba(10, 6, 20, 0.55); }
-    }
-    @keyframes ks-unlock-pop {
-      0% { transform: scale(1.12); filter: brightness(2); }
-      100% { transform: scale(1); filter: brightness(1); }
-    }
-  `;
-  document.head.appendChild(style);
 }

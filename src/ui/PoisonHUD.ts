@@ -1,69 +1,35 @@
 import { PoisonWeapon } from "../weapons/poison/PoisonWeapon";
+import { createGauge, WeaponPlate } from "./hudKit";
+
+const ACCENT = "#7bff4d";
 
 /**
- * Discreet Lance-Poison charge readout (bottom-right, ATTACKS card —
- * same slot pattern as the RevolverHUD):
+ * Lance-Poison plate — the flask badge + a bubbling toxic-green tube. The
+ * level is the SAME charge the gameplay drains and the 3D liquid tank
+ * displays:
  *
- *     POISON
- *     [██████████░░░░]  73%
+ *     (flask)  POISON
+ *              73%   [≈≈≈≈≈≈≈≈≈░░░]
  *
- * The bar is the SAME charge the gameplay drains and the liquid tank
- * displays. DOM is only touched when the shown state actually changes.
+ * DOM is only touched when the shown state actually changes.
  */
 export class PoisonHUD {
-  private readonly root: HTMLElement;
-  private readonly label: HTMLElement;
-  private readonly barFill: HTMLElement;
-  private readonly value: HTMLElement;
+  private readonly plate: WeaponPlate;
+  private readonly setLevel: (ratio: number) => void;
 
   private lastPercent = -1;
   private lastReloading: boolean | null = null;
   private lastVisible: boolean | null = null;
 
   constructor() {
-    this.root = document.createElement("div");
-    this.root.id = "poison-hud";
-    this.root.style.cssText = [
-      "display:none",
-      "flex-direction:row",
-      "align-items:center",
-      "justify-content:space-between",
-      "gap:8px",
-      "font-family:'Baloo 2','Segoe UI',sans-serif",
-      "pointer-events:none",
-    ].join(";");
-
-    this.label = document.createElement("div");
-    this.label.textContent = "POISON";
-    this.label.style.cssText =
-      "font-size:10px;letter-spacing:3px;color:#4ade80;text-shadow:0 0 6px rgba(57,255,20,0.8)";
-    this.root.appendChild(this.label);
-
-    const barWrap = document.createElement("div");
-    barWrap.style.cssText =
-      "flex:1;max-width:110px;height:8px;border-radius:4px;overflow:hidden;" +
-      "background:rgba(20,40,20,0.7);border:1px solid rgba(57,255,20,0.35)";
-    this.barFill = document.createElement("div");
-    this.barFill.style.cssText =
-      "height:100%;width:100%;background:linear-gradient(90deg,#16a34a,#39ff14);" +
-      "box-shadow:0 0 8px rgba(57,255,20,0.8);transition:width 0.08s linear";
-    barWrap.appendChild(this.barFill);
-    this.root.appendChild(barWrap);
-
-    this.value = document.createElement("div");
-    this.value.textContent = "100%";
-    this.value.style.cssText =
-      "font-size:11px;min-width:34px;text-align:right;color:#bbf7d0;" +
-      "text-shadow:0 0 5px rgba(57,255,20,0.6)";
-    this.root.appendChild(this.value);
-
-    (document.getElementById("attack-rows") ?? document.body).appendChild(this.root);
+    this.plate = new WeaponPlate("poison-hud", "POISON", "poison", ACCENT, null);
+    this.setLevel = createGauge(this.plate.ammo, "poison");
   }
 
   setVisible(visible: boolean): void {
     if (visible === this.lastVisible) return;
     this.lastVisible = visible;
-    this.root.style.display = visible ? "flex" : "none";
+    this.plate.setVisible(visible);
   }
 
   update(weapon: PoisonWeapon): void {
@@ -75,14 +41,10 @@ export class PoisonHUD {
     this.lastPercent = percent;
     this.lastReloading = reloading;
 
-    this.barFill.style.width = `${percent}%`;
-    this.value.textContent = `${percent}%`;
-    if (reloading) {
-      this.label.textContent = "REFILLING";
-      this.label.style.color = "#86efac";
-    } else {
-      this.label.textContent = "POISON";
-      this.label.style.color = "#4ade80";
-    }
+    this.plate.setName(reloading ? "REFILLING" : undefined);
+    this.plate.setCount(`${percent}%`);
+    this.plate.setState(reloading ? "reload" : percent <= 20 ? "low" : "");
+    this.plate.setRing(reloading ? percent / 100 : -1);
+    this.setLevel(percent / 100);
   }
 }

@@ -2570,6 +2570,7 @@ export class Game {
     });
 
     this.hud.update(rawDt, this.movement, this.scene);
+    this.weaponHud.setVisible(this.primaryWeapon === "PLASMA_RIFLE");
     this.weaponHud.update(dt, this.rifle.heat, this.rifle.hittingTarget);
     this.dashHud.update(dt, this.movement);
     this.spearHud.setVisible(this.meleeWeapon === "SPEAR");

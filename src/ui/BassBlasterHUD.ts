@@ -1,21 +1,21 @@
 import { BassBlasterWeapon } from "../weapons/bassblaster/BassBlasterWeapon";
+import { createGauge, WeaponPlate } from "./hudKit";
+
+const ACCENT = "#ff7ac8"; // bubble-gum pink: a goofy boombox, not a neon synth
 
 /**
- * Discreet Bass Blaster ammo readout (bottom-right, above the melee zone —
- * same spot as the revolver chip, only one primary is ever visible):
+ * Bass Blaster plate — the boombox badge + a pink "equalizer" tube that
+ * drains with the magazine; during the musical reload it refills with the
+ * reload progress (dancing stripes) and the ribbon reads "♫ RECHARGE…":
  *
- *     BASS BLASTER          30/30
- *     ████████████████████████░░░
+ *     (boombox)  ♪ BASS BLASTER
+ *                30   [▮▮▮▮▮▮▮▮▮▮░░]
  *
- * The bar drains with the magazine; during the musical reload it turns
- * into a violet fill animating with the reload progress. DOM is only
- * touched when the displayed state actually changes — never per frame.
+ * DOM is only touched when the displayed state changes.
  */
 export class BassBlasterHUD {
-  private readonly root: HTMLElement;
-  private readonly label: HTMLElement;
-  private readonly counter: HTMLElement;
-  private readonly barFill: HTMLElement;
+  private readonly plate: WeaponPlate;
+  private readonly setLevel: (ratio: number) => void;
 
   private lastAmmo = -1;
   private lastReloadPct = -1;
@@ -23,60 +23,14 @@ export class BassBlasterHUD {
   private lastVisible: boolean | null = null;
 
   constructor() {
-    this.root = document.createElement("div");
-    this.root.id = "bassblaster-hud";
-    // Row inside the ATTACKS card (bottom-right column) — the card owns
-    // the chrome, this element only lays out label + ammo bar.
-    this.root.style.cssText = [
-      "display:none",
-      "flex-direction:column",
-      "gap:5px",
-      "font-family:'Baloo 2','Segoe UI',sans-serif",
-      "pointer-events:none",
-    ].join(";");
-
-    const topRow = document.createElement("div");
-    topRow.style.cssText = "display:flex;justify-content:space-between;align-items:baseline";
-
-    this.label = document.createElement("div");
-    this.label.textContent = "\u266A BASS BLASTER";
-    this.label.style.cssText =
-      "font-size:10px;letter-spacing:2.5px;color:#c084fc;text-shadow:0 0 6px rgba(168,85,247,0.8)";
-
-    this.counter = document.createElement("div");
-    this.counter.style.cssText =
-      "font-size:13px;font-weight:600;color:#e9d5ff;text-shadow:0 0 6px rgba(216,180,254,0.8)";
-
-    topRow.append(this.label, this.counter);
-    this.root.appendChild(topRow);
-
-    const bar = document.createElement("div");
-    bar.style.cssText = [
-      "height:6px",
-      "border-radius:3px",
-      "background:rgba(124,58,237,0.15)",
-      "border:1px solid rgba(168,85,247,0.25)",
-      "overflow:hidden",
-    ].join(";");
-    this.barFill = document.createElement("div");
-    this.barFill.style.cssText = [
-      "height:100%",
-      "width:100%",
-      "border-radius:3px",
-      "background:linear-gradient(90deg,#7c3aed,#d8b4fe)",
-      "box-shadow:0 0 8px rgba(168,85,247,0.8)",
-      "transition:width 0.08s linear",
-    ].join(";");
-    bar.appendChild(this.barFill);
-    this.root.appendChild(bar);
-
-    (document.getElementById("attack-rows") ?? document.body).appendChild(this.root);
+    this.plate = new WeaponPlate("bassblaster-hud", "\u266A BASS BLASTER", "bass", ACCENT, null);
+    this.setLevel = createGauge(this.plate.ammo, "eq");
   }
 
   setVisible(visible: boolean): void {
     if (visible === this.lastVisible) return;
     this.lastVisible = visible;
-    this.root.style.display = visible ? "flex" : "none";
+    this.plate.setVisible(visible);
   }
 
   update(weapon: BassBlasterWeapon): void {
@@ -97,18 +51,19 @@ export class BassBlasterHUD {
     this.lastReloadPct = reloadPct;
 
     if (reloading) {
-      this.label.textContent = "\u266B RECHARGE\u2026";
-      this.label.style.color = "#a855f7";
-      this.counter.textContent = "\u266A \u266B \u266A";
-      this.barFill.style.width = `${reloadPct}%`;
-      this.barFill.style.background = "linear-gradient(90deg,#a855f7,#f0abfc)";
+      this.plate.setName("\u266B RECHARGE\u2026");
+      this.plate.setCount("\u266A\u266B");
+      this.plate.setState("reload");
+      this.plate.setRing(reloadPct / 100);
+      this.setLevel(reloadPct / 100);
       return;
     }
 
-    this.label.textContent = "\u266A BASS BLASTER";
-    this.label.style.color = "#c084fc";
-    this.counter.textContent = `${ammo}/${weapon.maxAmmo}`;
-    this.barFill.style.width = `${(ammo / weapon.maxAmmo) * 100}%`;
-    this.barFill.style.background = "linear-gradient(90deg,#7c3aed,#d8b4fe)";
+    const ratio = ammo / weapon.maxAmmo;
+    this.plate.setName();
+    this.plate.setCount(String(ammo));
+    this.plate.setState(ratio <= 0.2 ? "low" : "");
+    this.plate.setRing(-1);
+    this.setLevel(ratio);
   }
 }

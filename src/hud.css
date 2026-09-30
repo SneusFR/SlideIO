@@ -1,0 +1,2346 @@
+/* ==========================================================================
+   SLIDEIO — "BEAN STICKER ARCADE" IN-GAME HUD (same family as the main
+   menu: goofy beans, sunny greens, wood + parchment, chunky shapes)
+   --------------------------------------------------------------------------
+   Visual language:
+   - Die-cut STICKERS: thick dark-wood outline, hard offset shadow, a light
+     tilt, glossy highlights. Every element is an OBJECT (a bean, a wooden
+     plate, a medallion, a hanging tag) — never a generic rectangle card.
+   - Numbers in Luckiest Guy with a dark-wood stroke → readable on ANY map.
+   - Everything moves with springy overshoot (squash / stretch / bounce).
+   - GOLDEN RULE: the centre of the screen stays clear. Only the crosshair,
+     the hitmarker, the directional damage bites and a tiny contextual
+     "LOW AMMO / RELOAD" ticker live near the aim point.
+   Layout: top-centre = mode badge + combo tag + event feed · top-right =
+   scoreboard · bottom-left = Bean Buddy (HP / dash) · bottom-right =
+   killstreak medallions + weapon plate + ability chips.
+   Performance: no backdrop-filter, animations on transform / opacity only,
+   no per-frame JS writes (everything change-detected), one-shot
+   animations restarted by swapping `x-a` / `x-b` classes (replayAnim).
+   ========================================================================== */
+
+:root {
+  /* Outline / shadow "ink" = the menu's dark wood (--mm-wood-dark). */
+  --ink: #3a2814;
+  --ink-soft: rgba(58, 40, 20, 0.6);
+  --cream: #fff6e0; /* --mm-text-cream */
+  --cream-dim: rgba(255, 246, 224, 0.68);
+  --parchment: #fbf3dd; /* --mm-parchment-hi */
+  --parchment-lo: #efe2c0;
+  --bean: #a8d94a; /* --mm-green-bright */
+  --bean-deep: #78ac1e; /* --mm-green */
+  --hp: #a8d94a;
+  --hp-mid: #facc15;
+  --hp-low: #ff5a4e;
+  --dash: #5cc8ff;
+  --gold: #facc15; /* --mm-gold */
+  --wood: #6b4a2b;
+  --hud-font: "Luckiest Guy", "Baloo 2", cursive;
+  --hud-font-alt: "Baloo 2", "Segoe UI", sans-serif;
+  --pop: cubic-bezier(0.2, 1.8, 0.4, 1);
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* Wooden plank (same wood as the menu buttons) + grain stripes. */
+  --plank:
+    repeating-linear-gradient(
+      172deg,
+      rgba(255, 220, 170, 0.05) 0 3px,
+      rgba(0, 0, 0, 0) 3px 11px,
+      rgba(40, 24, 8, 0.08) 11px 13px,
+      rgba(0, 0, 0, 0) 13px 22px
+    ),
+    linear-gradient(180deg, #8a6038 0%, #6b4a2b 55%, #563a20 100%);
+  --sticker-bg: linear-gradient(180deg, rgba(92, 64, 34, 0.9), rgba(52, 36, 18, 0.88));
+  --sticker-shadow: 0 4px 0 rgba(40, 27, 12, 0.85);
+  --outline: 3px solid var(--ink);
+}
+
+#hud {
+  font-family: var(--hud-font-alt);
+  color: var(--cream);
+  user-select: none;
+}
+
+/* Keyboard key cap — chunky parchment toy button. */
+.hud-key {
+  flex: none;
+  display: inline-block;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  font-family: var(--hud-font);
+  font-size: 13px;
+  line-height: 25px;
+  text-align: center;
+  color: var(--ink);
+  background: linear-gradient(180deg, #ffffff, var(--parchment) 60%, var(--parchment-lo));
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+  box-shadow: 0 3px 0 var(--ink);
+}
+
+/* Shared glossy highlight laid over tubes / pills. */
+.bar-shine {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  top: 2px;
+  height: 32%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0));
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   TOP-CENTRE stack: mode badge → combo tag → event feed
+   ========================================================================== */
+#top-center {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  z-index: 6;
+}
+
+#mode-hud {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 18px 3px;
+  background: var(--plank);
+  border: var(--outline);
+  border-radius: 999px;
+  box-shadow: var(--sticker-shadow), inset 0 2px 0 rgba(255, 226, 180, 0.25);
+  transform: rotate(-1.5deg);
+  z-index: 2;
+}
+
+/* Two little nails holding the sign. */
+#mode-hud::before,
+#mode-hud::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: #d8c49a;
+  box-shadow: 0 0 0 1.5px var(--ink);
+}
+#mode-hud::before { left: 6px; }
+#mode-hud::after { right: 6px; }
+
+#mode-name {
+  font-family: var(--hud-font);
+  font-size: 16px;
+  letter-spacing: 2px;
+  color: var(--gold);
+  -webkit-text-stroke: 1.5px var(--ink);
+  paint-order: stroke fill;
+  transform: translateY(1px);
+}
+
+/* Separator = a tiny bean. */
+.mode-sep {
+  width: 10px;
+  height: 7px;
+  border-radius: 50% 50% 45% 45% / 60% 60% 40% 40%;
+  background: var(--bean);
+  box-shadow: 0 0 0 1.5px var(--ink);
+  transform: rotate(-20deg);
+}
+
+.mode-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--cream-dim);
+}
+
+#mode-time {
+  font-family: var(--hud-font);
+  font-size: 17px;
+  line-height: 1;
+  color: var(--cream);
+  -webkit-text-stroke: 1px var(--ink);
+  paint-order: stroke fill;
+  transform: translateY(1px);
+}
+
+/* ==========================================================================
+   AIM TICKER — the only thing allowed near the crosshair, and only while
+   it matters: "LOW AMMO" (tomato, blinking) / "RELOAD" (cream, breathing).
+   Small, below the aim, no box — just outlined sticker letters.
+   ========================================================================== */
+#aim-ticker {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 44px);
+  transform: translateX(-50%) scale(0.6);
+  font-family: var(--hud-font);
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  white-space: nowrap;
+  color: var(--cream);
+  -webkit-text-stroke: 2.5px var(--ink);
+  paint-order: stroke fill;
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.25s var(--pop);
+  pointer-events: none;
+}
+
+#aim-ticker.show {
+  opacity: 0.92;
+  transform: translateX(-50%) scale(1);
+}
+
+#aim-ticker.show.low {
+  color: #ff8a70;
+  animation: ticker-blink 0.9s ease-in-out infinite;
+}
+
+#aim-ticker.show.reload {
+  animation: ticker-breathe 1s ease-in-out infinite;
+}
+
+#hud.player-dead #aim-ticker {
+  display: none;
+}
+
+@keyframes ticker-blink {
+  0%, 100% { opacity: 0.95; }
+  50% { opacity: 0.35; }
+}
+
+@keyframes ticker-breathe {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0.5; }
+}
+
+/* ==========================================================================
+   COMBO TAG — a wooden tag hanging on two strings under the mode badge.
+   Hidden by default; .show = swings in, .drop = falls off its strings.
+   Swing on every kill (replayAnim "swing" on #combo-tag).
+   ========================================================================== */
+#combo-hud {
+  position: relative;
+  z-index: 1;
+}
+
+#combo-tag {
+  position: relative;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 12px;
+  padding: 5px 14px 6px;
+  background: var(--plank);
+  border: var(--outline);
+  border-radius: 10px 10px 16px 16px;
+  box-shadow: var(--sticker-shadow), inset 0 2px 0 rgba(255, 226, 180, 0.22);
+  transform-origin: 50% -14px;
+  animation: combo-hang 0.55s var(--pop) both;
+}
+
+#combo-hud.show #combo-tag,
+#combo-hud.drop #combo-tag {
+  display: flex;
+}
+
+/* Falling tag doesn't push the feed: taken out of the flow. */
+#combo-hud.drop {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+#combo-hud.drop #combo-tag {
+  animation: combo-drop 0.45s ease-in forwards;
+}
+
+/* The two strings from the tag up to the badge. */
+.combo-string {
+  position: absolute;
+  top: -15px;
+  width: 2.5px;
+  height: 15px;
+  background: var(--ink);
+  border-radius: 2px;
+}
+.combo-string.left { left: 24%; transform: rotate(12deg); }
+.combo-string.right { right: 24%; transform: rotate(-12deg); }
+
+#combo-label {
+  font-family: var(--hud-font);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--cream-dim);
+  line-height: 1;
+}
+
+#combo-count {
+  font-family: var(--hud-font);
+  font-size: 26px;
+  line-height: 1;
+  color: var(--cream);
+  -webkit-text-stroke: 4px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 3px 0 var(--ink);
+}
+
+/* Timer "rope" that burns down (scaleX driven by ComboHUD). */
+#combo-rope {
+  position: relative;
+  width: 54px;
+  height: 6px;
+  margin-top: 3px;
+  border-radius: 999px;
+  background: rgba(30, 20, 8, 0.7);
+  box-shadow: 0 0 0 1.5px var(--ink);
+  overflow: hidden;
+}
+
+#combo-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--bean-deep), var(--bean));
+  transform-origin: left center;
+}
+
+#combo-hud.tier-2 #combo-count { color: var(--gold); }
+#combo-hud.tier-2 #combo-fill { background: linear-gradient(90deg, #e0a800, var(--gold)); }
+#combo-hud.tier-3 #combo-count { color: #ff8a3d; }
+#combo-hud.tier-3 #combo-fill { background: linear-gradient(90deg, #ff4a36, #ff8a3d); }
+
+#combo-hud.ending #combo-rope {
+  animation: ticker-blink 0.3s linear infinite;
+}
+
+/* Kill: the tag swings on its strings. */
+#combo-hud.show #combo-tag.swing-a { animation: combo-swing-a 0.6s var(--spring); }
+#combo-hud.show #combo-tag.swing-b { animation: combo-swing-b 0.6s var(--spring); }
+
+@keyframes combo-hang {
+  0% { transform: translateY(-18px) rotate(-14deg); opacity: 0; }
+  60% { transform: translateY(2px) rotate(6deg); opacity: 1; }
+  100% { transform: none; }
+}
+@keyframes combo-swing-a {
+  0% { transform: scale(1.25) rotate(-10deg); }
+  45% { transform: scale(0.96) rotate(7deg); }
+  75% { transform: rotate(-3deg); }
+  100% { transform: none; }
+}
+@keyframes combo-swing-b {
+  0% { transform: scale(1.25) rotate(10deg); }
+  45% { transform: scale(0.96) rotate(-7deg); }
+  75% { transform: rotate(3deg); }
+  100% { transform: none; }
+}
+@keyframes combo-drop {
+  0% { transform: none; opacity: 1; }
+  30% { transform: rotate(18deg); }
+  100% { transform: translateY(60px) rotate(40deg); opacity: 0; visibility: hidden; }
+}
+
+/* ==========================================================================
+   EVENT FEED — short stickers under the badge ("BEANED!", "MOLE STRIKE
+   READY [W]"). Newest on top (flex order set by HudFeed), max 3.
+   ========================================================================== */
+#event-feed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.feed-sticker {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px 1px 8px;
+  font-family: var(--hud-font);
+  white-space: nowrap;
+  background: var(--plank);
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+  box-shadow: 0 3px 0 rgba(40, 27, 12, 0.85);
+}
+
+.feed-sticker.show { display: flex; }
+.feed-sticker.in-a { animation: feed-in-a 0.45s var(--pop) both; }
+.feed-sticker.in-b { animation: feed-in-b 0.45s var(--pop) both; }
+.feed-sticker.show.leaving { animation: feed-out 0.28s ease-in forwards; }
+
+.feed-icon {
+  width: 13px;
+  height: 10px;
+  margin-top: -2px;
+  border-radius: 50% 50% 45% 45% / 60% 60% 40% 40%;
+  background: var(--bean);
+  box-shadow: 0 0 0 2px var(--ink);
+  transform: rotate(-20deg);
+}
+
+.feed-title {
+  font-size: 15px;
+  letter-spacing: 1px;
+  color: var(--cream);
+  -webkit-text-stroke: 2.5px var(--ink);
+  paint-order: stroke fill;
+}
+
+.feed-sub {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--cream-dim);
+}
+.feed-sub:empty { display: none; }
+
+/* Kill: gold "BEANED!" with a green bean. */
+.feed-kill .feed-title { color: var(--gold); font-size: 17px; }
+
+/* Killstreak ready: parchment sticker, gold star icon. */
+.feed-streak {
+  background: linear-gradient(180deg, #fffbe9, var(--parchment-lo));
+}
+.feed-streak .feed-title { color: var(--gold); }
+.feed-streak .feed-sub { color: var(--ink); }
+.feed-streak .feed-icon {
+  width: 15px;
+  height: 15px;
+  margin-top: -1px;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--ink);
+  clip-path: polygon(50% 0, 62% 36%, 100% 38%, 70% 60%, 80% 100%, 50% 76%, 20% 100%, 30% 60%, 0 38%, 38% 36%);
+  transform: none;
+}
+
+.feed-heal .feed-title { color: var(--bean); }
+
+@keyframes feed-in-a {
+  0% { transform: scale(1.8) rotate(-8deg); opacity: 0; }
+  55% { transform: scale(0.92) rotate(2deg); opacity: 1; }
+  100% { transform: rotate(-1deg); }
+}
+@keyframes feed-in-b {
+  0% { transform: scale(1.8) rotate(8deg); opacity: 0; }
+  55% { transform: scale(0.92) rotate(-2deg); opacity: 1; }
+  100% { transform: rotate(1deg); }
+}
+@keyframes feed-out {
+  from { opacity: 1; }
+  to { transform: translateY(-8px) scale(0.85); opacity: 0; }
+}
+
+/* ==========================================================================
+   KNOCKDOWN banner — bottom-centre (above the controls hint), off the aim.
+   ========================================================================== */
+#knockdown-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%) rotate(-1.5deg);
+  padding: 5px 18px 2px;
+  font-family: var(--hud-font);
+  font-size: 17px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  color: var(--cream);
+  -webkit-text-stroke: 2.5px var(--ink);
+  paint-order: stroke fill;
+  background: var(--plank);
+  border: var(--outline);
+  border-radius: 12px;
+  box-shadow: var(--sticker-shadow);
+  animation: banner-slam 0.4s var(--pop);
+}
+
+#knockdown-hint.hidden { display: none; }
+
+#knockdown-hint.can-get-up {
+  color: var(--gold);
+  animation: banner-slam 0.4s var(--pop), banner-bob 0.8s ease-in-out 0.4s infinite;
+}
+
+@keyframes banner-slam {
+  0% { transform: translateX(-50%) translateY(30px) scale(0.6); opacity: 0; }
+  60% { transform: translateX(-50%) translateY(-4px) scale(1.06) rotate(1deg); opacity: 1; }
+  100% { transform: translateX(-50%) rotate(-1.5deg); }
+}
+@keyframes banner-bob {
+  0%, 100% { transform: translateX(-50%) translateY(0) rotate(-1.5deg); }
+  50% { transform: translateX(-50%) translateY(-4px) rotate(1.5deg); }
+}
+
+/* ==========================================================================
+   BEAN BUDDY (bottom-left) — round portrait medallion that overlaps a
+   wooden plank holding the jelly HP tube + the dash lightning pill.
+   Portrait face follows the HP mood (mood-happy / worried / panic / dead),
+   .ouch = grimace for a moment after a hit.
+   ========================================================================== */
+#bean-buddy {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+  z-index: 10;
+  transform: rotate(-1.5deg);
+  transform-origin: left bottom;
+}
+
+#bean-buddy.cheer-a { animation: buddy-cheer-a 0.5s var(--spring); }
+#bean-buddy.cheer-b { animation: buddy-cheer-b 0.5s var(--spring); }
+
+@keyframes buddy-cheer-a {
+  0% { transform: rotate(-1.5deg); }
+  35% { transform: translateY(-7px) rotate(-3deg); }
+  100% { transform: rotate(-1.5deg); }
+}
+@keyframes buddy-cheer-b {
+  0% { transform: rotate(-1.5deg); }
+  35% { transform: translateY(-7px) rotate(0deg); }
+  100% { transform: rotate(-1.5deg); }
+}
+
+/* ---- Portrait medallion ---- */
+.buddy-frame {
+  position: relative;
+  flex: none;
+  width: 86px;
+  height: 86px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 38%, #fff8dd 0%, #f3e3b6 55%, #d9c08a 100%);
+  border: 4px solid var(--ink);
+  box-shadow: 0 5px 0 var(--ink), inset 0 -6px 0 rgba(120, 80, 30, 0.18);
+  z-index: 2;
+}
+
+/* Soft sunburst behind the bean (turns red when in danger). */
+.buddy-rays {
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: repeating-conic-gradient(rgba(250, 204, 21, 0.28) 0 12deg, rgba(250, 204, 21, 0) 12deg 24deg);
+  opacity: 0.8;
+}
+
+#buddy-portrait {
+  position: absolute;
+  inset: 2px;
+  transform-origin: 50% 90%;
+  /* Round crop: the pear body is shown as a bust inside the medallion
+     (the sprout sits inside the circle, see hudIcons.BEAN_BUDDY_SVG). */
+  clip-path: circle(50% at 50% 50%);
+}
+
+#buddy-portrait .buddy-art {
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* The pear body runs past the viewBox: let the circular clip of
+     #buddy-portrait crop it (no straight SVG edge when it tips over). */
+  overflow: visible;
+  animation: buddy-idle 3.2s ease-in-out infinite;
+  transform-origin: 50% 92%;
+}
+
+/* The sprout leaf sways gently. */
+.bb-leaf {
+  transform-box: fill-box;
+  transform-origin: 0% 100%;
+  animation: leaf-sway 2.6s ease-in-out infinite;
+}
+@keyframes leaf-sway {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-12deg); }
+}
+
+@keyframes buddy-idle {
+  0%, 100% { transform: scale(1, 1); }
+  50% { transform: scale(1.03, 0.97) translateY(1px); }
+}
+
+/* Mood faces: only one visible at a time. */
+.bb-face { display: none; }
+#bean-buddy.mood-happy .bb-happy,
+#bean-buddy.mood-worried .bb-worried,
+#bean-buddy.mood-panic .bb-panic,
+#bean-buddy.mood-dead .bb-dead { display: inline; }
+#bean-buddy.ouch:not(.mood-dead) .bb-face { display: none; }
+#bean-buddy.ouch:not(.mood-dead) .bb-ouch { display: inline; }
+
+/* Happy bean blinks now and then. */
+.bb-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: buddy-blink 4.6s infinite;
+}
+@keyframes buddy-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.1); }
+}
+
+/* Panic: sweat drop falls, the whole bean trembles, rays turn red. */
+.bb-sweat { animation: buddy-sweat 1s ease-in infinite; }
+@keyframes buddy-sweat {
+  0% { transform: translateY(-2px); opacity: 0; }
+  30% { opacity: 1; }
+  100% { transform: translateY(8px); opacity: 0; }
+}
+#bean-buddy.mood-panic #buddy-portrait .buddy-art {
+  animation: buddy-tremble 0.18s linear infinite;
+}
+@keyframes buddy-tremble {
+  0%, 100% { transform: translateX(0) rotate(0); }
+  25% { transform: translateX(-1px) rotate(-1.5deg); }
+  75% { transform: translateX(1px) rotate(1.5deg); }
+}
+#bean-buddy.mood-panic .buddy-rays {
+  background: repeating-conic-gradient(rgba(255, 90, 78, 0.38) 0 12deg, rgba(255, 90, 78, 0) 12deg 24deg);
+  animation: rays-spin 6s linear infinite;
+}
+#bean-buddy.mood-worried .buddy-rays { opacity: 0.45; }
+
+/* Dead: greyed, tipped over. */
+/* Dead: greyed + tipped over INSIDE the medallion. Only the art rotates
+   (around the frame centre); #buddy-portrait keeps its circular clip still,
+   so the character never leaves the frame. */
+#bean-buddy.mood-dead #buddy-portrait {
+  filter: grayscale(0.85) brightness(0.85);
+}
+#bean-buddy.mood-dead #buddy-portrait .buddy-art {
+  animation: none;
+  transform-origin: 50% 50%;
+  transform: translateY(3px) rotate(-78deg);
+  transition: transform 0.45s var(--pop);
+}
+#bean-buddy.mood-dead .buddy-rays { opacity: 0; }
+
+/* Hit: squash & stretch. */
+#buddy-portrait.hurt-a { animation: buddy-hurt-a 0.34s var(--spring); }
+#buddy-portrait.hurt-b { animation: buddy-hurt-b 0.34s var(--spring); }
+@keyframes buddy-hurt-a {
+  0% { transform: scale(1.22, 0.72); filter: brightness(1.6) saturate(0.5); }
+  40% { transform: scale(0.9, 1.12); }
+  70% { transform: scale(1.04, 0.97); }
+  100% { transform: none; }
+}
+@keyframes buddy-hurt-b {
+  0% { transform: scale(1.22, 0.72); filter: brightness(1.6) saturate(0.5); }
+  40% { transform: scale(0.9, 1.12); }
+  70% { transform: scale(1.04, 0.97); }
+  100% { transform: none; }
+}
+
+@keyframes rays-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Heal: green bloom around the frame + sparkles fly out of it. */
+.buddy-sparkles i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  margin: -5.5px 0 0 -5.5px;
+  background: var(--bean);
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+  opacity: 0;
+}
+.buddy-sparkles i:nth-child(1) { --sx: -46px; --sy: -30px; }
+.buddy-sparkles i:nth-child(2) { --sx: 42px; --sy: -38px; }
+.buddy-sparkles i:nth-child(3) { --sx: 50px; --sy: 12px; }
+.buddy-sparkles i:nth-child(4) { --sx: -40px; --sy: 26px; }
+.buddy-sparkles i:nth-child(5) { --sx: 4px; --sy: -54px; }
+
+.buddy-frame.heal-a { animation: frame-heal-a 0.7s ease-out; }
+.buddy-frame.heal-b { animation: frame-heal-b 0.7s ease-out; }
+.buddy-frame.heal-a .buddy-sparkles i { animation: sparkle-fly-a 0.7s ease-out; }
+.buddy-frame.heal-b .buddy-sparkles i { animation: sparkle-fly-b 0.7s ease-out; }
+
+@keyframes frame-heal-a {
+  0% { box-shadow: 0 5px 0 var(--ink), 0 0 0 5px rgba(168, 217, 74, 0.9); }
+  100% { box-shadow: 0 5px 0 var(--ink), 0 0 0 22px rgba(168, 217, 74, 0); }
+}
+@keyframes frame-heal-b {
+  0% { box-shadow: 0 5px 0 var(--ink), 0 0 0 5px rgba(168, 217, 74, 0.9); }
+  100% { box-shadow: 0 5px 0 var(--ink), 0 0 0 22px rgba(168, 217, 74, 0); }
+}
+@keyframes sparkle-fly-a {
+  0% { transform: scale(0.3); opacity: 1; }
+  100% { transform: translate(var(--sx), var(--sy)) scale(1.2) rotate(90deg); opacity: 0; }
+}
+@keyframes sparkle-fly-b {
+  0% { transform: scale(0.3); opacity: 1; }
+  100% { transform: translate(var(--sx), var(--sy)) scale(1.2) rotate(90deg); opacity: 0; }
+}
+
+/* ---- Wooden plank tucked behind the medallion ---- */
+.buddy-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-left: -20px;
+  padding: 9px 20px 10px 30px;
+  background: var(--plank);
+  border: var(--outline);
+  /* Asymmetric hand-cut plank: flat against the medallion, round tip. */
+  border-radius: 8px 26px 22px 8px / 8px 30px 18px 8px;
+  box-shadow:
+    var(--sticker-shadow),
+    inset 0 2px 0 rgba(255, 226, 180, 0.22),
+    inset 0 -3px 0 rgba(30, 18, 6, 0.35);
+  z-index: 1;
+}
+
+/* Two nails holding the plank. */
+.buddy-panel::before,
+.buddy-panel::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #d8c49a;
+  box-shadow: 0 0 0 1.5px var(--ink);
+}
+.buddy-panel::before { top: 7px; }
+.buddy-panel::after { bottom: 7px; }
+
+/* ---- HP row: big number + jelly tube ---- */
+#health-hud {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+#health-value {
+  min-width: 48px;
+  font-family: var(--hud-font);
+  font-size: 30px;
+  line-height: 1;
+  text-align: right;
+  color: var(--cream);
+  -webkit-text-stroke: 4.5px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 3px 0 var(--ink);
+  transform: translateY(2px);
+}
+#health-value.bump-a { animation: hp-bump-a 0.3s var(--spring); }
+#health-value.bump-b { animation: hp-bump-b 0.3s var(--spring); }
+@keyframes hp-bump-a {
+  0% { transform: translateY(2px) scale(1.25, 0.85); }
+  100% { transform: translateY(2px); }
+}
+@keyframes hp-bump-b {
+  0% { transform: translateY(2px) scale(1.25, 0.85); }
+  100% { transform: translateY(2px); }
+}
+
+#health-hud.mid #health-value { color: #ffe27a; }
+#health-hud.low #health-value {
+  color: #ff9a8a;
+  animation: hp-heartbeat 0.7s ease-in-out infinite;
+}
+@keyframes hp-heartbeat {
+  0%, 100% { transform: translateY(2px) scale(1); }
+  15% { transform: translateY(2px) scale(1.14); }
+  30% { transform: translateY(2px) scale(1); }
+}
+
+#health-bar {
+  position: relative;
+  width: 150px;
+  height: 20px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #24170a, #3b2812);
+  box-shadow: 0 0 0 2.5px var(--ink), inset 0 3px 4px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+#health-fill,
+#health-ghost {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  transform-origin: left center;
+}
+
+#health-ghost {
+  background: #fff6e0;
+  opacity: 0.85;
+}
+
+#health-fill {
+  background: linear-gradient(180deg, #d4f47c 0%, var(--hp) 45%, var(--bean-deep) 100%);
+  transition: transform 0.18s var(--spring), background 0.3s ease;
+}
+#health-hud.mid #health-fill {
+  background: linear-gradient(180deg, #ffe68a 0%, var(--hp-mid) 45%, #d9a300 100%);
+}
+#health-hud.low #health-fill {
+  background: linear-gradient(180deg, #ff9d8a 0%, var(--hp-low) 45%, #c4281a 100%);
+}
+
+/* Notches every 25 HP. */
+.bar-ticks {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(90deg, transparent 0 calc(25% - 2px), rgba(40, 27, 12, 0.55) calc(25% - 2px) 25%);
+  pointer-events: none;
+}
+
+#health-hud.hurt-a #health-bar { animation: bar-shake-a 0.28s linear; }
+#health-hud.hurt-b #health-bar { animation: bar-shake-b 0.28s linear; }
+@keyframes bar-shake-a {
+  0%, 100% { transform: translate(0); }
+  25% { transform: translate(-3px, 1px) rotate(-1deg); }
+  50% { transform: translate(3px, -1px) rotate(1deg); }
+  75% { transform: translate(-1px, 0); }
+}
+@keyframes bar-shake-b {
+  0%, 100% { transform: translate(0); }
+  25% { transform: translate(3px, 1px) rotate(1deg); }
+  50% { transform: translate(-3px, -1px) rotate(-1deg); }
+  75% { transform: translate(1px, 0); }
+}
+
+/* "+35" floating up from the tube. */
+#heal-feedback {
+  position: absolute;
+  right: -6px;
+  top: -24px;
+  font-family: var(--hud-font);
+  font-size: 20px;
+  color: var(--bean);
+  -webkit-text-stroke: 3.5px var(--ink);
+  paint-order: stroke fill;
+  white-space: nowrap;
+}
+#heal-feedback.hidden { display: none; }
+#heal-feedback.float-a { animation: heal-float-a 0.9s var(--pop) forwards; }
+#heal-feedback.float-b { animation: heal-float-b 0.9s var(--pop) forwards; }
+@keyframes heal-float-a {
+  0% { transform: scale(0.3); opacity: 0; }
+  25% { transform: scale(1.25) rotate(-6deg); opacity: 1; }
+  70% { transform: translateY(-10px) scale(1); opacity: 1; }
+  100% { transform: translateY(-24px) scale(0.9); opacity: 0; }
+}
+@keyframes heal-float-b {
+  0% { transform: scale(0.3); opacity: 0; }
+  25% { transform: scale(1.25) rotate(6deg); opacity: 1; }
+  70% { transform: translateY(-10px) scale(1); opacity: 1; }
+  100% { transform: translateY(-24px) scale(0.9); opacity: 0; }
+}
+
+/* ---- DASH pill: E key cap + lightning tube (scaleX from DashHUD) ---- */
+#dash-hud {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 22px; /* aligned under the HP tube */
+}
+
+#dash-hud .hud-key {
+  min-width: 20px;
+  height: 20px;
+  font-size: 12px;
+  line-height: 23px;
+  background: linear-gradient(180deg, #d9f3ff, #8fdcff);
+}
+
+#dash-bar {
+  position: relative;
+  width: 104px;
+  height: 13px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #1c1409, #33220f);
+  box-shadow: 0 0 0 2.5px var(--ink), inset 0 2px 3px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+#dash-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #bfeaff 0%, var(--dash) 50%, #2a92d4 100%);
+  transform-origin: left center;
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
+}
+
+/* Bolt stamped on the right end of the tube. */
+#dash-bolt-slot {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  width: 15px;
+  height: 15px;
+  margin-top: -7.5px;
+  opacity: 0.35;
+}
+.dash-bolt {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#dash-status {
+  min-width: 26px;
+  font-family: var(--hud-font);
+  font-size: 12px;
+  color: #bfeaff;
+  -webkit-text-stroke: 2px var(--ink);
+  paint-order: stroke fill;
+  transform: translateY(1px);
+}
+
+/* READY: full, glowing, the key cap hops once in a while. */
+#dash-hud.ready #dash-fill { opacity: 1; }
+#dash-hud.ready #dash-bolt-slot { opacity: 1; }
+#dash-hud.ready .hud-key { animation: key-hop 2.4s ease-in-out infinite; }
+
+@keyframes key-hop {
+  0%, 84%, 100% { transform: translateY(0); }
+  90% { transform: translateY(-4px); }
+  95% { transform: translateY(0); }
+}
+
+/* Just recharged: sparkle pop on the whole pill. */
+#dash-hud.recharged-a #dash-bar { animation: dash-pop-a 0.45s var(--spring); }
+#dash-hud.recharged-b #dash-bar { animation: dash-pop-b 0.45s var(--spring); }
+@keyframes dash-pop-a {
+  0% { transform: scale(1.18, 1.35); box-shadow: 0 0 0 2.5px var(--ink), 0 0 14px 4px rgba(92, 200, 255, 0.9); }
+  100% { transform: none; }
+}
+@keyframes dash-pop-b {
+  0% { transform: scale(1.18, 1.35); box-shadow: 0 0 0 2.5px var(--ink), 0 0 14px 4px rgba(92, 200, 255, 0.9); }
+  100% { transform: none; }
+}
+
+/* Dashing: white-hot streak. */
+#dash-hud.dashing #dash-fill {
+  background: linear-gradient(180deg, #ffffff, #d8f3ff);
+  opacity: 1;
+}
+
+/* ==========================================================================
+   BOTTOM-RIGHT column: killstreak medallions on top, then the weapon row
+   (ability chips on the left of the plate).
+   ========================================================================== */
+#right-hud-col {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+#weapon-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+#ability-slot {
+  display: flex;
+  gap: 8px;
+}
+
+/* ==========================================================================
+   WEAPON PLATE — round icon badge (with reload ring) overlapping a wooden
+   plate: ribbon with the weapon name, big count, the ammo drawn as the
+   weapon's own ammo (--wpn = weapon accent colour).
+   ========================================================================== */
+.wpn-plate {
+  position: relative;
+  display: none;
+  align-items: center;
+  transform: rotate(1.5deg);
+  transform-origin: right bottom;
+}
+
+.wpn-plate.is-visible { display: flex; }
+.wpn-plate.enter-a { animation: plate-enter-a 0.45s var(--pop); }
+.wpn-plate.enter-b { animation: plate-enter-b 0.45s var(--pop); }
+@keyframes plate-enter-a {
+  0% { transform: translateY(40px) rotate(8deg) scale(0.8); opacity: 0; }
+  100% { transform: rotate(1.5deg); opacity: 1; }
+}
+@keyframes plate-enter-b {
+  0% { transform: translateY(40px) rotate(8deg) scale(0.8); opacity: 0; }
+  100% { transform: rotate(1.5deg); opacity: 1; }
+}
+
+/* ---- Icon badge (left, overlaps the plate) ---- */
+.wpn-badge {
+  position: relative;
+  flex: none;
+  width: 74px;
+  height: 74px;
+  margin-right: -18px;
+  z-index: 2;
+}
+
+.wpn-badge-face {
+  position: absolute;
+  inset: 5px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 60%),
+    var(--wpn);
+  border: 3.5px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink), inset 0 -5px 0 rgba(0, 0, 0, 0.18);
+}
+
+.wpn-icon-art {
+  width: 44px;
+  height: 44px;
+  transform: rotate(-8deg);
+  filter: drop-shadow(0 2px 0 rgba(40, 27, 12, 0.35));
+}
+
+/* Recoil kick on each shot. */
+.wpn-badge.kick-a { animation: badge-kick-a 0.16s ease-out; }
+.wpn-badge.kick-b { animation: badge-kick-b 0.16s ease-out; }
+@keyframes badge-kick-a {
+  0% { transform: translate(-3px, 1px) rotate(-7deg) scale(0.94); }
+  100% { transform: none; }
+}
+@keyframes badge-kick-b {
+  0% { transform: translate(-3px, 1px) rotate(-7deg) scale(0.94); }
+  100% { transform: none; }
+}
+
+/* Reload done: the face spins + bounces back. */
+.wpn-badge-face.refilled-a { animation: face-refill-a 0.5s var(--spring); }
+.wpn-badge-face.refilled-b { animation: face-refill-b 0.5s var(--spring); }
+@keyframes face-refill-a {
+  0% { transform: scale(0.7) rotate(-120deg); }
+  100% { transform: none; }
+}
+@keyframes face-refill-b {
+  0% { transform: scale(0.7) rotate(-120deg); }
+  100% { transform: none; }
+}
+
+/* Ring around the badge: determinate conic progress (--p 0..100) or
+   indeterminate spinning dashes (.spin). */
+.wpn-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  opacity: 0;
+  background: conic-gradient(var(--gold) calc(var(--p, 0) * 1%), rgba(40, 27, 12, 0.55) 0);
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 59%);
+  mask: radial-gradient(circle, transparent 58%, #000 59%);
+  transition: opacity 0.15s ease;
+}
+.wpn-ring.on { opacity: 1; }
+.wpn-ring.spin {
+  background: repeating-conic-gradient(var(--gold) 0 22deg, rgba(40, 27, 12, 0.55) 22deg 45deg);
+  animation: rays-spin 1.1s linear infinite;
+}
+
+/* ---- Wooden plate (right) ---- */
+.wpn-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  padding: 0 14px 8px 28px;
+  background: var(--plank);
+  border: var(--outline);
+  border-radius: 10px 18px 14px 10px / 10px 22px 12px 10px;
+  box-shadow:
+    var(--sticker-shadow),
+    inset 0 2px 0 rgba(255, 226, 180, 0.22),
+    inset 0 -3px 0 rgba(30, 18, 6, 0.35);
+}
+
+/* Name ribbon hanging over the top edge, in the weapon colour. */
+.wpn-ribbon {
+  align-self: flex-start;
+  margin: -12px 0 2px -4px;
+  padding: 2px 12px 0;
+  background: var(--wpn);
+  border: 2.5px solid var(--ink);
+  border-radius: 6px;
+  box-shadow: 0 2px 0 var(--ink);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 6px) 50%, 100% 100%, 0 100%, 6px 50%);
+  transform: rotate(-2deg);
+}
+
+.wpn-name {
+  font-family: var(--hud-font);
+  font-size: 12px;
+  letter-spacing: 1.2px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--cream);
+  -webkit-text-stroke: 2.5px var(--ink);
+  paint-order: stroke fill;
+}
+
+.wpn-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wpn-count {
+  display: flex;
+  align-items: baseline;
+  flex: none;
+}
+
+.wpn-count-value {
+  display: inline-block;
+  min-width: 34px;
+  font-family: var(--hud-font);
+  font-size: 32px;
+  line-height: 1;
+  text-align: right;
+  color: var(--cream);
+  -webkit-text-stroke: 4.5px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 3px 0 var(--ink);
+  transform-origin: 50% 80%;
+}
+.wpn-count-value.tick-a { animation: count-tick-a 0.18s var(--spring); }
+.wpn-count-value.tick-b { animation: count-tick-b 0.18s var(--spring); }
+@keyframes count-tick-a {
+  0% { transform: scale(1.18, 0.86) translateY(2px); }
+  100% { transform: none; }
+}
+@keyframes count-tick-b {
+  0% { transform: scale(1.18, 0.86) translateY(2px); }
+  100% { transform: none; }
+}
+
+.wpn-count-max {
+  margin-left: 2px;
+  font-family: var(--hud-font);
+  font-size: 13px;
+  color: var(--cream-dim);
+  -webkit-text-stroke: 2px var(--ink);
+  paint-order: stroke fill;
+}
+
+.wpn-ammo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-height: 26px;
+}
+
+/* ---- Plate states ---- */
+.wpn-plate.low .wpn-count-value {
+  color: #ff8a70;
+  animation: hp-heartbeat 0.6s ease-in-out infinite;
+}
+
+.wpn-plate.reloading .wpn-name {
+  animation: ticker-breathe 0.8s ease-in-out infinite;
+}
+.wpn-plate.reloading .wpn-count-value {
+  color: var(--cream-dim);
+}
+
+.wpn-plate.hot .wpn-badge-face {
+  background:
+    radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 60%),
+    #ff8a3d;
+}
+
+/* OVERHEAT happens on the plate: red, shaking, steam puffs. */
+.wpn-plate.overheat .wpn-body {
+  background:
+    repeating-linear-gradient(172deg, rgba(255, 200, 160, 0.06) 0 3px, transparent 3px 12px),
+    linear-gradient(180deg, #c8452a, #8e2414);
+  animation: plate-shake 0.22s linear infinite;
+}
+.wpn-plate.overheat .wpn-ribbon { background: #ff5a4e; }
+.wpn-plate.overheat .wpn-badge-face {
+  background:
+    radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 60%),
+    #ff4a36;
+}
+.wpn-plate.overheat .wpn-badge::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -6px;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  border-radius: 50%;
+  background: rgba(255, 246, 224, 0.8);
+  box-shadow: 10px -6px 0 -2px rgba(255, 246, 224, 0.6), -9px -4px 0 -3px rgba(255, 246, 224, 0.55);
+  animation: steam-puff 0.9s ease-out infinite;
+}
+@keyframes plate-shake {
+  0%, 100% { transform: translate(0); }
+  25% { transform: translate(-1.5px, 0.5px); }
+  75% { transform: translate(1.5px, -0.5px); }
+}
+@keyframes steam-puff {
+  0% { transform: translateY(6px) scale(0.5); opacity: 0; }
+  30% { opacity: 1; }
+  100% { transform: translateY(-16px) scale(1.2); opacity: 0; }
+}
+
+/* Rubber stamp slammed on the plate ("RELOAD!", "TOO HOT!"). */
+.wpn-stamp {
+  position: absolute;
+  right: 10px;
+  top: -22px;
+  padding: 1px 8px 0;
+  font-family: var(--hud-font);
+  font-size: 14px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  color: #ff5a4e;
+  border: 3px solid #ff5a4e;
+  border-radius: 6px;
+  background: rgba(255, 246, 224, 0.92);
+  box-shadow: 0 2px 0 rgba(40, 27, 12, 0.6);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.wpn-plate.stamp-a .wpn-stamp { animation: stamp-slam-a 0.9s var(--pop) forwards; }
+.wpn-plate.stamp-b .wpn-stamp { animation: stamp-slam-b 0.9s var(--pop) forwards; }
+@keyframes stamp-slam-a {
+  0% { transform: scale(2.2) rotate(-18deg); opacity: 0; }
+  18% { transform: scale(0.95) rotate(-8deg); opacity: 1; }
+  75% { transform: rotate(-8deg); opacity: 1; }
+  100% { transform: translateY(-6px) rotate(-8deg); opacity: 0; }
+}
+@keyframes stamp-slam-b {
+  0% { transform: scale(2.2) rotate(-18deg); opacity: 0; }
+  18% { transform: scale(0.95) rotate(-8deg); opacity: 1; }
+  75% { transform: rotate(-8deg); opacity: 1; }
+  100% { transform: translateY(-6px) rotate(-8deg); opacity: 0; }
+}
+
+/* ==========================================================================
+   AMMO OBJECTS — every pip is a little object; .on = loaded.
+   One replayAnim name ("pip"): with .on = refill bounce, without = spent pop.
+   ========================================================================== */
+.ammo-pips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ammo-pip {
+  position: relative;
+  flex: none;
+  transition: opacity 0.15s ease, filter 0.15s ease;
+}
+.ammo-pip:not(.on) {
+  opacity: 0.28;
+  filter: grayscale(1) brightness(0.6);
+}
+.ammo-pip.group-end { margin-right: 5px; }
+
+.ammo-pip.on.pip-a { animation: pip-refill-a 0.35s var(--spring); }
+.ammo-pip.on.pip-b { animation: pip-refill-b 0.35s var(--spring); }
+.ammo-pip:not(.on).pip-a { animation: pip-spent-a 0.3s ease-out; }
+.ammo-pip:not(.on).pip-b { animation: pip-spent-b 0.3s ease-out; }
+@keyframes pip-refill-a {
+  0% { transform: scale(0.2) translateY(6px); }
+  100% { transform: none; }
+}
+@keyframes pip-refill-b {
+  0% { transform: scale(0.2) translateY(6px); }
+  100% { transform: none; }
+}
+@keyframes pip-spent-a {
+  0% { transform: scale(1.5); opacity: 1; filter: brightness(1.6); }
+  100% { transform: none; }
+}
+@keyframes pip-spent-b {
+  0% { transform: scale(1.5); opacity: 1; filter: brightness(1.6); }
+  100% { transform: none; }
+}
+
+/* Paint balls: glossy spheres in the three paint colours. */
+.ammo-ball { gap: 3px; }
+.ammo-ball .ammo-pip {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.85) 0 18%, rgba(255, 255, 255, 0) 32%),
+    var(--pip, var(--wpn));
+  box-shadow: 0 0 0 2px var(--ink), inset 0 -2px 0 rgba(0, 0, 0, 0.2);
+}
+
+/* Popcorn puffs (SVG inside, colour via currentColor): jump off on shot. */
+.ammo-puff .ammo-pip {
+  width: 26px;
+  height: 24px;
+  color: var(--pip, #fff3c4);
+}
+.ammo-puff .ammo-pip svg { width: 100%; height: 100%; display: block; }
+.ammo-puff .ammo-pip:not(.on).pip-a { animation: puff-fly-a 0.4s ease-out; }
+.ammo-puff .ammo-pip:not(.on).pip-b { animation: puff-fly-b 0.4s ease-out; }
+@keyframes puff-fly-a {
+  0% { transform: translateY(-14px) rotate(-30deg) scale(1.3); opacity: 1; filter: none; }
+  100% { transform: none; }
+}
+@keyframes puff-fly-b {
+  0% { transform: translateY(-14px) rotate(30deg) scale(1.3); opacity: 1; filter: none; }
+  100% { transform: none; }
+}
+
+/* Water droplets (one per burst) — the rotation is the shape itself, so
+   the droplet uses its own pop keyframes. */
+.ammo-drop { gap: 5px; }
+.ammo-drop .ammo-pip {
+  width: 11px;
+  height: 11px;
+  border-radius: 0 50% 50% 50%;
+  transform: rotate(45deg);
+  background:
+    radial-gradient(circle at 60% 60%, rgba(255, 255, 255, 0.8) 0 16%, rgba(255, 255, 255, 0) 30%),
+    #38c6ff;
+  box-shadow: 0 0 0 2px var(--ink);
+}
+.ammo-drop .ammo-pip.on.pip-a,
+.ammo-drop .ammo-pip.on.pip-b { animation: drop-pop 0.35s var(--spring); }
+.ammo-drop .ammo-pip:not(.on).pip-a,
+.ammo-drop .ammo-pip:not(.on).pip-b { animation: none; }
+@keyframes drop-pop {
+  0% { transform: rotate(45deg) scale(0.2); }
+  100% { transform: rotate(45deg); }
+}
+
+/* Frisbee: the big disc on the deck + the cage stack seen edge-on. */
+.ammo-deck .ammo-pip {
+  width: 30px;
+  height: 14px;
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse at 50% 40%, #ffd0a8 0 30%, rgba(255, 208, 168, 0) 32%),
+    var(--pip, #ff8a3d);
+  box-shadow: 0 0 0 2.5px var(--ink), 0 3px 0 var(--ink);
+}
+.ammo-deck .ammo-pip:not(.on).pip-a { animation: disc-fly-a 0.4s ease-out; }
+.ammo-deck .ammo-pip:not(.on).pip-b { animation: disc-fly-b 0.4s ease-out; }
+@keyframes disc-fly-a {
+  0% { transform: translate(-18px, -10px) rotate(-20deg); opacity: 1; filter: none; }
+  100% { transform: none; }
+}
+@keyframes disc-fly-b {
+  0% { transform: translate(-18px, -10px) rotate(-20deg); opacity: 1; filter: none; }
+  100% { transform: none; }
+}
+
+.ammo-stack { gap: 2px; }
+.ammo-stack .ammo-pip {
+  width: 6px;
+  height: 20px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--pip, #ffd0a8), #ff8a3d);
+  box-shadow: 0 0 0 2px var(--ink);
+}
+
+/* Revolver bullets: brass cartridges. */
+.ammo-bullet .ammo-pip {
+  width: 7px;
+  height: 18px;
+  border-radius: 4px 4px 1px 1px / 7px 7px 1px 1px;
+  background: linear-gradient(90deg, #f7d77e, #c9962e);
+  box-shadow: 0 0 0 2px var(--ink);
+}
+
+/* ==========================================================================
+   LIQUID GAUGES — glass tube, liquid = scaleX (createGauge), wavy surface
+   riding at --level. Variants: water / poison / heat / eq (bass blaster).
+   ========================================================================== */
+.ammo-gauge {
+  --liq: var(--wpn);
+  --liq-hi: #ffffff;
+  position: relative;
+  flex: 1;
+  min-width: 84px;
+  height: 18px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(20, 14, 6, 0.85), rgba(50, 34, 16, 0.85));
+  box-shadow: 0 0 0 2.5px var(--ink), inset 0 2px 4px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.gauge-liquid {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--liq-hi) -40%, var(--liq) 55%, color-mix(in srgb, var(--liq) 70%, #000) 100%);
+  transform-origin: left center;
+  transition: transform 0.2s var(--spring);
+}
+
+/* Wavy front edge riding at the liquid level. */
+.gauge-wave {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--level, 100%) - 5px);
+  width: 10px;
+  background: radial-gradient(ellipse at 50% 50%, var(--liq) 45%, transparent 50%);
+  background-size: 10px 8px;
+  animation: wave-bob 0.9s ease-in-out infinite;
+  opacity: 0.9;
+}
+@keyframes wave-bob {
+  0%, 100% { background-position: 0 0; }
+  50% { background-position: 0 4px; }
+}
+
+.gauge-shine {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  top: 2px;
+  height: 30%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0));
+}
+
+.gauge-water { --liq: #38c6ff; --liq-hi: #d8f4ff; }
+.gauge-poison { --liq: #7bff4d; --liq-hi: #e8ffd8; }
+/* Poison bubbles rising inside the tube. */
+.gauge-poison::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 70%, rgba(255, 255, 255, 0.6) 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 55% 60%, rgba(255, 255, 255, 0.5) 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 80% 75%, rgba(255, 255, 255, 0.55) 0 1px, transparent 2px);
+  animation: bubbles-rise 1.6s linear infinite;
+}
+@keyframes bubbles-rise {
+  from { transform: translateY(6px); opacity: 1; }
+  to { transform: translateY(-8px); opacity: 0; }
+}
+
+.gauge-heat { --liq: var(--bean); --liq-hi: #efffc8; }
+.wpn-plate.hot .gauge-heat { --liq: #ff8a3d; --liq-hi: #ffe0b8; }
+.wpn-plate.overheat .gauge-heat,
+.wpn-plate.low .gauge-heat { --liq: #ff4a36; --liq-hi: #ffc0b0; }
+
+/* Bass blaster: equalizer stripes. */
+.gauge-eq { --liq: #ff7ac8; --liq-hi: #ffe0f2; }
+.gauge-eq .gauge-liquid {
+  background:
+    repeating-linear-gradient(90deg, transparent 0 7px, rgba(58, 40, 20, 0.35) 7px 9px),
+    linear-gradient(180deg, #ffe0f2 -40%, #ff7ac8 55%, #c9459a 100%);
+}
+.wpn-plate.reloading .gauge-eq .gauge-liquid {
+  animation: eq-dance 0.4s steps(2) infinite;
+}
+@keyframes eq-dance {
+  50% { filter: brightness(1.25); }
+}
+
+.wpn-plate.low .ammo-gauge { animation: ticker-blink 0.6s ease-in-out infinite; }
+.wpn-plate.overheat .ammo-gauge { animation: none; }
+
+/* ==========================================================================
+   ABILITY CHIP (spear rush…) — round button with conic cooldown sweep,
+   key cap + label under it.
+   ========================================================================== */
+.ability-chip {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  transform: rotate(-2deg);
+}
+.ability-chip.is-visible { display: flex; }
+
+.chip-disc {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: #2a1c0c;
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink);
+  overflow: hidden;
+}
+
+.chip-sweep {
+  position: absolute;
+  inset: 0;
+  background: conic-gradient(var(--chip) calc(var(--p, 0) * 1%), rgba(255, 246, 224, 0.1) 0);
+  opacity: 0.55;
+}
+
+.chip-face {
+  position: absolute;
+  inset: 5px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 35%, #8a6038, #4a321a);
+  box-shadow: inset 0 2px 0 rgba(255, 226, 180, 0.2);
+}
+.chip-face .wpn-icon-art {
+  width: 32px;
+  height: 32px;
+  filter: grayscale(0.7) brightness(0.8);
+}
+
+.chip-time {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--hud-font);
+  font-size: 15px;
+  color: var(--cream);
+  -webkit-text-stroke: 3px var(--ink);
+  paint-order: stroke fill;
+}
+
+.chip-text {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.chip-key {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  font-family: var(--hud-font);
+  font-size: 11px;
+  line-height: 21px;
+  text-align: center;
+  color: var(--ink);
+  background: var(--parchment);
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  box-shadow: 0 2px 0 var(--ink);
+}
+.chip-label {
+  font-family: var(--hud-font);
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--cream);
+  -webkit-text-stroke: 2px var(--ink);
+  paint-order: stroke fill;
+}
+
+.ability-chip.ready .chip-sweep { opacity: 1; }
+.ability-chip.ready .chip-face .wpn-icon-art { filter: none; }
+.ability-chip.ready .chip-disc {
+  box-shadow: 0 4px 0 var(--ink), 0 0 0 3px color-mix(in srgb, var(--chip) 60%, transparent);
+}
+.ability-chip.ready .chip-key { background: var(--chip); animation: key-hop 2.4s ease-in-out infinite; }
+
+.ability-chip.ready-a .chip-disc { animation: chip-ready-a 0.5s var(--pop); }
+.ability-chip.ready-b .chip-disc { animation: chip-ready-b 0.5s var(--pop); }
+@keyframes chip-ready-a {
+  0% { transform: scale(1.35) rotate(-12deg); filter: brightness(1.8); }
+  100% { transform: none; }
+}
+@keyframes chip-ready-b {
+  0% { transform: scale(1.35) rotate(-12deg); filter: brightness(1.8); }
+  100% { transform: none; }
+}
+
+.ability-chip.active .chip-disc { animation: chip-active 0.3s ease-in-out infinite; }
+@keyframes chip-active {
+  50% { transform: scale(1.08); filter: brightness(1.4); }
+}
+
+/* ==========================================================================
+   KILLSTREAK MEDALLIONS (above the weapon plate) — one per equipped slot,
+   --ks = streak accent colour. States: locked / ready / active / spent.
+   The whole row disappears when nothing is equipped.
+   ========================================================================== */
+#killstreak-hud {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  padding-right: 6px;
+}
+
+#killstreak-hud:not(:has(.ks-medal:not(.empty))) {
+  display: none;
+}
+
+.ks-medal {
+  --ks: var(--gold);
+  position: relative;
+  width: 72px;
+  height: 72px;
+  flex: none;
+}
+.ks-medal.empty { display: none; }
+
+/* Notched progress ring (SVG built by KillstreakHUD). */
+.ks-ring {
+  position: absolute;
+  inset: -4px;
+  width: calc(100% + 8px);
+  height: calc(100% + 8px);
+  overflow: visible;
+  z-index: 2;
+}
+.ks-ring-track {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 8;
+}
+.ks-seg {
+  fill: none;
+  stroke: rgba(255, 246, 224, 0.22);
+  stroke-width: 4.5;
+  stroke-linecap: round;
+  transition: stroke 0.2s ease;
+}
+.ks-seg.on { stroke: var(--gold); }
+.ks-seg.pop-a,
+.ks-seg.pop-b { animation: seg-pop 0.45s var(--pop); }
+.ks-seg.pop-b { animation-name: seg-pop-b; }
+@keyframes seg-pop {
+  0% { stroke: #ffffff; stroke-width: 9; }
+  100% { stroke-width: 4.5; }
+}
+@keyframes seg-pop-b {
+  0% { stroke: #ffffff; stroke-width: 9; }
+  100% { stroke-width: 4.5; }
+}
+.ks-ring.gulp-a { animation: ring-gulp-a 0.35s var(--spring); }
+.ks-ring.gulp-b { animation: ring-gulp-b 0.35s var(--spring); }
+@keyframes ring-gulp-a {
+  0% { transform: scale(1.12); }
+  100% { transform: none; }
+}
+@keyframes ring-gulp-b {
+  0% { transform: scale(1.12); }
+  100% { transform: none; }
+}
+
+/* The medallion disc. */
+.ks-disc {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 55%),
+    radial-gradient(circle, color-mix(in srgb, var(--ks) 55%, #fff6e0) 0%, var(--ks) 100%);
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink), inset 0 -5px 0 rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+  z-index: 1;
+}
+
+.ks-art {
+  position: absolute;
+  inset: 5px;
+}
+.ks-icon-art {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Padlock badge (bottom-right of the disc, outside the clipping). */
+.ks-lock {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 24px;
+  height: 26px;
+  display: none;
+  z-index: 3;
+}
+.ks-lock-art { width: 100%; height: 100%; display: block; overflow: visible; }
+
+.ks-count {
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  transform: translateX(-50%);
+  font-family: var(--hud-font);
+  font-size: 12px;
+  line-height: 1;
+  color: var(--cream);
+  -webkit-text-stroke: 3px var(--ink);
+  paint-order: stroke fill;
+  white-space: nowrap;
+}
+
+.ks-used {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: none;
+  padding: 1px 5px 0;
+  font-family: var(--hud-font);
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #ff5a4e;
+  border: 2.5px solid #ff5a4e;
+  border-radius: 5px;
+  background: rgba(255, 246, 224, 0.9);
+  transform: translate(-50%, -50%) rotate(-16deg);
+}
+
+/* Key cap under the medallion. */
+.ks-key {
+  position: absolute;
+  left: 50%;
+  bottom: -12px;
+  transform: translateX(-50%);
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  font-family: var(--hud-font);
+  font-size: 12px;
+  line-height: 23px;
+  text-align: center;
+  color: var(--ink);
+  background: var(--parchment);
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  box-shadow: 0 2px 0 var(--ink);
+  z-index: 4;
+}
+
+/* Rays + confetti live behind / around the disc, idle = invisible. */
+.ks-rays {
+  position: absolute;
+  inset: -22px;
+  border-radius: 50%;
+  background: repeating-conic-gradient(color-mix(in srgb, var(--ks) 60%, #fff6e0) 0 10deg, transparent 10deg 24deg);
+  -webkit-mask: radial-gradient(circle, #000 35%, transparent 70%);
+  mask: radial-gradient(circle, #000 35%, transparent 70%);
+  opacity: 0;
+  z-index: 0;
+}
+
+.ks-confetti {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+.ks-confetti i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 7px;
+  height: 11px;
+  margin: -5px 0 0 -3px;
+  border-radius: 2px;
+  background: var(--gold);
+  box-shadow: 0 0 0 1.5px var(--ink);
+  opacity: 0;
+}
+.ks-confetti i:nth-child(1) { --cx: -52px; --cy: -40px; --cr: -200deg; background: #ff5fa2; }
+.ks-confetti i:nth-child(2) { --cx: 0px; --cy: -62px; --cr: 160deg; background: var(--gold); }
+.ks-confetti i:nth-child(3) { --cx: 50px; --cy: -44px; --cr: 240deg; background: #38c6ff; }
+.ks-confetti i:nth-child(4) { --cx: 62px; --cy: 4px; --cr: -120deg; background: var(--bean); }
+.ks-confetti i:nth-child(5) { --cx: 42px; --cy: 46px; --cr: 200deg; background: #ff8a3d; }
+.ks-confetti i:nth-child(6) { --cx: -8px; --cy: 58px; --cr: -260deg; background: #ff5fa2; }
+.ks-confetti i:nth-child(7) { --cx: -54px; --cy: 36px; --cr: 140deg; background: var(--gold); }
+.ks-confetti i:nth-child(8) { --cx: -64px; --cy: -4px; --cr: -180deg; background: #38c6ff; }
+
+/* ---- LOCKED: greyed silhouette + padlock, the ring charges ---- */
+.ks-medal.locked .ks-disc {
+  background: radial-gradient(circle at 50% 35%, #6d5638, #3d2a15);
+}
+.ks-medal.locked .ks-art {
+  filter: grayscale(1) brightness(0.35) contrast(1.2);
+  opacity: 0.85;
+}
+.ks-medal.locked .ks-lock { display: block; }
+
+/* ---- READY: colours, gold rim, float, shine sweep, hopping key ---- */
+.ks-medal.ready .ks-disc {
+  border-color: var(--ink);
+  box-shadow:
+    0 4px 0 var(--ink),
+    0 0 0 3px var(--gold),
+    0 0 18px 4px color-mix(in srgb, var(--gold) 55%, transparent);
+  animation: ks-float 1.6s ease-in-out infinite;
+}
+.ks-medal.ready .ks-disc::after {
+  content: "";
+  position: absolute;
+  top: -20%;
+  bottom: -20%;
+  left: -60%;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+  transform: skewX(-20deg);
+  animation: ks-shine 2.5s ease-in-out infinite;
+}
+.ks-medal.ready .ks-ring { animation: ks-float 1.6s ease-in-out infinite; }
+.ks-medal.ready .ks-rays {
+  opacity: 0.55;
+  animation: rays-spin 7s linear infinite;
+}
+.ks-medal.ready .ks-key {
+  background: var(--gold);
+  animation: ks-key-bounce 0.8s ease-in-out infinite;
+}
+@keyframes ks-float {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50% { transform: translateY(-4px) rotate(2deg); }
+}
+@keyframes ks-shine {
+  0%, 60% { left: -60%; }
+  100% { left: 130%; }
+}
+@keyframes ks-key-bounce {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(-4px); }
+}
+
+/* ---- ACTIVE: warm pulse + spinning ring ---- */
+.ks-medal.active .ks-disc {
+  box-shadow: 0 4px 0 var(--ink), 0 0 0 3px #ff8a3d, 0 0 22px 6px rgba(255, 138, 61, 0.6);
+  animation: ks-active 0.5s ease-in-out infinite;
+}
+.ks-medal.active .ks-ring { animation: rays-spin 1.4s linear infinite; }
+.ks-medal.active .ks-seg.on { stroke: #ff8a3d; }
+@keyframes ks-active {
+  50% { transform: scale(1.07); filter: brightness(1.2); }
+}
+
+/* ---- SPENT: washed out + USED stamp ---- */
+.ks-medal.spent { opacity: 0.6; }
+.ks-medal.spent .ks-art { filter: grayscale(0.9) brightness(0.7); }
+.ks-medal.spent .ks-used { display: block; }
+.ks-medal.spent .ks-key { opacity: 0.5; }
+
+/* ---- UNLOCK moment (replayAnim "unlock" on .ks-medal) ---- */
+.ks-medal.ready.unlock-a .ks-disc,
+.ks-medal.ready.unlock-b .ks-disc { animation: ks-unlock-pop 0.7s var(--pop), ks-float 1.6s ease-in-out 0.7s infinite; }
+.ks-medal.ready.unlock-a .ks-art,
+.ks-medal.ready.unlock-b .ks-art { animation: ks-color-flood 0.6s ease-out; }
+.ks-medal.ready.unlock-a .ks-rays,
+.ks-medal.ready.unlock-b .ks-rays { animation: ks-rays-burst 0.9s ease-out, rays-spin 7s linear infinite; }
+.ks-medal.ready.unlock-a .ks-confetti i { animation: ks-confetti-a 0.9s cubic-bezier(0.2, 0.8, 0.4, 1) forwards; }
+.ks-medal.ready.unlock-b .ks-confetti i { animation: ks-confetti-b 0.9s cubic-bezier(0.2, 0.8, 0.4, 1) forwards; }
+/* The padlock shows for the burst even though the state is already READY. */
+.ks-medal.ready.unlock-a .ks-lock,
+.ks-medal.ready.unlock-b .ks-lock { display: block; animation: ks-lock-burst 0.5s ease-in forwards; }
+.ks-medal.ready.unlock-a .ks-lock-shackle,
+.ks-medal.ready.unlock-b .ks-lock-shackle { animation: ks-shackle-fly 0.5s ease-out forwards; }
+
+@keyframes ks-unlock-pop {
+  0% { transform: scale(0.6) rotate(-20deg); filter: brightness(2.2); }
+  45% { transform: scale(1.3) rotate(8deg); filter: brightness(1.4); }
+  70% { transform: scale(0.94) rotate(-3deg); }
+  100% { transform: none; filter: none; }
+}
+@keyframes ks-color-flood {
+  0% { filter: grayscale(1) brightness(0.35); }
+  100% { filter: none; }
+}
+@keyframes ks-rays-burst {
+  0% { opacity: 0; transform: scale(0.3); }
+  30% { opacity: 1; transform: scale(1.25); }
+  100% { opacity: 0.55; transform: scale(1); }
+}
+@keyframes ks-confetti-a {
+  0% { transform: scale(0.4); opacity: 1; }
+  70% { opacity: 1; }
+  100% { transform: translate(var(--cx), var(--cy)) rotate(var(--cr)); opacity: 0; }
+}
+@keyframes ks-confetti-b {
+  0% { transform: scale(0.4); opacity: 1; }
+  70% { opacity: 1; }
+  100% { transform: translate(var(--cx), var(--cy)) rotate(var(--cr)); opacity: 0; }
+}
+@keyframes ks-lock-burst {
+  0% { transform: scale(1.3); opacity: 1; }
+  100% { transform: translate(14px, 22px) rotate(50deg) scale(0.6); opacity: 0; }
+}
+@keyframes ks-shackle-fly {
+  0% { transform: none; }
+  100% { transform: translate(-6px, -14px) rotate(-40deg); }
+}
+
+/* ==========================================================================
+   SCREEN FEEDBACK: vignettes (opacity driven by CombatHUD), directional
+   damage "bites", heal / phase glows. Centre always stays clear.
+   ========================================================================== */
+#damage-vignette,
+#lowhp-vignette,
+#heal-flash {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Warm tomato splash (not a sci-fi red). */
+#damage-vignette {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(255, 90, 78, 0) 42%,
+    rgba(255, 90, 78, 0.22) 74%,
+    rgba(196, 44, 30, 0.58) 100%
+  );
+}
+
+#lowhp-vignette {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(196, 44, 30, 0) 48%,
+    rgba(196, 44, 30, 0.3) 78%,
+    rgba(110, 20, 12, 0.82) 100%
+  );
+}
+
+#heal-flash {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(168, 217, 74, 0) 45%,
+    rgba(168, 217, 74, 0.26) 80%,
+    rgba(120, 172, 30, 0.5) 100%
+  );
+}
+
+/* Directional damage: a chunky tomato "bite" around the aim point (far from it), pointing at
+   the attacker (rotation driven by CombatHUD; 0 = ahead, 90° = right…). */
+#damage-dir-container {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.damage-dir {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.damage-dir::before {
+  content: "";
+  position: absolute;
+  left: -28px;
+  top: -168px;
+  width: 56px;
+  height: 18px;
+  border-radius: 50% 50% 40% 40% / 90% 90% 30% 30%;
+  background: radial-gradient(ellipse at 50% 30%, #ff8a70, #ff4a36 55%, #b3261a);
+  border: 2.5px solid var(--ink);
+  box-shadow: 0 3px 0 rgba(40, 27, 12, 0.7);
+}
+
+/* Soft screen-edge glow in the same direction (big layer, rotated too). */
+.damage-dir::after {
+  content: "";
+  position: absolute;
+  left: -80vmax;
+  top: -80vmax;
+  width: 160vmax;
+  height: 160vmax;
+  background: radial-gradient(
+    ellipse 40% 24% at 50% 12%,
+    rgba(255, 74, 54, 0.55) 0%,
+    rgba(255, 74, 54, 0.22) 45%,
+    rgba(255, 74, 54, 0) 72%
+  );
+}
+
+/* ==========================================================================
+   DEATH screen — a squashed-bean card, not a blood-red game over
+   ========================================================================== */
+#death-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(40, 27, 12, 0.25) 0%,
+    rgba(40, 27, 12, 0.7) 100%
+  );
+}
+
+#death-screen.hidden {
+  display: none;
+}
+
+#death-title {
+  font-family: var(--hud-font);
+  font-size: clamp(44px, 6vw, 76px);
+  letter-spacing: 3px;
+  color: #ff6f5e;
+  -webkit-text-stroke: 5px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 6px 0 var(--ink);
+  animation: death-squash 0.6s var(--pop);
+}
+
+#death-respawn {
+  padding: 4px 16px 2px;
+  font-family: var(--hud-font);
+  font-size: 16px;
+  letter-spacing: 1px;
+  color: var(--cream);
+  background: var(--sticker-bg);
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+  box-shadow: var(--sticker-shadow);
+}
+
+#death-timer {
+  color: var(--gold);
+}
+
+@keyframes death-squash {
+  0% { transform: scaleY(0.2) scaleX(1.6); opacity: 0; }
+  50% { transform: scaleY(1.2) scaleX(0.9); opacity: 1; }
+  75% { transform: scaleY(0.94) scaleX(1.04); }
+  100% { transform: none; }
+}
+
+/* ==========================================================================
+   HITMARKER — cartoon "tick" around the crosshair (pure CSS, zero JS/frame)
+   BODY: 4 cream diagonal sticks with ink outline, quick punch.
+   HEAD: gold sticks thrown further out + a double bounce + a "star" core.
+   Durations from HitFeedbackConfig via --hm-body-dur / --hm-head-dur.
+   ========================================================================== */
+#hitmarker {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 22;
+}
+
+.hm-arm {
+  position: absolute;
+  left: -2px;
+  top: -6px;
+  width: 4px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1.5px solid var(--ink);
+  opacity: 0;
+  transform: rotate(var(--r)) translateY(-11px);
+}
+
+.hm-center {
+  position: absolute;
+  left: -5px;
+  top: -5px;
+  width: 10px;
+  height: 10px;
+  opacity: 0;
+  background: var(--gold);
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+}
+
+#hitmarker.hm-body .hm-arm {
+  background: var(--cream);
+  animation: hm-body-arm var(--hm-body-dur, 0.16s) ease-out forwards;
+}
+
+@keyframes hm-body-arm {
+  0% { opacity: 1; transform: rotate(var(--r)) translateY(-15px) scaleY(1.35); }
+  40% { opacity: 1; transform: rotate(var(--r)) translateY(-11px) scaleY(1); }
+  100% { opacity: 0; transform: rotate(var(--r)) translateY(-10px) scaleY(0.85); }
+}
+
+#hitmarker.hm-head .hm-arm {
+  background: var(--gold);
+  animation: hm-head-arm var(--hm-head-dur, 0.28s) ease-out forwards;
+}
+
+@keyframes hm-head-arm {
+  0% { opacity: 1; transform: rotate(var(--r)) translateY(-26px) scaleY(1.7); }
+  30% { opacity: 1; transform: rotate(var(--r)) translateY(-15px) scaleY(1.05); }
+  50% { opacity: 1; transform: rotate(var(--r)) translateY(-21px) scaleY(1.3); }
+  70% { opacity: 0.9; transform: rotate(var(--r)) translateY(-14px) scaleY(1); }
+  100% { opacity: 0; transform: rotate(var(--r)) translateY(-12px) scaleY(0.8); }
+}
+
+#hitmarker.hm-head .hm-center {
+  animation: hm-head-center var(--hm-head-dur, 0.28s) ease-out forwards;
+}
+
+@keyframes hm-head-center {
+  0% { opacity: 1; transform: scale(2) rotate(0deg); }
+  45% { opacity: 1; transform: scale(1.1) rotate(45deg); }
+  100% { opacity: 0; transform: scale(0.5) rotate(90deg); }
+}
+
+/* Crosshair "hit" (beam burning a target): bean-green glow. */
+#crosshair.hit {
+  background: #f4ffd9;
+  box-shadow: 0 0 0 2px var(--ink), 0 0 10px rgba(168, 217, 74, 0.9);
+}
+
+#crosshair.cross.hit::before,
+#crosshair.cross.hit::after {
+  background: #f4ffd9;
+  box-shadow: 0 0 8px rgba(168, 217, 74, 0.95);
+}
+
+/* ==========================================================================
+   LEADERBOARD (top-right) — a wooden scoreboard, compact and quiet.
+   Row height MUST stay 21px (LeaderboardHUD.ROW_HEIGHT).
+   ========================================================================== */
+#leaderboard-hud {
+  position: absolute;
+  top: 60px;
+  right: 16px;
+  width: 252px;
+  padding: 6px 10px 8px;
+  background: var(--sticker-bg);
+  border: 2.5px solid var(--ink);
+  border-radius: 14px;
+  box-shadow: var(--sticker-shadow);
+  font-family: var(--hud-font-alt);
+  color: var(--cream);
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0.92;
+}
+
+#leaderboard-hud.hidden {
+  display: none;
+}
+
+#leaderboard-title {
+  font-family: var(--hud-font);
+  font-size: 13px;
+  letter-spacing: 2px;
+  text-align: center;
+  color: var(--gold);
+  -webkit-text-stroke: 2px var(--ink);
+  paint-order: stroke fill;
+  margin-bottom: 3px;
+}
+
+#leaderboard-header,
+.lb-row {
+  display: grid;
+  grid-template-columns: 16px 1fr 24px 24px 24px 36px;
+  align-items: center;
+  column-gap: 2px;
+}
+
+#leaderboard-hud.with-ping #leaderboard-header,
+#leaderboard-hud.with-ping .lb-row {
+  grid-template-columns: 16px 28px 1fr 22px 22px 22px 34px;
+}
+
+#leaderboard-header {
+  font-family: var(--hud-font);
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--cream-dim);
+  padding: 0 4px 3px;
+  border-bottom: 2px dashed rgba(255, 246, 224, 0.16);
+  margin-bottom: 3px;
+}
+
+#leaderboard-rows {
+  position: relative;
+  transition: height 0.2s ease;
+}
+
+.lb-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 21px;
+  padding: 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 21px;
+  color: rgba(255, 246, 224, 0.88);
+  border-radius: 8px;
+  transition: transform 0.28s var(--pop);
+  will-change: transform;
+}
+
+.lb-rank {
+  font-family: var(--hud-font);
+  font-size: 11px;
+  color: var(--cream-dim);
+}
+
+.lb-ping {
+  display: none;
+  text-align: right;
+  padding-right: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--cream-dim);
+}
+
+#leaderboard-hud.with-ping .lb-ping {
+  display: block;
+}
+
+.lb-ping.good { color: #a8d94a; }
+.lb-ping.ok { color: #facc15; }
+.lb-ping.bad { color: #ff9a3d; }
+.lb-ping.awful { color: #ff5a4e; }
+
+.lb-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  letter-spacing: 0.3px;
+}
+
+.lb-k,
+.lb-d,
+.lb-a,
+.lb-kd {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.lb-kd {
+  color: var(--cream-dim);
+}
+
+/* Local player: a bean-green highlight + YOU tag. */
+.lb-row.local {
+  background: rgba(168, 217, 74, 0.2);
+  color: #ffffff;
+}
+
+.lb-row.local .lb-rank {
+  color: var(--bean);
+}
+
+.lb-you {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0 4px;
+  font-family: var(--hud-font);
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  line-height: 13px;
+  vertical-align: 1px;
+  color: var(--ink);
+  background: var(--bean);
+  border-radius: 5px;
+}
+
+.lb-row.kill-pulse {
+  animation: lb-kill-pulse 0.5s var(--pop);
+}
+
+@keyframes lb-kill-pulse {
+  0% { background: rgba(250, 204, 21, 0.55); }
+  100% { background: rgba(168, 217, 74, 0.2); }
+}
+
+@media (max-width: 1280px) {
+  #leaderboard-hud {
+    width: 216px;
+    right: 10px;
+    top: 54px;
+  }
+  .lb-row {
+    font-size: 12px;
+  }
+}
+
+/* ---- Controls hint: shown when the HUD appears, then politely leaves ---- */
+#controls-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: rgba(40, 27, 12, 0.5);
+  color: var(--cream-dim);
+  font-size: 12px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  animation: hint-leave 0.8s ease-in 9s forwards;
+}
+
+@keyframes hint-leave {
+  to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+  }
+}
+
+/* ==========================================================================
+   RESPONSIVE — slightly smaller corners on small windows, bigger on 2K/4K
+   (the menus already scale the same way with zoom).
+   ========================================================================== */
+@media (max-width: 1280px), (max-height: 720px) {
+  #bean-buddy,
+  #right-hud-col {
+    zoom: 0.85;
+  }
+}
+
+@media (min-width: 2200px) {
+  #bean-buddy,
+  #right-hud-col,
+  #leaderboard-hud,
+  #top-center {
+    zoom: 1.3;
+  }
+}
+
+@media (min-width: 3200px) {
+  #bean-buddy,
+  #right-hud-col,
+  #leaderboard-hud,
+  #top-center {
+    zoom: 1.8;
+  }
+}
+
