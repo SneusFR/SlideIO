@@ -2013,6 +2013,11 @@ export class Game {
     });
   }
 
+  /** Local player's display name on the bottom-left player card. */
+  setPlayerName(name: string): void {
+    this.combatHud.setPlayerName(name);
+  }
+
   /**
    * Live frame-rate cap change (Escape-menu FPS LIMIT button). Unlike the
    * graphics preset (MSAA is fixed at context creation → reload), the cap

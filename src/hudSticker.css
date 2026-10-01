@@ -1,0 +1,1076 @@
+/* ==========================================================================
+   SLIDEIO — "JUICY STICKER" HUD SKIN (layered over hud.css)
+   --------------------------------------------------------------------------
+   Look: die-cut vinyl stickers — CREAM die-cut border, near-black ink edge,
+   charcoal pills, cream sticker tabs / portrait / icon badges, candy accents
+   (cyan / pink / lime / yellow), paint blobs stuck on the corners.
+   hud.css keeps the structure + every JS-driven state; this file only
+   re-skins and adds the juicy FX (paint drips…).
+   Performance: transform / opacity animations only, no backdrop-filter.
+   ========================================================================== */
+
+:root {
+  /* Charcoal pills (names kept from the first navy pass: --st-navy*). */
+  --st-navy: #1a1920;
+  --st-navy-hi: #2c2a33;
+  --st-navy-lo: #0f0e14;
+  --st-ink: #0e0d12;
+  --st-cream: #fbf1da;
+  --st-cream-lo: #e6dac0;
+  --st-white: var(--st-cream);
+  --st-cyan: #35e0f2;
+  --st-pink: #ff4fa8;
+  --st-lime: #b8f23a;
+  --st-yellow: #ffd83a;
+  --st-orange: #ff8a3d;
+  /* Charcoal panel edge: thin grey inner bevel + thick ink rim + hard drop
+     shadow (cream die-cut rings are kept for the cream stickers only). */
+  --st-edge: inset 0 0 0 2px rgba(255, 250, 240, 0.16), 0 0 0 3.5px var(--st-ink), 0 6px 0 3.5px rgba(8, 7, 12, 0.55);
+  --st-edge-sm: 0 0 0 3px var(--st-ink), 0 4px 0 3px rgba(8, 7, 12, 0.5);
+  --st-pill: linear-gradient(180deg, var(--st-navy-hi) 0%, var(--st-navy) 55%, var(--st-navy-lo) 100%);
+}
+
+/* Keyboard key cap — white sticker key. */
+#hud .hud-key {
+  color: var(--st-ink);
+  background: linear-gradient(180deg, #fffaf0 0%, var(--st-cream) 60%, var(--st-cream-lo) 100%);
+  border: 2px solid var(--st-ink);
+  border-radius: 7px;
+  box-shadow: 0 3px 0 var(--st-ink);
+}
+
+@keyframes st-wobble {
+  0%, 100% { transform: rotate(-1.5deg) scale(1); }
+  50% { transform: rotate(1deg) scale(1.03); }
+}
+@keyframes st-jelly {
+  0%, 100% { transform: scale(1, 1); }
+  30% { transform: scale(1.14, 0.86); }
+  55% { transform: scale(0.93, 1.07); }
+  75% { transform: scale(1.03, 0.97); }
+}
+@keyframes st-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ==========================================================================
+   TOP-CENTRE mode pill: white sticker "FFA | ⏱ ∞", pink blob + cyan splash.
+   ========================================================================== */
+#top-center { top: 12px; }
+
+#mode-hud {
+  gap: 10px;
+  padding: 4px 20px 2px;
+  background: linear-gradient(180deg, #fffaf0 0%, var(--st-cream) 100%);
+  border: 3px solid var(--st-ink);
+  border-radius: 999px;
+  box-shadow: 0 4px 0 var(--st-ink), 0 8px 12px rgba(8, 7, 12, 0.3);
+  animation: st-wobble 4s ease-in-out infinite;
+}
+/* Pink paint ball on the left edge. */
+#mode-hud::before {
+  left: -13px;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  margin-top: -10px;
+  background: radial-gradient(circle at 35% 30%, #ffffff 0 14%, transparent 26%), var(--st-pink);
+  box-shadow: 0 0 0 2.5px var(--st-ink);
+  animation: st-jelly 2.2s ease-in-out infinite;
+}
+/* Cyan splash (two drops) on the right edge. */
+#mode-hud::after {
+  right: -18px;
+  top: -8px;
+  width: 13px;
+  height: 13px;
+  margin-top: 0;
+  background: var(--st-cyan);
+  box-shadow: 0 0 0 2.5px var(--st-ink), 8px 11px 0 -3px var(--st-cyan), 8px 11px 0 -0.5px var(--st-ink);
+  animation: st-jelly 2.6s ease-in-out 0.5s infinite;
+}
+
+#mode-name {
+  font-size: 20px;
+  letter-spacing: 1px;
+  color: var(--st-ink);
+  -webkit-text-stroke: 0;
+}
+.mode-sep {
+  width: 3px;
+  height: 20px;
+  border-radius: 2px;
+  background: var(--st-ink);
+  box-shadow: none;
+  transform: none;
+}
+.mode-icon { width: 20px; height: 20px; color: var(--st-ink); }
+#mode-time {
+  font-size: 25px;
+  color: var(--st-ink);
+  -webkit-text-stroke: 0.6px var(--st-ink);
+}
+
+/* ==========================================================================
+   PLAYER CARD (bottom-left): white round portrait sticker, name tag,
+   navy pill "79 /100" + striped lime jelly tube, cyan "» E PRÊT" pill.
+   ========================================================================== */
+#bean-buddy {
+  left: 24px;
+  bottom: 22px;
+  transform: none;
+  align-items: flex-end;
+}
+@keyframes buddy-cheer-a {
+  0% { transform: none; }
+  35% { transform: translateY(-9px) rotate(-3deg) scale(1.04); }
+  100% { transform: none; }
+}
+@keyframes buddy-cheer-b {
+  0% { transform: none; }
+  35% { transform: translateY(-9px) rotate(3deg) scale(1.04); }
+  100% { transform: none; }
+}
+
+.buddy-frame {
+  width: 100px;
+  height: 100px;
+  margin-bottom: 6px;
+  background: radial-gradient(circle at 50% 40%, #fffaf0 0%, var(--st-cream) 60%, var(--st-cream-lo) 100%);
+  border: 4px solid var(--st-ink);
+  box-shadow: 0 0 0 5px var(--st-white), 0 0 0 7px var(--st-ink), 0 9px 0 7px rgba(8, 7, 12, 0.5);
+  transform: rotate(-4deg);
+}
+/* Cyan paint drops stuck next to the portrait. */
+.buddy-frame::before,
+.buddy-frame::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  background: var(--st-cyan);
+  box-shadow: 0 0 0 2px var(--st-ink);
+  z-index: 3;
+  animation: st-jelly 2.8s ease-in-out infinite;
+}
+.buddy-frame::before { left: -22px; top: 34px; width: 11px; height: 11px; }
+.buddy-frame::after { left: -15px; top: 56px; width: 6px; height: 6px; animation-delay: 0.5s; }
+/* Reference look: plain cream squircle sticker (no sunburst) — rays only
+   come back as the red danger burst in panic mood. */
+.buddy-frame { border-radius: 42% 46% 44% 40% / 44% 42% 46% 42%; }
+#buddy-portrait { clip-path: inset(0 round 40%); }
+.buddy-rays { opacity: 0; }
+#bean-buddy.mood-panic .buddy-rays { opacity: 0.8; }
+
+.buddy-panel {
+  gap: 7px;
+  margin-left: 12px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.buddy-panel::before,
+.buddy-panel::after { display: none; }
+
+/* Name tag sticker. */
+#buddy-name {
+  align-self: flex-start;
+  max-width: 160px;
+  margin: 0 0 -4px 8px;
+  padding: 4px 13px 1px;
+  font-family: var(--hud-font);
+  font-size: 13px;
+  letter-spacing: 1px;
+  color: var(--st-ink);
+  background: var(--st-cream);
+  border: 2.5px solid var(--st-ink);
+  border-radius: 999px;
+  box-shadow: 0 3px 0 var(--st-ink);
+  transform: rotate(-3deg);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  z-index: 2;
+}
+
+/* HP pill: big number above the tube. */
+#health-hud {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 7px 16px 10px 14px;
+  background: var(--st-pill);
+  border-radius: 16px 28px 28px 16px;
+  box-shadow: var(--st-edge);
+}
+#health-num {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  padding-left: 2px;
+  line-height: 1;
+}
+#health-value {
+  min-width: 0;
+  font-size: 38px;
+  text-align: left;
+  color: #fffaf0;
+  -webkit-text-stroke: 5px var(--st-ink);
+  text-shadow: 0 3px 0 var(--st-ink);
+  transform: none;
+  transform-origin: 50% 90%;
+}
+@keyframes hp-bump-a {
+  0% { transform: scale(1.35, 0.8); }
+  50% { transform: scale(0.92, 1.1); }
+  100% { transform: none; }
+}
+@keyframes hp-bump-b {
+  0% { transform: scale(1.35, 0.8); }
+  50% { transform: scale(0.92, 1.1); }
+  100% { transform: none; }
+}
+@keyframes hp-heartbeat {
+  0%, 100% { transform: scale(1); }
+  15% { transform: scale(1.16); }
+  30% { transform: scale(1); }
+}
+#health-max {
+  font-family: var(--hud-font);
+  font-size: 18px;
+  color: #fffaf0;
+  -webkit-text-stroke: 3px var(--st-ink);
+  paint-order: stroke fill;
+}
+#health-hud.mid #health-value { color: var(--st-yellow); }
+#health-hud.low #health-value { color: #ff6b6b; }
+
+#health-bar {
+  width: 196px;
+  height: 22px;
+  background: linear-gradient(180deg, #050608, #121318);
+  box-shadow: 0 0 0 3px var(--st-cream), 0 0 0 4.5px var(--st-ink), inset 0 3px 4px rgba(0, 0, 0, 0.6);
+}
+#health-value { display: inline-block; }
+#health-fill {
+  background:
+    repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.18) 0 8px, rgba(255, 255, 255, 0) 8px 16px),
+    linear-gradient(180deg, #e8ff9a 0%, var(--st-lime) 45%, #6fb81a 100%);
+}
+#health-hud.mid #health-fill {
+  background:
+    repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.18) 0 8px, rgba(255, 255, 255, 0) 8px 16px),
+    linear-gradient(180deg, #fff2a0 0%, var(--st-yellow) 45%, #d9a300 100%);
+}
+#health-hud.low #health-fill {
+  background:
+    repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.18) 0 8px, rgba(255, 255, 255, 0) 8px 16px),
+    linear-gradient(180deg, #ffb0a0 0%, #ff4a4a 45%, #b81f1f 100%);
+}
+#health-ghost { background: var(--st-cream); }
+#health-bar .bar-ticks {
+  background: repeating-linear-gradient(90deg, transparent 0 calc(25% - 2px), rgba(8, 7, 12, 0.45) calc(25% - 2px) 25%);
+}
+/* Low HP: the whole pill throbs red. */
+#health-hud.low { animation: st-low-pill 0.7s ease-in-out infinite; }
+@keyframes st-low-pill {
+  0%, 100% { box-shadow: var(--st-edge); }
+  /* Same shadow list shape as --st-edge (+ glow) so it interpolates. */
+  50% { box-shadow: inset 0 0 0 2px #ff6b6b, 0 0 0 3.5px var(--st-ink), 0 6px 0 3.5px rgba(8, 7, 12, 0.55), 0 0 22px 6px rgba(255, 74, 74, 0.55); }
+}
+#heal-feedback {
+  right: -12px;
+  top: -28px;
+  font-size: 26px;
+  color: var(--st-lime);
+  -webkit-text-stroke: 4px var(--st-ink);
+}
+
+/* ---- DASH pill: cyan sticker "» E PRÊT" (fill = cooldown) ---- */
+#dash-hud {
+  position: relative;
+  align-self: flex-start;
+  gap: 7px;
+  margin-left: 6px;
+  padding: 4px 16px 4px 10px;
+  border-radius: 999px;
+  background: var(--st-pill);
+  box-shadow: var(--st-edge-sm);
+  transform: rotate(-2deg);
+  overflow: visible;
+}
+/* The bar becomes the pill's cyan liquid (behind the content). */
+#dash-bar {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  z-index: 0;
+}
+#dash-fill {
+  background:
+    repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.2) 0 7px, rgba(255, 255, 255, 0) 7px 14px),
+    linear-gradient(180deg, #b6f7ff 0%, var(--st-cyan) 50%, #16a9c4 100%);
+  opacity: 0.55;
+}
+#dash-hud.ready #dash-fill { opacity: 1; }
+#dash-bolt-slot { display: none; }
+#dash-hud > :not(#dash-bar) { position: relative; z-index: 1; }
+
+.dash-chevrons { display: flex; gap: 0; margin-right: 1px; }
+.dash-chevrons i {
+  width: 11px;
+  height: 14px;
+  margin-right: -3px;
+  background: var(--st-ink);
+  clip-path: polygon(0 0, 45% 0, 100% 50%, 45% 100%, 0 100%, 55% 50%);
+}
+#dash-hud.ready .dash-chevrons i { animation: st-chevron 1s ease-in-out infinite; }
+#dash-hud.ready .dash-chevrons i:nth-child(2) { animation-delay: 0.15s; }
+@keyframes st-chevron {
+  0%, 100% { transform: translateX(0); opacity: 1; }
+  50% { transform: translateX(4px); opacity: 0.55; }
+}
+#dash-hud .hud-key {
+  min-width: 22px;
+  height: 22px;
+  font-size: 13px;
+  line-height: 25px;
+  background: var(--st-cream);
+}
+#dash-status {
+  min-width: 44px;
+  font-size: 17px;
+  color: #fffaf0;
+  -webkit-text-stroke: 3.5px var(--st-ink);
+  transform: translateY(1px);
+}
+#dash-hud.ready #dash-status { color: var(--st-ink); -webkit-text-stroke: 0; }
+#dash-hud:not(.ready) .dash-chevrons i { background: var(--st-cream); opacity: 0.45; }
+#dash-hud.recharged-a { animation: st-dash-pop-a 0.5s var(--pop); }
+#dash-hud.recharged-b { animation: st-dash-pop-b 0.5s var(--pop); }
+@keyframes st-dash-pop-a {
+  0% { transform: rotate(-2deg) scale(1.3, 0.8); }
+  50% { transform: rotate(-4deg) scale(0.92, 1.1); }
+  100% { transform: rotate(-2deg); }
+}
+@keyframes st-dash-pop-b {
+  0% { transform: rotate(-2deg) scale(1.3, 0.8); }
+  50% { transform: rotate(0deg) scale(0.92, 1.1); }
+  100% { transform: rotate(-2deg); }
+}
+#dash-hud.recharged-a #dash-bar,
+#dash-hud.recharged-b #dash-bar { animation: none; }
+#dash-hud.dashing #dash-fill { background: linear-gradient(180deg, #ffffff, #d8f9ff); }
+
+/* ==========================================================================
+   WEAPON PLATE (bottom-right): white round icon sticker overlapping a navy
+   pill — coloured name tab on top, "32 /32", ammo capsule underneath.
+   --wpn = weapon accent (set by each *HUD).
+   ========================================================================== */
+#right-hud-col { right: 30px; bottom: 22px; gap: 20px; }
+
+.wpn-plate {
+  transform: none;
+  padding: 18px 12px 0 0;
+}
+@keyframes plate-enter-a {
+  0% { transform: translateY(60px) rotate(10deg) scale(0.6); opacity: 0; }
+  55% { transform: translateY(-8px) rotate(-3deg) scale(1.08); opacity: 1; }
+  80% { transform: translateY(2px) scale(0.97); }
+  100% { transform: none; opacity: 1; }
+}
+@keyframes plate-enter-b {
+  0% { transform: translateY(60px) rotate(-10deg) scale(0.6); opacity: 0; }
+  55% { transform: translateY(-8px) rotate(3deg) scale(1.08); opacity: 1; }
+  80% { transform: translateY(2px) scale(0.97); }
+  100% { transform: none; opacity: 1; }
+}
+
+/* Icon badge: white rounded sticker, tilted. */
+.wpn-badge {
+  width: 78px;
+  height: 78px;
+  margin-right: -22px;
+  transform: rotate(-8deg);
+  z-index: 3;
+}
+.wpn-badge-face {
+  inset: 4px;
+  border-radius: 24px;
+  background: radial-gradient(circle at 50% 35%, #fffaf0 0%, var(--st-cream) 60%, var(--st-cream-lo) 100%);
+  border: 3.5px solid var(--st-ink);
+  box-shadow: 0 0 0 4px var(--st-cream), 0 0 0 6px var(--st-ink), 0 7px 0 6px rgba(8, 7, 12, 0.5);
+}
+.wpn-icon-art {
+  width: 52px;
+  height: 52px;
+  transform: rotate(-4deg);
+  filter: drop-shadow(0 3px 0 rgba(8, 7, 12, 0.35));
+  animation: st-icon-idle 2.4s ease-in-out infinite;
+}
+@keyframes st-icon-idle {
+  0%, 100% { transform: rotate(-4deg) translateY(0); }
+  50% { transform: rotate(2deg) translateY(-2px); }
+}
+@keyframes badge-kick-a {
+  0% { transform: rotate(-8deg) translate(-7px, 3px) rotate(-12deg) scale(1.12, 0.86); }
+  45% { transform: rotate(-8deg) translate(2px, -1px) scale(0.96, 1.05); }
+  100% { transform: rotate(-8deg); }
+}
+@keyframes badge-kick-b {
+  0% { transform: rotate(-8deg) translate(-7px, 3px) rotate(-10deg) scale(1.12, 0.86); }
+  45% { transform: rotate(-8deg) translate(2px, -1px) scale(0.96, 1.05); }
+  100% { transform: rotate(-8deg); }
+}
+.wpn-ring {
+  inset: -6px;
+  border-radius: 30px;
+  background: conic-gradient(var(--wpn) calc(var(--p, 0) * 1%), rgba(8, 7, 12, 0.5) 0);
+  -webkit-mask: none;
+  mask: none;
+  z-index: -1;
+}
+.wpn-ring.spin {
+  background: repeating-conic-gradient(var(--wpn) 0 22deg, #ffffff 22deg 45deg);
+}
+
+/* Navy pill body. */
+.wpn-body {
+  min-width: 196px;
+  padding: 6px 18px 10px 32px;
+  background: var(--st-pill);
+  border: 0;
+  border-radius: 18px 30px 30px 18px;
+  box-shadow: var(--st-edge);
+}
+/* Name tab in the weapon colour, sitting on the top edge. */
+.wpn-ribbon {
+  align-self: center;
+  margin: -24px 0 4px 0;
+  padding: 3px 16px 1px;
+  background: var(--wpn);
+  border: 2.5px solid var(--st-ink);
+  border-radius: 999px;
+  box-shadow: 0 0 0 2.5px var(--st-cream), 0 0 0 4px var(--st-ink), 0 3px 0 4px rgba(8, 7, 12, 0.45);
+  clip-path: none;
+  transform: rotate(-2deg);
+}
+.wpn-name {
+  font-size: 14px;
+  letter-spacing: 1px;
+  line-height: 18px;
+  color: #fffaf0;
+  -webkit-text-stroke: 3px var(--st-ink);
+}
+.wpn-main {
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.wpn-count-value {
+  min-width: 0;
+  font-size: 40px;
+  color: #fffaf0;
+  -webkit-text-stroke: 5px var(--st-ink);
+  text-shadow: 0 3px 0 var(--st-ink);
+}
+@keyframes count-tick-a {
+  0% { transform: scale(1.3, 0.78) translateY(3px); color: var(--wpn); }
+  60% { transform: scale(0.95, 1.06); }
+  100% { transform: none; }
+}
+@keyframes count-tick-b {
+  0% { transform: scale(1.3, 0.78) translateY(3px); color: var(--wpn); }
+  60% { transform: scale(0.95, 1.06); }
+  100% { transform: none; }
+}
+.wpn-count-max {
+  margin-left: 3px;
+  font-size: 20px;
+  color: #fffaf0;
+  -webkit-text-stroke: 3.5px var(--st-ink);
+}
+/* Ammo capsule: dark inset tray under the number. */
+.wpn-ammo {
+  justify-content: center;
+  width: 100%;
+  min-height: 26px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #050608, #121318);
+  box-shadow: 0 0 0 2.5px var(--st-cream), 0 0 0 4px var(--st-ink), inset 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+.wpn-plate.low .wpn-count-value { color: #ff6b6b; }
+.wpn-plate.reloading .wpn-count-value { color: #aab3e6; }
+
+.wpn-stamp {
+  top: -8px;
+  right: 0;
+  color: var(--st-pink);
+  border-color: var(--st-pink);
+  background: var(--st-cream);
+  box-shadow: 0 0 0 2px var(--st-ink), 0 3px 0 2px var(--st-ink);
+  z-index: 6;
+}
+
+/* ==========================================================================
+   PER-WEAPON FX — palette (--c1..3) per weapon, then:
+   .wpn-splat  paint splat stuck on the pill's right end (jelly wobble)
+   .wpn-fx i   idle loop particles around the icon (drips, drops, kernels…)
+   .wpn-burst  one-shot splash thrown on each shot (WeaponPlate.kick)
+   ========================================================================== */
+.wpn-plate { --c1: var(--wpn); --c2: #ffffff; --c3: var(--wpn); }
+.wpn-plate[data-icon="paintball"] { --c1: #ff4fa8; --c2: #ffd83a; --c3: #35e0f2; }
+.wpn-plate[data-icon="water"] { --c1: #35c8ff; --c2: #b6f1ff; --c3: #1f8fe0; }
+.wpn-plate[data-icon="popcorn"] { --c1: #fff6d0; --c2: #ffd83a; --c3: #ffffff; }
+.wpn-plate[data-icon="poison"] { --c1: #7bff4d; --c2: #c8ff9e; --c3: #3fd11c; }
+.wpn-plate[data-icon="bass"] { --c1: #ff7ac8; --c2: #35e0f2; --c3: #ffd83a; }
+.wpn-plate[data-icon="heat"] { --c1: #ff8a3d; --c2: #ffd83a; --c3: #ff4a36; }
+.wpn-plate[data-icon="frisbee"] { --c1: #ff8a3d; --c2: #ffd0a8; --c3: #ffd83a; }
+.wpn-plate[data-icon="revolver"] { --c1: #e8ecff; --c2: #c3cae8; --c3: #ffffff; }
+
+/* ---- Splat stuck on the right end of the pill ---- */
+.wpn-splat {
+  position: absolute;
+  right: -2px;
+  top: 44%;
+  width: 30px;
+  height: 30px;
+  border-radius: 55% 45% 50% 50% / 50% 55% 45% 50%;
+  background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.7) 0 12%, transparent 24%), var(--c1);
+  box-shadow:
+    0 0 0 2.5px var(--st-ink),
+    15px -13px 0 -8px var(--c1), 15px -13px 0 -5.5px var(--st-ink),
+    17px 12px 0 -10px var(--c1), 17px 12px 0 -7.5px var(--st-ink),
+    -2px 22px 0 -9px var(--c1), -2px 22px 0 -6.5px var(--st-ink);
+  animation: st-jelly 2.4s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 2;
+}
+.wpn-plate[data-icon="revolver"] .wpn-splat { display: none; }
+
+/* ---- Idle particles (anchored on the icon sticker) ---- */
+.wpn-fx,
+.wpn-burst {
+  position: absolute;
+  left: 0;
+  /* Same centre as the badge: plate content box starts 18px down (padding). */
+  top: calc(50% + 9px - 39px);
+  width: 78px;
+  height: 78px;
+  pointer-events: none;
+  z-index: 4;
+}
+.wpn-fx i,
+.wpn-burst i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.8) 0 16%, transparent 30%), var(--c1);
+  box-shadow: 0 0 0 2px var(--st-ink);
+  opacity: 0;
+}
+.wpn-fx i:nth-child(3n + 2),
+.wpn-burst i:nth-child(3n + 2) { background-color: var(--c2); --pc: var(--c2); }
+.wpn-fx i:nth-child(3n),
+.wpn-burst i:nth-child(3n) { background-color: var(--c3); }
+.wpn-fx i:nth-child(1) { --fx: -22px; --d: 0s; }
+.wpn-fx i:nth-child(2) { --fx: 4px; --d: 0.45s; }
+.wpn-fx i:nth-child(3) { --fx: 20px; --d: 0.95s; }
+.wpn-fx i:nth-child(4) { --fx: -8px; --d: 1.4s; }
+.wpn-fx i:nth-child(5) { --fx: 14px; --d: 1.85s; }
+.wpn-fx i:nth-child(6) { --fx: -16px; --d: 2.3s; }
+.wpn-fx i { animation: st-drip 2.8s ease-in var(--d) infinite; }
+
+/* PAINTBALL / WATER: paint (or water) drips off the bottom of the icon. */
+.wpn-plate[data-icon="paintball"] .wpn-fx i,
+.wpn-plate[data-icon="water"] .wpn-fx i {
+  top: 86%;
+  width: 8px;
+  height: 11px;
+  margin-left: calc(-4px + var(--fx));
+  border-radius: 50% 50% 50% 50% / 62% 62% 38% 38%;
+  transform-origin: 50% 0;
+}
+@keyframes st-drip {
+  0% { opacity: 0; transform: translateY(-4px) scale(0.5, 0.2); }
+  12% { opacity: 1; transform: translateY(0) scale(1, 1); }
+  38% { opacity: 1; transform: translateY(3px) scale(0.85, 1.9); }
+  48% { transform: translateY(8px) scale(1.05, 0.95); }
+  100% { opacity: 0; transform: translateY(64px) scale(0.9, 1.25); }
+}
+.wpn-plate[data-icon="water"] .wpn-fx i { animation-duration: 2.2s; }
+
+/* PAINTBALL: a thick paint drip also runs down the pill under the splat. */
+.wpn-plate[data-icon="paintball"] .wpn-splat::after {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 22px;
+  width: 9px;
+  height: 20px;
+  border-radius: 0 0 6px 6px;
+  background: var(--c1);
+  box-shadow: 0 0 0 2.5px var(--st-ink);
+  transform-origin: 50% 0;
+  animation: st-long-drip 3.2s ease-in-out infinite;
+  z-index: -1;
+}
+@keyframes st-long-drip {
+  0%, 100% { transform: scaleY(0.4); }
+  60% { transform: scaleY(1.35); }
+  75% { transform: scaleY(1.2); }
+}
+
+/* POPCORN: kernels pop up out of the bucket and fall back. */
+.wpn-plate[data-icon="popcorn"] .wpn-fx i {
+  top: 18%;
+  width: 11px;
+  height: 10px;
+  margin-left: calc(-5px + var(--fx) * 0.8);
+  border-radius: 45% 55% 50% 50%;
+  animation: st-pop-kernel 2.4s cubic-bezier(0.3, 0.6, 0.5, 1) var(--d) infinite;
+}
+@keyframes st-pop-kernel {
+  0%, 8% { opacity: 0; transform: translate(0, 10px) scale(0.3) rotate(0); }
+  14% { opacity: 1; transform: translate(0, 0) scale(1.25) rotate(20deg); }
+  45% { opacity: 1; transform: translate(calc(var(--fx) * 0.6), -26px) scale(1) rotate(160deg); }
+  100% { opacity: 0; transform: translate(var(--fx), 40px) scale(0.9) rotate(340deg); }
+}
+
+/* POISON: toxic bubbles rise and pop. */
+.wpn-plate[data-icon="poison"] .wpn-fx i {
+  top: 30%;
+  margin-left: calc(-4.5px + var(--fx) * 0.7);
+  background: radial-gradient(circle at 35% 30%, #ffffff 0 18%, transparent 32%), rgba(123, 255, 77, 0.55);
+  animation: st-bubble 2.6s ease-out var(--d) infinite;
+}
+@keyframes st-bubble {
+  0% { opacity: 0; transform: translateY(6px) scale(0.4); }
+  20% { opacity: 1; }
+  85% { opacity: 1; transform: translateY(-46px) scale(1.1); }
+  92% { opacity: 1; transform: translateY(-48px) scale(1.6); }
+  100% { opacity: 0; transform: translateY(-48px) scale(2); }
+}
+
+/* BASS: music notes bounce out of the speakers, the box thumps. */
+.wpn-plate[data-icon="bass"] .wpn-fx i {
+  top: 25%;
+  margin-left: calc(-4.5px + var(--fx));
+  animation: st-note 2.2s ease-out var(--d) infinite;
+}
+.wpn-plate[data-icon="bass"] .wpn-fx i::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  bottom: 4px;
+  width: 2.5px;
+  height: 12px;
+  background: var(--st-ink);
+}
+@keyframes st-note {
+  0% { opacity: 0; transform: translate(0, 0) scale(0.4) rotate(-20deg); }
+  20% { opacity: 1; transform: translate(4px, -12px) scale(1.2) rotate(10deg); }
+  60% { opacity: 1; transform: translate(-4px, -30px) scale(1) rotate(-12deg); }
+  100% { opacity: 0; transform: translate(6px, -50px) scale(0.8) rotate(15deg); }
+}
+.wpn-plate[data-icon="bass"] .wpn-badge-face { animation: st-boom 0.5s ease-in-out infinite; }
+@keyframes st-boom {
+  0%, 100% { transform: scale(1); }
+  20% { transform: scale(1.06, 0.95); }
+}
+/* Keep the reload-done spin working on top of any idle face animation. */
+.wpn-plate[data-icon] .wpn-badge-face.refilled-a { animation: face-refill-a 0.5s var(--spring); }
+.wpn-plate[data-icon] .wpn-badge-face.refilled-b { animation: face-refill-b 0.5s var(--spring); }
+
+/* HEAT / FRISBEE: embers float up (faster when hot). */
+.wpn-plate[data-icon="heat"] .wpn-fx i,
+.wpn-plate[data-icon="frisbee"] .wpn-fx i {
+  top: 20%;
+  width: 7px;
+  height: 7px;
+  margin-left: calc(-3.5px + var(--fx) * 0.8);
+  animation: st-ember 2s ease-out var(--d) infinite;
+}
+@keyframes st-ember {
+  0% { opacity: 0; transform: translateY(8px) scale(0.5); }
+  25% { opacity: 1; transform: translate(3px, -8px) scale(1.1); }
+  100% { opacity: 0; transform: translate(-6px, -48px) scale(0.3); }
+}
+.wpn-plate.hot .wpn-fx i,
+.wpn-plate.overheat .wpn-fx i { animation-duration: 0.9s; }
+.wpn-plate[data-icon="frisbee"] .wpn-icon-art { animation: st-frisbee 3s ease-in-out infinite; }
+@keyframes st-frisbee {
+  0%, 100% { transform: rotate(-6deg) translateX(0); }
+  50% { transform: rotate(6deg) translateX(3px); }
+}
+
+/* REVOLVER: soft smoke wisps from the muzzle. */
+.wpn-plate[data-icon="revolver"] .wpn-fx i {
+  top: 18%;
+  left: 88%;
+  width: 10px;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 0 0 2px rgba(8, 7, 12, 0.5);
+  animation: st-smoke 3s ease-out var(--d) infinite;
+}
+@keyframes st-smoke {
+  0% { opacity: 0; transform: scale(0.4); }
+  25% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(10px, -40px) scale(1.8); }
+}
+
+.wpn-plate.reloading .wpn-fx { opacity: 0.35; }
+
+/* ---- Shot burst: splash thrown out of the icon on each shot ---- */
+.wpn-burst i:nth-child(1) { --bx: -40px; --by: -26px; }
+.wpn-burst i:nth-child(2) { --bx: -14px; --by: -46px; }
+.wpn-burst i:nth-child(3) { --bx: 22px; --by: -44px; }
+.wpn-burst i:nth-child(4) { --bx: -46px; --by: 8px; }
+.wpn-burst i:nth-child(5) { --bx: -30px; --by: 36px; }
+.wpn-burst i:nth-child(6) { --bx: 8px; --by: -58px; }
+.wpn-burst.burst-a i { animation: st-burst-a 0.45s cubic-bezier(0.15, 0.8, 0.4, 1) forwards; }
+.wpn-burst.burst-b i { animation: st-burst-b 0.45s cubic-bezier(0.15, 0.8, 0.4, 1) forwards; }
+@keyframes st-burst-a {
+  0% { opacity: 1; transform: scale(1.4); }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--bx), var(--by)) scale(0.5); }
+}
+@keyframes st-burst-b {
+  0% { opacity: 1; transform: scale(1.4); }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--bx), var(--by)) scale(0.5); }
+}
+.wpn-plate[data-icon="water"] .wpn-burst i { border-radius: 50% 50% 50% 50% / 62% 62% 38% 38%; }
+.wpn-plate[data-icon="popcorn"] .wpn-burst i { width: 13px; height: 12px; margin: -6px 0 0 -6px; }
+.wpn-plate[data-icon="revolver"] .wpn-burst i { background: #ffd83a; }
+
+/* The splat squishes on each shot too. */
+.wpn-plate:has(.wpn-burst.burst-a) .wpn-splat { animation: st-splat-hit-a 0.35s var(--pop), st-jelly 2.4s ease-in-out 0.35s infinite; }
+.wpn-plate:has(.wpn-burst.burst-b) .wpn-splat { animation: st-splat-hit-b 0.35s var(--pop), st-jelly 2.4s ease-in-out 0.35s infinite; }
+@keyframes st-splat-hit-a {
+  0% { transform: scale(1.45, 0.7); }
+  100% { transform: none; }
+}
+@keyframes st-splat-hit-b {
+  0% { transform: scale(1.45, 0.7); }
+  100% { transform: none; }
+}
+
+/* ==========================================================================
+   AMMO OBJECTS + GAUGES — candy balls in the navy capsule.
+   ========================================================================== */
+.ammo-pip:not(.on) { opacity: 0.22; filter: grayscale(0.6) brightness(0.55); }
+.ammo-ball { gap: 4px; }
+.ammo-ball .ammo-pip {
+  width: 15px;
+  height: 15px;
+  box-shadow: 0 0 0 2px var(--st-ink), inset 0 -2px 0 rgba(0, 0, 0, 0.2);
+}
+.ammo-ball .ammo-pip.on { animation: st-ball-idle 1.8s ease-in-out infinite; }
+.ammo-ball .ammo-pip:nth-child(2n).on { animation-delay: 0.3s; }
+.ammo-ball .ammo-pip:nth-child(3n).on { animation-delay: 0.6s; }
+@keyframes st-ball-idle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1.5px); }
+}
+/* Spent ball SPLATS (flattens) instead of a plain fade. */
+.ammo-ball .ammo-pip:not(.on).pip-a,
+.ammo-ball .ammo-pip:not(.on).pip-b { animation: st-ball-splat 0.35s ease-out; }
+@keyframes st-ball-splat {
+  0% { transform: scale(1.7, 0.5); opacity: 1; filter: brightness(1.4); }
+  60% { transform: scale(1.2, 0.7); opacity: 0.8; }
+  100% { transform: none; }
+}
+.ammo-ball .ammo-pip.on.pip-a,
+.ammo-ball .ammo-pip.on.pip-b { animation: pip-refill-a 0.35s var(--spring); }
+
+.ammo-drop .ammo-pip,
+.ammo-deck .ammo-pip,
+.ammo-stack .ammo-pip,
+.ammo-bullet .ammo-pip { box-shadow: 0 0 0 2px var(--st-ink); }
+.ammo-deck .ammo-pip { box-shadow: 0 0 0 2.5px var(--st-ink), 0 3px 0 var(--st-ink); }
+.ammo-puff .ammo-pip svg path { stroke: var(--st-ink); }
+
+.ammo-gauge {
+  min-width: 120px;
+  height: 16px;
+  background: linear-gradient(180deg, #050608, #121318);
+  box-shadow: 0 0 0 2px var(--st-ink), inset 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+.gauge-water { --liq: #35c8ff; --liq-hi: #e0f8ff; }
+.gauge-heat { --liq: var(--st-lime); --liq-hi: #f2ffc8; }
+
+/* ==========================================================================
+   ABILITY CHIP (spear rush) — white round sticker.
+   ========================================================================== */
+.chip-disc {
+  border-color: var(--st-ink) !important;
+  box-shadow: 0 0 0 3px var(--st-cream), 0 0 0 5px var(--st-ink), 0 5px 0 5px rgba(8, 7, 12, 0.5) !important;
+}
+.chip-key { color: var(--st-ink); background: var(--st-cream); border-color: var(--st-ink); box-shadow: 0 2px 0 var(--st-ink); }
+.chip-label { color: #fffaf0; -webkit-text-stroke: 3px var(--st-ink); paint-order: stroke fill; }
+
+/* ==========================================================================
+   KILLSTREAK MEDALLION — white blob sticker, icon, "1/5", key tab, candy
+   paint dots crowning it (the notched ring becomes the progress arc).
+   ========================================================================== */
+#killstreak-hud { gap: 18px; padding-right: 26px; }
+.ks-medal { width: 84px; height: 84px; }
+.ks-disc {
+  inset: 4px;
+  border-radius: 46% 54% 50% 50% / 52% 48% 52% 48%;
+  background: radial-gradient(circle at 50% 35%, #fffaf0 0%, var(--st-cream) 60%, var(--st-cream-lo) 100%);
+  border: 3px solid var(--st-ink);
+  box-shadow: 0 0 0 4px var(--st-cream), 0 0 0 6px var(--st-ink), 0 7px 0 6px rgba(8, 7, 12, 0.5);
+  overflow: visible;
+}
+.ks-art { inset: 10px 12px 18px 10px; }
+.ks-medal.locked .ks-disc { background: radial-gradient(circle at 50% 35%, #f5ecd6 0%, #e9dec4 65%, #d6c9ab 100%); }
+.ks-medal.locked .ks-art { filter: grayscale(1) brightness(0.3) contrast(1.4); opacity: 0.9; }
+.ks-count {
+  left: auto;
+  right: 6px;
+  bottom: 14px;
+  transform: none;
+  font-size: 15px;
+  color: var(--st-ink);
+  -webkit-text-stroke: 0;
+}
+.ks-key {
+  left: auto;
+  right: -10px;
+  bottom: -10px;
+  transform: rotate(6deg);
+  min-width: 26px;
+  height: 26px;
+  font-size: 15px;
+  line-height: 29px;
+  color: var(--st-ink);
+  background: var(--st-cream);
+  border: 2.5px solid var(--st-ink);
+  border-radius: 8px;
+  box-shadow: 0 3px 0 var(--st-ink);
+}
+@keyframes ks-key-bounce {
+  0%, 100% { transform: rotate(6deg) translateY(0); }
+  50% { transform: rotate(-4deg) translateY(-5px); }
+}
+.ks-lock { right: auto; left: -6px; bottom: -4px; }
+.ks-ring-track { stroke: rgba(8, 7, 12, 0.55); stroke-width: 7; }
+.ks-seg { stroke: rgba(255, 255, 255, 0.35); }
+.ks-seg.on { stroke: var(--st-yellow); }
+
+/* Candy paint dots crowning the medallion. */
+.ks-medal::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -12px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-radius: 50%;
+  background: #3a3d48;
+  box-shadow:
+    0 0 0 2px var(--st-ink),
+    -17px 5px 0 -1px #3a3d48, -17px 5px 0 1px var(--st-ink),
+    17px 5px 0 -1px #3a3d48, 17px 5px 0 1px var(--st-ink),
+    -33px 16px 0 0 var(--st-yellow), -33px 16px 0 2px var(--st-ink),
+    32px 16px 0 -2px var(--st-cyan), 32px 16px 0 0 var(--st-ink);
+  z-index: 5;
+  animation: st-dots 2.4s ease-in-out infinite;
+}
+@keyframes st-dots {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+.ks-medal.ready::before { background: var(--st-pink); animation-duration: 0.9s; }
+.ks-medal.ready .ks-disc {
+  box-shadow: 0 0 0 4px var(--st-yellow), 0 0 0 6px var(--st-ink), 0 7px 0 6px rgba(8, 7, 12, 0.5), 0 0 24px 8px rgba(255, 216, 58, 0.55);
+}
+.ks-medal.active .ks-disc {
+  box-shadow: 0 0 0 4px var(--st-orange), 0 0 0 6px var(--st-ink), 0 0 26px 8px rgba(255, 138, 61, 0.6);
+}
+
+/* ==========================================================================
+   LEADERBOARD (top-right) — white "CLASSEMENT" tab over a navy sticker
+   panel: rank · name · score (kills). Local row = cyan pill "VOUS".
+   Row pitch MUST stay 28px (LeaderboardHUD.ROW_HEIGHT): 22px row + gap for
+   the local pill's sticker edge.
+   ========================================================================== */
+#leaderboard-hud {
+  top: 42px;
+  right: 22px;
+  width: 190px;
+  padding: 22px 8px 8px;
+  background: var(--st-pill);
+  border: 0;
+  border-radius: 18px;
+  box-shadow: var(--st-edge);
+  opacity: 1;
+  overflow: visible;
+}
+#leaderboard-title {
+  position: absolute;
+  left: 8px;
+  top: -16px;
+  margin: 0;
+  padding: 5px 16px 2px;
+  font-size: 15px;
+  letter-spacing: 1px;
+  color: var(--st-ink);
+  -webkit-text-stroke: 0;
+  background: var(--st-cream);
+  border: 2.5px solid var(--st-ink);
+  border-radius: 999px;
+  box-shadow: 0 3px 0 var(--st-ink);
+  transform: rotate(-2deg);
+}
+/* Pink paint ball + cyan splash on the top-right corner. */
+.lb-blob {
+  position: absolute;
+  right: 22px;
+  top: -12px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffffff 0 14%, transparent 26%), var(--st-pink);
+  box-shadow: 0 0 0 2.5px var(--st-ink), 18px -10px 0 -3px var(--st-cyan), 18px -10px 0 -0.5px var(--st-ink);
+  animation: st-jelly 2.2s ease-in-out infinite;
+}
+#leaderboard-header { display: none; }
+
+#leaderboard-header,
+.lb-row { grid-template-columns: 18px 1fr 30px; column-gap: 6px; }
+#leaderboard-hud.with-ping #leaderboard-header,
+#leaderboard-hud.with-ping .lb-row { grid-template-columns: 18px 26px 1fr 30px; }
+.lb-d,
+.lb-a,
+.lb-kd { display: none; }
+
+.lb-row {
+  top: 2px;
+  height: 22px;
+  padding: 0 8px;
+  font-family: var(--hud-font);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 24px;
+  color: #fffaf0;
+  border-radius: 8px;
+}
+.lb-row:not(.local)::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 0;
+  height: 1.5px;
+  background: rgba(255, 255, 255, 0.1);
+}
+.lb-rank { font-size: 13px; color: #fffaf0; }
+.lb-k { font-size: 14px; color: #fffaf0; }
+.lb-ping { font-family: var(--hud-font-alt); font-weight: 700; }
+
+/* Local row: cyan sticker pill sticking out of the panel. */
+.lb-row.local {
+  left: -12px;
+  right: -12px;
+  height: 22px;
+  padding: 0 18px;
+  line-height: 25px;
+  font-size: 15px;
+  color: var(--st-ink);
+  background: linear-gradient(180deg, #9ffcff 0%, var(--st-cyan) 55%, #12c9d6 100%);
+  border-radius: 11px;
+  box-shadow: 0 0 0 2.5px var(--st-cream), 0 0 0 4px var(--st-ink), 0 4px 0 4px rgba(8, 7, 12, 0.5);
+  z-index: 2;
+}
+.lb-row.local .lb-rank,
+.lb-row.local .lb-k { color: var(--st-ink); font-size: 16px; }
+.lb-row.local .lb-name { display: flex; align-items: center; gap: 5px; overflow: visible; }
+.lb-avatar {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  margin: -6px 0 -4px -2px;
+  animation: st-avatar 1.6s ease-in-out infinite;
+}
+.lb-avatar .buddy-art { width: 100%; height: 100%; display: block; overflow: visible; }
+/* Only the happy face in the tiny avatar. */
+.lb-avatar .bb-face { display: none; }
+.lb-avatar .bb-happy { display: inline; }
+@keyframes st-avatar {
+  0%, 100% { transform: rotate(-6deg) translateY(0); }
+  50% { transform: rotate(6deg) translateY(-2px); }
+}
+.lb-you {
+  margin: 0;
+  padding: 0;
+  font-size: 16px;
+  line-height: inherit;
+  color: var(--st-ink);
+  background: none;
+  border-radius: 0;
+}
+.lb-row.kill-pulse { animation: st-lb-kill 0.5s var(--pop); }
+/* Filter only: the row's position is an inline translateY (never animate transform). */
+@keyframes st-lb-kill {
+  0% { filter: brightness(1.6) saturate(1.4); }
+  100% { filter: none; }
+}
+
+@media (max-width: 1280px) {
+  #leaderboard-hud { width: 176px; right: 14px; top: 38px; }
+  .lb-row { font-size: 12px; }
+}
+
+/* ==========================================================================
+   CROSSHAIR — cyan sticker "+" with a centre dot (default look; the
+   SETTINGS colour still wins because it only rewrites --ch-color).
+   ========================================================================== */
+#crosshair { box-shadow: 0 0 0 1.5px var(--st-ink); }
+#crosshair.cross::before,
+#crosshair.cross::after { box-shadow: 0 0 0 1.5px var(--st-ink); border-radius: 2px; }
+
+/* ==========================================================================
+   EVENT FEED / AIM TICKER / KNOCKDOWN — same sticker language.
+   ========================================================================== */
+.feed-sticker {
+  background: var(--st-pill) !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  box-shadow: var(--st-edge-sm) !important;
+}
+.feed-title { -webkit-text-stroke: 3px var(--st-ink); paint-order: stroke fill; }
+.feed-kill .feed-title { color: var(--st-yellow); }
+.feed-streak .feed-title { color: var(--st-pink); }
+.feed-streak .feed-sub { color: #fffaf0; }
+
+#aim-ticker {
+  color: #fffaf0;
+  background: var(--st-pink);
+  border: 2.5px solid var(--st-ink);
+  box-shadow: 0 0 0 2px var(--st-cream), 0 3px 0 2px var(--st-ink);
+  -webkit-text-stroke: 0;
+}
+#aim-ticker.show.reload { background: var(--st-cyan); color: var(--st-ink); }
+
+#knockdown-hint {
+  background: var(--st-pill) !important;
+  border: 0 !important;
+  box-shadow: var(--st-edge) !important;
+}
+#controls-hint { background: rgba(8, 7, 12, 0.6); color: #fffaf0; }
+

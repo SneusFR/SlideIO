@@ -15,6 +15,7 @@
     <!-- In-game "Bean Sticker Arcade" HUD (bean buddy, weapon plates,
          killstreak medallions, top feed, screen feedback) -->
     <link rel="stylesheet" href="/src/hud.css" />
+    <link rel="stylesheet" href="/src/hudWeapons.css" />
   </head>
   <body>
     <div id="app"></div>
@@ -326,9 +327,11 @@
         <div id="event-feed"></div>
       </div>
 
-      <!-- Bottom-left: the BEAN BUDDY — portrait (face = HP mood), jelly HP
-           tube with the damage "ghost", and the dash lightning pill.
-           Portrait / bolt art is injected by CombatHUD / DashHUD (hudIcons.ts). -->
+      <!-- Bottom-left: the BEAN BUDDY player card — die-cut cream portrait
+           sticker (face = HP mood), name tag, charcoal HP pill "79 /100" +
+           lime tube with the damage "ghost", and the cyan dash pill
+           "» E READY" (the pill fills up during the cooldown).
+           Portrait art + name are injected by CombatHUD (hudIcons.ts). -->
       <div id="bean-buddy" class="mood-happy">
         <div class="buddy-frame">
           <div class="buddy-rays"></div>
@@ -336,8 +339,9 @@
           <div class="buddy-sparkles"><i></i><i></i><i></i><i></i><i></i></div>
         </div>
         <div class="buddy-panel">
+          <div id="buddy-name">PLAYER</div>
           <div id="health-hud" class="full">
-            <div id="health-value">100</div>
+            <div id="health-num"><span id="health-value">100</span><span id="health-max">/100</span></div>
             <div id="health-bar">
               <div id="health-ghost"></div>
               <div id="health-fill"></div>
@@ -347,13 +351,13 @@
             <div id="heal-feedback" class="hidden">+35</div>
           </div>
           <div id="dash-hud" class="ready">
-            <span class="hud-key">E</span>
             <div id="dash-bar">
               <div id="dash-fill"></div>
-              <span id="dash-bolt-slot"></span>
               <div class="bar-shine"></div>
             </div>
-            <div id="dash-status"></div>
+            <span class="dash-chevrons"><i></i><i></i></span>
+            <span class="hud-key">E</span>
+            <div id="dash-status">READY</div>
           </div>
         </div>
       </div>

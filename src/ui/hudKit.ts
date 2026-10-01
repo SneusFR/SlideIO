@@ -1,4 +1,6 @@
 import { weaponIconSvg, WeaponIconKey } from "./hudIcons";
+import { PaintLayer } from "./paint/PaintLayer";
+import { PAINT_PROFILES } from "./paint/paintProfiles";
 
 /**
  * Toy-box HUD kit — shared building blocks for the "Bean Sticker Arcade" HUD.
@@ -58,6 +60,8 @@ export class WeaponPlate {
   private readonly countEl: HTMLSpanElement;
   private readonly ring: HTMLDivElement;
   private readonly baseName: string;
+  /** 3D paint layer (Paintball / Poison): reacts to shots and equips. */
+  readonly paint: PaintLayer | null = null;
 
   private visible = false;
   private lastName = "";
@@ -65,7 +69,8 @@ export class WeaponPlate {
   private lastState: PlateState | null = null;
   private lastRing = -2;
 
-  constructor(id: string, name: string, icon: WeaponIconKey, color: string, max: number | null) {
+  /** `paint` = id of a PAINT_PROFILES entry: adds the 3D paint layer on the plate. */
+  constructor(id: string, name: string, icon: WeaponIconKey, color: string, max: number | null, paint?: string) {
     this.baseName = name;
     this.root = document.createElement("div");
     this.root.id = id;
@@ -94,6 +99,9 @@ export class WeaponPlate {
     const maxEl = this.root.querySelector<HTMLSpanElement>(".wpn-count-max")!;
     maxEl.textContent = max !== null ? `/${max}` : "";
     this.setName(name);
+    this.root.dataset.icon = icon;
+    const profile = paint ? PAINT_PROFILES[paint] : undefined;
+    if (profile) this.paint = new PaintLayer(this.root, profile);
     (document.getElementById("weapon-slot") ?? document.body).appendChild(this.root);
   }
 
@@ -102,6 +110,7 @@ export class WeaponPlate {
     if (visible === this.visible) return;
     this.visible = visible;
     this.root.classList.toggle("is-visible", visible);
+    this.paint?.setVisible(visible);
     if (visible) {
       replayAnim(this.root, "enter");
       aimTicker.claim(this);
@@ -166,6 +175,7 @@ export class WeaponPlate {
   /** Short recoil kick on the icon badge (call when a shot leaves). */
   kick(): void {
     replayAnim(this.badge, "kick");
+    this.paint?.impact(0.55);
   }
 }
 

@@ -14,88 +14,87 @@ const O = o(3);
 
 // ---------------------------------------------------------------------------
 // BEAN BUDDY — the player's portrait (bottom-left): the in-game character,
-// an orange pear-shaped bean with a green sprout, big round eyes and two
-// buck teeth. Every mood face is in the SVG; CSS shows one of them from the
-// #bean-buddy mood class. The body runs past the bottom of the viewBox:
-// the round portrait frame crops it like a bust.
+// a squat orange pear-shaped bean with a two-leaf sprout, big round eyes and
+// two buck teeth. Every mood face is in the SVG; CSS shows one of them from
+// the #bean-buddy mood class. The WHOLE bean fits in the viewBox (head top
+// y≈12, belly y≈78): the die-cut cream sticker frame shows it head to toe.
+// Outlined in near-black sticker ink (darker than the wood INK of the icons).
 // ---------------------------------------------------------------------------
+const BUDDY_INK = "#1d1512";
+
 export const BEAN_BUDDY_SVG = `
 <svg class="buddy-art" viewBox="0 0 80 80" aria-hidden="true">
   <defs>
-    <radialGradient id="bb-body-grad" cx="38%" cy="30%" r="80%">
-      <stop offset="0" stop-color="#f2a066"/>
-      <stop offset="0.5" stop-color="#d06a2e"/>
-      <stop offset="1" stop-color="#9a4518"/>
+    <radialGradient id="bb-body-grad" cx="36%" cy="32%" r="78%">
+      <stop offset="0" stop-color="#ff9b5e"/>
+      <stop offset="0.5" stop-color="#f0601f"/>
+      <stop offset="1" stop-color="#b8400f"/>
     </radialGradient>
     <radialGradient id="bb-leaf-grad" cx="30%" cy="30%" r="90%">
       <stop offset="0" stop-color="#b6ea6a"/>
       <stop offset="1" stop-color="#5ea42a"/>
     </radialGradient>
   </defs>
-  <!-- Sprout: stem + leaf on top of the head -->
-  <path d="M40 17c0-4 1-7 3-9" fill="none" stroke="${INK}" stroke-width="4.4" stroke-linecap="round"/>
-  <path d="M40 17c0-4 1-7 3-9" fill="none" stroke="#6fb536" stroke-width="2" stroke-linecap="round"/>
-  <path class="bb-leaf" d="M43 9c3-5 10-6 15-3-2 5-9 7-15 3z" fill="url(#bb-leaf-grad)" stroke="${INK}" stroke-width="2.4" stroke-linejoin="round"/>
-  <!-- Pear-shaped body (runs past the frame, cropped by the round portrait) -->
-  <path class="bb-body" d="M40 15c11 0 16 9 17 18 1 9 14 16 14 32 0 17-14 27-31 27S9 82 9 65c0-16 13-23 14-32 1-9 6-18 17-18z"
-    fill="url(#bb-body-grad)" stroke="${INK}" stroke-width="4" stroke-linejoin="round"/>
-  <ellipse cx="31" cy="23" rx="5" ry="2.6" fill="#ffffff" opacity="0.35" transform="rotate(-35 31 23)"/>
-  <path d="M38 72q2 2.2 4 0" fill="none" stroke="${INK}" stroke-width="2" stroke-linecap="round" opacity="0.7"/>
+  <!-- Sprout: stem + two leaves on top of the head -->
+  <path d="M40 16c0-4 1-7 3-9" fill="none" stroke="${BUDDY_INK}" stroke-width="4.4" stroke-linecap="round"/>
+  <path d="M40 16c0-4 1-7 3-9" fill="none" stroke="#6fb536" stroke-width="2" stroke-linecap="round"/>
+  <path class="bb-leaf bb-leaf-l" d="M40.5 11c-3-4-9-5-13-2 2 4 8 6 13 2z" fill="url(#bb-leaf-grad)" stroke="${BUDDY_INK}" stroke-width="2.2" stroke-linejoin="round"/>
+  <path class="bb-leaf" d="M43 8c3-5 10-6 15-3-2 5-9 7-15 3z" fill="url(#bb-leaf-grad)" stroke="${BUDDY_INK}" stroke-width="2.4" stroke-linejoin="round"/>
+  <!-- Squat pear body: narrow head, round belly -->
+  <path class="bb-body" d="M40 14C50 14 55 22 56 30C57 38 70 43 70 57C70 70 57 76 40 76C23 76 10 70 10 57C10 43 23 38 24 30C25 22 30 14 40 14Z"
+    fill="url(#bb-body-grad)" stroke="${BUDDY_INK}" stroke-width="4" stroke-linejoin="round"/>
+  <ellipse cx="34" cy="21" rx="4.5" ry="2.4" fill="#ffffff" opacity="0.4" transform="rotate(-35 34 21)"/>
+  <ellipse cx="20" cy="56" rx="2.6" ry="6" fill="#ffffff" opacity="0.18" transform="rotate(18 20 56)"/>
+  <circle cx="40" cy="67" r="1.3" fill="${BUDDY_INK}" opacity="0.75"/>
 
-  <g class="bb-face bb-happy">
+  <g transform="translate(0 6)" class="bb-face bb-happy">
     <g class="bb-eyes">
-      <circle cx="31" cy="31" r="6.4" fill="#ffffff" stroke="${INK}" stroke-width="2.4"/>
-      <circle cx="49" cy="31" r="6.4" fill="#ffffff" stroke="${INK}" stroke-width="2.4"/>
-      <circle cx="32" cy="31.5" r="2.5" fill="${INK}"/>
-      <circle cx="48" cy="31.5" r="2.5" fill="${INK}"/>
+      <circle cx="31" cy="31" r="6.4" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="2.4"/>
+      <circle cx="49" cy="31" r="6.4" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="2.4"/>
+      <circle cx="32" cy="31.5" r="2.5" fill="${BUDDY_INK}"/>
+      <circle cx="48" cy="31.5" r="2.5" fill="${BUDDY_INK}"/>
       <circle cx="33" cy="30.3" r="0.9" fill="#ffffff"/>
       <circle cx="49" cy="30.3" r="0.9" fill="#ffffff"/>
     </g>
-    <path d="M27 42q13 2 26 0-1 15-13 15t-13-15z" fill="#6e1a14" stroke="${INK}" stroke-width="2.6" stroke-linejoin="round"/>
+    <path d="M27 42q13 2 26 0-1 15-13 15t-13-15z" fill="#6e1a14" stroke="${BUDDY_INK}" stroke-width="2.6" stroke-linejoin="round"/>
     <ellipse cx="40" cy="53" rx="7" ry="3.2" fill="#e25548"/>
-    <path d="M35.5 43.2h4.2v5.6a0.8 0.8 0 0 1-0.8 0.8h-2.6a0.8 0.8 0 0 1-0.8-0.8z" fill="#ffffff" stroke="${INK}" stroke-width="1.5" stroke-linejoin="round"/>
-    <path d="M40.3 43.2h4.2v5.6a0.8 0.8 0 0 1-0.8 0.8h-2.6a0.8 0.8 0 0 1-0.8-0.8z" fill="#ffffff" stroke="${INK}" stroke-width="1.5" stroke-linejoin="round"/>
+    <path d="M35.5 43.2h4.2v5.6a0.8 0.8 0 0 1-0.8 0.8h-2.6a0.8 0.8 0 0 1-0.8-0.8z" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="1.5" stroke-linejoin="round"/>
+    <path d="M40.3 43.2h4.2v5.6a0.8 0.8 0 0 1-0.8 0.8h-2.6a0.8 0.8 0 0 1-0.8-0.8z" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="1.5" stroke-linejoin="round"/>
   </g>
 
-  <g class="bb-face bb-worried">
-    <path d="M24 23l9 3M56 23l-9 3" fill="none" stroke="${INK}" stroke-width="2.8" stroke-linecap="round"/>
-    <circle cx="31" cy="32" r="6" fill="#ffffff" stroke="${INK}" stroke-width="2.4"/>
-    <circle cx="49" cy="32" r="6" fill="#ffffff" stroke="${INK}" stroke-width="2.4"/>
-    <circle cx="29.5" cy="33.5" r="2.2" fill="${INK}"/>
-    <circle cx="47.5" cy="33.5" r="2.2" fill="${INK}"/>
-    <path d="M32 49q8-5 16 0-1 6-8 6t-8-6z" fill="#6e1a14" stroke="${INK}" stroke-width="2.4" stroke-linejoin="round"/>
-    <path d="M36.2 46.8h3.6v3.6h-3.6zM40.2 46.8h3.6v3.6h-3.6z" fill="#ffffff" stroke="${INK}" stroke-width="1.3" stroke-linejoin="round"/>
+  <g transform="translate(0 6)" class="bb-face bb-worried">
+    <path d="M24 23l9 3M56 23l-9 3" fill="none" stroke="${BUDDY_INK}" stroke-width="2.8" stroke-linecap="round"/>
+    <circle cx="31" cy="32" r="6" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="2.4"/>
+    <circle cx="49" cy="32" r="6" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="2.4"/>
+    <circle cx="29.5" cy="33.5" r="2.2" fill="${BUDDY_INK}"/>
+    <circle cx="47.5" cy="33.5" r="2.2" fill="${BUDDY_INK}"/>
+    <path d="M32 49q8-5 16 0-1 6-8 6t-8-6z" fill="#6e1a14" stroke="${BUDDY_INK}" stroke-width="2.4" stroke-linejoin="round"/>
+    <path d="M36.2 46.8h3.6v3.6h-3.6zM40.2 46.8h3.6v3.6h-3.6z" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="1.3" stroke-linejoin="round"/>
   </g>
 
-  <g class="bb-face bb-panic">
-    <path d="M23 22l9-4M57 22l-9-4" fill="none" stroke="${INK}" stroke-width="2.8" stroke-linecap="round"/>
-    <circle cx="31" cy="31" r="7.4" fill="#ffffff" stroke="${INK}" stroke-width="2.4"/>
-    <circle cx="49" cy="31" r="7.4" fill="#ffffff" stroke="${INK}" stroke-width="2.4"/>
-    <circle cx="31" cy="31" r="1.5" fill="${INK}"/>
-    <circle cx="49" cy="31" r="1.5" fill="${INK}"/>
-    <ellipse cx="40" cy="51" rx="7.5" ry="8.5" fill="#6e1a14" stroke="${INK}" stroke-width="2.6"/>
-    <path d="M36.3 43.2h3.4v4h-3.4zM40.3 43.2h3.4v4h-3.4z" fill="#ffffff" stroke="${INK}" stroke-width="1.3" stroke-linejoin="round"/>
+  <g transform="translate(0 6)" class="bb-face bb-panic">
+    <path d="M23 22l9-4M57 22l-9-4" fill="none" stroke="${BUDDY_INK}" stroke-width="2.8" stroke-linecap="round"/>
+    <circle cx="31" cy="31" r="7.4" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="2.4"/>
+    <circle cx="49" cy="31" r="7.4" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="2.4"/>
+    <circle cx="31" cy="31" r="1.5" fill="${BUDDY_INK}"/>
+    <circle cx="49" cy="31" r="1.5" fill="${BUDDY_INK}"/>
+    <ellipse cx="40" cy="51" rx="7.5" ry="8.5" fill="#6e1a14" stroke="${BUDDY_INK}" stroke-width="2.6"/>
+    <path d="M36.3 43.2h3.4v4h-3.4zM40.3 43.2h3.4v4h-3.4z" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="1.3" stroke-linejoin="round"/>
     <ellipse cx="40" cy="56" rx="4.6" ry="2.4" fill="#e25548"/>
-    <path class="bb-sweat" d="M62 17c3.4 5 3.4 8.4 0 9.4-3.4-1-3.4-4.4 0-9.4z" fill="#8fe3ff" stroke="${INK}" stroke-width="2"/>
+    <path class="bb-sweat" d="M62 17c3.4 5 3.4 8.4 0 9.4-3.4-1-3.4-4.4 0-9.4z" fill="#8fe3ff" stroke="${BUDDY_INK}" stroke-width="2"/>
   </g>
 
-  <g class="bb-face bb-ouch">
-    <path d="M25 27l8 4-8 4M55 27l-8 4 8 4" fill="none" stroke="${INK}" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
-    <rect x="28" y="43" width="24" height="10" rx="5" fill="#ffffff" stroke="${INK}" stroke-width="2.6"/>
-    <path d="M28.5 48h23M34 43.5v9M40 43.5v9M46 43.5v9" fill="none" stroke="${INK}" stroke-width="1.6"/>
+  <g transform="translate(0 6)" class="bb-face bb-ouch">
+    <path d="M25 27l8 4-8 4M55 27l-8 4 8 4" fill="none" stroke="${BUDDY_INK}" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="28" y="43" width="24" height="10" rx="5" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="2.6"/>
+    <path d="M28.5 48h23M34 43.5v9M40 43.5v9M46 43.5v9" fill="none" stroke="${BUDDY_INK}" stroke-width="1.6"/>
   </g>
 
-  <g class="bb-face bb-dead">
-    <path d="M26 27l9 9M35 27l-9 9M45 27l9 9M54 27l-9 9" fill="none" stroke="${INK}" stroke-width="3.2" stroke-linecap="round"/>
-    <path d="M30 47q10 4 20 0" fill="none" stroke="${INK}" stroke-width="3" stroke-linecap="round"/>
-    <path d="M42 48.6v4.4a3.2 3.2 0 0 0 6.4 0v-5.6" fill="#e25548" stroke="${INK}" stroke-width="2.2" stroke-linejoin="round"/>
+  <g transform="translate(0 6)" class="bb-face bb-dead">
+    <path d="M26 27l9 9M35 27l-9 9M45 27l9 9M54 27l-9 9" fill="none" stroke="${BUDDY_INK}" stroke-width="3.2" stroke-linecap="round"/>
+    <path d="M30 47q10 4 20 0" fill="none" stroke="${BUDDY_INK}" stroke-width="3" stroke-linecap="round"/>
+    <path d="M42 48.6v4.4a3.2 3.2 0 0 0 6.4 0v-5.6" fill="#e25548" stroke="${BUDDY_INK}" stroke-width="2.2" stroke-linejoin="round"/>
   </g>
-</svg>`;
-
-/** Tiny lightning bolt for the dash tube. */
-export const BOLT_SVG = `
-<svg class="dash-bolt" viewBox="0 0 24 24" aria-hidden="true">
-  <path d="M14 2L5 13h6l-2 9 9-12h-6z" fill="#5cc8ff" ${o(2.4)}/>
 </svg>`;
 
 /** Small popcorn puff used as the popcorn shotgun's ammo pip. */
@@ -122,16 +121,19 @@ export type WeaponIconKey =
 
 const WEAPON_ICONS: Record<WeaponIconKey, string> = {
   paintball: `
-    <path d="M5 25h25l6-4h6v9h-6l-2 2H21l-3 10h-8l3-10H5z" fill="#ff5fa2" ${O}/>
-    <circle cx="21" cy="14" r="8" fill="#ffd23f" ${O}/>
-    <circle cx="18.5" cy="11.5" r="2.4" fill="#ffffff" opacity="0.75"/>
-    <circle cx="11" cy="28" r="1.8" fill="#3ee0c5"/>`,
+    <g fill="#17151c" stroke="#17151c" stroke-linejoin="round" stroke-linecap="round">
+      <rect x="6" y="11" width="38" height="10" rx="4" stroke-width="1.6" transform="rotate(-11 25 16)"/>
+      <path d="M9 21.5L26 18.5L28 27.5H18.5L16.5 29H10Z" stroke-width="2"/>
+      <path d="M10.5 28L19 29.5L16 42.5L8 41Z" stroke-width="2"/>
+      <path d="M20 29.5L23.5 31.5V35.5H29" fill="none" stroke-width="2.4"/>
+      <rect x="22" y="12.5" width="6" height="3" rx="1.5" fill="#3a3744" stroke="none" transform="rotate(-11 25 14)"/>
+    </g>`,
   popcorn: `
-    <circle cx="15" cy="17" r="6.5" fill="#fff3c4" ${O}/>
-    <circle cx="33" cy="17" r="6.5" fill="#fff3c4" ${O}/>
-    <circle cx="24" cy="12" r="7.5" fill="#fff3c4" ${O}/>
-    <path d="M10 20h28l-4 23H14z" fill="#fff6e0"/>
-    <path d="M19 21.5l1.4 20M29 21.5l-1.4 20" stroke="#ff4d6d" stroke-width="4.5"/>
+    <circle cx="15" cy="17" r="6.5" fill="#f4b73a" ${O}/>
+    <circle cx="33" cy="17" r="6.5" fill="#f4b73a" ${O}/>
+    <circle cx="24" cy="12" r="7.5" fill="#ffc94a" ${O}/>
+    <path d="M10 20h28l-4 23H14z" fill="#ff4d6d"/>
+    <path d="M19 21.5l1.4 20M29 21.5l-1.4 20" stroke="#fff6e0" stroke-width="4.5"/>
     <path d="M10 20h28l-4 23H14z" fill="none" ${O}/>`,
   water: `
     <rect x="13" y="8" width="15" height="11" rx="5" fill="#bdefff" ${O}/>
@@ -159,8 +161,8 @@ const WEAPON_ICONS: Record<WeaponIconKey, string> = {
     <path d="M24 4c2 8 13 12 13 25a13 13 0 0 1-26 0c0-7 4-10 6-14 1 4 3 6 5 6-1-6 0-12 2-17z" fill="#ff8a3d" ${O}/>
     <path d="M24 26c1 4 6 6 6 11a6 6 0 0 1-12 0c0-3 2-5 3-7 1 2 2 3 3 3z" fill="#ffd23f"/>`,
   revolver: `
-    <path d="M4 16h32v8H22l-2 4h-5l-3 13H5l3-13-4-4z" fill="#e8d3a8" ${O}/>
-    <circle cx="23" cy="21" r="5.5" fill="#c9b184" ${o(2.4)}/>
+    <path d="M4 16h32v8H22l-2 4h-5l-3 13H5l3-13-4-4z" fill="#a9793a" ${O}/>
+    <circle cx="23" cy="21" r="5.5" fill="#5e3f19" ${o(2.4)}/>
     <path d="M36 18h7" fill="none" ${O}/>`,
   spear: `
     <path d="M9 41L31 19" fill="none" stroke="${INK}" stroke-width="8" stroke-linecap="round"/>

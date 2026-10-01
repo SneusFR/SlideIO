@@ -6,7 +6,7 @@ import { MenuOverlay } from "./menu/MenuOverlay";
 import { LobbyBrowser } from "./menu/LobbyBrowser";
 import { LobbyController } from "./network/LobbyController";
 import { MultiplayerClient } from "./network/MultiplayerClient";
-import { parseJoinRoomId } from "./network/MultiplayerConfig";
+import { loadDisplayName, parseJoinRoomId } from "./network/MultiplayerConfig";
 
 /**
  * Boot flow — "the menu is just an overlay on top of the game":
@@ -87,6 +87,11 @@ async function main(): Promise<void> {
   let entering = false;
   let inMultiplayerGame = false;
 
+  // Player card name tag: the persisted name (the lobby / menu rename save
+  // it) — refreshed on every entry / resume, the HUD change-detects it.
+  const syncPlayerName = (): void => game.setPlayerName(loadDisplayName() ?? menu.playerName);
+  syncPlayerName();
+
   /**
    * Shared Menu → Game hand-off (solo PLAY and multiplayer START GAME).
    * Solo uses the cinematic camera flight; multiplayer skips it (the mp
@@ -109,6 +114,7 @@ async function main(): Promise<void> {
 
     menu.hide();
     // Gameplay HUD becomes visible.
+    syncPlayerName();
     hud.classList.remove("menu-active");
 
     game.start();
@@ -138,6 +144,7 @@ async function main(): Promise<void> {
     const locked = document.pointerLockElement === game.domElement;
     if (locked) {
       menu.hide();
+      syncPlayerName(); // a rename in the pause menu shows on the card
       // Back in the fight: reveal the gameplay HUD again.
       document.body.classList.remove("game-paused");
     } else if (document.hasFocus()) {

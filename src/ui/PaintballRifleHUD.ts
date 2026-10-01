@@ -3,7 +3,7 @@ import { createPips, setPips, WeaponPlate, RING_SPIN } from "./hudKit";
 
 const ACCENT = "#ff5fa2";
 /** The three paint colours, cycled over the balls. */
-const PAINT = ["#ff4d6d", "#ffd23f", "#3ee0c5"] as const;
+const PAINT = ["#22c7ea", "#ff4fa3", "#ffd23f"] as const;
 /** One ball on the plate = capacity / BALLS real balls (32 / 8 = 4). */
 const BALLS = 8;
 
@@ -28,7 +28,7 @@ export class PaintballRifleHUD {
 
   constructor(capacity: number) {
     this.capacity = capacity;
-    this.plate = new WeaponPlate("paintball-rifle-hud", "PAINTBALL", "paintball", ACCENT, capacity);
+    this.plate = new WeaponPlate("paintball-rifle-hud", "PAINTBALL", "paintball", ACCENT, capacity, "paintball");
     this.balls = createPips(this.plate.ammo, BALLS, "ball", PAINT);
   }
 

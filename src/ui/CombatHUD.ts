@@ -47,6 +47,8 @@ export class CombatHUD {
   private readonly healthFill = document.getElementById("health-fill")!;
   private readonly healthGhost = document.getElementById("health-ghost")!;
   private readonly healthValue = document.getElementById("health-value")!;
+  private readonly healthMax = document.getElementById("health-max")!;
+  private readonly nameTag = document.getElementById("buddy-name")!;
   private readonly vignette = document.getElementById("damage-vignette")!;
   private readonly lowHpVignette = document.getElementById("lowhp-vignette")!;
   private readonly healFlash = document.getElementById("heal-flash")!;
@@ -72,6 +74,8 @@ export class CombatHUD {
   private lastVignetteShown = -1;
   private lastLowHpShown = -1;
   private lastHpShown = -1;
+  private lastMaxShown = -1;
+  private lastName = "";
   private healTimer = 0;
   private healFlashOpacity = 0;
   private lastHealFlashShown = -1;
@@ -98,6 +102,14 @@ export class CombatHUD {
         lastAngleDeg: 361,
       });
     }
+  }
+
+  /** Player name on the card's name tag (upper-cased, change-detected). */
+  setPlayerName(name: string): void {
+    const text = name.trim().toUpperCase() || "PLAYER";
+    if (text === this.lastName) return;
+    this.lastName = text;
+    this.nameTag.textContent = text;
   }
 
   // DOM writes only on actual state changes (same discipline as the rest).
@@ -195,6 +207,11 @@ export class CombatHUD {
     // ---- HP tube + number + portrait mood ----
     const hp = Math.ceil(health.current);
     const ratio = Math.max(0, Math.min(1, health.ratio));
+    const max = Math.round(health.max);
+    if (max !== this.lastMaxShown) {
+      this.lastMaxShown = max;
+      this.healthMax.textContent = `/${max}`;
+    }
     if (hp !== this.lastHpShown) {
       const healed = this.lastHpShown >= 0 && hp > this.lastHpShown;
       const hadValue = this.lastHpShown >= 0;

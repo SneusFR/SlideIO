@@ -1,0 +1,446 @@
+/* ==========================================================================
+   WEAPON PLATES (bottom-right) — one compact family, one identity per weapon.
+
+   Common anatomy (fixed 170 × 72 box, y down — same numbers as the paint
+   profiles in src/ui/paint/paintProfiles.ts):
+
+        ┌ badge ┐ ╭─ TAB (name) ──╮
+        │  gun  │ │  32 /32        │   ← matte charcoal face, thin cream edge
+        └───────┘ ╰────────────────╯
+           ╭── RAIL: the ammo, drawn as the weapon's own object ──╮
+
+   Per-weapon identity = [data-icon] overrides of the --pl-* variables below
+   (silhouette of the tab / face, material, accent) + its own reactions.
+   Paintball and Poison also carry a 3D paint layer (<canvas class="wpn-paint">).
+   ========================================================================== */
+.wpn-plate {
+  --pl-ink: #0e0d12;
+  --pl-cream: #f7f1e6;
+  --pl-cream-lo: #e4dac6;
+  --pl-text: #f4f1ea;
+  --pl-face: #17151c;
+  --pl-face-hi: #1f1d26;
+  --pl-rail: #100f15;
+  --pl-edge: var(--pl-cream);
+  --pl-tab-ink: var(--pl-ink);
+  --pl-tab-clip: none;
+  --pl-tab-radius: 11px;
+  --pl-face-radius: 11px 12px 12px 4px;
+  --pl-rail-radius: 11px;
+  position: relative;
+  display: none;
+  width: 170px;
+  height: 72px;
+  flex: none;
+  font-family: var(--hud-font);
+  color: var(--pl-text);
+}
+.wpn-plate.is-visible { display: block; }
+
+/* The body is the positioning frame of tab / face / count / rail. */
+.wpn-body { position: absolute; inset: 0; }
+
+/* Charcoal face with a thin cream edge and one small hard shadow. */
+.wpn-body::before {
+  content: "";
+  position: absolute;
+  left: 49px;
+  top: 20px;
+  width: 120px;
+  height: 30px;
+  box-sizing: border-box;
+  background: var(--pl-face);
+  border: 2px solid var(--pl-edge);
+  border-bottom: 0;
+  border-radius: var(--pl-face-radius);
+  box-shadow: 0 3px 0 rgba(8, 7, 12, 0.5);
+}
+
+/* ---- TAB: the weapon name, hanging over the face ---- */
+.wpn-ribbon {
+  position: absolute;
+  left: 46px;
+  top: 0;
+  width: max-content;
+  min-width: 86px;
+  max-width: 128px;
+  padding: 0 10px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  background: var(--wpn);
+  border-radius: var(--pl-tab-radius);
+  clip-path: var(--pl-tab-clip);
+  box-shadow: 0 0 0 2px var(--pl-ink), 0 3px 0 2px rgba(8, 7, 12, 0.5);
+  z-index: 2;
+}
+.wpn-name {
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+  color: var(--pl-tab-ink);
+  transform: translateY(1px);
+}
+
+/* ---- Count: dynamic values, first priority ---- */
+.wpn-main { position: absolute; inset: 0; }
+.wpn-count {
+  position: absolute;
+  left: 66px;
+  top: 21px;
+  height: 30px;
+  display: flex;
+  align-items: baseline;
+  padding-top: 3px;
+  box-sizing: border-box;
+  z-index: 2;
+}
+.wpn-count-value {
+  display: inline-block;
+  font-size: 27px;
+  line-height: 1;
+  color: var(--pl-text);
+  transform-origin: 50% 80%;
+}
+.wpn-count-max {
+  margin-left: 3px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--pl-cream-lo);
+  opacity: 0.9;
+}
+
+/* ---- Badge: small cream blob with the weapon silhouette ---- */
+.wpn-badge {
+  position: absolute;
+  left: 0;
+  top: 12px;
+  width: 49px;
+  height: 43px;
+  z-index: 3;
+}
+.wpn-badge-face {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  background: var(--pl-cream);
+  border: 3px solid var(--pl-ink);
+  border-radius: 52% 48% 50% 50% / 56% 56% 44% 44%;
+  box-shadow: 0 3px 0 rgba(8, 7, 12, 0.5);
+}
+.wpn-icon-art {
+  width: 33px;
+  height: 33px;
+  transform: rotate(-4deg);
+}
+.wpn-badge-face .wpn-icon-art path,
+.wpn-badge-face .wpn-icon-art circle,
+.wpn-badge-face .wpn-icon-art ellipse,
+.wpn-badge-face .wpn-icon-art rect { stroke: none; }
+
+/* Reload ring around the badge (determinate or spinning). */
+.wpn-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  opacity: 0;
+  background: conic-gradient(var(--wpn) calc(var(--p, 0) * 1%), rgba(14, 13, 18, 0.55) 0);
+  -webkit-mask: radial-gradient(closest-side, transparent 80%, #000 82%);
+  mask: radial-gradient(closest-side, transparent 80%, #000 82%);
+  transition: opacity 0.15s ease;
+}
+.wpn-ring.on { opacity: 1; }
+.wpn-ring.spin {
+  background: repeating-conic-gradient(var(--wpn) 0 22deg, rgba(14, 13, 18, 0.55) 22deg 45deg);
+  animation: rays-spin 1.1s linear infinite;
+}
+
+/* ---- Rail: the ammo (30..164 × 50..72) ---- */
+.wpn-ammo {
+  position: absolute;
+  left: 30px;
+  top: 50px;
+  width: 134px;
+  height: 22px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding: 0 8px 0 14px;
+  background: var(--pl-rail);
+  border: 2px solid var(--pl-edge);
+  border-radius: var(--pl-rail-radius);
+  box-shadow: 0 3px 0 rgba(8, 7, 12, 0.5);
+  z-index: 1;
+}
+
+/* 3D paint canvas: aligned on the plate box, above everything but the stamp. */
+.wpn-paint {
+  position: absolute;
+  pointer-events: none;
+  z-index: 4;
+}
+
+/* ---- States ---- */
+.wpn-plate.low .wpn-count-value { color: #ff8a70; animation: hp-heartbeat 0.6s ease-in-out infinite; }
+.wpn-plate.reloading .wpn-count-value { color: var(--pl-cream-lo); opacity: 0.7; }
+.wpn-plate.reloading .wpn-name { animation: ticker-breathe 0.8s ease-in-out infinite; }
+
+/* ---- Family animations (one-shot, restarted by replayAnim a/b) ---- */
+.wpn-plate.enter-a { animation: plate-enter-a 0.4s cubic-bezier(0.2, 1.4, 0.4, 1); }
+.wpn-plate.enter-b { animation: plate-enter-b 0.4s cubic-bezier(0.2, 1.4, 0.4, 1); }
+@keyframes plate-enter-a { 0% { transform: translateY(26px) scale(0.92); opacity: 0; } 100% { transform: none; opacity: 1; } }
+@keyframes plate-enter-b { 0% { transform: translateY(26px) scale(0.92); opacity: 0; } 100% { transform: none; opacity: 1; } }
+
+.wpn-badge.kick-a { animation: badge-kick-a 0.2s cubic-bezier(0.3, 1.5, 0.5, 1); }
+.wpn-badge.kick-b { animation: badge-kick-b 0.2s cubic-bezier(0.3, 1.5, 0.5, 1); }
+@keyframes badge-kick-a { 0% { transform: translate(-2px, 1px) rotate(-5deg) scale(0.95); } 100% { transform: none; } }
+@keyframes badge-kick-b { 0% { transform: translate(-2px, 1px) rotate(-5deg) scale(0.95); } 100% { transform: none; } }
+
+.wpn-badge-face.refilled-a { animation: face-refill-a 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.wpn-badge-face.refilled-b { animation: face-refill-b 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes face-refill-a { 0% { transform: scale(0.75) rotate(-90deg); } 100% { transform: none; } }
+@keyframes face-refill-b { 0% { transform: scale(0.75) rotate(-90deg); } 100% { transform: none; } }
+
+.wpn-count-value.tick-a { animation: count-tick-a 0.16s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.wpn-count-value.tick-b { animation: count-tick-b 0.16s cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes count-tick-a { 0% { transform: scale(1.12, 0.9) translateY(1px); } 100% { transform: none; } }
+@keyframes count-tick-b { 0% { transform: scale(1.12, 0.9) translateY(1px); } 100% { transform: none; } }
+
+/* Rubber stamp ("RELOAD!", "TOO HOT!"): a flat pill on the face, no rotation noise. */
+.wpn-stamp {
+  position: absolute;
+  right: 6px;
+  top: 24px;
+  padding: 2px 8px 1px;
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: 0.6px;
+  white-space: nowrap;
+  color: #ff6a5a;
+  background: var(--pl-ink);
+  border: 2px solid #ff6a5a;
+  border-radius: 8px;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+.wpn-plate.stamp-a .wpn-stamp { animation: stamp-slam-a 0.8s cubic-bezier(0.2, 1.6, 0.4, 1) forwards; }
+.wpn-plate.stamp-b .wpn-stamp { animation: stamp-slam-b 0.8s cubic-bezier(0.2, 1.6, 0.4, 1) forwards; }
+@keyframes stamp-slam-a { 0% { transform: scale(1.8); opacity: 0; } 20% { transform: scale(1); opacity: 1; } 75% { opacity: 1; } 100% { transform: translateY(-4px); opacity: 0; } }
+@keyframes stamp-slam-b { 0% { transform: scale(1.8); opacity: 0; } 20% { transform: scale(1); opacity: 1; } 75% { opacity: 1; } 100% { transform: translateY(-4px); opacity: 0; } }
+
+/* Overheat (plasma): the face turns red and trembles, steam off the badge. */
+.wpn-plate.overheat .wpn-body::before { background: #5c1a14; animation: plate-shake 0.22s linear infinite; }
+.wpn-plate.overheat .wpn-ribbon { background: #ff5a4e; }
+.wpn-plate.overheat .wpn-badge::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -6px;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border-radius: 50%;
+  background: rgba(247, 241, 230, 0.8);
+  animation: steam-puff 0.9s ease-out infinite;
+}
+@keyframes plate-shake { 0%, 100% { transform: translate(0); } 25% { transform: translate(-1px, 0.5px); } 75% { transform: translate(1px, -0.5px); } }
+@keyframes steam-puff { 0% { transform: translateY(6px) scale(0.5); opacity: 0; } 30% { opacity: 1; } 100% { transform: translateY(-14px) scale(1.2); opacity: 0; } }
+
+/* ---- Ammo objects (.on = loaded). One replayAnim name: "pip". ---- */
+.ammo-pips { display: flex; align-items: center; gap: 2px; }
+.ammo-pip { position: relative; flex: none; transition: opacity 0.15s ease, filter 0.15s ease; }
+.ammo-pip:not(.on) { opacity: 0.22; filter: grayscale(1) brightness(0.55); }
+.ammo-pip.group-end { margin-right: 4px; }
+.ammo-pip.on.pip-a { animation: pip-refill-a 0.32s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.ammo-pip.on.pip-b { animation: pip-refill-b 0.32s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.ammo-pip:not(.on).pip-a { animation: pip-spent-a 0.26s ease-out; }
+.ammo-pip:not(.on).pip-b { animation: pip-spent-b 0.26s ease-out; }
+@keyframes pip-refill-a { 0% { transform: scale(0.2) translateY(5px); } 100% { transform: none; } }
+@keyframes pip-refill-b { 0% { transform: scale(0.2) translateY(5px); } 100% { transform: none; } }
+@keyframes pip-spent-a { 0% { transform: scale(1.4); opacity: 1; filter: brightness(1.5); } 100% { transform: none; } }
+@keyframes pip-spent-b { 0% { transform: scale(1.4); opacity: 1; filter: brightness(1.5); } 100% { transform: none; } }
+
+/* ==========================================================================
+   IDENTITIES — each weapon: silhouette (tab / face / rail), material, accent,
+   ammo object and its own reaction. Shared: size, ammo position, type.
+   ========================================================================== */
+
+/* PAINTBALL — matte charcoal, pigment pink tab, glossy paint balls in the
+   rail (the hopper), 3D pink / cyan / yellow paint on the edges. */
+.ammo-ball { gap: 1.5px; }
+.ammo-ball .ammo-pip {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.9) 0 14%, rgba(255, 255, 255, 0) 30%),
+    radial-gradient(circle at 62% 74%, rgba(0, 0, 0, 0.28), rgba(0, 0, 0, 0) 55%),
+    var(--pip, var(--wpn));
+  box-shadow: 0 1.5px 0 rgba(0, 0, 0, 0.55);
+}
+
+/* POPCORN — warm kernel-yellow tab with a scalloped bottom edge, puffs that
+   jump off the rail when the shell is fired. */
+.wpn-plate[data-icon="popcorn"] {
+  --pl-face: #231a14;
+  --pl-edge: #fff3c4;
+  --pl-tab-clip: polygon(0 0, 100% 0, 100% 78%, 92% 100%, 83% 80%, 75% 100%, 66% 80%, 58% 100%, 50% 80%, 42% 100%, 33% 80%, 25% 100%, 17% 80%, 8% 100%, 0 78%);
+  --pl-tab-radius: 6px;
+  --pl-rail: #1b1410;
+}
+.ammo-puff { gap: 0; }
+.ammo-puff .ammo-pip { width: 22px; height: 18px; color: var(--pip, #fff3c4); }
+.ammo-puff .ammo-pip svg { width: 100%; height: 100%; display: block; }
+.ammo-puff .ammo-pip:not(.on).pip-a { animation: puff-fly-a 0.4s ease-out; }
+.ammo-puff .ammo-pip:not(.on).pip-b { animation: puff-fly-b 0.4s ease-out; }
+@keyframes puff-fly-a { 0% { transform: translateY(-12px) rotate(-24deg) scale(1.25); opacity: 1; filter: none; } 100% { transform: none; } }
+@keyframes puff-fly-b { 0% { transform: translateY(-12px) rotate(24deg) scale(1.25); opacity: 1; filter: none; } 100% { transform: none; } }
+
+/* WATER FAMAS — glass TANK: blue-black face, the rail is a glass tube with a
+   sloshing level, one droplet per burst. */
+.wpn-plate[data-icon="water"] {
+  --pl-face: #0e2230;
+  --pl-rail: #0a1a26;
+  --pl-edge: #bdefff;
+  --pl-tab-radius: 11px 11px 4px 11px;
+}
+.ammo-drop { gap: 3px; margin-left: 5px; }
+.ammo-drop .ammo-pip {
+  width: 9px;
+  height: 9px;
+  border-radius: 0 50% 50% 50%;
+  transform: rotate(45deg);
+  background: radial-gradient(circle at 62% 62%, rgba(255, 255, 255, 0.85) 0 14%, rgba(255, 255, 255, 0) 30%), #38c6ff;
+}
+.ammo-drop .ammo-pip.on.pip-a,
+.ammo-drop .ammo-pip.on.pip-b { animation: drop-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.ammo-drop .ammo-pip:not(.on).pip-a,
+.ammo-drop .ammo-pip:not(.on).pip-b { animation: none; }
+@keyframes drop-pop { 0% { transform: rotate(45deg) scale(0.2); } 100% { transform: rotate(45deg); } }
+
+/* FRISBEE — orange: the big disc on the DECK flies off, the cage is a stack
+   of discs seen edge-on. Tab = bevelled disc profile. */
+.wpn-plate[data-icon="frisbee"] {
+  --pl-face: #20150f;
+  --pl-edge: #ffd0a8;
+  --pl-tab-clip: polygon(7% 0, 93% 0, 100% 50%, 93% 100%, 7% 100%, 0 50%);
+  --pl-tab-radius: 4px;
+}
+.ammo-deck .ammo-pip {
+  width: 26px;
+  height: 11px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at 50% 42%, #ffd0a8 0 28%, rgba(255, 208, 168, 0) 31%), var(--pip, #ff8a3d);
+  box-shadow: 0 1.5px 0 rgba(0, 0, 0, 0.55);
+}
+.ammo-deck .ammo-pip:not(.on).pip-a { animation: disc-fly-a 0.4s ease-out; }
+.ammo-deck .ammo-pip:not(.on).pip-b { animation: disc-fly-b 0.4s ease-out; }
+@keyframes disc-fly-a { 0% { transform: translate(-14px, -9px) rotate(-18deg); opacity: 1; filter: none; } 100% { transform: none; } }
+@keyframes disc-fly-b { 0% { transform: translate(-14px, -9px) rotate(-18deg); opacity: 1; filter: none; } 100% { transform: none; } }
+.ammo-stack { gap: 2px; margin-left: 6px; }
+.ammo-stack .ammo-pip { width: 5px; height: 14px; border-radius: 2px; background: linear-gradient(90deg, #ffd0a8, #ff8a3d); }
+
+/* REVOLVER — parchment, square tab, brass cartridges. */
+.wpn-plate[data-icon="revolver"] {
+  --pl-edge: #e8d3a8;
+  --pl-tab-radius: 4px;
+  --pl-face-radius: 5px 12px 12px 4px;
+  --pl-rail-radius: 6px;
+}
+.wpn-plate[data-icon="revolver"] .wpn-name { color: #2a2118; }
+.ammo-bullet { gap: 4px; }
+.ammo-bullet .ammo-pip { width: 7px; height: 15px; border-radius: 4px 4px 1px 1px / 7px 7px 1px 1px; background: linear-gradient(90deg, #f7d77e, #c9962e); }
+
+/* BASS BLASTER — boombox: speaker-grille face, magenta tab, EQ-stripe gauge
+   that dances while the music reloads. */
+.wpn-plate[data-icon="bass"] {
+  --pl-face: #1d1020;
+  --pl-edge: #ffd1ee;
+  --pl-tab-radius: 7px;
+}
+.wpn-plate[data-icon="bass"] .wpn-body::before {
+  background: radial-gradient(circle, rgba(255, 122, 200, 0.16) 1.2px, transparent 1.6px) 0 0 / 6px 6px, var(--pl-face);
+}
+
+/* POISON — flask: green-black face, slow 3D ooze, bubbling tube. */
+.wpn-plate[data-icon="poison"] {
+  --pl-face: #10190f;
+  --pl-edge: #effde6;
+  --pl-tab-radius: 11px 11px 11px 4px;
+}
+
+/* HEAT (plasma rifle) — bean-green tab, tube green → orange → red. */
+.wpn-plate[data-icon="heat"] {
+  --pl-face: #15170f;
+  --pl-edge: #e9f3c4;
+}
+
+/* ---- Liquid gauges inside the rail (water / poison / heat / eq) ---- */
+.ammo-gauge {
+  --liq: var(--wpn);
+  position: relative;
+  flex: 1;
+  min-width: 40px;
+  height: 11px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.gauge-liquid {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--liq);
+  transform-origin: left center;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.gauge-wave {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--level, 100%) - 4px);
+  width: 8px;
+  background: radial-gradient(ellipse at 50% 50%, var(--liq) 45%, transparent 50%);
+  background-size: 8px 7px;
+  animation: wave-bob 0.9s ease-in-out infinite;
+}
+@keyframes wave-bob { 0%, 100% { background-position: 0 0; } 50% { background-position: 0 3px; } }
+.gauge-shine { display: none; }
+.gauge-water { --liq: #38c6ff; }
+.gauge-poison { --liq: #7bff4d; }
+.gauge-poison::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 70%, rgba(255, 255, 255, 0.6) 0 1.2px, transparent 2px),
+    radial-gradient(circle at 58% 62%, rgba(255, 255, 255, 0.5) 0 1.2px, transparent 2px),
+    radial-gradient(circle at 82% 74%, rgba(255, 255, 255, 0.55) 0 1px, transparent 2px);
+  animation: bubbles-rise 1.6s linear infinite;
+}
+@keyframes bubbles-rise { from { transform: translateY(4px); opacity: 1; } to { transform: translateY(-6px); opacity: 0; } }
+.gauge-heat { --liq: #a8d94a; }
+.wpn-plate.hot .gauge-heat { --liq: #ff8a3d; }
+.wpn-plate.overheat .gauge-heat,
+.wpn-plate.low .gauge-heat { --liq: #ff4a36; }
+.gauge-eq { --liq: #ff7ac8; }
+.gauge-eq .gauge-liquid { background: repeating-linear-gradient(90deg, #ff7ac8 0 6px, transparent 6px 8px); }
+.wpn-plate.reloading .gauge-eq .gauge-liquid { animation: eq-dance 0.4s steps(2) infinite; }
+@keyframes eq-dance { 50% { filter: brightness(1.3); } }
+.wpn-plate.low .ammo-gauge { animation: ticker-blink 0.6s ease-in-out infinite; }
+.wpn-plate.overheat .ammo-gauge { animation: none; }
+
+/* Size on screen: the module (badge → paint) is ~15 % of the screen width in
+   the reference (275 px of 1816). The plate is authored at 170 px, so scale it
+   by width bands (same technique as the rest of the HUD). */
+.wpn-plate { zoom: 1.66; }
+@media (max-width: 1699px) { .wpn-plate { zoom: 1.4; } }
+@media (max-width: 1280px), (max-height: 720px) { .wpn-plate { zoom: 1.3; } }
+@media (min-width: 2400px) { .wpn-plate { zoom: 2; } }
+/* Room on the right for the paint that hangs past the plate (reference: ~38 px margin). */
+#weapon-row { padding-right: 56px; margin-bottom: 24px; }

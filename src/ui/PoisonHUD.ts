@@ -22,7 +22,7 @@ export class PoisonHUD {
   private lastVisible: boolean | null = null;
 
   constructor() {
-    this.plate = new WeaponPlate("poison-hud", "POISON", "poison", ACCENT, null);
+    this.plate = new WeaponPlate("poison-hud", "POISON", "poison", ACCENT, null, "poison");
     this.setLevel = createGauge(this.plate.ammo, "poison");
   }
 
