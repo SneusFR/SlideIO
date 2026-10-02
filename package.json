@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "test:animation-loop": "node scripts/test-animation-loop.mjs",
+    "test:givre": "node scripts/test-givre-map-physics.mjs",
     "test:popcorn": "npx --prefix backend tsx scripts/test-popcorn-shotgun.mts",
     "test:paintball": "npx --prefix backend tsx scripts/test-paintball-rifle.mts",
     "test:famas": "npx --prefix backend tsx scripts/test-water-famas.mts",

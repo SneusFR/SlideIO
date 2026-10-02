@@ -20,6 +20,20 @@ export const CollisionGroups = {
   CHARACTER: (0x0004 << 16) | 0xffff,
   /** Ragdoll parts: member of bit 1, collides with the world bit only. */
   RAGDOLL: (0x0002 << 16) | 0x0001,
+  /**
+   * PLAYER CLIP volumes (GIVRE low-roof blockers): member of bit 3,
+   * interacts with the CHARACTER bit ONLY. Character controllers (player +
+   * bots, no query filter) are stopped by them; ragdolls fall through, and
+   * every query using SHOT_QUERY — or a world-bit-only filter such as the
+   * weapons' `(0xffff << 16) | 0x0001` — ignores them, so shots and lines
+   * of sight pass straight through.
+   */
+  PLAYER_CLIP: (0x0008 << 16) | 0x0004,
+  /**
+   * Query groups for shots / lines of sight: everything EXCEPT the player
+   * clip bit. On maps without clips this is identical to "no filter".
+   */
+  SHOT_QUERY: (0xffff << 16) | (0xffff & ~0x0008),
 } as const;
 
 /**
@@ -63,6 +77,8 @@ export class PhysicsWorld {
    * Optional quaternion rotation for ramps.
    * `phaseable: true` marks the wall as traversable by the Phase Dash —
    * an explicit opt-in so future maps can be designed around the mechanic.
+   * `collisionGroups` overrides the default (world) interaction groups —
+   * e.g. CollisionGroups.PLAYER_CLIP for character-only blockers.
    */
   addStaticBox(
     x: number,
@@ -72,13 +88,14 @@ export class PhysicsWorld {
     sizeY: number,
     sizeZ: number,
     rotation?: { x: number; y: number; z: number; w: number },
-    options?: { phaseable?: boolean },
+    options?: { phaseable?: boolean; collisionGroups?: number },
   ): RAPIER.Collider {
     const desc = RAPIER.ColliderDesc.cuboid(sizeX / 2, sizeY / 2, sizeZ / 2)
       .setTranslation(x, y, z)
       .setFriction(0)
       .setRestitution(0);
     if (rotation) desc.setRotation(rotation);
+    if (options?.collisionGroups !== undefined) desc.setCollisionGroups(options.collisionGroups);
     const collider = this.world.createCollider(desc);
     if (options?.phaseable) this.phaseableHandles.add(collider.handle);
     return collider;

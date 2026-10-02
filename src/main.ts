@@ -66,6 +66,11 @@ async function main(): Promise<void> {
   menu.onChangeLobby = () => browser.open();
   // FPS LIMIT (settings popover): pure loop pacing — applies live.
   menu.onFpsCapChange = (maxFps) => game.setFpsCap(maxFps);
+  // OUTLINE (settings popover, Givre only): cel-shading knobs — live.
+  if (game.hasOutline) {
+    menu.onOutlineChange = (settings) => game.applyOutlineSettings(settings);
+    menu.enableOutlineSettings();
+  }
 
   browser.onCreate = () => lobby.open();
   browser.onJoinByCode = () => lobby.open();

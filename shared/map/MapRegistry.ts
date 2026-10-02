@@ -16,11 +16,22 @@ import {
   type HazardZone,
 } from "./YardColliders";
 import { YARD_SPAWN_POINTS } from "./YardSpawns";
+import { GIVRE_COLLIDER_BOXES } from "./GivreColliders";
+import { GIVRE_SPAWN_POINTS } from "./GivreSpawns";
 
 /** Stable network identity of every playable map. */
 export enum MapId {
   JUNGLE = "JUNGLE",
   YARD = "YARD",
+  GIVRE = "GIVRE",
+}
+
+/** Horizontal playable bounds (XZ, metres) — leaving them = out of the world. */
+export interface MapEnvelope {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
 }
 
 export function isMapId(raw: unknown): raw is MapId {
@@ -42,6 +53,8 @@ export interface MapDefinition {
   hazards: HazardZone[];
   /** Y below which a player is out of the world (safety respawn / death). */
   killPlaneY: number;
+  /** Optional XZ envelope: outside it counts like falling below the kill plane. */
+  envelope?: MapEnvelope;
 }
 
 export const MAP_REGISTRY: Record<MapId, MapDefinition> = {
@@ -62,6 +75,19 @@ export const MAP_REGISTRY: Record<MapId, MapDefinition> = {
     // The acid pool floor sits at −3 m; the arena never goes lower. Keep a
     // margin so ragdolls/knockbacks never trip it accidentally.
     killPlaneY: -25,
+  },
+  [MapId.GIVRE]: {
+    id: MapId.GIVRE,
+    name: "GIVRE",
+    // givre_01 (src/assets/MAP/Givre) — playerClips are client-side only:
+    // they block characters, never shots, so they are NOT in this list.
+    colliderBoxes: GIVRE_COLLIDER_BOXES,
+    spawnPoints: GIVRE_SPAWN_POINTS,
+    hazards: [],
+    // Flat ground at Y = 0 over the whole 280 × 280 m envelope.
+    killPlaneY: -10,
+    // expansion.mapEnvelope of givre_01.physics.json (280 × 280 m, centred).
+    envelope: { minX: -140, maxX: 140, minZ: -140, maxZ: 140 },
   },
 };
 

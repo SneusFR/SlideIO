@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { PhysicsWorld, RAPIER } from "../physics/PhysicsWorld";
+import { PhysicsWorld, RAPIER, CollisionGroups } from "../physics/PhysicsWorld";
 import { ParticleSystem } from "../effects/ParticleSystem";
 import { Combatant } from "../combat/Combatant";
 import { KillMethod } from "../combat/KillMethod";
@@ -179,6 +179,7 @@ export class BotManager {
         Math.max(dist - 0.35, 0.05),
         true,
         RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC, // walls only
+        CollisionGroups.SHOT_QUERY, // player-only clips (Givre) never occlude
       );
       if (hit === null) return true;
     }

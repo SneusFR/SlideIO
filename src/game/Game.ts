@@ -11,10 +11,20 @@ import { YardSky } from "../world/YardSky";
 import { YardConfig as yardCfg } from "../world/YardConfig";
 import { SpaceSky } from "../world/SpaceSky";
 import { SpaceConfig as spaceCfg } from "../world/SpaceConfig";
+import { GivreMap } from "../world/GivreMap";
+import { GivreSky } from "../world/GivreSky";
+import { GivreConfig as givreCfg } from "../world/GivreConfig";
 import { loadMapSelection } from "../world/MapSelection";
-import { MapId } from "../../shared/map/MapRegistry";
+import { MapId, MAP_REGISTRY, type MapEnvelope } from "../../shared/map/MapRegistry";
 import { YARD_SPAWN_POINTS } from "../../shared/map/YardSpawns";
-import { JUNGLE_NAV_BOUNDS, YARD_NAV_BOUNDS } from "../navigation/NavGrid";
+import { GIVRE_SPAWN_POINTS } from "../../shared/map/GivreSpawns";
+import { GIVRE_NAV_BOUNDS, JUNGLE_NAV_BOUNDS, YARD_NAV_BOUNDS } from "../navigation/NavGrid";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { FXAAPass } from "three/examples/jsm/postprocessing/FXAAPass.js";
+import { GivreOutlinePass, defaultOutlineExclude } from "../effects/GivreOutlinePass";
+import { loadOutlineSettings, type OutlineSettings } from "./OutlineSettings";
 import { InteractHUD } from "../ui/InteractHUD";
 import { DebugHUD } from "../ui/DebugHUD";
 import { WeaponHUD } from "../ui/WeaponHUD";
@@ -155,8 +165,30 @@ export class Game {
   private particles: ParticleSystem;
   private rifle: PlasmaRifle;
   private targets: TargetManager;
-  /** The active map's sky backdrop (SpaceSky on Jungle, YardSky on Yard). */
-  private spaceSky: SpaceSky | YardSky | null = null;
+  /** The active map's sky backdrop (SpaceSky on Jungle, YardSky on Yard, GivreSky on Givre). */
+  private spaceSky: SpaceSky | YardSky | GivreSky | null = null;
+
+  // ---- GIVRE map extras (null on the other maps) ----
+  /**
+   * Post-processing chain (GIVRE only — Jungle/Yard keep their direct
+   * renderer.render path untouched):
+   *   world RenderPass → world GivreOutlinePass → FP viewmodel overlay
+   *   → FP GivreOutlinePass → OutputPass (sRGB) → FXAA (LOW preset only).
+   */
+  private composer: EffectComposer | null = null;
+  private worldRenderPass: RenderPass | null = null;
+  private worldOutline: GivreOutlinePass | null = null;
+  private fpOverlayPass: RenderPass | null = null;
+  private fpOutline: GivreOutlinePass | null = null;
+  /** Live cel-shading settings (menu SETTINGS → OUTLINE). */
+  private outlineSettings: OutlineSettings = loadOutlineSettings();
+  /** Collider (magenta) / playerClip (cyan) wireframes — toggled with KeyH. */
+  private colliderDebug: THREE.Object3D | null = null;
+  /** Per-map out-of-world rules (MapRegistry): kill plane + optional XZ envelope. */
+  private readonly killPlaneY: number;
+  private readonly envelope: MapEnvelope | undefined;
+  /** Camera far plane of the active map (Givre's mountains sit kilometres away). */
+  private readonly cameraFar: number;
 
   // ---- YARD map extras (null on the Jungle map) ----
   /** Which map this Game instance runs (fixed for the whole session). */
@@ -409,11 +441,16 @@ export class Game {
   private constructor(
     container: HTMLElement,
     physics: PhysicsWorld,
-    map: JungleMap | YardMap,
+    map: JungleMap | YardMap | GivreMap,
     mapId: MapId,
   ) {
     this.physics = physics;
     this.mapId = mapId;
+    const mapDef = MAP_REGISTRY[mapId];
+    this.killPlaneY = mapDef.killPlaneY;
+    this.envelope = mapDef.envelope;
+    const isGivre = mapId === MapId.GIVRE;
+    this.cameraFar = isGivre ? givreCfg.cameraFar : 400;
 
     // Quality preset (auto-detected iGPU → LOW, override in the Escape
     // menu): resolution cap, MSAA, shadow budget — see GraphicsQuality.
@@ -460,6 +497,17 @@ export class Game {
       this.renderer.toneMappingExposure = yardCfg.toneMappingExposure;
       this.spaceSky = new YardSky();
       this.scene.add(this.spaceSky.group);
+    } else if (isGivre) {
+      // GIVRE: flat alpine midday — sRGB output WITHOUT tone mapping (the
+      // concept's "Standard" view), no distance fog (the mountains must stay
+      // crisp), gradient sky sphere (see GivreConfig).
+      this.scene.background = new THREE.Color(givreCfg.backgroundColor);
+      this.scene.fog = null;
+      this.renderer.toneMapping = THREE.NoToneMapping;
+      this.renderer.toneMappingExposure = 1;
+      this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+      this.spaceSky = new GivreSky();
+      this.scene.add(this.spaceSky.group);
     } else {
       // JUNGLE: deep-space night — near-black clear color + a very light
       // violet-blue distance haze (never a ground fog).
@@ -474,6 +522,13 @@ export class Game {
     // Map visuals + exact Rapier colliders were already loaded/created in
     // Game.create (async) — just attach the group.
     this.scene.add(map.group);
+    if (map instanceof GivreMap) {
+      // Out-of-bounds mountains + debug wireframes are added to the SCENE
+      // (not map.group) so they never join the beam-raycast hittables.
+      this.scene.add(map.backdrop);
+      this.scene.add(map.colliderDebug);
+      this.colliderDebug = map.colliderDebug;
+    }
 
     // Navigation must be built from STATIC geometry only — before any
     // character capsule (player or bot) exists in the physics world.
@@ -482,11 +537,21 @@ export class Game {
     // cell would be walkable (bots frozen in place).
     this.physics.refreshQueries();
     const isYard = mapId === MapId.YARD;
-    this.nav = new NavGrid(this.physics, isYard ? YARD_NAV_BOUNDS : JUNGLE_NAV_BOUNDS);
-    this.spawner = new SpawnManager(this.physics, isYard ? YARD_SPAWN_POINTS : undefined);
+    this.nav = new NavGrid(
+      this.physics,
+      isYard ? YARD_NAV_BOUNDS : isGivre ? GIVRE_NAV_BOUNDS : JUNGLE_NAV_BOUNDS,
+    );
+    this.spawner = new SpawnManager(
+      this.physics,
+      isYard ? YARD_SPAWN_POINTS : isGivre ? GIVRE_SPAWN_POINTS : undefined,
+    );
 
     this.input = new InputManager(this.renderer.domElement);
     this.fpsCamera = new FPSCamera(window.innerWidth / window.innerHeight);
+    if (this.cameraFar !== this.fpsCamera.camera.far) {
+      this.fpsCamera.camera.far = this.cameraFar;
+      this.fpsCamera.camera.updateProjectionMatrix();
+    }
     // Camera must be in the scene graph so the weapon view model renders.
     this.scene.add(this.fpsCamera.camera);
     this.player = new PlayerController(this.physics);
@@ -496,6 +561,11 @@ export class Game {
     if (isYard) {
       const s = YARD_SPAWN_POINTS[0];
       this.player.setPosition(s.x, s.y + 0.3, s.z);
+    } else if (isGivre) {
+      // GIVRE: first spawn of the Stock room, facing the room centre.
+      const s = GIVRE_SPAWN_POINTS[0];
+      this.player.setPosition(s.x, s.y + 0.3, s.z);
+      this.fpsCamera.yaw = s.yaw;
     }
     this.movement = new PlayerMovement(this.player, this.input, this.fpsCamera);
     this.hud = new DebugHUD();
@@ -506,9 +576,10 @@ export class Game {
 
     // ---- Weapon / targets / effects ----
     this.particles = new ParticleSystem(this.scene);
-    // YARD has NO training targets (per the map design) — the manager
-    // still exists so weapon adapters keep working against empty lists.
-    this.targets = new TargetManager(this.particles, !isYard);
+    // YARD / GIVRE have NO training targets (the Jungle targets sit at
+    // Jungle coordinates) — the manager still exists so weapon adapters
+    // keep working against empty lists.
+    this.targets = new TargetManager(this.particles, !isYard && !isGivre);
     this.scene.add(this.targets.group);
 
     // ---- YARD: animations + acid + terminals (ONE instance per map) ----
@@ -589,6 +660,8 @@ export class Game {
     // no second rig, no second mixer; the selection is fed by applyLoadout.
     this.viewmodelSystem.setArmsReadyHook((arms) => this.fpOutfit.setTarget(arms));
     this.fpOutfit.setSelection(loadCharacterCosmetics());
+    // GIVRE: cel-shading post-processing chain (needs the FP scene/camera).
+    if (isGivre) this.buildGivreComposer();
 
     // ---- Brick Maul (melee): grounded WHIRLWIND + airborne Ground Slam ----
     this.shockwave = new Shockwave(this.scene);
@@ -1062,7 +1135,110 @@ export class Game {
       // The FP camera keeps its own projection (reference vertical FOV) —
       // its aspect must follow every resize too (16:9, 4:3, 21:9…).
       this.viewmodelSystem.setAspect(window.innerWidth / window.innerHeight);
+      // GIVRE post chain: composer buffers + every pass follow the canvas.
+      this.composer?.setSize(window.innerWidth, window.innerHeight);
     });
+  }
+
+  /**
+   * GIVRE post-processing chain (see the `composer` field):
+   *   1. RenderPass(world)            → HDR linear buffer (+ depth/stencil:
+   *                                     the enemy outline stencil keeps working)
+   *   2. GivreOutlinePass(world)      → white rim over the world
+   *   3. RenderPass(FP scene) overlay → arms + weapon, ONE depth clear (same
+   *                                     contract as ViewmodelSystem.render)
+   *   4. GivreOutlinePass(FP scene)   → the weapon gets its rim too (reference)
+   *   5. OutputPass                   → sRGB conversion AFTER the outlines
+   *   6. FXAAPass (LOW only)          → the composer path has no MSAA; HIGH
+   *                                     uses 4× MSAA buffers instead.
+   * renderer.info.autoReset is turned off so the debug HUD counts every pass
+   * of the frame (reset manually once per frame in frame()).
+   */
+  private buildGivreComposer(): void {
+    const quality = getQualitySettings();
+    const size = this.renderer.getSize(new THREE.Vector2());
+    const ratio = this.renderer.getPixelRatio();
+    const target = new THREE.WebGLRenderTarget(size.x * ratio, size.y * ratio, {
+      type: THREE.HalfFloatType,
+      depthBuffer: true,
+      stencilBuffer: true, // enemy outline = stencil-masked inverted hull
+      samples: quality.antialias ? 4 : 0,
+    });
+    target.texture.name = "GivreComposer.rt";
+    const composer = new EffectComposer(this.renderer, target);
+
+    const world = new RenderPass(this.scene, this.fpsCamera.camera);
+    composer.addPass(world);
+
+    const o = givreCfg.outline;
+    const worldOutline = new GivreOutlinePass(this.scene, this.fpsCamera.camera, o);
+    // Opaque gameplay overlays (enemy red hull, HP bars…) are never outlined.
+    worldOutline.exclude = (obj) =>
+      defaultOutlineExclude(obj) || obj.userData.enemyOutline === true;
+    composer.addPass(worldOutline);
+
+    const fpScene = this.viewmodelSystem.scene;
+    const fpCamera = this.viewmodelSystem.camera;
+    const fpOverlay = new RenderPass(fpScene, fpCamera);
+    fpOverlay.clear = false; // keep the world colour…
+    fpOverlay.clearDepth = true; // …but give the FP scene its own depth
+    composer.addPass(fpOverlay);
+
+    const fpOutline = new GivreOutlinePass(fpScene, fpCamera, o);
+    fpOutline.outlineSky = false; // the FP scene has no sky: only weapon creases
+    fpOutline.debugMode = "OVERLAY";
+    composer.addPass(fpOutline);
+
+    composer.addPass(new OutputPass());
+    if (!quality.antialias) composer.addPass(new FXAAPass());
+
+    this.composer = composer;
+    this.worldRenderPass = world;
+    this.worldOutline = worldOutline;
+    this.fpOverlayPass = fpOverlay;
+    this.fpOutline = fpOutline;
+    this.renderer.info.autoReset = false;
+    this.applyOutlineSettings(this.outlineSettings);
+
+    // DEV builds only (`npm run dev`): live tuning / verification handle —
+    //   givreDebug.world.normalThreshold = 0.3   (any GivreOutlinePass knob)
+    //   givreDebug.apply({ enabled: false })     (same path as the menu)
+    //   givreDebug.colliders(true)               (same overlay as KeyH)
+    //   givreDebug.renderInfo()                  (whole composer frame)
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).givreDebug = {
+        world: worldOutline,
+        fp: fpOutline,
+        apply: (s: Partial<OutlineSettings>) =>
+          this.applyOutlineSettings({ ...this.outlineSettings, ...s }),
+        colliders: (on: boolean) => {
+          if (this.colliderDebug) this.colliderDebug.visible = on;
+        },
+        renderInfo: () => ({ ...this.renderer.info.render }),
+      };
+    }
+  }
+
+  /**
+   * Live cel-shading settings (menu SETTINGS → OUTLINE, persisted by the
+   * menu). No-op outside Givre. Thickness is in CSS pixels.
+   */
+  applyOutlineSettings(settings: OutlineSettings): void {
+    this.outlineSettings = { ...settings };
+    const ratio = this.renderer.getPixelRatio();
+    for (const pass of [this.worldOutline, this.fpOutline]) {
+      if (!pass) continue;
+      pass.enabled = settings.enabled || settings.debugEdges;
+      pass.thickness = settings.thickness;
+      pass.intensity = settings.intensity;
+      pass.debugEdges = settings.debugEdges;
+      pass.setPixelRatio(ratio);
+    }
+  }
+
+  /** True when the active map has the cel-shading outline (menu visibility). */
+  get hasOutline(): boolean {
+    return this.worldOutline !== null;
   }
 
   static async create(container: HTMLElement): Promise<Game> {
@@ -1075,7 +1251,11 @@ export class Game {
     // graphics-quality preset).
     const mapId = loadMapSelection();
     const map =
-      mapId === MapId.YARD ? await YardMap.create(physics) : await JungleMap.create(physics);
+      mapId === MapId.YARD
+        ? await YardMap.create(physics)
+        : mapId === MapId.GIVRE
+          ? await GivreMap.create(physics)
+          : await JungleMap.create(physics);
     return new Game(container, physics, map, mapId);
   }
 
@@ -1263,6 +1443,9 @@ export class Game {
     for (let i = 0; i < 2; i++) {
       this.renderer.render(this.scene, this.fpsCamera.camera);
     }
+    // GIVRE: compile the post chain (outline normal pre-pass programs,
+    // composer targets) with everything forced visible too.
+    if (this.composer) this.renderComposer();
 
     // FP scene warm-up: force the arms + mounted weapon visible for a few
     // frames so their shaders compile and textures upload NOW — the first
@@ -1272,6 +1455,7 @@ export class Game {
     this.viewmodelSystem.setVisible(true);
     this.viewmodelSystem.syncCamera(this.fpsCamera.camera);
     for (let i = 0; i < 2; i++) this.viewmodelSystem.render(this.renderer);
+    if (this.composer) this.renderComposer(); // FP overlay + FP outline programs
     // Brick Maul: when it is NOT the current FP owner, mount it for the
     // warm frames too (its shaders/textures compile now, never on the first
     // melee attack), then hand the arms back to the real owner.
@@ -1318,6 +1502,8 @@ export class Game {
     if (this.staticShadows) {
       this.renderer.shadowMap.needsUpdate = true;
       this.renderer.render(this.scene, this.fpsCamera.camera);
+      // The baked pass must not leave a stale info count on the composer path.
+      if (this.composer) this.renderer.info.reset();
     }
 
     // 4. Cleanup: transient warm objects removed, pools back at rest.
@@ -1911,7 +2097,7 @@ export class Game {
       48,
       window.innerWidth / window.innerHeight,
       0.1,
-      400,
+      this.cameraFar,
     );
     const onResize = () => {
       camera.aspect = window.innerWidth / window.innerHeight;
@@ -1959,7 +2145,7 @@ export class Game {
     this.spaceSky?.update(dt, p.elapsed, p.camera);
     this.yardEffects?.update(dt, null);
 
-    this.renderer.render(this.scene, p.camera);
+    this.renderWorld(p.camera);
   }
 
   /**
@@ -1998,7 +2184,7 @@ export class Game {
         p.camera.quaternion.slerpQuaternions(startQuat, targetQuat, e);
         p.camera.fov = startFov + (targetFov - startFov) * e;
         p.camera.updateProjectionMatrix();
-        this.renderer.render(this.scene, p.camera);
+        this.renderWorld(p.camera);
         if (t >= 1) {
           // Three r185 queues the next rAF AFTER this callback returns,
           // even if setAnimationLoop(null) was called inside it. Stopping
@@ -2046,6 +2232,33 @@ export class Game {
     if (!p) return;
     this.menuPreview = null;
     window.removeEventListener("resize", p.onResize);
+  }
+
+  /**
+   * GIVRE composer frame. `camera` overrides the world camera (menu preview
+   * / play transition); the FP overlay is skipped then (no arms in the
+   * cinematic shots) and when the viewmodel is hidden (same rule as
+   * ViewmodelSystem.render).
+   */
+  private renderComposer(camera: THREE.PerspectiveCamera = this.fpsCamera.camera): void {
+    const composer = this.composer;
+    if (!composer || !this.worldRenderPass) return;
+    this.renderer.info.reset(); // autoReset is off: one reset per frame
+    this.worldRenderPass.camera = camera;
+    if (this.worldOutline) this.worldOutline.camera = camera;
+    const fpOn = camera === this.fpsCamera.camera && this.viewmodelSystem.visible;
+    if (this.fpOverlayPass) this.fpOverlayPass.enabled = fpOn;
+    if (this.fpOutline) {
+      const s = this.outlineSettings;
+      this.fpOutline.enabled = fpOn && (s.enabled || s.debugEdges);
+    }
+    composer.render();
+  }
+
+  /** World frame through whichever path the map uses (composer on Givre). */
+  private renderWorld(camera: THREE.PerspectiveCamera): void {
+    if (this.composer) this.renderComposer(camera);
+    else this.renderer.render(this.scene, camera);
   }
 
   /** Rebuild the beam raycast list after the bot roster changes. */
@@ -2124,6 +2337,9 @@ export class Game {
       if (this.input.wasPressed("KeyH")) {
         this.hitboxDebug = !this.hitboxDebug;
         this.playerCombatant.setHitboxDebug(this.hitboxDebug);
+        // GIVRE: same debug toggle shows the static colliders (magenta)
+        // and the character-only player clips (cyan) as wireframes.
+        if (this.colliderDebug) this.colliderDebug.visible = this.hitboxDebug;
       }
       // Applied every frame (state-guarded, free) so bots added later from
       // the Escape menu inherit the current debug state automatically.
@@ -2664,17 +2880,26 @@ export class Game {
       // warmUpRendering). No per-frame refresh: the caster re-render was the
       // single most expensive fixed pass AND its every-other-frame cadence
       // created the short/long frame judder that felt like 30 FPS.
-      this.renderer.render(this.scene, cam);
-      // Debug HUD GPU stats: renderer.info is reset by every render() call,
-      // so the WORLD pass numbers must be captured right here.
-      this.hud.sampleRenderInfo(this.renderer);
-      // FP pass (migrated viewmodel weapons — HexSniper / Brick Maul):
-      // follows the FINAL game-camera pose (spin included), ONE depth clear,
-      // arms + weapon drawn together over the world color. Legacy
-      // camera-attached viewmodels already rendered inside the world pass
-      // above (no double draw — each weapon renders on exactly one path).
-      this.viewmodelSystem.syncCamera(cam);
-      this.viewmodelSystem.render(this.renderer);
+      if (this.composer) {
+        // GIVRE: world + outline + FP overlay + FP outline + sRGB output in
+        // ONE composer render (see buildGivreComposer). info.autoReset is
+        // off on this path, so the HUD numbers cover EVERY pass of the frame.
+        this.viewmodelSystem.syncCamera(cam);
+        this.renderComposer();
+        this.hud.sampleRenderInfo(this.renderer);
+      } else {
+        this.renderer.render(this.scene, cam);
+        // Debug HUD GPU stats: renderer.info is reset by every render() call,
+        // so the WORLD pass numbers must be captured right here.
+        this.hud.sampleRenderInfo(this.renderer);
+        // FP pass (migrated viewmodel weapons — HexSniper / Brick Maul):
+        // follows the FINAL game-camera pose (spin included), ONE depth clear,
+        // arms + weapon drawn together over the world color. Legacy
+        // camera-attached viewmodels already rendered inside the world pass
+        // above (no double draw — each weapon renders on exactly one path).
+        this.viewmodelSystem.syncCamera(cam);
+        this.viewmodelSystem.render(this.renderer);
+      }
     } finally {
       if (spinning) {
         cam.quaternion.copy(this.spinBaseQuat);
@@ -2923,7 +3148,15 @@ export class Game {
   private handleSafety(): void {
     if (!this.playerCombatant.health.alive) return;
     this.player.getPosition(this.playerPos);
-    const fellOut = this.playerPos.y < cfg.killPlaneY;
+    // Per-map kill plane (MapRegistry) + optional XZ envelope (Givre).
+    const env = this.envelope;
+    const fellOut =
+      this.playerPos.y < this.killPlaneY ||
+      (env !== undefined &&
+        (this.playerPos.x < env.minX ||
+          this.playerPos.x > env.maxX ||
+          this.playerPos.z < env.minZ ||
+          this.playerPos.z > env.maxZ));
     // MULTIPLAYER: death is SERVER-authoritative — no manual R respawn and
     // no local kill. Falling out of the world just recovers to a spawn pad
     // (position is client-reported in this phase).

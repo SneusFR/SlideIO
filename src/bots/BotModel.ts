@@ -230,6 +230,7 @@ export class BotModel {
     this.nameLabel.visible = cc.enemyNameVisible;
     this.healthBar.add(barBg, this.healthFill, this.nameLabel);
     this.healthBar.visible = false; // hidden until the player actually sees the bot
+    this.healthBar.userData.noOutline = true; // 3D HUD: never cel-outlined (Givre)
     // UI planes must NEVER count as body hits for beam raycasts.
     barBg.raycast = NO_RAYCAST;
     this.healthFill.raycast = NO_RAYCAST;

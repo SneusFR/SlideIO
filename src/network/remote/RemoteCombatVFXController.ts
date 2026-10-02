@@ -296,6 +296,7 @@ export class RemoteCombatVFXController {
     // Opaque MeshBasicMaterial (obliterreur tube core).
     const coreMat = new THREE.MeshBasicMaterial({ color: 0x0a0312 });
     const core = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6), coreMat);
+    core.userData.noOutline = true; // opaque VFX: never cel-outlined (Givre)
     core.position.set(far.x, far.y, far.z);
     core.frustumCulled = false;
     this.scene.add(core);

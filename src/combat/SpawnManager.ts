@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { PhysicsWorld, RAPIER } from "../physics/PhysicsWorld";
+import { PhysicsWorld, RAPIER, CollisionGroups } from "../physics/PhysicsWorld";
 import { Combatant } from "./Combatant";
 import { CombatConfig as cc } from "./CombatConfig";
 import { MAP_SPAWN_POINTS, type MapSpawnPoint } from "../../shared/map/MapSpawns";
@@ -85,6 +85,7 @@ export class SpawnManager {
       Math.max(dist - 0.9, 0.1),
       true,
       RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC,
+      CollisionGroups.SHOT_QUERY, // player-only clips (Givre) never block sight
     );
     return hit === null; // no wall in between → visible
   }

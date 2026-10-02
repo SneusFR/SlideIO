@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { RAPIER } from "../physics/PhysicsWorld";
+import { RAPIER, CollisionGroups } from "../physics/PhysicsWorld";
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import { Combatant } from "../combat/Combatant";
 import { HeatSystem } from "../weapons/HeatSystem";
@@ -269,6 +269,7 @@ export class BotAI {
     // Only STATIC geometry blocks vision. Character capsules are kinematic
     // and must be excluded — otherwise the ray instantly hits the bot's own
     // capsule (the eye is inside it) and the bot is permanently blind.
+    // SHOT_QUERY: player-only clips (Givre) never block vision.
     const hit = ctx.physics.world.castRay(
       new RAPIER.Ray(
         { x: this.selfEye.x, y: this.selfEye.y, z: this.selfEye.z },
@@ -277,6 +278,7 @@ export class BotAI {
       Math.max(dist - 0.2, 0.05),
       true,
       RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC,
+      CollisionGroups.SHOT_QUERY,
     );
     return hit === null;
   }

@@ -44,6 +44,19 @@ export const YARD_NAV_BOUNDS: NavGridBounds = {
   minFloorY: -0.5,
 };
 
+/** GIVRE 01 (280 × 280 m, perimeter buildings at ±140, North gallery at
+ *  +6 m). maxFloorY 6.2 keeps the gallery walkable but excludes the
+ *  covered traverse roof (6.3 m); the low roofs P1/Q1 (4 m) are excluded
+ *  by their player clips (the ground ray starts inside them). */
+export const GIVRE_NAV_BOUNDS: NavGridBounds = {
+  minX: -138,
+  maxX: 138,
+  minZ: -138,
+  maxZ: 138,
+  maxFloorY: 6.2,
+  minFloorY: -0.5,
+};
+
 export class NavGrid {
   private static readonly CELL = 1.5;
   /** Max ground-height difference between adjacent cells (Jungle ramps

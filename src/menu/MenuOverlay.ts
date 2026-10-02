@@ -33,6 +33,11 @@ import {
   mapDisplayName,
   nextMapId,
 } from "../world/MapSelection";
+import {
+  loadOutlineSettings,
+  saveOutlineSettings,
+  type OutlineSettings,
+} from "../game/OutlineSettings";
 
 /**
  * MenuOverlay — the new Beanzo.io main menu: a pure DOM overlay rendered
@@ -66,6 +71,8 @@ export class MenuOverlay {
   onLeaveGame: (() => void) | null = null;
   /** FPS LIMIT changed: effective maxFps (Infinity = uncapped) — live. */
   onFpsCapChange: ((maxFps: number) => void) | null = null;
+  /** OUTLINE settings changed (Givre cel-shading) — live. */
+  onOutlineChange: ((settings: OutlineSettings) => void) | null = null;
 
   /** Current display name (persisted guest identity). */
   playerName: string;
@@ -350,6 +357,69 @@ export class MenuOverlay {
       sizeSlider.removeEventListener("input", onSize);
       colorInput.removeEventListener("input", onColor);
       colorReset.removeEventListener("click", onReset);
+    });
+  }
+
+  /**
+   * OUTLINE section (Givre cel-shading): ON/OFF, thickness (0.5–3 px),
+   * intensity (0–100 %) and the session-only EDGE DEBUG view. Applied LIVE
+   * through onOutlineChange and persisted (debug excluded). The section is
+   * hidden until enableOutlineSettings() is called (Givre map only).
+   */
+  enableOutlineSettings(): void {
+    const section = document.getElementById("menu-outline-section");
+    const toggleBtn = document.getElementById("menu-outline-btn") as HTMLButtonElement | null;
+    const debugBtn = document.getElementById("menu-outline-debug-btn") as HTMLButtonElement | null;
+    const thickSlider = document.getElementById("menu-outline-thickness") as HTMLInputElement | null;
+    const thickValue = document.getElementById("menu-outline-thickness-value");
+    const intSlider = document.getElementById("menu-outline-intensity") as HTMLInputElement | null;
+    const intValue = document.getElementById("menu-outline-intensity-value");
+    if (!section || !toggleBtn || !debugBtn || !thickSlider || !intSlider) return;
+    section.classList.remove("hidden");
+
+    let settings: OutlineSettings = loadOutlineSettings();
+    const render = () => {
+      toggleBtn.textContent = `CEL OUTLINE: ${settings.enabled ? "ON" : "OFF"}`;
+      debugBtn.textContent = `EDGE DEBUG: ${settings.debugEdges ? "ON" : "OFF"}`;
+      thickSlider.value = String(Math.round(settings.thickness * 100));
+      if (thickValue) thickValue.textContent = `${settings.thickness.toFixed(2)} px`;
+      intSlider.value = String(Math.round(settings.intensity * 100));
+      if (intValue) intValue.textContent = `${Math.round(settings.intensity * 100)}%`;
+    };
+    const commit = () => {
+      render();
+      saveOutlineSettings(settings);
+      this.onOutlineChange?.(settings);
+    };
+    render();
+
+    const onToggle = () => {
+      this.sounds.click();
+      settings = { ...settings, enabled: !settings.enabled };
+      commit();
+    };
+    const onDebug = () => {
+      this.sounds.click();
+      settings = { ...settings, debugEdges: !settings.debugEdges };
+      commit();
+    };
+    const onThickness = () => {
+      settings = { ...settings, thickness: Number(thickSlider.value) / 100 };
+      commit();
+    };
+    const onIntensity = () => {
+      settings = { ...settings, intensity: Number(intSlider.value) / 100 };
+      commit();
+    };
+    toggleBtn.addEventListener("click", onToggle);
+    debugBtn.addEventListener("click", onDebug);
+    thickSlider.addEventListener("input", onThickness);
+    intSlider.addEventListener("input", onIntensity);
+    this.cleanups.push(() => {
+      toggleBtn.removeEventListener("click", onToggle);
+      debugBtn.removeEventListener("click", onDebug);
+      thickSlider.removeEventListener("input", onThickness);
+      intSlider.removeEventListener("input", onIntensity);
     });
   }
 

@@ -1,0 +1,5240 @@
+{
+  "formatVersion": 2,
+  "name": "Givre - Station alpine",
+  "map": "givre_01",
+  "units": "metres",
+  "coordinateSystem": "right-handed Y-up; already converted from Blender (X,Z,-Y); north = -Z, east = +X",
+  "generatedFrom": "src/assets/MAP/Givre/source/givre_01.source.physics.json",
+  "player": {
+    "height": 1.8,
+    "capsuleRadius": 0.35,
+    "capsuleHalfHeight": 0.55
+  },
+  "colliders": [
+    {
+      "id": "COL_BAT_CS1_00",
+      "type": "cuboid",
+      "position": [
+        -36.95,
+        4.5,
+        72.75
+      ],
+      "halfExtents": [
+        24.3,
+        4.5,
+        9.75
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_CS2_00",
+      "type": "cuboid",
+      "position": [
+        35.7,
+        4.25,
+        72.75
+      ],
+      "halfExtents": [
+        25.8,
+        4.25,
+        9.75
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_E_MID1_00",
+      "type": "cuboid",
+      "position": [
+        123.525,
+        7,
+        -52.975
+      ],
+      "halfExtents": [
+        16.475,
+        7,
+        8.275
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_E_MID2_00",
+      "type": "cuboid",
+      "position": [
+        129.55,
+        7.75,
+        -9.9
+      ],
+      "halfExtents": [
+        10.45,
+        7.75,
+        34.8
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_E_MID3_00",
+      "type": "cuboid",
+      "position": [
+        123.525,
+        7,
+        43.2
+      ],
+      "halfExtents": [
+        16.475,
+        7,
+        18.3
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_N_MID_00",
+      "type": "cuboid",
+      "position": [
+        0.125,
+        7.25,
+        -115.9
+      ],
+      "halfExtents": [
+        61.375,
+        7.25,
+        9.1
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_P1_00",
+      "type": "cuboid",
+      "position": [
+        -36.95,
+        2,
+        -68.975
+      ],
+      "halfExtents": [
+        24.3,
+        2,
+        14.275
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_P3_00",
+      "type": "cuboid",
+      "position": [
+        -55.475,
+        4.75,
+        -43.95
+      ],
+      "halfExtents": [
+        9.775,
+        4.75,
+        17.3
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_PE1_00",
+      "type": "cuboid",
+      "position": [
+        133.5,
+        7.5,
+        -93.125
+      ],
+      "halfExtents": [
+        6.5,
+        7.5,
+        31.875
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_PE3_00",
+      "type": "cuboid",
+      "position": [
+        133.5,
+        7.5,
+        93.25
+      ],
+      "halfExtents": [
+        6.5,
+        7.5,
+        31.75
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_PN1_00",
+      "type": "cuboid",
+      "position": [
+        -100.625,
+        8,
+        -132.5
+      ],
+      "halfExtents": [
+        39.375,
+        8,
+        7.5
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_PN2_00",
+      "type": "cuboid",
+      "position": [
+        0.125,
+        9,
+        -132.5
+      ],
+      "halfExtents": [
+        61.375,
+        9,
+        7.5
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_PN3_00",
+      "type": "cuboid",
+      "position": [
+        100.75,
+        8.25,
+        -132.5
+      ],
+      "halfExtents": [
+        39.25,
+        8.25,
+        7.5
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_PS1_00",
+      "type": "cuboid",
+      "position": [
+        -100.625,
+        8,
+        132.5
+      ],
+      "halfExtents": [
+        39.375,
+        8,
+        7.5
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_PS2A_00",
+      "type": "cuboid",
+      "position": [
+        -30.625,
+        6.75,
+        122.525
+      ],
+      "halfExtents": [
+        30.625,
+        6.75,
+        17.475
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_PS2B_00",
+      "type": "cuboid",
+      "position": [
+        30.75,
+        7.5,
+        122.525
+      ],
+      "halfExtents": [
+        30.75,
+        7.5,
+        17.475
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_PS3_00",
+      "type": "cuboid",
+      "position": [
+        100.75,
+        8.25,
+        132.5
+      ],
+      "halfExtents": [
+        39.25,
+        8.25,
+        7.5
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_PW1_00",
+      "type": "cuboid",
+      "position": [
+        -133.5,
+        7.5,
+        -93.125
+      ],
+      "halfExtents": [
+        6.5,
+        7.5,
+        31.875
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_PW3_00",
+      "type": "cuboid",
+      "position": [
+        -133.5,
+        7.5,
+        93.25
+      ],
+      "halfExtents": [
+        6.5,
+        7.5,
+        31.75
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_Q1_00",
+      "type": "cuboid",
+      "position": [
+        35.7,
+        2,
+        -68.975
+      ],
+      "halfExtents": [
+        25.8,
+        2,
+        14.275
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_Q3_00",
+      "type": "cuboid",
+      "position": [
+        73.025,
+        5.25,
+        -52.975
+      ],
+      "halfExtents": [
+        11.525,
+        5.25,
+        8.275
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_Q4_00",
+      "type": "cuboid",
+      "position": [
+        53.75,
+        4.75,
+        -43.95
+      ],
+      "halfExtents": [
+        7.75,
+        4.75,
+        17.3
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_R1_00",
+      "type": "cuboid",
+      "position": [
+        53.75,
+        4.5,
+        18.675
+      ],
+      "halfExtents": [
+        7.75,
+        4.5,
+        22.825
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_R2_00",
+      "type": "cuboid",
+      "position": [
+        73.025,
+        5,
+        33.2
+      ],
+      "halfExtents": [
+        11.525,
+        5,
+        8.3
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_SB_00",
+      "type": "cuboid",
+      "position": [
+        -74,
+        4,
+        51.75
+      ],
+      "halfExtents": [
+        11.25,
+        4,
+        9.75
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_T1_00",
+      "type": "cuboid",
+      "position": [
+        -31.375,
+        3.3,
+        39.25
+      ],
+      "halfExtents": [
+        18.725,
+        3.3,
+        2.25
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_T2_00",
+      "type": "cuboid",
+      "position": [
+        27.95,
+        3.3,
+        39.25
+      ],
+      "halfExtents": [
+        18.05,
+        3.3,
+        2.25
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_TW_00",
+      "type": "cuboid",
+      "position": [
+        -64,
+        2.5,
+        37.5
+      ],
+      "halfExtents": [
+        1.25,
+        2.5,
+        4.5
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_WB_00",
+      "type": "cuboid",
+      "position": [
+        -55.475,
+        4,
+        3.625
+      ],
+      "halfExtents": [
+        9.775,
+        4,
+        7.775
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_W_LOW_00",
+      "type": "cuboid",
+      "position": [
+        -123.375,
+        6.25,
+        40.45
+      ],
+      "halfExtents": [
+        16.625,
+        6.25,
+        21.05
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_BAT_W_MID_00",
+      "type": "cuboid",
+      "position": [
+        -113.375,
+        7,
+        -20.925
+      ],
+      "halfExtents": [
+        26.625,
+        7,
+        40.325
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Atelier_Caisses_00",
+      "type": "cuboid",
+      "position": [
+        -69.608,
+        1.2,
+        113.604
+      ],
+      "halfExtents": [
+        2.408,
+        1.2,
+        2.496
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Atelier_Caisses_01",
+      "type": "cuboid",
+      "position": [
+        -70.984,
+        0.6,
+        108.036
+      ],
+      "halfExtents": [
+        3.784,
+        0.6,
+        1.536
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Atelier_Caisses_02",
+      "type": "cuboid",
+      "position": [
+        -74.51,
+        0.65,
+        114.372
+      ],
+      "halfExtents": [
+        1.29,
+        0.65,
+        1.728
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Atelier_Etablis_00",
+      "type": "cuboid",
+      "position": [
+        -108.6,
+        0.5,
+        79.05
+      ],
+      "halfExtents": [
+        8,
+        0.5,
+        1.65
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Atelier_Etablis_01",
+      "type": "cuboid",
+      "position": [
+        -110.3,
+        1.91,
+        79.05
+      ],
+      "halfExtents": [
+        1.5,
+        0.79,
+        1.35
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Atelier_Etablis_02",
+      "type": "cuboid",
+      "position": [
+        -110.3,
+        3.05,
+        79.05
+      ],
+      "halfExtents": [
+        0.7,
+        0.35,
+        0.75
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Atelier_Etablis_03",
+      "type": "cuboid",
+      "position": [
+        -108.6,
+        0.5,
+        72.45
+      ],
+      "halfExtents": [
+        8,
+        0.5,
+        1.65
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Atelier_Etablis_04",
+      "type": "cuboid",
+      "position": [
+        -105.18,
+        1.91,
+        72.45
+      ],
+      "halfExtents": [
+        1.5,
+        0.79,
+        1.35
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Atelier_Etablis_05",
+      "type": "cuboid",
+      "position": [
+        -105.18,
+        3.05,
+        72.45
+      ],
+      "halfExtents": [
+        0.7,
+        0.35,
+        0.75
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Chaufferie_Chaudiere_00",
+      "type": "cuboid",
+      "position": [
+        113.3,
+        0.25,
+        -100.55
+      ],
+      "halfExtents": [
+        5.5,
+        0.25,
+        7.95
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Chaufferie_Chaudiere_01",
+      "type": "cuboid",
+      "position": [
+        113.3,
+        2.25,
+        -100.55
+      ],
+      "halfExtents": [
+        5,
+        1.75,
+        7.45
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Chaufferie_Chaudiere_02",
+      "type": "cuboid",
+      "position": [
+        113.3,
+        4.3,
+        -100.55
+      ],
+      "halfExtents": [
+        5,
+        0.3,
+        7.45
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Chaufferie_Chaudiere_03",
+      "type": "cuboid",
+      "position": [
+        108.075,
+        2,
+        -100.55
+      ],
+      "halfExtents": [
+        0.225,
+        0.8,
+        1.3
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Chaufferie_Chaudiere_04",
+      "type": "convexHull",
+      "vertices": [
+        [
+          112.1,
+          4.4,
+          -106.1
+        ],
+        [
+          111.8,
+          4.4,
+          -106.02
+        ],
+        [
+          111.58,
+          4.4,
+          -105.8
+        ],
+        [
+          111.5,
+          4.4,
+          -105.5
+        ],
+        [
+          111.58,
+          4.4,
+          -105.2
+        ],
+        [
+          111.8,
+          4.4,
+          -104.98
+        ],
+        [
+          112.1,
+          4.4,
+          -104.9
+        ],
+        [
+          112.4,
+          4.4,
+          -104.98
+        ],
+        [
+          112.62,
+          4.4,
+          -105.2
+        ],
+        [
+          112.7,
+          4.4,
+          -105.5
+        ],
+        [
+          112.62,
+          4.4,
+          -105.8
+        ],
+        [
+          112.4,
+          4.4,
+          -106.02
+        ],
+        [
+          112.1,
+          8.3,
+          -106.1
+        ],
+        [
+          111.8,
+          8.3,
+          -106.02
+        ],
+        [
+          111.58,
+          8.3,
+          -105.8
+        ],
+        [
+          111.5,
+          8.3,
+          -105.5
+        ],
+        [
+          111.58,
+          8.3,
+          -105.2
+        ],
+        [
+          111.8,
+          8.3,
+          -104.98
+        ],
+        [
+          112.1,
+          8.3,
+          -104.9
+        ],
+        [
+          112.4,
+          8.3,
+          -104.98
+        ],
+        [
+          112.62,
+          8.3,
+          -105.2
+        ],
+        [
+          112.7,
+          8.3,
+          -105.5
+        ],
+        [
+          112.62,
+          8.3,
+          -105.8
+        ],
+        [
+          112.4,
+          8.3,
+          -106.02
+        ]
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Chaufferie_Chaudiere_05",
+      "type": "convexHull",
+      "vertices": [
+        [
+          114.5,
+          4.4,
+          -96.6
+        ],
+        [
+          114.25,
+          4.4,
+          -96.533
+        ],
+        [
+          114.067,
+          4.4,
+          -96.35
+        ],
+        [
+          114,
+          4.4,
+          -96.1
+        ],
+        [
+          114.067,
+          4.4,
+          -95.85
+        ],
+        [
+          114.25,
+          4.4,
+          -95.667
+        ],
+        [
+          114.5,
+          4.4,
+          -95.6
+        ],
+        [
+          114.75,
+          4.4,
+          -95.667
+        ],
+        [
+          114.933,
+          4.4,
+          -95.85
+        ],
+        [
+          115,
+          4.4,
+          -96.1
+        ],
+        [
+          114.933,
+          4.4,
+          -96.35
+        ],
+        [
+          114.75,
+          4.4,
+          -96.533
+        ],
+        [
+          114.5,
+          6.6,
+          -96.6
+        ],
+        [
+          114.25,
+          6.6,
+          -96.533
+        ],
+        [
+          114.067,
+          6.6,
+          -96.35
+        ],
+        [
+          114,
+          6.6,
+          -96.1
+        ],
+        [
+          114.067,
+          6.6,
+          -95.85
+        ],
+        [
+          114.25,
+          6.6,
+          -95.667
+        ],
+        [
+          114.5,
+          6.6,
+          -95.6
+        ],
+        [
+          114.75,
+          6.6,
+          -95.667
+        ],
+        [
+          114.933,
+          6.6,
+          -95.85
+        ],
+        [
+          115,
+          6.6,
+          -96.1
+        ],
+        [
+          114.933,
+          6.6,
+          -96.35
+        ],
+        [
+          114.75,
+          6.6,
+          -96.533
+        ]
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Chaufferie_Chaudiere_06",
+      "type": "convexHull",
+      "vertices": [
+        [
+          114.5,
+          6.6,
+          -95.6
+        ],
+        [
+          114.5,
+          6.35,
+          -95.667
+        ],
+        [
+          114.5,
+          6.167,
+          -95.85
+        ],
+        [
+          114.5,
+          6.1,
+          -96.1
+        ],
+        [
+          114.5,
+          6.167,
+          -96.35
+        ],
+        [
+          114.5,
+          6.35,
+          -96.533
+        ],
+        [
+          114.5,
+          6.6,
+          -96.6
+        ],
+        [
+          114.5,
+          6.85,
+          -96.533
+        ],
+        [
+          114.5,
+          7.033,
+          -96.35
+        ],
+        [
+          114.5,
+          7.1,
+          -96.1
+        ],
+        [
+          114.5,
+          7.033,
+          -95.85
+        ],
+        [
+          114.5,
+          6.85,
+          -95.667
+        ],
+        [
+          126.4,
+          6.6,
+          -95.6
+        ],
+        [
+          126.4,
+          6.35,
+          -95.667
+        ],
+        [
+          126.4,
+          6.167,
+          -95.85
+        ],
+        [
+          126.4,
+          6.1,
+          -96.1
+        ],
+        [
+          126.4,
+          6.167,
+          -96.35
+        ],
+        [
+          126.4,
+          6.35,
+          -96.533
+        ],
+        [
+          126.4,
+          6.6,
+          -96.6
+        ],
+        [
+          126.4,
+          6.85,
+          -96.533
+        ],
+        [
+          126.4,
+          7.033,
+          -96.35
+        ],
+        [
+          126.4,
+          7.1,
+          -96.1
+        ],
+        [
+          126.4,
+          7.033,
+          -95.85
+        ],
+        [
+          126.4,
+          6.85,
+          -95.667
+        ]
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Chaufferie_Cuve_00",
+      "type": "cuboid",
+      "position": [
+        78.275,
+        1.4,
+        -113.6
+      ],
+      "halfExtents": [
+        6.475,
+        1.4,
+        4
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CouloirOuest_Bloc1_00",
+      "type": "cuboid",
+      "position": [
+        -82.15,
+        1.3,
+        -35.95
+      ],
+      "halfExtents": [
+        4.6,
+        1.3,
+        6.45
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CouloirOuest_Bloc2_00",
+      "type": "cuboid",
+      "position": [
+        -69.85,
+        1.3,
+        6.65
+      ],
+      "halfExtents": [
+        4.6,
+        1.3,
+        5.95
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CourCentrale_BlocCentral_00",
+      "type": "convexHull",
+      "vertices": [
+        [
+          -5.1,
+          0,
+          1.9
+        ],
+        [
+          6.3,
+          0,
+          1.9
+        ],
+        [
+          8.9,
+          0,
+          -0.7
+        ],
+        [
+          8.9,
+          0,
+          -11.1
+        ],
+        [
+          6.3,
+          0,
+          -13.7
+        ],
+        [
+          -5.1,
+          0,
+          -13.7
+        ],
+        [
+          -7.7,
+          0,
+          -11.1
+        ],
+        [
+          -7.7,
+          0,
+          -0.7
+        ],
+        [
+          -5.1,
+          2.9,
+          1.9
+        ],
+        [
+          6.3,
+          2.9,
+          1.9
+        ],
+        [
+          8.9,
+          2.9,
+          -0.7
+        ],
+        [
+          8.9,
+          2.9,
+          -11.1
+        ],
+        [
+          6.3,
+          2.9,
+          -13.7
+        ],
+        [
+          -5.1,
+          2.9,
+          -13.7
+        ],
+        [
+          -7.7,
+          2.9,
+          -11.1
+        ],
+        [
+          -7.7,
+          2.9,
+          -0.7
+        ]
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CourCentrale_Bloc_00",
+      "type": "cuboid",
+      "position": [
+        -22.4,
+        1.2,
+        -28.4
+      ],
+      "halfExtents": [
+        6,
+        1.2,
+        3
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CourCentrale_CaissesNE_00",
+      "type": "cuboid",
+      "position": [
+        33.752,
+        1.2,
+        -43.97
+      ],
+      "halfExtents": [
+        3.248,
+        1.2,
+        2.73
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CourCentrale_CaissesNE_01",
+      "type": "cuboid",
+      "position": [
+        31.896,
+        0.6,
+        -37.88
+      ],
+      "halfExtents": [
+        5.104,
+        0.6,
+        1.68
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CourCentrale_CaissesNE_02",
+      "type": "cuboid",
+      "position": [
+        27.14,
+        0.65,
+        -44.81
+      ],
+      "halfExtents": [
+        1.74,
+        0.65,
+        1.89
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CourCentrale_CaissesSO_00",
+      "type": "cuboid",
+      "position": [
+        -28.452,
+        1.2,
+        25.17
+      ],
+      "halfExtents": [
+        3.248,
+        1.2,
+        2.73
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CourCentrale_CaissesSO_01",
+      "type": "cuboid",
+      "position": [
+        -26.596,
+        0.6,
+        19.08
+      ],
+      "halfExtents": [
+        5.104,
+        0.6,
+        1.68
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CourCentrale_CaissesSO_02",
+      "type": "cuboid",
+      "position": [
+        -21.84,
+        0.65,
+        26.01
+      ],
+      "halfExtents": [
+        1.74,
+        0.65,
+        1.89
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CourLivraison_Caisses1_00",
+      "type": "cuboid",
+      "position": [
+        110.692,
+        1.2,
+        -17.336
+      ],
+      "halfExtents": [
+        2.408,
+        1.2,
+        2.236
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CourLivraison_Caisses1_01",
+      "type": "cuboid",
+      "position": [
+        109.316,
+        0.6,
+        -22.324
+      ],
+      "halfExtents": [
+        3.784,
+        0.6,
+        1.376
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CourLivraison_Caisses1_02",
+      "type": "cuboid",
+      "position": [
+        105.79,
+        0.65,
+        -16.648
+      ],
+      "halfExtents": [
+        1.29,
+        0.65,
+        1.548
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CourLivraison_Caisses2_00",
+      "type": "cuboid",
+      "position": [
+        84.748,
+        1.2,
+        -9.684
+      ],
+      "halfExtents": [
+        3.248,
+        1.2,
+        3.016
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CourLivraison_Caisses2_01",
+      "type": "cuboid",
+      "position": [
+        86.604,
+        0.6,
+        -2.956
+      ],
+      "halfExtents": [
+        5.104,
+        0.6,
+        1.856
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_CourLivraison_Caisses2_02",
+      "type": "cuboid",
+      "position": [
+        91.36,
+        0.65,
+        -10.612
+      ],
+      "halfExtents": [
+        1.74,
+        0.65,
+        2.088
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Stock_Bloc_00",
+      "type": "cuboid",
+      "position": [
+        -74,
+        1.3,
+        -113.6
+      ],
+      "halfExtents": [
+        4.45,
+        1.3,
+        4
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Stock_Caisses_00",
+      "type": "cuboid",
+      "position": [
+        -113.812,
+        1.2,
+        -87.77
+      ],
+      "halfExtents": [
+        4.088,
+        1.2,
+        2.47
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Stock_Caisses_01",
+      "type": "cuboid",
+      "position": [
+        -111.476,
+        0.6,
+        -93.28
+      ],
+      "halfExtents": [
+        6.424,
+        0.6,
+        1.52
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Stock_Caisses_02",
+      "type": "cuboid",
+      "position": [
+        -105.49,
+        0.65,
+        -87.01
+      ],
+      "halfExtents": [
+        2.19,
+        0.65,
+        1.71
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Stock_Etageres_00",
+      "type": "cuboid",
+      "position": [
+        -114,
+        2.1,
+        -123
+      ],
+      "halfExtents": [
+        7.1,
+        2.1,
+        0.9
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Stock_Etageres_01",
+      "type": "cuboid",
+      "position": [
+        -96,
+        2.1,
+        -123
+      ],
+      "halfExtents": [
+        7.1,
+        2.1,
+        0.9
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Transit_Caisses_00",
+      "type": "cuboid",
+      "position": [
+        90.148,
+        1.2,
+        107.256
+      ],
+      "halfExtents": [
+        4.648,
+        1.2,
+        2.756
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Transit_Caisses_01",
+      "type": "cuboid",
+      "position": [
+        92.804,
+        0.6,
+        113.404
+      ],
+      "halfExtents": [
+        7.304,
+        0.6,
+        1.696
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Transit_Caisses_02",
+      "type": "cuboid",
+      "position": [
+        99.61,
+        0.65,
+        106.408
+      ],
+      "halfExtents": [
+        2.49,
+        0.65,
+        1.908
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Transit_Guerite_00",
+      "type": "cuboid",
+      "position": [
+        115.8,
+        1.45,
+        77.75
+      ],
+      "halfExtents": [
+        4,
+        1.45,
+        5.95
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Transit_Guerite_01",
+      "type": "cuboid",
+      "position": [
+        115.8,
+        3.025,
+        77.75
+      ],
+      "halfExtents": [
+        4.4,
+        0.125,
+        6.35
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_COUV_Traverse_Bloc_00",
+      "type": "cuboid",
+      "position": [
+        20.65,
+        1.2,
+        58.85
+      ],
+      "halfExtents": [
+        4.95,
+        1.2,
+        4.15
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_GALERIE_GardeCorps_00",
+      "type": "convexHull",
+      "vertices": [
+        [
+          -33.6,
+          6.65,
+          -83.4
+        ],
+        [
+          -33.6,
+          6.65,
+          -83.6
+        ],
+        [
+          -12.85,
+          6.65,
+          -83.4
+        ],
+        [
+          -12.85,
+          6.65,
+          -83.6
+        ],
+        [
+          -33.6,
+          7.25,
+          -83.4
+        ],
+        [
+          -33.6,
+          7.25,
+          -83.6
+        ],
+        [
+          -12.85,
+          7.25,
+          -83.4
+        ],
+        [
+          -12.85,
+          7.25,
+          -83.6
+        ]
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_GALERIE_GardeCorps_01",
+      "type": "convexHull",
+      "vertices": [
+        [
+          10.1,
+          6.65,
+          -83.4
+        ],
+        [
+          10.1,
+          6.65,
+          -83.6
+        ],
+        [
+          33.9,
+          6.65,
+          -83.4
+        ],
+        [
+          33.9,
+          6.65,
+          -83.6
+        ],
+        [
+          10.1,
+          7.25,
+          -83.4
+        ],
+        [
+          10.1,
+          7.25,
+          -83.6
+        ],
+        [
+          33.9,
+          7.25,
+          -83.4
+        ],
+        [
+          33.9,
+          7.25,
+          -83.6
+        ]
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_GALERIE_GardeCorps_02",
+      "type": "convexHull",
+      "vertices": [
+        [
+          -48.5,
+          2.787,
+          -83.5
+        ],
+        [
+          -48.5,
+          2.787,
+          -83.7
+        ],
+        [
+          -33.8,
+          6,
+          -83.5
+        ],
+        [
+          -33.8,
+          6,
+          -83.7
+        ],
+        [
+          -48.5,
+          3.887,
+          -83.5
+        ],
+        [
+          -48.5,
+          3.887,
+          -83.7
+        ],
+        [
+          -33.8,
+          7.1,
+          -83.5
+        ],
+        [
+          -33.8,
+          7.1,
+          -83.7
+        ]
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_GALERIE_GardeCorps_03",
+      "type": "convexHull",
+      "vertices": [
+        [
+          34.1,
+          6,
+          -83.5
+        ],
+        [
+          34.1,
+          6,
+          -83.7
+        ],
+        [
+          48.7,
+          2.803,
+          -83.5
+        ],
+        [
+          48.7,
+          2.803,
+          -83.7
+        ],
+        [
+          34.1,
+          7.1,
+          -83.5
+        ],
+        [
+          34.1,
+          7.1,
+          -83.7
+        ],
+        [
+          48.7,
+          3.903,
+          -83.5
+        ],
+        [
+          48.7,
+          3.903,
+          -83.7
+        ]
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_GALERIE_GardeCorps_04",
+      "type": "convexHull",
+      "vertices": [
+        [
+          -12.4,
+          6,
+          -83.25
+        ],
+        [
+          -12.2,
+          6,
+          -83.25
+        ],
+        [
+          -12.4,
+          2.795,
+          -68
+        ],
+        [
+          -12.2,
+          2.795,
+          -68
+        ],
+        [
+          -12.4,
+          7.1,
+          -83.25
+        ],
+        [
+          -12.2,
+          7.1,
+          -83.25
+        ],
+        [
+          -12.4,
+          3.895,
+          -68
+        ],
+        [
+          -12.2,
+          3.895,
+          -68
+        ]
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_GALERIE_GardeCorps_05",
+      "type": "convexHull",
+      "vertices": [
+        [
+          9.45,
+          6,
+          -83.25
+        ],
+        [
+          9.65,
+          6,
+          -83.25
+        ],
+        [
+          9.45,
+          2.795,
+          -68
+        ],
+        [
+          9.65,
+          2.795,
+          -68
+        ],
+        [
+          9.45,
+          7.1,
+          -83.25
+        ],
+        [
+          9.65,
+          7.1,
+          -83.25
+        ],
+        [
+          9.45,
+          3.895,
+          -68
+        ],
+        [
+          9.65,
+          3.895,
+          -68
+        ]
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_GALERIE_Nord_00",
+      "type": "cuboid",
+      "position": [
+        0.15,
+        3,
+        -95.025
+      ],
+      "halfExtents": [
+        33.95,
+        3,
+        11.775
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_GALERIE_Nord_01",
+      "type": "cuboid",
+      "position": [
+        -23.225,
+        6.25,
+        -83.5
+      ],
+      "halfExtents": [
+        10.575,
+        0.25,
+        0.25
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_GALERIE_Nord_02",
+      "type": "cuboid",
+      "position": [
+        22,
+        6.25,
+        -83.5
+      ],
+      "halfExtents": [
+        12.1,
+        0.25,
+        0.25
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_MURET_CourOuest_00",
+      "type": "cuboid",
+      "position": [
+        -45.7,
+        0.6,
+        24.2
+      ],
+      "halfExtents": [
+        0.5,
+        0.6,
+        12.8
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_RAMPE_Est_00",
+      "type": "convexHull",
+      "vertices": [
+        [
+          61.5,
+          0,
+          -106.8
+        ],
+        [
+          34.1,
+          0,
+          -106.8
+        ],
+        [
+          34.1,
+          0,
+          -83.25
+        ],
+        [
+          61.5,
+          0,
+          -83.25
+        ],
+        [
+          34.1,
+          6,
+          -106.8
+        ],
+        [
+          34.1,
+          6,
+          -83.25
+        ]
+      ],
+      "purpose": "movement_ramp"
+    },
+    {
+      "id": "COL_RAMPE_Ouest_00",
+      "type": "convexHull",
+      "vertices": [
+        [
+          -61.25,
+          0,
+          -83.25
+        ],
+        [
+          -33.8,
+          0,
+          -83.25
+        ],
+        [
+          -33.8,
+          0,
+          -106.8
+        ],
+        [
+          -61.25,
+          0,
+          -106.8
+        ],
+        [
+          -33.8,
+          6,
+          -83.25
+        ],
+        [
+          -33.8,
+          6,
+          -106.8
+        ]
+      ],
+      "purpose": "movement_ramp"
+    },
+    {
+      "id": "COL_RAMPE_Sud_00",
+      "type": "convexHull",
+      "vertices": [
+        [
+          9.9,
+          0,
+          -54.7
+        ],
+        [
+          9.9,
+          0,
+          -83.25
+        ],
+        [
+          -12.65,
+          0,
+          -83.25
+        ],
+        [
+          -12.65,
+          0,
+          -54.7
+        ],
+        [
+          9.9,
+          6,
+          -83.25
+        ],
+        [
+          -12.65,
+          6,
+          -83.25
+        ]
+      ],
+      "purpose": "movement_ramp"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Cadres_00",
+      "type": "cuboid",
+      "position": [
+        -102.6,
+        2.5,
+        61.5
+      ],
+      "halfExtents": [
+        0.4,
+        2.5,
+        0.85
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Cadres_01",
+      "type": "cuboid",
+      "position": [
+        -89.4,
+        2.5,
+        61.5
+      ],
+      "halfExtents": [
+        0.4,
+        2.5,
+        0.85
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Cadres_02",
+      "type": "cuboid",
+      "position": [
+        -96,
+        5.4,
+        61.5
+      ],
+      "halfExtents": [
+        7,
+        0.4,
+        0.85
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Cadres_03",
+      "type": "cuboid",
+      "position": [
+        -61.25,
+        2.5,
+        100.4
+      ],
+      "halfExtents": [
+        0.85,
+        2.5,
+        0.4
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Cadres_04",
+      "type": "cuboid",
+      "position": [
+        -61.25,
+        2.5,
+        87.2
+      ],
+      "halfExtents": [
+        0.85,
+        2.5,
+        0.4
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Cadres_05",
+      "type": "cuboid",
+      "position": [
+        -61.25,
+        5.4,
+        93.8
+      ],
+      "halfExtents": [
+        0.85,
+        0.4,
+        7
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Murs_00",
+      "type": "cuboid",
+      "position": [
+        -115.3,
+        4,
+        61.5
+      ],
+      "halfExtents": [
+        12.3,
+        4,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Murs_01",
+      "type": "cuboid",
+      "position": [
+        -96,
+        6.9,
+        61.5
+      ],
+      "halfExtents": [
+        7,
+        1.1,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Murs_02",
+      "type": "cuboid",
+      "position": [
+        -74.825,
+        4,
+        61.5
+      ],
+      "halfExtents": [
+        14.175,
+        4,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Murs_03",
+      "type": "cuboid",
+      "position": [
+        -94.125,
+        4,
+        125
+      ],
+      "halfExtents": [
+        33.475,
+        4,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Murs_04",
+      "type": "cuboid",
+      "position": [
+        -127,
+        4,
+        93.25
+      ],
+      "halfExtents": [
+        0.6,
+        4,
+        31.15
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Murs_05",
+      "type": "cuboid",
+      "position": [
+        -61.25,
+        4,
+        112.6
+      ],
+      "halfExtents": [
+        0.6,
+        4,
+        11.8
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Murs_06",
+      "type": "cuboid",
+      "position": [
+        -61.25,
+        6.9,
+        93.8
+      ],
+      "halfExtents": [
+        0.6,
+        1.1,
+        7
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Murs_07",
+      "type": "cuboid",
+      "position": [
+        -61.25,
+        4,
+        74.45
+      ],
+      "halfExtents": [
+        0.6,
+        4,
+        12.35
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Murs_08",
+      "type": "cuboid",
+      "position": [
+        -105,
+        4,
+        87
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Murs_09",
+      "type": "cuboid",
+      "position": [
+        -83.5,
+        4,
+        87
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Murs_10",
+      "type": "cuboid",
+      "position": [
+        -105,
+        4,
+        105
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Murs_11",
+      "type": "cuboid",
+      "position": [
+        -83.5,
+        4,
+        105
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Atelier_Toit_00",
+      "type": "cuboid",
+      "position": [
+        -94.125,
+        8.4,
+        93.25
+      ],
+      "halfExtents": [
+        33.475,
+        0.4,
+        32.35
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Cadres_00",
+      "type": "cuboid",
+      "position": [
+        89.2,
+        2.5,
+        -61.25
+      ],
+      "halfExtents": [
+        0.4,
+        2.5,
+        0.85
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Cadres_01",
+      "type": "cuboid",
+      "position": [
+        102.4,
+        2.5,
+        -61.25
+      ],
+      "halfExtents": [
+        0.4,
+        2.5,
+        0.85
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Cadres_02",
+      "type": "cuboid",
+      "position": [
+        95.8,
+        5.4,
+        -61.25
+      ],
+      "halfExtents": [
+        7,
+        0.4,
+        0.85
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Cadres_03",
+      "type": "cuboid",
+      "position": [
+        61.5,
+        2.5,
+        -88.4
+      ],
+      "halfExtents": [
+        0.85,
+        2.5,
+        0.4
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Cadres_04",
+      "type": "cuboid",
+      "position": [
+        61.5,
+        2.5,
+        -101.6
+      ],
+      "halfExtents": [
+        0.85,
+        2.5,
+        0.4
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Cadres_05",
+      "type": "cuboid",
+      "position": [
+        61.5,
+        5.4,
+        -95
+      ],
+      "halfExtents": [
+        0.85,
+        0.4,
+        7
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Murs_00",
+      "type": "cuboid",
+      "position": [
+        94.25,
+        4,
+        -125
+      ],
+      "halfExtents": [
+        33.35,
+        4,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Murs_01",
+      "type": "cuboid",
+      "position": [
+        74.85,
+        4,
+        -61.25
+      ],
+      "halfExtents": [
+        13.95,
+        4,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Murs_02",
+      "type": "cuboid",
+      "position": [
+        95.8,
+        6.9,
+        -61.25
+      ],
+      "halfExtents": [
+        7,
+        1.1,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Murs_03",
+      "type": "cuboid",
+      "position": [
+        115.2,
+        4,
+        -61.25
+      ],
+      "halfExtents": [
+        12.4,
+        4,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Murs_04",
+      "type": "cuboid",
+      "position": [
+        61.5,
+        4,
+        -74.925
+      ],
+      "halfExtents": [
+        0.6,
+        4,
+        13.075
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Murs_05",
+      "type": "cuboid",
+      "position": [
+        61.5,
+        6.9,
+        -95
+      ],
+      "halfExtents": [
+        0.6,
+        1.1,
+        7
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Murs_06",
+      "type": "cuboid",
+      "position": [
+        61.5,
+        4,
+        -113.2
+      ],
+      "halfExtents": [
+        0.6,
+        4,
+        11.2
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Murs_07",
+      "type": "cuboid",
+      "position": [
+        127,
+        4,
+        -93.125
+      ],
+      "halfExtents": [
+        0.6,
+        4,
+        31.275
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Murs_08",
+      "type": "cuboid",
+      "position": [
+        81,
+        4,
+        -103
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Murs_09",
+      "type": "cuboid",
+      "position": [
+        101,
+        4,
+        -103
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Murs_10",
+      "type": "cuboid",
+      "position": [
+        81,
+        4,
+        -82.5
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Murs_11",
+      "type": "cuboid",
+      "position": [
+        101,
+        4,
+        -82.5
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Chaufferie_Toit_00",
+      "type": "cuboid",
+      "position": [
+        94.25,
+        8.4,
+        -93.125
+      ],
+      "halfExtents": [
+        33.35,
+        0.4,
+        32.475
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Cadres_00",
+      "type": "cuboid",
+      "position": [
+        -82.6,
+        2.5,
+        -61.25
+      ],
+      "halfExtents": [
+        0.4,
+        2.5,
+        0.85
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Cadres_01",
+      "type": "cuboid",
+      "position": [
+        -69.4,
+        2.5,
+        -61.25
+      ],
+      "halfExtents": [
+        0.4,
+        2.5,
+        0.85
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Cadres_02",
+      "type": "cuboid",
+      "position": [
+        -76,
+        5.4,
+        -61.25
+      ],
+      "halfExtents": [
+        7,
+        0.4,
+        0.85
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Cadres_03",
+      "type": "cuboid",
+      "position": [
+        -61.25,
+        2.5,
+        -88.4
+      ],
+      "halfExtents": [
+        0.85,
+        2.5,
+        0.4
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Cadres_04",
+      "type": "cuboid",
+      "position": [
+        -61.25,
+        2.5,
+        -101.6
+      ],
+      "halfExtents": [
+        0.85,
+        2.5,
+        0.4
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Cadres_05",
+      "type": "cuboid",
+      "position": [
+        -61.25,
+        5.4,
+        -95
+      ],
+      "halfExtents": [
+        0.85,
+        0.4,
+        7
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Murs_00",
+      "type": "cuboid",
+      "position": [
+        -94.125,
+        4,
+        -125
+      ],
+      "halfExtents": [
+        33.475,
+        4,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Murs_01",
+      "type": "cuboid",
+      "position": [
+        -105.3,
+        4,
+        -61.25
+      ],
+      "halfExtents": [
+        22.3,
+        4,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Murs_02",
+      "type": "cuboid",
+      "position": [
+        -76,
+        6.9,
+        -61.25
+      ],
+      "halfExtents": [
+        7,
+        1.1,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Murs_03",
+      "type": "cuboid",
+      "position": [
+        -64.825,
+        4,
+        -61.25
+      ],
+      "halfExtents": [
+        4.175,
+        4,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Murs_04",
+      "type": "cuboid",
+      "position": [
+        -127,
+        4,
+        -93.125
+      ],
+      "halfExtents": [
+        0.6,
+        4,
+        31.275
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Murs_05",
+      "type": "cuboid",
+      "position": [
+        -61.25,
+        4,
+        -74.925
+      ],
+      "halfExtents": [
+        0.6,
+        4,
+        13.075
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Murs_06",
+      "type": "cuboid",
+      "position": [
+        -61.25,
+        6.9,
+        -95
+      ],
+      "halfExtents": [
+        0.6,
+        1.1,
+        7
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Murs_07",
+      "type": "cuboid",
+      "position": [
+        -61.25,
+        4,
+        -113.2
+      ],
+      "halfExtents": [
+        0.6,
+        4,
+        11.2
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Murs_08",
+      "type": "cuboid",
+      "position": [
+        -105,
+        4,
+        -103.5
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Murs_09",
+      "type": "cuboid",
+      "position": [
+        -83.5,
+        4,
+        -103.5
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Murs_10",
+      "type": "cuboid",
+      "position": [
+        -105,
+        4,
+        -81.5
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Murs_11",
+      "type": "cuboid",
+      "position": [
+        -83.5,
+        4,
+        -81.5
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Stock_Toit_00",
+      "type": "cuboid",
+      "position": [
+        -94.125,
+        8.4,
+        -93.125
+      ],
+      "halfExtents": [
+        33.475,
+        0.4,
+        32.475
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Cadres_00",
+      "type": "cuboid",
+      "position": [
+        66.4,
+        2.5,
+        61.5
+      ],
+      "halfExtents": [
+        0.4,
+        2.5,
+        0.85
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Cadres_01",
+      "type": "cuboid",
+      "position": [
+        79.6,
+        2.5,
+        61.5
+      ],
+      "halfExtents": [
+        0.4,
+        2.5,
+        0.85
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Cadres_02",
+      "type": "cuboid",
+      "position": [
+        73,
+        5.4,
+        61.5
+      ],
+      "halfExtents": [
+        7,
+        0.4,
+        0.85
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Cadres_03",
+      "type": "cuboid",
+      "position": [
+        89.2,
+        2.5,
+        61.5
+      ],
+      "halfExtents": [
+        0.4,
+        2.5,
+        0.85
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Cadres_04",
+      "type": "cuboid",
+      "position": [
+        102.4,
+        2.5,
+        61.5
+      ],
+      "halfExtents": [
+        0.4,
+        2.5,
+        0.85
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Cadres_05",
+      "type": "cuboid",
+      "position": [
+        95.8,
+        5.4,
+        61.5
+      ],
+      "halfExtents": [
+        7,
+        0.4,
+        0.85
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Cadres_06",
+      "type": "cuboid",
+      "position": [
+        61.5,
+        2.5,
+        100.4
+      ],
+      "halfExtents": [
+        0.85,
+        2.5,
+        0.4
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Cadres_07",
+      "type": "cuboid",
+      "position": [
+        61.5,
+        2.5,
+        87.2
+      ],
+      "halfExtents": [
+        0.85,
+        2.5,
+        0.4
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Cadres_08",
+      "type": "cuboid",
+      "position": [
+        61.5,
+        5.4,
+        93.8
+      ],
+      "halfExtents": [
+        0.85,
+        0.4,
+        7
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Murs_00",
+      "type": "cuboid",
+      "position": [
+        63.45,
+        4,
+        61.5
+      ],
+      "halfExtents": [
+        2.55,
+        4,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Murs_01",
+      "type": "cuboid",
+      "position": [
+        73,
+        6.9,
+        61.5
+      ],
+      "halfExtents": [
+        7,
+        1.1,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Murs_02",
+      "type": "cuboid",
+      "position": [
+        84.4,
+        4,
+        61.5
+      ],
+      "halfExtents": [
+        4.4,
+        4,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Murs_03",
+      "type": "cuboid",
+      "position": [
+        95.8,
+        6.9,
+        61.5
+      ],
+      "halfExtents": [
+        7,
+        1.1,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Murs_04",
+      "type": "cuboid",
+      "position": [
+        115.2,
+        4,
+        61.5
+      ],
+      "halfExtents": [
+        12.4,
+        4,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Murs_05",
+      "type": "cuboid",
+      "position": [
+        94.25,
+        4,
+        125
+      ],
+      "halfExtents": [
+        33.35,
+        4,
+        0.6
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Murs_06",
+      "type": "cuboid",
+      "position": [
+        61.5,
+        4,
+        112.6
+      ],
+      "halfExtents": [
+        0.6,
+        4,
+        11.8
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Murs_07",
+      "type": "cuboid",
+      "position": [
+        61.5,
+        6.9,
+        93.8
+      ],
+      "halfExtents": [
+        0.6,
+        1.1,
+        7
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Murs_08",
+      "type": "cuboid",
+      "position": [
+        61.5,
+        4,
+        74.45
+      ],
+      "halfExtents": [
+        0.6,
+        4,
+        12.35
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Murs_09",
+      "type": "cuboid",
+      "position": [
+        127,
+        4,
+        93.25
+      ],
+      "halfExtents": [
+        0.6,
+        4,
+        31.15
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Murs_10",
+      "type": "cuboid",
+      "position": [
+        83,
+        4,
+        82
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Murs_11",
+      "type": "cuboid",
+      "position": [
+        104,
+        4,
+        82
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Murs_12",
+      "type": "cuboid",
+      "position": [
+        83,
+        4,
+        98
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Murs_13",
+      "type": "cuboid",
+      "position": [
+        104,
+        4,
+        98
+      ],
+      "halfExtents": [
+        0.55,
+        4,
+        0.55
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SALLE_Transit_Toit_00",
+      "type": "cuboid",
+      "position": [
+        94.25,
+        8.4,
+        93.25
+      ],
+      "halfExtents": [
+        33.35,
+        0.4,
+        32.35
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_SOL_Neige_00",
+      "type": "cuboid",
+      "position": [
+        0,
+        -0.5,
+        0
+      ],
+      "halfExtents": [
+        140,
+        0.5,
+        140
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_TRAVERSE_Cadres_00",
+      "type": "cuboid",
+      "position": [
+        -12.25,
+        2.35,
+        39.25
+      ],
+      "halfExtents": [
+        0.4,
+        2.35,
+        2.5
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_TRAVERSE_Cadres_01",
+      "type": "cuboid",
+      "position": [
+        9.5,
+        2.35,
+        39.25
+      ],
+      "halfExtents": [
+        0.4,
+        2.35,
+        2.5
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_TRAVERSE_Cadres_02",
+      "type": "cuboid",
+      "position": [
+        -1.375,
+        5.1,
+        39.25
+      ],
+      "halfExtents": [
+        11.275,
+        0.4,
+        2.5
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_TRAVERSE_Cadres_03",
+      "type": "cuboid",
+      "position": [
+        -12.25,
+        2.35,
+        62.3
+      ],
+      "halfExtents": [
+        0.4,
+        2.35,
+        0.95
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_TRAVERSE_Cadres_04",
+      "type": "cuboid",
+      "position": [
+        9.5,
+        2.35,
+        62.3
+      ],
+      "halfExtents": [
+        0.4,
+        2.35,
+        0.95
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_TRAVERSE_Cadres_05",
+      "type": "cuboid",
+      "position": [
+        -1.375,
+        5.1,
+        62.3
+      ],
+      "halfExtents": [
+        11.275,
+        0.4,
+        0.95
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_TRAVERSE_Cadres_06",
+      "type": "cuboid",
+      "position": [
+        -49.4,
+        2.35,
+        62.6
+      ],
+      "halfExtents": [
+        0.95,
+        2.35,
+        0.4
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_TRAVERSE_Cadres_07",
+      "type": "cuboid",
+      "position": [
+        -49.4,
+        2.35,
+        41.9
+      ],
+      "halfExtents": [
+        0.95,
+        2.35,
+        0.4
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_TRAVERSE_Cadres_08",
+      "type": "cuboid",
+      "position": [
+        -49.4,
+        5.1,
+        52.25
+      ],
+      "halfExtents": [
+        0.95,
+        0.4,
+        10.75
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_TRAVERSE_Cadres_09",
+      "type": "cuboid",
+      "position": [
+        83.85,
+        2.35,
+        61.1
+      ],
+      "halfExtents": [
+        0.95,
+        2.35,
+        0.4
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_TRAVERSE_Cadres_10",
+      "type": "cuboid",
+      "position": [
+        83.85,
+        2.35,
+        41.9
+      ],
+      "halfExtents": [
+        0.95,
+        2.35,
+        0.4
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_TRAVERSE_Cadres_11",
+      "type": "cuboid",
+      "position": [
+        83.85,
+        5.1,
+        51.5
+      ],
+      "halfExtents": [
+        0.95,
+        0.4,
+        10
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_TRAVERSE_Toit_00",
+      "type": "convexHull",
+      "vertices": [
+        [
+          -50.1,
+          5.5,
+          63
+        ],
+        [
+          61.5,
+          5.5,
+          63
+        ],
+        [
+          61.5,
+          5.5,
+          61.5
+        ],
+        [
+          84.55,
+          5.5,
+          61.5
+        ],
+        [
+          84.55,
+          5.5,
+          41.5
+        ],
+        [
+          -50.1,
+          5.5,
+          41.5
+        ],
+        [
+          -50.1,
+          6.1,
+          63
+        ],
+        [
+          61.5,
+          6.1,
+          63
+        ],
+        [
+          61.5,
+          6.1,
+          61.5
+        ],
+        [
+          84.55,
+          6.1,
+          61.5
+        ],
+        [
+          84.55,
+          6.1,
+          41.5
+        ],
+        [
+          -50.1,
+          6.1,
+          41.5
+        ]
+      ],
+      "purpose": "solid"
+    },
+    {
+      "id": "COL_TRAVERSE_Toit_01",
+      "type": "cuboid",
+      "position": [
+        -1.375,
+        5.9,
+        39.25
+      ],
+      "halfExtents": [
+        11.275,
+        0.4,
+        2.25
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "solid"
+    }
+  ],
+  "playerClips": [
+    {
+      "id": "CLIP_Toit_P1",
+      "type": "cuboid",
+      "position": [
+        -36.95,
+        10,
+        -68.975
+      ],
+      "halfExtents": [
+        24.3,
+        6,
+        14.275
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "player_clip"
+    },
+    {
+      "id": "CLIP_Toit_Q1",
+      "type": "cuboid",
+      "position": [
+        35.7,
+        10,
+        -68.975
+      ],
+      "halfExtents": [
+        25.8,
+        6,
+        14.275
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "purpose": "player_clip"
+    }
+  ],
+  "ramps": [
+    {
+      "id": "RAMPE_Ouest",
+      "colliderId": "COL_RAMPE_Ouest_00",
+      "start": [
+        -61.25,
+        0,
+        -95.025
+      ],
+      "end": [
+        -33.8,
+        6,
+        -95.025
+      ],
+      "width": 23.55,
+      "slopeDegrees": 12.33
+    },
+    {
+      "id": "RAMPE_Est",
+      "colliderId": "COL_RAMPE_Est_00",
+      "start": [
+        61.5,
+        0,
+        -95.025
+      ],
+      "end": [
+        34.1,
+        6,
+        -95.025
+      ],
+      "width": 23.55,
+      "slopeDegrees": 12.35
+    },
+    {
+      "id": "RAMPE_Sud",
+      "colliderId": "COL_RAMPE_Sud_00",
+      "start": [
+        -1.375,
+        0,
+        -54.7
+      ],
+      "end": [
+        -1.375,
+        6,
+        -83.25
+      ],
+      "width": 22.55,
+      "slopeDegrees": 11.87
+    }
+  ],
+  "spawns": [
+    {
+      "id": "SPAWN_01",
+      "feet": [
+        -115,
+        0,
+        -115
+      ],
+      "position": [
+        -115,
+        0.93,
+        -115
+      ],
+      "yaw": -2.37958,
+      "room": "STOCK"
+    },
+    {
+      "id": "SPAWN_02",
+      "feet": [
+        -116,
+        0,
+        -70
+      ],
+      "position": [
+        -116,
+        0.93,
+        -70
+      ],
+      "yaw": -0.75763,
+      "room": "STOCK"
+    },
+    {
+      "id": "SPAWN_03",
+      "feet": [
+        115,
+        0,
+        -70
+      ],
+      "position": [
+        115,
+        0.93,
+        -70
+      ],
+      "yaw": 0.73132,
+      "room": "CHAUFFERIE"
+    },
+    {
+      "id": "SPAWN_04",
+      "feet": [
+        98,
+        0,
+        -118
+      ],
+      "position": [
+        98,
+        0.93,
+        -118
+      ],
+      "yaw": -3.29122,
+      "room": "CHAUFFERIE"
+    },
+    {
+      "id": "SPAWN_05",
+      "feet": [
+        -120,
+        0,
+        90
+      ],
+      "position": [
+        -120,
+        0.93,
+        90
+      ],
+      "yaw": -1.69575,
+      "room": "ATELIER"
+    },
+    {
+      "id": "SPAWN_06",
+      "feet": [
+        -115,
+        0,
+        117
+      ],
+      "position": [
+        -115,
+        0.93,
+        117
+      ],
+      "yaw": -0.72106,
+      "room": "ATELIER"
+    },
+    {
+      "id": "SPAWN_07",
+      "feet": [
+        116,
+        0,
+        117
+      ],
+      "position": [
+        116,
+        0.93,
+        117
+      ],
+      "yaw": 0.74147,
+      "room": "TRANSIT"
+    },
+    {
+      "id": "SPAWN_08",
+      "feet": [
+        115,
+        0,
+        96
+      ],
+      "position": [
+        115,
+        0.93,
+        96
+      ],
+      "yaw": 1.43903,
+      "room": "TRANSIT"
+    }
+  ],
+  "floorY": 0,
+  "upperLevelHeight": 6,
+  "killPlaneY": -10,
+  "expansion": {
+    "mapEnvelope": [
+      280,
+      280
+    ],
+    "envelopeMin": [
+      -140,
+      -140
+    ],
+    "envelopeMax": [
+      140,
+      140
+    ]
+  },
+  "hazards": [],
+  "zones": [
+    {
+      "id": "stock",
+      "name": "Stock",
+      "kind": "interieur",
+      "floorY": 0,
+      "min": [
+        -127,
+        -125
+      ],
+      "max": [
+        -61.25,
+        -61.25
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "chaufferie",
+      "name": "Chaufferie",
+      "kind": "interieur",
+      "floorY": 0,
+      "min": [
+        61.5,
+        -125
+      ],
+      "max": [
+        127,
+        -61.25
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "atelier",
+      "name": "Atelier",
+      "kind": "interieur",
+      "floorY": 0,
+      "min": [
+        -127,
+        61.5
+      ],
+      "max": [
+        -61.25,
+        125
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "transit",
+      "name": "Transit",
+      "kind": "interieur",
+      "floorY": 0,
+      "min": [
+        61.5,
+        61.5
+      ],
+      "max": [
+        127,
+        125
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "galerie_nord",
+      "name": "Galerie Nord",
+      "kind": "galerie",
+      "floorY": 6,
+      "min": [
+        -33.8,
+        -106.8
+      ],
+      "max": [
+        34.1,
+        -83.25
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "rampe_ouest",
+      "name": "Rampe ouest",
+      "kind": "rampe",
+      "floorY": 0,
+      "min": [
+        -61.25,
+        -106.8
+      ],
+      "max": [
+        -33.8,
+        -83.25
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "rampe_est",
+      "name": "Rampe est",
+      "kind": "rampe",
+      "floorY": 0,
+      "min": [
+        34.1,
+        -106.8
+      ],
+      "max": [
+        61.5,
+        -83.25
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "rampe_sud",
+      "name": "Rampe sud",
+      "kind": "rampe",
+      "floorY": 0,
+      "min": [
+        -12.65,
+        -83.25
+      ],
+      "max": [
+        9.9,
+        -54.7
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "cour_centrale",
+      "name": "Cour centrale",
+      "kind": "exterieur",
+      "floorY": 0,
+      "min": [
+        -45.7,
+        -54.7
+      ],
+      "max": [
+        46,
+        37
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "cour_livraison",
+      "name": "Cour livraison",
+      "kind": "exterieur",
+      "floorY": 0,
+      "min": [
+        61.5,
+        -44.7
+      ],
+      "max": [
+        119.1,
+        24.9
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "passage_cours",
+      "name": "Passage entre les cours",
+      "kind": "exterieur",
+      "floorY": 0,
+      "min": [
+        46,
+        -26.65
+      ],
+      "max": [
+        61.5,
+        -4.15
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "couloir_ouest",
+      "name": "Couloir ouest",
+      "kind": "exterieur",
+      "floorY": 0,
+      "min": [
+        -86.75,
+        -61.25
+      ],
+      "max": [
+        -65.25,
+        19.4
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "vestibule_sud_ouest",
+      "name": "Vestibule sud-ouest",
+      "kind": "exterieur",
+      "floorY": 0,
+      "min": [
+        -106.75,
+        19.4
+      ],
+      "max": [
+        -45.7,
+        61.5
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "couloir_est",
+      "name": "Couloir est",
+      "kind": "exterieur",
+      "floorY": 0,
+      "min": [
+        84.55,
+        -61.25
+      ],
+      "max": [
+        107.05,
+        -44.7
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "couloir_sud_est",
+      "name": "Couloir sud-est",
+      "kind": "exterieur",
+      "floorY": 0,
+      "min": [
+        84.55,
+        24.9
+      ],
+      "max": [
+        107.05,
+        61.5
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "traverse_couverte",
+      "name": "Traverse couverte",
+      "kind": "couvert",
+      "floorY": 0,
+      "min": [
+        -50.1,
+        41.5
+      ],
+      "max": [
+        84.55,
+        63
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "couloir_central_sud",
+      "name": "Couloir central sud",
+      "kind": "exterieur",
+      "floorY": 0,
+      "min": [
+        -12.65,
+        63
+      ],
+      "max": [
+        9.9,
+        82.5
+      ],
+      "axes": "xz"
+    },
+    {
+      "id": "passage_sud",
+      "name": "Passage sud",
+      "kind": "exterieur",
+      "floorY": 0,
+      "min": [
+        -61.25,
+        82.5
+      ],
+      "max": [
+        61.5,
+        105.05
+      ],
+      "axes": "xz"
+    }
+  ],
+  "viewpoints": [
+    {
+      "id": "CAM_1_CourCentrale",
+      "position": [
+        -0.25,
+        1.6,
+        23.75
+      ],
+      "lookAt": [
+        -0.25,
+        2.6467,
+        3.7774
+      ],
+      "horizontalFovDeg": 90
+    },
+    {
+      "id": "CAM_2_Atelier",
+      "position": [
+        -120,
+        1.6,
+        117
+      ],
+      "lookAt": [
+        -105.1462,
+        2.298,
+        103.6255
+      ],
+      "horizontalFovDeg": 90
+    },
+    {
+      "id": "CAM_3_CourLivraison",
+      "position": [
+        74,
+        1.6,
+        20
+      ],
+      "lookAt": [
+        76.7818,
+        2.298,
+        0.2067
+      ],
+      "horizontalFovDeg": 90
+    },
+    {
+      "id": "CAM_4_GalerieNord",
+      "position": [
+        -1.4,
+        7.6,
+        -87.5
+      ],
+      "lookAt": [
+        -1.4,
+        4.8165,
+        -67.6946
+      ],
+      "horizontalFovDeg": 90
+    },
+    {
+      "id": "CAM_5_Chaufferie",
+      "position": [
+        96,
+        1.6,
+        -116
+      ],
+      "lookAt": [
+        93.217,
+        1.949,
+        -96.1977
+      ],
+      "horizontalFovDeg": 90
+    },
+    {
+      "id": "CAM_Vue_Aerienne",
+      "position": [
+        0,
+        260,
+        330
+      ],
+      "lookAt": [
+        0,
+        247.1442,
+        314.6791
+      ],
+      "horizontalFovDeg": 65.5
+    }
+  ],
+  "lighting": {
+    "sun": {
+      "directionToSun": [
+        0.4045,
+        0.5878,
+        -0.7006
+      ],
+      "colorHex": "#fffbf5",
+      "blenderStrength": 2.4000000953674316,
+      "angularDiameterDeg": 2.5,
+      "three": "DirectionalLight : position = target + directionToSun * 200, intensity ~ blenderStrength en lumieres physiques (r155+), a ajuster a l'oeil"
+    },
+    "ambient": {
+      "skyColorHex": "#98b0d6",
+      "horizonColorHex": "#d8dbe0",
+      "groundColorHex": "#b4b6ba",
+      "blenderStrength": 1,
+      "three": "HemisphereLight(skyColor, groundColor) ; intensity ~ PI x blenderStrength en lumieres physiques"
+    },
+    "skyBackground": {
+      "stops": [
+        [
+          0,
+          "#e3f0fe"
+        ],
+        [
+          0.05,
+          "#a9dcfd"
+        ],
+        [
+          0.16,
+          "#80d0fd"
+        ],
+        [
+          0.45,
+          "#62b6fa"
+        ],
+        [
+          1,
+          "#4fa7f6"
+        ]
+      ],
+      "mapping": "fac = clamp((dir.y + 0.02) / 0.82, 0, 1) ; dir = direction de vue normalisee (Y haut)"
+    },
+    "colorManagement": "Sortie sRGB sans tone mapping (Blender : Standard) pour garder les aplats du concept",
+    "interiors": "Dans Blender : panneaux emissifs + lumieres de zone (non exportees). En jeu : l'ambiance hemisphere suffit, ajouter quelques PointLight si besoin."
+  },
+  "materials": {
+    "GIV_Neige": {
+      "baseColorHex": "#f4f5f9",
+      "roughness": 0.92
+    },
+    "GIV_Mur": {
+      "baseColorHex": "#d6cec8",
+      "roughness": 0.9
+    },
+    "GIV_Bande": {
+      "baseColorHex": "#1f6f96",
+      "roughness": 0.8
+    },
+    "GIV_Teal": {
+      "baseColorHex": "#286a8c",
+      "roughness": 0.75
+    },
+    "GIV_Orange": {
+      "baseColorHex": "#f45a1c",
+      "roughness": 0.6
+    },
+    "GIV_Caisse": {
+      "baseColorHex": "#c8662f",
+      "roughness": 0.75
+    },
+    "GIV_Ardoise": {
+      "baseColorHex": "#5b7187",
+      "roughness": 0.8
+    },
+    "GIV_Rail": {
+      "baseColorHex": "#2a3a4d",
+      "roughness": 0.5
+    },
+    "GIV_Tuyau": {
+      "baseColorHex": "#434c58",
+      "roughness": 0.55
+    },
+    "GIV_SolInt": {
+      "baseColorHex": "#7c879a",
+      "roughness": 0.45
+    },
+    "GIV_Plafond": {
+      "baseColorHex": "#a6a6ab",
+      "roughness": 0.9
+    },
+    "GIV_PorteSombre": {
+      "baseColorHex": "#5f6b7b",
+      "roughness": 0.7
+    },
+    "GIV_Sombre": {
+      "baseColorHex": "#2f3742",
+      "roughness": 0.8
+    },
+    "GIV_Fenetre": {
+      "baseColorHex": "#6f7782",
+      "roughness": 0.35
+    },
+    "GIV_Montagne": {
+      "baseColorHex": "#f2f5fa",
+      "roughness": 0.95
+    },
+    "GIV_Lampe": {
+      "baseColorHex": "#ffffff",
+      "emissiveHex": "#fffcf9",
+      "emissiveStrength": 6
+    }
+  }
+}
