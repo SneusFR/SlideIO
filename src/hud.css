@@ -2032,173 +2032,6 @@
   box-shadow: 0 0 8px rgba(168, 217, 74, 0.95);
 }
 
-/* ==========================================================================
-   LEADERBOARD (top-right) — a wooden scoreboard, compact and quiet.
-   Row height MUST stay 21px (LeaderboardHUD.ROW_HEIGHT).
-   ========================================================================== */
-#leaderboard-hud {
-  position: absolute;
-  top: 60px;
-  right: 16px;
-  width: 252px;
-  padding: 6px 10px 8px;
-  background: var(--sticker-bg);
-  border: 2.5px solid var(--ink);
-  border-radius: 14px;
-  box-shadow: var(--sticker-shadow);
-  font-family: var(--hud-font-alt);
-  color: var(--cream);
-  pointer-events: none;
-  z-index: 5;
-  opacity: 0.92;
-}
-
-#leaderboard-hud.hidden {
-  display: none;
-}
-
-#leaderboard-title {
-  font-family: var(--hud-font);
-  font-size: 13px;
-  letter-spacing: 2px;
-  text-align: center;
-  color: var(--gold);
-  -webkit-text-stroke: 2px var(--ink);
-  paint-order: stroke fill;
-  margin-bottom: 3px;
-}
-
-#leaderboard-header,
-.lb-row {
-  display: grid;
-  grid-template-columns: 16px 1fr 24px 24px 24px 36px;
-  align-items: center;
-  column-gap: 2px;
-}
-
-#leaderboard-hud.with-ping #leaderboard-header,
-#leaderboard-hud.with-ping .lb-row {
-  grid-template-columns: 16px 28px 1fr 22px 22px 22px 34px;
-}
-
-#leaderboard-header {
-  font-family: var(--hud-font);
-  font-size: 10px;
-  letter-spacing: 1px;
-  color: var(--cream-dim);
-  padding: 0 4px 3px;
-  border-bottom: 2px dashed rgba(255, 246, 224, 0.16);
-  margin-bottom: 3px;
-}
-
-#leaderboard-rows {
-  position: relative;
-  transition: height 0.2s ease;
-}
-
-.lb-row {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 21px;
-  padding: 0 4px;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 21px;
-  color: rgba(255, 246, 224, 0.88);
-  border-radius: 8px;
-  transition: transform 0.28s var(--pop);
-  will-change: transform;
-}
-
-.lb-rank {
-  font-family: var(--hud-font);
-  font-size: 11px;
-  color: var(--cream-dim);
-}
-
-.lb-ping {
-  display: none;
-  text-align: right;
-  padding-right: 4px;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--cream-dim);
-}
-
-#leaderboard-hud.with-ping .lb-ping {
-  display: block;
-}
-
-.lb-ping.good { color: #a8d94a; }
-.lb-ping.ok { color: #facc15; }
-.lb-ping.bad { color: #ff9a3d; }
-.lb-ping.awful { color: #ff5a4e; }
-
-.lb-name {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  letter-spacing: 0.3px;
-}
-
-.lb-k,
-.lb-d,
-.lb-a,
-.lb-kd {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.lb-kd {
-  color: var(--cream-dim);
-}
-
-/* Local player: a bean-green highlight + YOU tag. */
-.lb-row.local {
-  background: rgba(168, 217, 74, 0.2);
-  color: #ffffff;
-}
-
-.lb-row.local .lb-rank {
-  color: var(--bean);
-}
-
-.lb-you {
-  display: inline-block;
-  margin-left: 5px;
-  padding: 0 4px;
-  font-family: var(--hud-font);
-  font-size: 9px;
-  letter-spacing: 0.5px;
-  line-height: 13px;
-  vertical-align: 1px;
-  color: var(--ink);
-  background: var(--bean);
-  border-radius: 5px;
-}
-
-.lb-row.kill-pulse {
-  animation: lb-kill-pulse 0.5s var(--pop);
-}
-
-@keyframes lb-kill-pulse {
-  0% { background: rgba(250, 204, 21, 0.55); }
-  100% { background: rgba(168, 217, 74, 0.2); }
-}
-
-@media (max-width: 1280px) {
-  #leaderboard-hud {
-    width: 216px;
-    right: 10px;
-    top: 54px;
-  }
-  .lb-row {
-    font-size: 12px;
-  }
-}
-
 /* ---- Controls hint: shown when the HUD appears, then politely leaves ---- */
 #controls-hint {
   position: absolute;
@@ -2236,7 +2069,6 @@
 @media (min-width: 2200px) {
   #bean-buddy,
   #right-hud-col,
-  #leaderboard-hud,
   #top-center {
     zoom: 1.3;
   }
@@ -2245,7 +2077,6 @@
 @media (min-width: 3200px) {
   #bean-buddy,
   #right-hud-col,
-  #leaderboard-hud,
   #top-center {
     zoom: 1.8;
   }

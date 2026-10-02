@@ -28,6 +28,22 @@ export function getKDRatio(stats: PlayerMatchStats): number {
   return stats.kills / Math.max(1, stats.deaths);
 }
 
+/**
+ * THE official ranking rules (single source of truth — local MatchStatsManager,
+ * the network adapter and the leaderboard tests all use it):
+ *   kills DESC → deaths ASC → assists DESC → K/D DESC → stable id ASC.
+ * Fully deterministic: two players never compare as equal, so a tie can never
+ * make the order flip-flop between two updates.
+ */
+export function compareMatchStats(a: PlayerMatchStats, b: PlayerMatchStats): number {
+  if (b.kills !== a.kills) return b.kills - a.kills;
+  if (a.deaths !== b.deaths) return a.deaths - b.deaths;
+  if (b.assists !== a.assists) return b.assists - a.assists;
+  const kd = getKDRatio(b) - getKDRatio(a);
+  if (kd !== 0) return kd;
+  return a.combatantId - b.combatantId;
+}
+
 /** One attacker's running contribution to a victim's CURRENT life. */
 interface DamageContribution {
   attackerId: number;
@@ -113,14 +129,7 @@ export class MatchStatsManager {
    */
   getSortedStats(): PlayerMatchStats[] {
     const list = [...this.stats.values()];
-    list.sort((a, b) => {
-      if (b.kills !== a.kills) return b.kills - a.kills;
-      if (a.deaths !== b.deaths) return a.deaths - b.deaths;
-      if (b.assists !== a.assists) return b.assists - a.assists;
-      const kd = getKDRatio(b) - getKDRatio(a);
-      if (kd !== 0) return kd;
-      return a.combatantId - b.combatantId;
-    });
+    list.sort(compareMatchStats);
     return list;
   }
 

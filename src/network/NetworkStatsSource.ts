@@ -1,5 +1,5 @@
 import type { NetworkPlayerInfo } from "./MultiplayerClient";
-import { PlayerMatchStats, getKDRatio } from "../stats/MatchStatsManager";
+import { PlayerMatchStats, compareMatchStats } from "../stats/MatchStatsManager";
 
 /**
  * MULTIPLAYER leaderboard source (Phase 4).
@@ -62,16 +62,8 @@ export class NetworkStatsSource {
       pingMs: p.pingMs,
     }));
 
-    // EXACT same ranking rules as the local MatchStatsManager:
-    // kills DESC → deaths ASC → assists DESC → K/D DESC → stable id.
-    stats.sort((a, b) => {
-      if (b.kills !== a.kills) return b.kills - a.kills;
-      if (a.deaths !== b.deaths) return a.deaths - b.deaths;
-      if (b.assists !== a.assists) return b.assists - a.assists;
-      const kd = getKDRatio(b) - getKDRatio(a);
-      if (kd !== 0) return kd;
-      return a.combatantId - b.combatantId;
-    });
+    // EXACT same ranking rules as the local MatchStatsManager (shared comparator).
+    stats.sort(compareMatchStats);
     return stats;
   }
 

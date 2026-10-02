@@ -16,6 +16,7 @@
          killstreak medallions, top feed, screen feedback) -->
     <link rel="stylesheet" href="/src/hud.css" />
     <link rel="stylesheet" href="/src/hudWeapons.css" />
+  <link rel="stylesheet" href="/src/hudLeaderboard.css" />
   </head>
   <body>
     <div id="app"></div>
@@ -376,18 +377,11 @@
            top-centre stack. Content is built once by MedalHUD. -->
       <div id="medal-display" class="hidden"></div>
 
+      <!-- Leaderboard: cream tab + five separate capsules. Rows, crown and
+           particles are created once by LeaderboardHUD (src/ui/leaderboard/). -->
       <div id="leaderboard-hud" class="hidden">
-        <div id="leaderboard-title">FFA</div>
-        <div id="leaderboard-header">
-          <span class="lb-rank">#</span>
-          <span class="lb-ping">MS</span>
-          <span class="lb-name">PLAYER</span>
-          <span class="lb-k">K</span>
-          <span class="lb-d">D</span>
-          <span class="lb-a">A</span>
-          <span class="lb-kd">K/D</span>
-        </div>
-        <div id="leaderboard-rows"></div>
+        <div class="lb-head"><div class="lb-title">CLASSEMENT</div><span class="lb-dot"></span></div>
+        <div id="lb-list"></div>
       </div>
 
       <!-- Knockdown banner: bottom-centre, above the controls hint. -->
