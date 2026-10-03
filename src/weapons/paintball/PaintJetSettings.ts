@@ -30,24 +30,30 @@ export const BODY_RINGS = 18;
 export const NOSE_RINGS = 6;
 
 export const PAINT_JET = {
-  // ---- flight (unchanged: speed, flight time) ----
-  /** Mean head speed (m/s). 95 m/s = a 10 shots/s burst leaves ~9.5 m gaps between jets. */
-  speed: 95,
+  // ---- flight: 95 m/s originally, halved (47.5), then ×1.5 → 71.25 m/s; the cap scaled with it ----
+  /** Mean head speed (m/s). 71.25 m/s = a 10 shots/s burst leaves ~7.1 m between jet noses (each jet ≈ 1.1 m long). */
+  speed: 71.25,
   /** ± share of the speed randomised per jet. */
   speedJitter: 0.1,
-  /** Head flight time bounds (s): ≥ 2 frames at point blank, ≤ 0.35 s whatever the distance. */
+  /**
+   * Head flight time bounds (s): ≥ 2 frames at point blank, ≤ maxFlight whatever the distance. maxFlight scales
+   * inversely with the speed (0.7 / 1.5 ≈ 0.467 s): the cap still kicks in beyond ~33 m as before, so the jet
+   * has the same speed at every distance (a different cap would speed up / slow down far jets). Visual only:
+   * damage and the hitmarker stay instant (hitscan).
+   */
   minFlight: 2 / 60,
-  maxFlight: 0.35,
+  maxFlight: 0.7 / 1.5,
 
-  // ---- elastic body: BORN stretched, stays a LONG jet (8-12× its thickness) until the impact ----
-  // With volume conservation, length / thickness = L^1.5 / (2 · radius · √refLength):
-  // 0.93 m → 8.2×, 1.06 m → 9.9×, 1.20 m → 11.9×. It never contracts into a ball.
+  // ---- elastic body: BORN stretched, stays a LONG jet until the impact ----
+  // With volume conservation, length / thickness = L^1.5 / (2 · radius · √refLength).
+  // Lengths unchanged, thickness ×2.25 (radius 0.12375): 0.93 m → 3.6×, 1.06 m → 4.4×,
+  // 1.20 m → 5.3×. It never contracts into a ball.
   /** Length (m) on the very first frame: already a long liquid jet. */
   launchLength: 1.2,
   /** Rest length (m) the jet relaxes to (one soft, slight contraction) and its ± per-jet share. */
   restLength: 1.06,
   restJitter: 0.05,
-  /** The body never shrinks below / stretches beyond these lengths (m): 8.2× … 11.9× its thickness. */
+  /** The body never shrinks below / stretches beyond these lengths (m): 3.6× … 5.3× its thickness. */
   minLength: 0.93,
   maxLength: 1.2,
   /** Relaxation spring: frequency (Hz) + ± per-jet share, damping ratio (0.6 = barely one undershoot). */
@@ -62,7 +68,7 @@ export const PAINT_JET = {
    * In-flight elasticity: the rest length keeps BREATHING (± this share, at
    * breatheHz ± jitter, per-jet phase), so the body keeps stretching / thinning
    * a little during the whole flight instead of freezing into a rigid spike.
-   * ±4.5 % of the length = the ratio stays inside 9-11× (the silhouette stays long).
+   * ±4.5 % of the length = the ratio stays inside 4.2-4.8× (the silhouette stays long).
    */
   breathe: 0.045,
   breatheHz: 6,
@@ -73,8 +79,8 @@ export const PAINT_JET = {
   anchorRelease: 0.06,
 
   // ---- shape (ONE shared geometry, shaped in the vertex shader) ----
-  /** Nominal jet radius (m) = half the thickness at the nose (unchanged). */
-  radius: 0.055,
+  /** Nominal jet radius (m) = half the thickness at the nose: 0.055 × 1.5 × 1.5 (wider jet, same length). */
+  radius: 0.12375,
   /** Nose cap length = this × the nose radius (1 = hemisphere, > 1 = slightly ogival): lightly rounded front. */
   noseRound: 1.35,
   /** Body profile sin(u·π/2)^taper from the pointed tail (u = 0) to the nose (u = 1), ± per-jet share. */
@@ -94,18 +100,20 @@ export const PAINT_JET = {
   neckHz: 3.2,
 
   // ---- FPS readability ----
+  // Thickness ×2.25 everywhere on screen (both clamps scaled with the radius), length on screen unchanged.
   /** Minimum ON-SCREEN radius (rad): a far jet never thins to nothing (it gets longer as much, same proportions). */
-  minAngularRadius: 0.0035,
+  minAngularRadius: 0.007875,
   /** Max on-screen radius (rad) near the camera: at the FP muzzle it never fills the view. */
-  maxAngularRadius: 0.04,
+  maxAngularRadius: 0.09,
   /**
    * Seen almost along its flight (the FPS case: it leaves the gun toward the
    * crosshair), a jet would shrink to a dot. The drawn axis is then turned,
    * around the head and ONLY in the plane (camera, head, flight), until the
    * jet is at least this many times longer than wide on screen: it stays
    * exactly on the screen line muzzle → impact, and never goes past the muzzle.
+   * 7 / 2.25: the jet is 2.25× wider, so the SAME on-screen length gives this aspect.
    */
-  minScreenAspect: 7,
+  minScreenAspect: 3.1,
   /** Upper bound (m) of the drawn length far away (beyond it the jet gets thinner, same proportions). */
   maxDrawLength: 4,
 
@@ -145,9 +153,13 @@ export const PAINT_JET = {
   //    pancake thins and sinks into it — the trace is what the paint left.
   /** Time (s) the rest of the jet takes to sink into the impact (nose buried in the surface). */
   impactDrain: 0.035,
-  /** Pancake start radius (m) ≈ the jet radius, and its start half-thickness (m): a blob taller than wide. */
-  impactStartRadius: 0.06,
-  impactStartHeight: 0.075,
+  /**
+   * Pancake start radius (m) and start half-thickness (m): a thick blob. It starts a bit NARROWER than the (wide)
+   * jet nose — hidden under the body draining into the surface, it squashes out from under it — so it still
+   * slams FLAT on its way to the (unchanged) splat size: thickness ∝ 1/r², volume kept.
+   */
+  impactStartRadius: 0.09,
+  impactStartHeight: 0.085,
   /** Pancake final radius = this share of the splat core: the puddle edge stays visible around it. */
   impactFill: 0.8,
   /** Time (s) the pancake takes to reach its size, and its elastic overshoot (easeOutBack constant: 1.7 ≈ +10 %). */

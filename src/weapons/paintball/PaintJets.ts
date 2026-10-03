@@ -181,7 +181,7 @@ vec3 objectNormal = normalize(vec3(position.xy / pjSc * pjNr.x, pjNr.y));
  * PAINT JETS (SlideIO) — what everybody SEES when the Paintball Rifle fires
  * (the damage / ammo logic is the unchanged hitscan): an elastic, stretched
  * jet of liquid paint in the colour of the ball that left the hopper.
- *   - SHAPE: a long liquid jet, 8-12× longer than thick: lightly rounded
+ *   - SHAPE: a long, wide liquid jet (≈ 24 cm thick), 3.5-5.3× longer than thick: lightly rounded
  *     nose, body that tapers progressively to a pointed tail. ONE shared
  *     geometry, ONE instance per jet, shaped in the vertex shader (light
  *     elastic, asymmetric sway of the tail + slightly oval section, per-jet
@@ -596,7 +596,7 @@ export class PaintJets {
       if (len < 1e-3) continue;
 
       // Volume conservation: stretched = thinner, relaxed = a bit thicker
-      // (the length stays 8-12× the thickness: never a ball). While draining
+      // (the length stays 3.5-5.3× the thickness: never a ball). While draining
       // into the impact it squashes: shorter and fatter (bounded).
       const r = this.radius * this.radiusScale(i, len);
       _h.copy(_a).addScaledVector(_d, head); // nose tip (WORLD)

@@ -411,10 +411,15 @@ try {
     const gl = await loadPaintballRifleGltf();
     const pal = gl.scene.getObjectByName("Hopper").userData.palette as number[][];
     for (let i = 0; i < 3; i++) assert.ok(same(new THREE.Color(pal[i][0], pal[i][1], pal[i][2]), want[i]), `hopper palette ${i} patched`);
-    assert.ok(jets.speed >= 60 && jets.speed <= 140, `jet head speed ${jets.speed} m/s: leaves gaps in a 10 shots/s burst`);
-    assert.ok(jets.speed / 10 >= 6, "≥ 6 m between two jets of a 600 rpm burst");
+    // 95 m/s originally, halved, then ×1.5 (= 71.25 m/s); the flight-time cap scaled inversely (same ~33 m distance before it kicks in).
+    const K = S.PAINT_JET;
+    assert.equal(jets.speed, (95 / 2) * 1.5, `jet head speed = 1.5 × the halved speed (${jets.speed} m/s)`);
+    assert.ok(Math.abs(K.maxFlight - 0.7 / 1.5) < 1e-12, "flight-time cap scaled inversely with it");
+    assert.ok(Math.abs(K.maxFlight * jets.speed - 0.35 * 95) < 1e-9, "the cap kicks in at the same distance as before");
+    assert.ok(jets.speed / 10 >= 6, "≥ 6 m between two jets of a 600 rpm burst (jets ≈ 1.1 m long: clearly separate)");
     assert.ok(Math.abs(jets.flightTime(19) - 19 / jets.speed) < 1e-12, "19 m at jet speed");
-    assert.ok(jets.flightTime(1000) <= 0.35 + 1e-12, "far shot bounded");
+    assert.ok(Math.abs(jets.flightTime(19) - (19 / 47.5) / 1.5) < 1e-12, "19 m takes 1.5× less time than at the halved speed");
+    assert.ok(jets.flightTime(1000) <= K.maxFlight + 1e-12, "far shot bounded");
     assert.ok(Math.abs(jets.flightTime(1) - 2 / 60) < 1e-12, "point blank: ≥ 2 frames (exit still seen)");
   });
   /** Per-frame samples of the first jet on screen: body length, head, tail, physical nose radius. */
@@ -436,17 +441,23 @@ try {
     return out;
   };
 
-  await test("BORN STRETCHED, STAYS A LONG JET: 8-12× longer than thick from frame 0 to the impact (never a ball), one slight soft relaxation, then a light elastic breathing (no rigid spike, no jitter)", async () => {
+  await test("BORN STRETCHED, STAYS A LONG JET: 2.25× WIDER (same length), 3.5-5.3× longer than thick from frame 0 to the impact (never a ball), one slight soft relaxation, then a light elastic breathing (no rigid spike, no jitter)", async () => {
     const S = await server.ssrLoadModule("/src/weapons/paintball/PaintJetSettings.ts");
     const K = S.PAINT_JET;
-    const s = sampleJet(new THREE.Vector3(0.3, 1, -60.6), 240, 150); // 60 m: the whole flight (maxFlight 0.35 s = 84 frames)
+    // Thickness ×1.5 ×1.5 vs the original 0.055 m radius; the lengths are unchanged.
+    const W = 1.5 * 1.5;
+    assert.ok(Math.abs(K.radius - 0.055 * W) < 1e-9, `jet radius ×2.25 (${(K.radius * 1000).toFixed(1)} mm)`);
+    assert.ok(K.launchLength === 1.2 && K.restLength === 1.06 && K.minLength === 0.93 && K.maxLength === 1.2, "same lengths as before");
+    assert.ok(Math.abs(K.maxAngularRadius - 0.04 * W) < 1e-9 && Math.abs(K.minAngularRadius - 0.0035 * W) < 1e-9, "on-screen thickness clamps ×2.25 too");
+    const s = sampleJet(new THREE.Vector3(0.3, 1, -60.6), 240, 200); // 60 m: the whole flight (maxFlight ≈ 0.47 s = 112 frames)
     const l0 = s[0].len;
     const ratio = (x: { len: number; r: number }) => x.len / (2 * x.r);
-    console.log(`    length: ${s.filter((_, i) => i % 12 === 0).map((x) => x.len.toFixed(2)).join(" → ")} m; length / thickness: ${s.filter((_, i) => i % 12 === 0).map((x) => ratio(x).toFixed(1)).join(" → ")}`);
+    console.log(`    length: ${s.filter((_, i) => i % 12 === 0).map((x) => x.len.toFixed(2)).join(" → ")} m; thickness ${s.filter((_, i) => i % 12 === 0).map((x) => (2 * x.r * 100).toFixed(1)).join(" → ")} cm; length / thickness: ${s.filter((_, i) => i % 12 === 0).map((x) => ratio(x).toFixed(1)).join(" → ")}`);
     assert.ok(s.length >= Math.floor(K.maxFlight * 240) - 1, `sampled over the whole flight up to the impact (${s.length} frames)`);
     assert.ok(s[0].tail < 1e-6, "frame 0: the tail sits at the nozzle");
     assert.ok(Math.abs(l0 - K.launchLength) < 1e-6, `frame 0 is already the long jet (${l0.toFixed(2)} m)`);
-    for (const x of s) assert.ok(ratio(x) >= 8 - 1e-6 && ratio(x) <= 12 + 1e-6, `length / thickness ${ratio(x).toFixed(2)} at ${(x.t * 1000).toFixed(0)} ms: within 8-12, never a ball`);
+    // The original 8-12× band divided by 2.25 (same lengths, 2.25× thicker).
+    for (const x of s) assert.ok(ratio(x) >= 8 / W - 1e-6 && ratio(x) <= 12 / W + 1e-6, `length / thickness ${ratio(x).toFixed(2)} at ${(x.t * 1000).toFixed(0)} ms: within 3.5-5.3, never a ball`);
     // Launch relaxation: one soft, monotonic contraction during the first frames (readable at normal speed).
     const early = s.filter((x) => x.t <= 0.05);
     for (let i = 1; i < early.length; i++) assert.ok(early[i].len <= early[i - 1].len + 1e-4, "the launch relaxation is monotonic");
@@ -469,9 +480,12 @@ try {
     console.log(`    in flight: length ${cLo.toFixed(3)}…${cHi.toFixed(3)} m (±${((50 * (cHi - cLo)) / cLo).toFixed(1)} %), radius ${(rLo * 1000).toFixed(1)}…${(rHi * 1000).toFixed(1)} mm, ${turns} direction change(s) in ${((cruise[cruise.length - 1].t - cruise[0].t) * 1000).toFixed(0)} ms`);
     assert.ok(cHi - cLo >= 0.03, `still elastic in flight: the body stretches / relaxes a little (${((cHi - cLo) * 100).toFixed(1)} cm)`);
     assert.ok(rHi - rLo >= 0.0005, "and thins / thickens with it (volume kept)");
-    // ...but slight and smooth: the silhouette stays long (8-12 checked above), no jitter.
+    // ...but slight and smooth: the silhouette stays long (3.5-5.3 checked above), no jitter.
     assert.ok((cHi - cLo) / cLo <= 0.15, "slight: the silhouette keeps its length");
-    assert.ok(turns >= 1 && turns <= 6, `a slow breathing, not a jitter (${turns} direction changes)`);
+    // Breathing at ~6 Hz = ~12 direction changes per second: count the RATE (independent of the flight duration / speed).
+    const span = cruise[cruise.length - 1].t - cruise[0].t;
+    const perSec = turns / span;
+    assert.ok(turns >= 1 && perSec <= 2 * K.breatheHz * (1 + K.breatheHzJitter) + 3, `a slow breathing, not a jitter (${turns} direction changes in ${(span * 1000).toFixed(0)} ms = ${perSec.toFixed(1)}/s)`);
     // One fixed sub-step (1/180 s) per drawn frame at most: the length moves ≤ 1.5 % of itself per frame.
     assert.ok(maxStep <= 0.015 * cLo, `smooth from frame to frame (max ${(maxStep * 1000).toFixed(1)} mm per 1/180 s step)`);
   });
@@ -485,7 +499,8 @@ try {
     assert.ok(s[0].r < s[s.length - 1].r, "stretched at birth = thinner than once relaxed");
   });
 
-  await test("FPS READABILITY: from the shooter's camera the jet reads as a long streak on screen during its whole flight, on the muzzle → crosshair line, never past the muzzle", () => {
+  await test("FPS READABILITY: from the shooter's camera the jet reads as a long, 2.25× wider streak on screen during its whole flight, on the muzzle → crosshair line, never past the muzzle", async () => {
+    const K = (await server.ssrLoadModule("/src/weapons/paintball/PaintJetSettings.ts")).PAINT_JET;
     const jets = fx.projectiles!;
     const cam = new THREE.PerspectiveCamera(75, 16 / 9, 0.05, 500);
     cam.position.set(0, 1.6, 0);
@@ -502,15 +517,16 @@ try {
       const impact = new THREE.Vector3(0, 1.6, -dist);
       fx.spawn(muzzle, impact, new THREE.Color(1, 0, 1), { normal: new THREE.Vector3(0, 0, 1), seed: 9 });
       fx.update(0, eye);
-      let minAspect = Infinity, frames = 0, minLenPx = Infinity;
+      let minAspect = Infinity, frames = 0, minLenPx = Infinity, minWPx = Infinity;
       while (jets.activeCount > 0 && frames < 60) {
         const c = segs()[0];
         if (c && !c.draining) {
           const a = px(c.headW), b = px(c.tailW);
           const lenPx = a.distanceTo(b);
-          const wPx = 2 * Math.min(c.drawR, c.headW.distanceTo(eye) * 0.04) * fy / c.headW.distanceTo(eye);
+          const wPx = 2 * Math.min(c.drawR, c.headW.distanceTo(eye) * K.maxAngularRadius) * fy / c.headW.distanceTo(eye);
           minAspect = Math.min(minAspect, lenPx / wPx);
           minLenPx = Math.min(minLenPx, lenPx);
+          minWPx = Math.min(minWPx, wPx);
           // On the screen line muzzle → crosshair (the hitscan line seen by the shooter).
           const m = px(muzzle), t = px(impact);
           const line = t.clone().sub(m).normalize();
@@ -522,9 +538,12 @@ try {
         fx.update(1 / 60, eye);
         frames++;
       }
-      console.log(`    ${dist} m: on-screen length / width ≥ ${minAspect.toFixed(1)}, length ≥ ${minLenPx.toFixed(0)} px over ${frames} frames`);
+      console.log(`    ${dist} m: on-screen width ≥ ${minWPx.toFixed(1)} px, length / width ≥ ${minAspect.toFixed(1)}, length ≥ ${minLenPx.toFixed(0)} px over ${frames} frames`);
       assert.ok(frames >= 2, "seen in flight");
-      assert.ok(minAspect >= 6, `${dist} m: always a long streak on screen, never a dot (≥ 6:1, got ${minAspect.toFixed(1)})`);
+      // 2.25× wider for the SAME on-screen length as before (≥ 6:1 then → ≥ 2.7:1 now): still a streak, never a dot.
+      assert.ok(minAspect >= 2.7, `${dist} m: always a long streak on screen, never a dot (≥ 2.7:1, got ${minAspect.toFixed(1)})`);
+      assert.ok(minLenPx >= 30, `${dist} m: as long on screen as before (${minLenPx.toFixed(0)} px)`);
+      assert.ok(minWPx >= 2 * K.minAngularRadius * fy - 0.5, `${dist} m: wide on screen (${minWPx.toFixed(1)} px)`);
     }
     // Seen from the side, the real geometry is drawn unchanged (no fake stretch).
     jets.clear(); fx.clearAll();
@@ -645,7 +664,8 @@ try {
     assert.ok(flat.h < 0.12 * flat.w, `slammed flat against the surface (${(flat.h * 100).toFixed(1)} cm thick vs ${(flat.w * 100).toFixed(0)} cm wide)`);
     const half = pan.find((x) => x.t >= 0.025)!;
     assert.ok(half.w >= 0.6 * wMax, "fast: most of the spread happens in the first 25 ms");
-    assert.ok(wMax > 2.5 * first.w, "spreads out wide");
+    // The blob squashes out from under the (wide) draining nose; the splat it spreads to keeps its size.
+    assert.ok(wMax > 1.8 * first.w, `spreads out wide (${(first.w * 100).toFixed(1)} → ${(wMax * 100).toFixed(1)} cm)`);
     assert.ok(wMaxAt < K.impactSpread && end.w < wMax * 0.97, `elastic overshoot then recoil (peak at ${(wMaxAt * 1000).toFixed(0)} ms)`);
     assert.ok(end.h < 0.25 * flat.h, "thins and sinks into the trace at the end");
     // 3) trace: the splat appears EARLY, UNDER the pancake, as a small puddle, and spreads out to its shape.
@@ -825,7 +845,7 @@ try {
 
 
 
-  await test("no max range: a 150 m shot lands within the flight bound, splat at the far wall, bounded detail", () => {
+  await test("no max range: a 150 m shot lands within the flight bound, splat at the far wall, bounded detail", async () => {
     const jets = fx.projectiles!;
     jets.clear();
     const from = new THREE.Vector3(0.3, -0.2, -0.6), to = new THREE.Vector3(0.3, -0.2, -150.6);
@@ -836,7 +856,8 @@ try {
     while (fx.splats.surfaceCount === n0 && frames < 60) { fx.update(1 / 60, viewer); maxInst = Math.max(maxInst, jets.mesh.count); frames++; }
     console.log(`    150 m shot: splat after ${frames} frames, ≤ ${maxInst} instance(s)`);
     assert.ok(fx.splats.surfaceCount > n0, "splat 150 m away");
-    assert.ok(frames <= Math.ceil((0.35 + 0.12) * 60) + 2, `150 m in ${frames} frames (flight + impact pancake)`);
+    const KF = (await server.ssrLoadModule("/src/weapons/paintball/PaintJetSettings.ts")).PAINT_JET;
+    assert.ok(frames <= Math.ceil((KF.maxFlight + KF.impactSplatAt) * 60) + 2, `150 m in ${frames} frames (flight + the splat under the pancake)`);
     assert.equal(maxInst, 1, "one instance per jet, whatever the distance");
     fx.clearAll();
   });
@@ -854,7 +875,7 @@ try {
       // Length sampled at FIXED instants (0.1 s, 0.2 s — multiples of every tested frame time).
       let arrival = -1;
       const at: number[] = [];
-      for (let f = 1; f <= fps * 0.35 + 1e-6; f++) {
+      for (let f = 1; f <= fps * 0.8 + 1e-6; f++) { // 25 m at 71.25 m/s ≈ 0.35 s + the splat (margin for slower speeds)
         fx.update(1 / fps, viewer);
         if (arrival < 0 && fx.splats.surfaceCount > n0) arrival = f / fps;
         if (Math.abs(f / fps - 0.1) < 1e-6 || Math.abs(f / fps - 0.2) < 1e-6) {
@@ -862,7 +883,8 @@ try {
           at.push(c.length ? c[0].head - c[0].tail : 0);
         }
       }
-      return { arrival: arrival < 0 ? 0.3 : arrival, at };
+      assert.ok(arrival > 0, `${fps} fps: landed`);
+      return { arrival, at };
     };
     const r = [20, 40, 60, 120, 240].map(run);
     console.log(`    arrival ${r.map((x) => x.arrival.toFixed(3)).join(" / ")} s, length @0.1 s ${r.map((x) => x.at[0].toFixed(2)).join(" / ")} m, @0.2 s ${r.map((x) => x.at[1].toFixed(2)).join(" / ")} m`);
@@ -874,7 +896,8 @@ try {
     jets.clear();
     fx.clearAll();
     const n0 = fx.splats.surfaceCount;
-    fx.spawn(new THREE.Vector3(0.3, 1, -0.6), new THREE.Vector3(0.3, 1, -25.6), new THREE.Color(1, 0, 0), { normal: new THREE.Vector3(0, 0, 1), seed: 12 });
+    // 15 m at 71.25 m/s ≈ 0.21 s: the whole flight + the splat fit inside ONE 500 ms hitch.
+    fx.spawn(new THREE.Vector3(0.3, 1, -0.6), new THREE.Vector3(0.3, 1, -15.6), new THREE.Color(1, 0, 0), { normal: new THREE.Vector3(0, 0, 1), seed: 12 });
     fx.update(0, viewer);
     fx.update(0.5, viewer);
     assert.equal(fx.splats.surfaceCount, n0 + 1, "a 500 ms hitch still lands (and only once)");
@@ -950,7 +973,8 @@ try {
     }
     console.log(`    2 s burst: ≤ ${peakJets} jets / ${peakSeg} instances drawn`);
     assert.ok(peakJets >= 2, "pulses overlap: a continuous paint stream");
-    assert.ok(peakJets <= 4 && peakSeg <= peakJets, "bounded cost: one instance per jet");
+    // 71.25 m/s: a 25 m jet flies ≈ 0.35 s (+ 35 ms draining) → ≈ 4 in the air at 10 shots/s (≤ 7 allowed).
+    assert.ok(peakJets <= 7 && peakSeg <= peakJets, "bounded cost: one instance per jet");
     for (let f = 0; f < 90; f++) fx.update(1 / 60, viewer);
     assert.equal(jets.mesh.count + jets.drops.count, 0, "idle: no instance drawn");
     fx.clearAll();
