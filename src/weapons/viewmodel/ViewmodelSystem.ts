@@ -87,6 +87,11 @@ export class ViewmodelSystem {
   private bobPhase = 0;
   private bobAmount = 0;
   private recoil = 0;
+  // Per-shot kick (see kick()): displacement (m) + rate (m/s) of a critically damped spring.
+  private kickX = 0;
+  private kickV = 0;
+  private kickOmega = 60;
+  private kickPitch = 0;
   private readonly jumpMotion = new ViewmodelJumpMotion();
   private readonly slideMotion = new ViewmodelSlideMotion();
 
@@ -505,6 +510,26 @@ export class ViewmodelSystem {
   }
 
   /**
+   * One sharp kick straight back + a soft return, SET (never accumulated):
+   * the spring rate is REPLACED by the impulse of this shot, so a burst
+   * repeats the same bounded stroke (peak ≤ ~1.05 × `peak`) instead of
+   * walking away. Critically damped, so no oscillation: the displacement is
+   * x(t) = v0·t·e^(-ωt): peak = `peak` (m) after 1/ω, back to 5 % after
+   * ≈ 5.7/ω (ω = 55 → peak at 18 ms, home in ≈ 104 ms). Moves the whole
+   * viewmodel group only — the aiming camera is never touched.
+   */
+  kick(peak: number, omega: number, pitchPerMetre = 0): void {
+    this.kickOmega = omega;
+    this.kickPitch = pitchPerMetre;
+    this.kickV = peak * omega * Math.E;
+  }
+
+  /** Current kick displacement (m, positive = backwards). */
+  get kickOffset(): number {
+    return this.kickX;
+  }
+
+  /**
    * Per-frame presentation. Priority (per the integration contract):
    * combat/ADS straight pose > inspection > run > hold. `straight` must
    * stay true through the WHOLE attack cycle (Extending/Pulling/
@@ -639,15 +664,24 @@ export class ViewmodelSystem {
     this.bobAmount += (bobTarget - this.bobAmount) * Math.min(1, dt * 8);
     this.bobPhase += dt * Math.min(input.speed, 14) * 1.35;
     this.recoil *= Math.exp(-10 * dt);
+    if (this.kickX !== 0 || this.kickV !== 0) {
+      // Exact critically damped step (frame-rate independent).
+      const w = this.kickOmega;
+      const e = Math.exp(-w * dt);
+      const c = this.kickV + w * this.kickX;
+      this.kickX = (this.kickX + c * dt) * e;
+      this.kickV = (this.kickV - w * c * dt) * e;
+      if (Math.abs(this.kickX) < 1e-6 && Math.abs(this.kickV) < 1e-4) { this.kickX = 0; this.kickV = 0; }
+    }
     const bob = this.bobAmount * 0.006;
     this.jumpMotion.update(dt, input);
     this.slideMotion.update(dt, !!input.sliding, input.speed, input.straight);
     this.swayGroup.position.set(
       Math.sin(this.bobPhase) * bob,
       -Math.abs(Math.cos(this.bobPhase)) * bob + this.recoil * 0.03 + this.jumpMotion.offsetY + this.slideMotion.offsetY,
-      this.recoil * 0.05,
+      this.recoil * 0.05 + this.kickX,
     );
-    this.swayGroup.rotation.x = this.recoil * 0.05;
+    this.swayGroup.rotation.x = this.recoil * 0.05 + this.kickX * this.kickPitch;
   }
 
   /**

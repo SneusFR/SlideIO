@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { PaintballRifleProfile } from "../profiles/PaintballRifleProfile";
 import { markEnemyOutlineOccluder } from "../../characters/PotatoCharacter";
+import { paintPaletteLinear } from "./PaintJetSettings";
 
 /**
  * Shared, cached Paintball Rifle assets (same pattern as PopcornShotgunModel):
@@ -22,6 +23,11 @@ export function loadPaintballRifleGltf(): Promise<GLTF> {
     // Held by enemy avatars: the weapon masks the red contour like every
     // in-hand weapon (pure GL stencil state — no effect in the FP pass).
     markEnemyOutlineOccluder(gltf.scene);
+    // Paint palette = pink / blue / yellow (index = the `pc` sent on the wire).
+    // Patched BEFORE any clone: the hopper balls, the shot colour and the jets
+    // all read this palette, so they always match.
+    const hopper = gltf.scene.getObjectByName("Hopper");
+    if (hopper) hopper.userData.palette = paintPaletteLinear();
     return gltf;
   });
   return weaponPromise;

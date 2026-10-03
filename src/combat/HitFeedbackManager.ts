@@ -41,6 +41,8 @@ export class HitFeedbackManager {
   onBodyHitSound: (() => void) | null = null;
   /** Headshot confirmation sound — clearly distinct, never just louder. */
   onHeadshotSound: (() => void) | null = null;
+  /** Paintball Rifle hit sound (wet paint splat) — replaces the generic tick for that weapon. */
+  onPaintballHitSound: ((head: boolean) => void) | null = null;
   /** Floating damage numbers next to the victim (wired by Game, optional). */
   damageNumbers: DamageNumbersHUD | null = null;
 
@@ -94,7 +96,9 @@ export class HitFeedbackManager {
     this.lastPulseZone = hit.hitZone;
 
     this.hud.show(hit.hitZone);
-    if (hit.hitZone === HitZone.HEAD) this.onHeadshotSound?.();
+    if (hit.weapon === KillMethod.PAINTBALL_RIFLE && this.onPaintballHitSound) {
+      this.onPaintballHitSound(hit.hitZone === HitZone.HEAD);
+    } else if (hit.hitZone === HitZone.HEAD) this.onHeadshotSound?.();
     else this.onBodyHitSound?.();
   }
 

@@ -158,6 +158,15 @@ Le clic du couvercle réutilise `ui/ui_click_plop_01.mp3` (déjà listé plus ha
 |---|---|---|---|---|
 | `paintball/paintball_shot_01.mp3` | paintball_shoot2.wav | 98190 | CC0 | https://freesound.org/s/98190/ |
 | `paintball/paintball_charge_01.mp3` | Gun Cocking Sound 2.wav | 632822 | CC0 | https://freesound.org/s/632822/ |
+| `paintball/paintball_blorp_01.mp3` | Splat/Squish 1 (tir : « blorp » de peinture épaisse) | 515618 | CC0 | https://freesound.org/s/515618/ |
+| `paintball/paintball_gush_01.mp3` | Gushing Flesh (tir : jet liquide) | 563315 | CC0 | https://freesound.org/s/563315/ |
+| `paintball/paintball_gooey_01.mp3` | Gooey Squish (tir : queue grave et visqueuse ; touche à la tête) | 269482 | CC0 | https://freesound.org/s/269482/ |
+| `paintball/paintball_splat_01.mp3` | Splat/Squish 4 (touche : « splat » de peinture) | 515621 | CC0 | https://freesound.org/s/515621/ |
+| `paintball/paintball_splat_02.mp3` | Splat/Squish 3 (touche : « splat » de peinture) | 515620 | CC0 | https://freesound.org/s/515620/ |
+
+Le tir du Paintball empile `paintball_blorp` + `paintball_gush` + `paintball_gooey` (squish liquide) ; la touche utilise
+`paintball_splat_01/02` (corps) et `paintball_gooey` + `paintball_splat_01` (tête). `paintball_shot_01.mp3`
+(air comprimé) n'est plus utilisé que par le Water Famas.
 
 Le clic à vide réutilise `popcorn/popcorn_dry_fire_01.mp3`, les clics du réservoir `ui/ui_click_plop_01.mp3` (déjà listés plus haut).
 

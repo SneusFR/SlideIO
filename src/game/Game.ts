@@ -870,6 +870,7 @@ export class Game {
     this.rifle.onOverheat = () => this.gameAudio.overheat();
     this.hitFeedback.onBodyHitSound = () => this.gameAudio.hitBody();
     this.hitFeedback.onHeadshotSound = () => this.gameAudio.hitHead();
+    this.hitFeedback.onPaintballHitSound = (head) => this.gameAudio.paintballHit(head);
     this.hammer.onSwingStart = () => this.gameAudio.hammerSwing();
     this.hammer.onHitConnect = (pos) => this.gameAudio.hammerHit(pos);
     this.hammer.onSlamStart = () => this.gameAudio.slamDescent();
@@ -3891,24 +3892,28 @@ export class Game {
     if (!event.killed && this.elapsed - this.lastNetHitFeedback < 0.08) return;
     this.lastNetHitFeedback = this.elapsed;
     this.hitmarkerHud.show(zone);
-    if (zone === HitZone.HEAD) this.gameAudio.hitHead();
+    if (event.weapon === NetworkWeaponId.PAINTBALL_RIFLE) {
+      // Killing paintball ball: wet paint splat instead of the generic tick.
+      this.gameAudio.paintballHit(zone === HitZone.HEAD);
+    } else if (zone === HitZone.HEAD) this.gameAudio.hitHead();
     else this.gameAudio.hitBody();
   }
 
   /**
-   * PAINTBALL predicted remote hit: hitmarker + hit sound at the click,
-   * EVERY ball (never throttled — each ball of a 600 rpm burst that
-   * connects is heard / seen).
+   * PAINTBALL predicted remote hit: hitmarker + squishy paint-splat sound at
+   * the click, EVERY ball (never throttled — each ball of a 600 rpm burst
+   * that connects is heard / seen).
    */
   private showPaintballHitFeedback(zone: HitZone): void {
     this.hitmarkerHud.show(zone);
-    if (zone === HitZone.HEAD) this.gameAudio.hitHead();
-    else this.gameAudio.hitBody();
+    this.gameAudio.paintballHit(zone === HitZone.HEAD);
   }
 
   /** WATER FAMAS predicted remote hit: same instant feedback, EVERY jet. */
   private showFamasHitFeedback(zone: HitZone): void {
-    this.showPaintballHitFeedback(zone);
+    this.hitmarkerHud.show(zone);
+    if (zone === HitZone.HEAD) this.gameAudio.hitHead();
+    else this.gameAudio.hitBody();
   }
 
   /** SERVER-confirmed kill → the full solo kill feedback chain. */

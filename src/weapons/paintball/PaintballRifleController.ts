@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { PaintballHopper } from "./PaintballHopper";
+import { PAINT_JET } from "./PaintJetSettings";
 
 /**
  * Timeline of the authored clips (seconds). Arms (FP_/TP_ clips) and weapon clips share the SAME clock:
@@ -26,6 +27,8 @@ export interface ViewmodelLike {
   startInspect(onDone: (cancelled: boolean) => void): boolean;
   cancelInspect(): void;
   addRecoil(amount: number): void;
+  /** Sharp recoil + soft return, set (not accumulated) per shot — ViewmodelSystem.kick. */
+  kick?(peak: number, omega: number, pitchPerMetre?: number): void;
   readonly activeActionKey: string | null;
 }
 
@@ -186,7 +189,11 @@ export class PaintballRifleController {
     }
     this.ammo--;
     this.sinceShot = 0;
-    this.vm?.addRecoil(this.recoilPerShot);
+    // Synced with the jet leaving the barrel (same call, same frame): one sharp
+    // kick back + a soft return in ~100 ms, SET each shot so a burst never
+    // accumulates. Falls back to the old additive recoil on a bare viewmodel.
+    if (this.vm?.kick) this.vm.kick(PAINT_JET.kickPeak, PAINT_JET.kickOmega, PAINT_JET.kickPitch);
+    else this.vm?.addRecoil(this.recoilPerShot);
     const slot = this.hopper.feedOne();
     this.hopper.colorOf(slot >= 0 ? slot : 0, _c);
     this.ev.onShot?.(this.ammo, _c);

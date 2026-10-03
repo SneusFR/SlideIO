@@ -3,6 +3,7 @@ import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { PaintSplats, hitBarycentric } from "./PaintSplats";
 import type { PaintHit } from "./PaintballProjectiles";
 import { PaintJets, type PaintballAnchor } from "./PaintJets";
+import { paintPaletteColors } from "./PaintJetSettings";
 
 /** Surface splat diameter (m): 3× the pack's 0.32 m, matching the 3× ball. */
 const SPLAT_SIZE = 0.96;
@@ -47,12 +48,13 @@ export class PaintballFX {
   /** Build the paint-jet pool + palette from the (cached) weapon GLB. */
   init(gltf: GLTF): void {
     if (this.projectiles) return;
-    // Procedural liquid paint streams (no asset needed) in the palette colours.
+    // Procedural elastic paint jets (no asset needed) in the palette colours.
     this.projectiles = new PaintJets(this.worldScene, this.splats);
-    const pal = gltf.scene.getObjectByName("Hopper")?.userData.palette as number[][] | undefined;
-    if (pal && pal.length > 0) {
-      this.palette = pal.map((c) => new THREE.Color().setRGB(c[0], c[1], c[2], THREE.LinearSRGBColorSpace));
-    }
+    // Pink / blue / yellow (PaintJetSettings) — the single source of truth.
+    // loadPaintballRifleGltf patches the hopper palette to the same values,
+    // so the wire index `pc` always maps to the colour of the ball that was fed.
+    void gltf;
+    this.palette = paintPaletteColors();
   }
 
   /** Paint colour of a palette index (wire `pc`). */

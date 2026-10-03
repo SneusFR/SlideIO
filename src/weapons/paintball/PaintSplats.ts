@@ -46,7 +46,7 @@ export interface PaintSplatsOptions {
 }
 
 /** Small deterministic RNG (same seed -> same splat on every client). */
-function rng(seed: number): () => number {
+export function rng(seed: number): () => number {
   let a = (seed >>> 0) || 0x9e3779b9;
   return () => {
     a = (a + 0x6d2b79f5) >>> 0;
@@ -60,6 +60,8 @@ function rng(seed: number): () => number {
 export class PaintSplats {
   readonly surfaceMesh: THREE.InstancedMesh;
   private readonly seeds: THREE.InstancedBufferAttribute;
+  /** Per-instance spread 0 → 1 (1 = the final splat): a fresh splat spreads out instead of popping in. */
+  private readonly spreads: THREE.InstancedBufferAttribute;
   private readonly max: number;
   private next = 0;
   private live = 0;
@@ -93,17 +95,20 @@ export class PaintSplats {
     this.seeds = new THREE.InstancedBufferAttribute(new Float32Array(max), 1);
     this.seeds.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute("aSeed", this.seeds);
+    this.spreads = new THREE.InstancedBufferAttribute(new Float32Array(max).fill(1), 1);
+    this.spreads.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute("aSpread", this.spreads);
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.0,
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
     mat.onBeforeCompile = (shader) => {
       shader.vertexShader = shader.vertexShader
-        .replace("#include <common>", "#include <common>\nattribute float aSeed;\nvarying float vSeed;\nvarying vec2 vSplatP;")
-        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvSeed = aSeed;\nvSplatP = position.xy * 2.0;");
+        .replace("#include <common>", "#include <common>\nattribute float aSeed;\nattribute float aSpread;\nvarying float vSeed;\nvarying float vSpread;\nvarying vec2 vSplatP;")
+        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvSeed = aSeed;\nvSpread = aSpread;\nvSplatP = position.xy * 2.0;");
       shader.fragmentShader = shader.fragmentShader
-        .replace("#include <common>", "#include <common>\nvarying float vSeed;\nvarying vec2 vSplatP;\n" + SPLAT_GLSL)
-        .replace("#include <clipping_planes_fragment>", "#include <clipping_planes_fragment>\nif (splatMask(vSplatP, vSeed) < 0.5) discard;");
+        .replace("#include <common>", "#include <common>\nvarying float vSeed;\nvarying float vSpread;\nvarying vec2 vSplatP;\n" + SPLAT_GLSL)
+        .replace("#include <clipping_planes_fragment>", "#include <clipping_planes_fragment>\nif (splatMask(vSplatP, vSeed, vSpread) < 0.5) discard;");
     };
-    mat.customProgramCacheKey = () => "paint-splat-v1";
+    mat.customProgramCacheKey = () => "paint-splat-v2";
     this.surfaceMesh = new THREE.InstancedMesh(geo, mat, max);
     this.surfaceMesh.name = "PaintSplats";
     this.surfaceMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -121,30 +126,26 @@ export class PaintSplats {
   /** Surface splats currently alive (<= maxSurface). */
   get surfaceCount(): number { return this.live; }
 
+  /** Default splat size (m): the size used when splatSurface() gets no explicit size. */
+  get surfaceBase(): number { return this.size; }
+
   /**
    * A splat on STATIC level geometry (walls, floor, props that never move). normal = WORLD normal of the hit face.
    * seed: pass the shot seed so every client draws the SAME splat (shape, rotation, size); omitted = random.
    * Persistent: it stays until clearSurfaces() or until maxSurface newer splats pushed it out. Cost of a call:
    * O(1) (hash grid lookup) + a partial GPU upload of that one instance — nothing is re-uploaded in full.
+   * spread: initial spread of a NEW splat (0 = a small round puddle, 1 = the final shape); drive it with
+   * setSpread() so the paint spreads out (round core, then the fingers, then the satellite drops) instead of
+   * popping in as a stamp. A merged splat keeps its current spread.
    * Returns the instance index used.
    */
-  splatSurface(point: THREE.Vector3, normal: THREE.Vector3, color: THREE.Color, size = this.size, seed?: number): number {
+  splatSurface(point: THREE.Vector3, normal: THREE.Vector3, color: THREE.Color, size = this.size, seed?: number, spread = 1): number {
     const r = seed === undefined ? Math.random : rng(seed);
     const cs = this.size;                                         // hash cell = one default splat
     const ix = Math.floor(point.x / cs), iy = Math.floor(point.y / cs), iz = Math.floor(point.z / cs);
     // 1) merge into a splat already there (same wall) instead of stacking quads
-    if (this.mergeR > 0) {
-      let best = -1, bestD = size * this.mergeR;
-      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
-        const list = this.grid.get(cellKey(ix + dx, iy + dy, iz + dz));
-        if (!list) continue;
-        for (const j of list) {
-          const j3 = j * 3;
-          if (this.nor[j3] * normal.x + this.nor[j3 + 1] * normal.y + this.nor[j3 + 2] * normal.z < 0.9) continue;
-          const d = Math.hypot(this.cen[j3] - point.x, this.cen[j3 + 1] - point.y, this.cen[j3 + 2] - point.z);
-          if (d < bestD) { bestD = d; best = j; }
-        }
-      }
+    {
+      const best = this.findMerge(point, normal, size);
       if (best >= 0) {
         // SlideIO: the merged splat keeps its SHAPE + ROTATION (no re-seed,
         // no spin) — under sustained fire on one spot the splat under the
@@ -178,12 +179,50 @@ export class PaintSplats {
     this.base[i] = size; this.grow[i] = 1;
     this.rot[i] = r() * Math.PI * 2;
     this.asp[i * 2] = 0.8 + r() * 0.45; this.asp[i * 2 + 1] = 0.8 + r() * 0.45;
-    this.seeds.setX(i, r() * 1000);
+    this.seeds.setX(i, Math.round(r() * 1000 * 64) / 64); // on the 1/64 grid the shader snaps to (stable shape)
+    this.spreads.setX(i, Math.min(1, Math.max(0, spread)));
     this.surfaceMesh.setColorAt(i, color);
     this.writeMatrix(i);
     this.surfaceMesh.count = this.live;
     this.touch(i);
     return i;
+  }
+
+  /**
+   * Spread of splat `i` (0 = small round puddle → 1 = final shape). Only ever GROWS (a splat several impacts
+   * drive, or a merged one already fully spread, never shrinks back). Uploads that one float.
+   */
+  setSpread(i: number, spread: number): void {
+    if (i < 0 || i >= this.max) return;
+    const s = Math.min(1, Math.max(0, spread));
+    if (s <= this.spreads.getX(i)) return;
+    this.spreads.setX(i, s);
+    this.spreads.addUpdateRange(i, 1);
+    this.spreads.needsUpdate = true;
+  }
+
+  /** Current spread of splat `i` (1 = fully spread). */
+  spreadOf(i: number): number {
+    return i >= 0 && i < this.max ? this.spreads.getX(i) : 1;
+  }
+
+  /** Existing splat on the same wall close enough to `point` to merge into, or -1. */
+  private findMerge(point: THREE.Vector3, normal: THREE.Vector3, size: number): number {
+    if (this.mergeR <= 0) return -1;
+    const cs = this.size;
+    const ix = Math.floor(point.x / cs), iy = Math.floor(point.y / cs), iz = Math.floor(point.z / cs);
+    let best = -1, bestD = size * this.mergeR;
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+      const list = this.grid.get(cellKey(ix + dx, iy + dy, iz + dz));
+      if (!list) continue;
+      for (const j of list) {
+        const j3 = j * 3;
+        if (this.nor[j3] * normal.x + this.nor[j3 + 1] * normal.y + this.nor[j3 + 2] * normal.z < 0.9) continue;
+        const d = Math.hypot(this.cen[j3] - point.x, this.cen[j3 + 1] - point.y, this.cen[j3 + 2] - point.z);
+        if (d < bestD) { bestD = d; best = j; }
+      }
+    }
+    return best;
   }
 
   private writeMatrix(i: number): void {
@@ -196,12 +235,13 @@ export class PaintSplats {
     this.surfaceMesh.setMatrixAt(i, _m.compose(_p, _q, _s));
   }
 
-  /** Upload ONLY this instance (matrix + colour + seed) — never the whole buffers. */
+  /** Upload ONLY this instance (matrix + colour + seed + spread) — never the whole buffers. */
   private touch(i: number): void {
     const im = this.surfaceMesh.instanceMatrix, ic = this.surfaceMesh.instanceColor!;
     im.addUpdateRange(i * 16, 16); im.needsUpdate = true;
     ic.addUpdateRange(i * 3, 3); ic.needsUpdate = true;
     this.seeds.addUpdateRange(i, 1); this.seeds.needsUpdate = true;
+    this.spreads.addUpdateRange(i, 1); this.spreads.needsUpdate = true;
   }
 
   /** Remove every surface splat (new round / map change). */
@@ -396,17 +436,35 @@ export function patchPaintMaterial(src: THREE.Material): THREE.Material {
 }
 
 const SPLAT_GLSL = /* glsl */ `
-float splatMask(vec2 p, float seed) {
+// spread 0 → 1: the paint SPREADS OUT (never a stamp): a small round puddle grows to the full core (0 → 0.5),
+// the fingers push out of it (0.2 → 0.85), the satellite drops land last, flying outward (0.45 → 0.95).
+// spread = 1 is exactly the final splat shape.
+float splatMask(vec2 p, float seedIn, float spread) {
+  // The seed is a per-instance constant, but its interpolated varying drifts by a few ulps from one fragment
+  // to the next, and fract(sin(x) * 43758) amplifies that into speckles on the satellite drops: snap it back
+  // to the 1/64 grid it is stored on (PaintSplats.splatSurface).
+  float seed = floor(seedIn * 64.0 + 0.5) / 64.0;
+  float s = clamp(spread, 0.0, 1.0);
+  float core = smoothstep(0.0, 0.5, s);
+  float fingers = smoothstep(0.2, 0.85, s);
   float r = length(p);
   float a = atan(p.y, p.x);
-  float edge = 0.52 + 0.14 * sin(a * 5.0 + seed * 6.283) + 0.09 * sin(a * 9.0 + seed * 12.1) + 0.05 * sin(a * 15.0 + seed * 3.7);
+  // Shape variants per seed: lobe counts (4..6, 8..10), lobe depth and the number of satellite droplets all change.
+  float f1 = 4.0 + floor(fract(seed * 7.31) * 3.0);
+  float f2 = 8.0 + floor(fract(seed * 3.17) * 3.0);
+  float amp = 0.10 + 0.10 * fract(seed * 1.713);
+  float lobes = amp * sin(a * f1 + seed * 6.283) + 0.09 * sin(a * f2 + seed * 12.1) + 0.05 * sin(a * 15.0 + seed * 3.7);
+  float edge = 0.52 * mix(0.35, 1.0, core) + lobes * fingers;
   float m = step(r, edge);
   for (int k = 0; k < 6; k++) {
     float fk = float(k);
+    if (fract(seed * 13.7 + fk * 0.37) < 0.25) continue;
+    float sat = smoothstep(0.45 + 0.07 * fk, 0.8 + 0.03 * fk, s);
+    if (sat <= 0.0) continue;
     float ang = seed * 31.0 + fk * 1.9;
-    float dist = 0.62 + 0.3 * fract(sin(seed * 7.3 + fk * 12.9898) * 43758.5453);
+    float dist = (0.62 + 0.3 * fract(sin(seed * 7.3 + fk * 12.9898) * 43758.5453)) * mix(0.55, 1.0, sat);
     vec2 c = vec2(cos(ang), sin(ang)) * dist;
-    float rad = 0.04 + 0.07 * fract(sin(seed * 3.1 + fk * 78.233) * 43758.5453);
+    float rad = (0.04 + 0.07 * fract(sin(seed * 3.1 + fk * 78.233) * 43758.5453)) * sat;
     m = max(m, step(length(p - c), rad));
   }
   return m;

@@ -53,6 +53,13 @@ export const AUDIO_MANIFEST: Record<string, string> = {
   // dry click + hopper clicks reuse popcorn_dry_fire / ui_click_plop)
   paintball_shot: `${A}/paintball/paintball_shot_01.mp3`,
   paintball_charge: `${A}/paintball/paintball_charge_01.mp3`,
+  // Paintball Rifle paint SFX (gooey blorp + liquid gush + squish shot, wet splat hits — CC0,
+  // see ATTRIBUTION.md; the compressed-air paintball_shot above is still used by the Water Famas)
+  paintball_blorp: `${A}/paintball/paintball_blorp_01.mp3`,
+  paintball_gush: `${A}/paintball/paintball_gush_01.mp3`,
+  paintball_gooey: `${A}/paintball/paintball_gooey_01.mp3`,
+  paintball_splat_01: `${A}/paintball/paintball_splat_01.mp3`,
+  paintball_splat_02: `${A}/paintball/paintball_splat_02.mp3`,
   // Frisbee Launcher (elastic twang / disc whirl / plastic latch / band snap — CC0, see ATTRIBUTION.md;
   // dry click + bounces reuse popcorn_dry_fire / basket_bounce)
   frisbee_twang: `${A}/frisbee/frisbee_twang_01.mp3`,
@@ -747,9 +754,31 @@ export class GameAudio {
   // PAINTBALL RIFLE (CC0 air shot / cocking sample + existing clicks)
   // ------------------------------------------------------------------
 
-  /** Compressed-air "pfft" (600 rpm: few voices, light pitch wobble). */
+  /**
+   * Thick paint "blorp": a wet splat pop (body) + a liquid gush (the jet
+   * leaving the barrel) + a low gooey squish tail. 600 rpm: short slices,
+   * few voices, wide pitch wobble so a burst stays squishy, never metronomic.
+   */
   paintballShot(): void {
-    audio.play("paintball_shot", { bus: "weapons", volume: 0.55, volumeVar: 0.06, rate: 1.05, rateVar: 0.06, maxInstances: 4 });
+    audio.play("paintball_blorp", { bus: "weapons", volume: 0.55, volumeVar: 0.06, rate: 1.15, rateVar: 0.15, duration: 0.3, maxInstances: 4 });
+    audio.play("paintball_gush", { bus: "weapons", volume: 0.3, volumeVar: 0.05, rate: 1.4, rateVar: 0.15, duration: 0.2, maxInstances: 4 });
+    audio.play("paintball_gooey", { bus: "weapons", volume: 0.35, volumeVar: 0.05, rate: 0.85, rateVar: 0.1, duration: 0.25, delay: 0.03, maxInstances: 3 });
+  }
+
+  /**
+   * Paint ball connects with a player (local shooter feedback): wet "splat" on
+   * the body (two variants), a fatter gooey squish on a headshot — still
+   * clearly distinct from a body hit. Never throttled harder than 40 ms so
+   * every ball of a 600 rpm burst is heard.
+   */
+  paintballHit(head: boolean): void {
+    if (head) {
+      audio.play("paintball_gooey", { bus: "impacts", volume: 0.8, volumeVar: 0.05, rate: 1.2, rateVar: 0.05, throttleMs: 40, maxInstances: 4 });
+      audio.play("paintball_splat_01", { bus: "impacts", volume: 0.55, rate: 1.5, rateVar: 0.05, throttleMs: 40, maxInstances: 4 });
+      return;
+    }
+    const key = Math.random() < 0.5 ? "paintball_splat_01" : "paintball_splat_02";
+    audio.play(key, { bus: "impacts", volume: 0.7, volumeVar: 0.06, rate: 1.05, rateVar: 0.12, throttleMs: 40, maxInstances: 5 });
   }
 
   /** Empty hopper: dry trigger click. */
@@ -787,9 +816,11 @@ export class GameAudio {
     else audio.play("paintball_charge", { bus: "weapons", volume: 0.55, rate: 1.15, rateVar: 0.03, duration: 0.45, throttleMs: 120 });
   }
 
-  /** Remote shooter: spatialized air shot at the shooter position. */
+  /** Remote shooter: spatialized paint blorp (same 3 layers) at the shooter position. */
   paintballShotAt(pos: THREE.Vector3): void {
-    audio.playAt("paintball_shot", pos, { bus: "weapons", volume: 0.7, rate: 1.05, rateVar: 0.06, refDistance: 6, maxInstances: 6 });
+    audio.playAt("paintball_blorp", pos, { bus: "weapons", volume: 0.7, volumeVar: 0.06, rate: 1.15, rateVar: 0.15, duration: 0.3, refDistance: 6, maxInstances: 6 });
+    audio.playAt("paintball_gush", pos, { bus: "weapons", volume: 0.38, volumeVar: 0.05, rate: 1.4, rateVar: 0.15, duration: 0.2, refDistance: 6, maxInstances: 6 });
+    audio.playAt("paintball_gooey", pos, { bus: "weapons", volume: 0.45, volumeVar: 0.05, rate: 0.85, rateVar: 0.1, duration: 0.25, delay: 0.03, refDistance: 6, maxInstances: 4 });
   }
 
   /** Remote hopper swap: release click, seat click, charging handle. */
