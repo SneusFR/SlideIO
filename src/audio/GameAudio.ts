@@ -770,15 +770,19 @@ export class GameAudio {
    * the body (two variants), a fatter gooey squish on a headshot — still
    * clearly distinct from a body hit. Never throttled harder than 40 ms so
    * every ball of a 600 rpm burst is heard.
+   *
+   * Voice caps: the samples last 0.5-1 s (the head squish ≈ 0.8 s at this rate) and a burst starts one every
+   * 0.1 s, so the caps must cover duration × 10 /s or the per-key instance limit silently drops the later hits of
+   * the burst (the "gooey" key is also used by paintballShot, whose own cap is 3). Same sounds, same volumes.
    */
   paintballHit(head: boolean): void {
     if (head) {
-      audio.play("paintball_gooey", { bus: "impacts", volume: 0.8, volumeVar: 0.05, rate: 1.2, rateVar: 0.05, throttleMs: 40, maxInstances: 4 });
-      audio.play("paintball_splat_01", { bus: "impacts", volume: 0.55, rate: 1.5, rateVar: 0.05, throttleMs: 40, maxInstances: 4 });
+      audio.play("paintball_gooey", { bus: "impacts", volume: 0.8, volumeVar: 0.05, rate: 1.2, rateVar: 0.05, throttleMs: 40, maxInstances: 14 });
+      audio.play("paintball_splat_01", { bus: "impacts", volume: 0.55, rate: 1.5, rateVar: 0.05, throttleMs: 40, maxInstances: 10 });
       return;
     }
     const key = Math.random() < 0.5 ? "paintball_splat_01" : "paintball_splat_02";
-    audio.play(key, { bus: "impacts", volume: 0.7, volumeVar: 0.06, rate: 1.05, rateVar: 0.12, throttleMs: 40, maxInstances: 5 });
+    audio.play(key, { bus: "impacts", volume: 0.7, volumeVar: 0.06, rate: 1.05, rateVar: 0.12, throttleMs: 40, maxInstances: 10 });
   }
 
   /** Empty hopper: dry trigger click. */

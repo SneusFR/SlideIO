@@ -30,19 +30,25 @@ export const BODY_RINGS = 18;
 export const NOSE_RINGS = 6;
 
 export const PAINT_JET = {
-  // ---- flight: 95 m/s originally, halved (47.5), then ×1.5 → 71.25 m/s; the cap scaled with it ----
-  /** Mean head speed (m/s). 71.25 m/s = a 10 shots/s burst leaves ~7.1 m between jet noses (each jet ≈ 1.1 m long). */
-  speed: 71.25,
+  // ---- flight: the jet covers the WHOLE hitscan path (muzzle → computed impact), in a short, bounded time ----
+  /**
+   * Mean head speed (m/s) used for CLOSE shots: below speed × maxFlight (≈ 8.5 m) the jet flies at this speed.
+   * Further away the flight time is capped by maxFlight (the jet is then faster, it still ends on the impact).
+   */
+  speed: 106.875,
   /** ± share of the speed randomised per jet. */
   speedJitter: 0.1,
   /**
-   * Head flight time bounds (s): ≥ 2 frames at point blank, ≤ maxFlight whatever the distance. maxFlight scales
-   * inversely with the speed (0.7 / 1.5 ≈ 0.467 s): the cap still kicks in beyond ~33 m as before, so the jet
-   * has the same speed at every distance (a different cap would speed up / slow down far jets). Visual only:
-   * damage and the hitmarker stay instant (hitscan).
+   * Head flight time bounds (s). Visual only: damage, hitmarker and bot flash are decided at the shot by the
+   * hitscan and never wait for the jet.
+   *   minFlight: ≥ 2 frames at point blank (the exit from the barrel is still seen).
+   *   maxFlight: ★ THE TUNABLE ★ — whatever the distance (combat range and beyond), the nose reaches the impact point
+   *   in at most this many seconds. The value is snapped DOWN to a whole number of fixed sub-steps
+   *   (springStep = 1/180 s): 0.08 s → 14 sub-steps = 77.8 ms of simulated time. Raise it for a slower, more
+   *   visible jet (0.31 was the previous value), lower it to approach an instantaneous line.
    */
   minFlight: 2 / 60,
-  maxFlight: 0.7 / 1.5,
+  maxFlight: 0.08,
 
   // ---- elastic body: BORN stretched, stays a LONG jet until the impact ----
   // With volume conservation, length / thickness = L^1.5 / (2 · radius · √refLength).

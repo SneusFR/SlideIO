@@ -97,6 +97,7 @@ import { Combatant } from "../combat/Combatant";
 import { PlayerCombatant } from "../combat/PlayerCombatant";
 import { HitZone } from "../combat/HitZone";
 import { HitFeedbackManager } from "../combat/HitFeedbackManager";
+import { HitFeedbackConfig as hitFeedbackCfg } from "../combat/HitFeedbackConfig";
 import { HitmarkerHUD } from "../ui/HitmarkerHUD";
 import { DamageNumbersHUD } from "../ui/DamageNumbersHUD";
 import { SpawnManager } from "../combat/SpawnManager";
@@ -3905,7 +3906,10 @@ export class Game {
    * that connects is heard / seen).
    */
   private showPaintballHitFeedback(zone: HitZone): void {
-    this.hitmarkerHud.show(zone);
+    this.hitmarkerHud.show(
+      zone,
+      zone === HitZone.HEAD ? hitFeedbackCfg.paintballHeadHitmarkerDuration : hitFeedbackCfg.paintballBodyHitmarkerDuration,
+    );
     this.gameAudio.paintballHit(zone === HitZone.HEAD);
   }
 

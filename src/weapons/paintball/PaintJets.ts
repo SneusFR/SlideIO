@@ -72,6 +72,15 @@ const _one = new THREE.Vector3(1, 1, 1);
 const f = (x: number): string => x.toFixed(5);
 
 /**
+ * Planned head flight time (s) for a raw `distance / speed` time: clamped to [minFlight, maxFlight], then snapped DOWN
+ * to a whole number of fixed sub-steps (springStep) so the impact lands on a sub-step boundary at or before maxFlight.
+ */
+function snapFlight(raw: number): number {
+  const t = Math.min(K.maxFlight, Math.max(K.minFlight, raw));
+  return Math.max(1, Math.floor(t / K.springStep + 1e-6)) * K.springStep;
+}
+
+/**
  * Paint shine at the emissive stage: key-light fill (keeps colours saturated
  * on a dark map) + highlight. No glow. `wet` (the jets) adds the liquid look:
  * a thin dark edge on the silhouette (diffuse darkened where N·V → 0, before
@@ -419,9 +428,13 @@ export class PaintJets {
     this.hasViewer = true;
   }
 
-  /** Head flight time over `distance` (bounded). */
+  /**
+   * Head flight time (s) over `distance`, at the nominal speed: bounded by minFlight / maxFlight and snapped DOWN to
+   * a whole number of fixed sub-steps, so the simulated nose is ON the impact at that exact time (never later than
+   * maxFlight). Per-jet speed jitter is applied by spawn() on top of the same rule.
+   */
   flightTime(distance: number): number {
-    return Math.min(K.maxFlight, Math.max(K.minFlight, distance / this.speed));
+    return snapFlight(distance / this.speed);
   }
 
   /**
@@ -460,7 +473,7 @@ export class PaintJets {
     this.seed[i] = hash01(n, 11);
     const L = from.distanceTo(to);
     const speed = this.speed * (1 + (hash01(n, 12) * 2 - 1) * K.speedJitter);
-    const dur = Math.min(K.maxFlight, Math.max(K.minFlight, L / speed));
+    const dur = snapFlight(L / speed);
     // BORN STRETCHED: on frame 0 the nose is already `launchLength` out of the
     // barrel and the tail sits at the nozzle — a long liquid jet with its
     // rounded nose, never a ball growing at the muzzle.
@@ -760,7 +773,9 @@ export class PaintJets {
       this.lenV[i] = 0;
       return u < 1;
     }
-    const head = Math.min(L, this.h0[i] + this.vh[i] * age);
+    // The nose is ON the impact once the planned flight time is spent (explicit test: float32 age / speed rounding
+    // must never cost one more sub-step, i.e. push the arrival past maxFlight).
+    const head = age >= this.dur[i] - 1e-5 ? L : Math.min(L, this.h0[i] + this.vh[i] * age);
     this.head[i] = head;
 
     // In-flight elasticity: the rest length BREATHES slightly (per-jet rate +

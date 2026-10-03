@@ -411,16 +411,17 @@ try {
     const gl = await loadPaintballRifleGltf();
     const pal = gl.scene.getObjectByName("Hopper").userData.palette as number[][];
     for (let i = 0; i < 3; i++) assert.ok(same(new THREE.Color(pal[i][0], pal[i][1], pal[i][2]), want[i]), `hopper palette ${i} patched`);
-    // 95 m/s originally, halved, then ×1.5 (= 71.25 m/s); the flight-time cap scaled inversely (same ~33 m distance before it kicks in).
+    // Close-shot speed 106.875 m/s (95 m/s originally, halved, then ×1.5 twice). The flight TIME is now capped at
+    // maxFlight = 0.08 s whatever the distance (the jet covers the whole hitscan path), snapped down to whole 1/180 s sub-steps.
     const K = S.PAINT_JET;
-    assert.equal(jets.speed, (95 / 2) * 1.5, `jet head speed = 1.5 × the halved speed (${jets.speed} m/s)`);
-    assert.ok(Math.abs(K.maxFlight - 0.7 / 1.5) < 1e-12, "flight-time cap scaled inversely with it");
-    assert.ok(Math.abs(K.maxFlight * jets.speed - 0.35 * 95) < 1e-9, "the cap kicks in at the same distance as before");
-    assert.ok(jets.speed / 10 >= 6, "≥ 6 m between two jets of a 600 rpm burst (jets ≈ 1.1 m long: clearly separate)");
-    assert.ok(Math.abs(jets.flightTime(19) - 19 / jets.speed) < 1e-12, "19 m at jet speed");
-    assert.ok(Math.abs(jets.flightTime(19) - (19 / 47.5) / 1.5) < 1e-12, "19 m takes 1.5× less time than at the halved speed");
+    assert.equal(jets.speed, (95 / 2) * 1.5 * 1.5, `jet head speed = 2.25 × the halved speed (${jets.speed} m/s)`);
+    assert.equal(K.maxFlight, 0.08, "the whole path is flown in at most 80 ms (one setting)");
+    assert.ok(jets.speed / 10 >= 6, "≥ 6 m between two jets of a 600 rpm burst at close range (jets ≈ 1.1 m long: clearly separate)");
+    const sub = (t: number) => Math.round(t / K.springStep);
+    assert.ok(Math.abs(jets.flightTime(5) - sub(5 / jets.speed) * K.springStep) < 1e-9 && jets.flightTime(5) <= 5 / jets.speed + 1e-9, "5 m at jet speed, snapped down to a sub-step");
+    assert.ok(jets.flightTime(19) <= K.maxFlight + 1e-9 && jets.flightTime(19) > K.maxFlight - K.springStep - 1e-9, "19 m: capped at maxFlight (14 sub-steps = 77.8 ms)");
     assert.ok(jets.flightTime(1000) <= K.maxFlight + 1e-12, "far shot bounded");
-    assert.ok(Math.abs(jets.flightTime(1) - 2 / 60) < 1e-12, "point blank: ≥ 2 frames (exit still seen)");
+    assert.ok(jets.flightTime(1) >= 2 / 60 - K.springStep, "point blank: ≈ 2 frames (exit still seen)");
   });
   /** Per-frame samples of the first jet on screen: body length, head, tail, physical nose radius. */
   const sampleJet = (to: THREE.Vector3, fps: number, frames: number, spawned = 100) => {
@@ -449,7 +450,13 @@ try {
     assert.ok(Math.abs(K.radius - 0.055 * W) < 1e-9, `jet radius ×2.25 (${(K.radius * 1000).toFixed(1)} mm)`);
     assert.ok(K.launchLength === 1.2 && K.restLength === 1.06 && K.minLength === 0.93 && K.maxLength === 1.2, "same lengths as before");
     assert.ok(Math.abs(K.maxAngularRadius - 0.04 * W) < 1e-9 && Math.abs(K.minAngularRadius - 0.0035 * W) < 1e-9, "on-screen thickness clamps ×2.25 too");
-    const s = sampleJet(new THREE.Vector3(0.3, 1, -60.6), 240, 200); // 60 m: the whole flight (maxFlight ≈ 0.47 s = 112 frames)
+    // This test is about the SHAPE of a long flight (relaxation, then in-flight breathing after 0.1 s). The shipped flight
+    // is now ≤ 80 ms, so the test flies the jet with the previous 0.311 s cap (shape logic unchanged, only the duration);
+    // the real ≤ 80 ms path + the same shape bounds are asserted in test-paintball-solo.mts.
+    const shippedMaxFlight = K.maxFlight;
+    (K as { maxFlight: number }).maxFlight = 0.7 / 2.25;
+    const s = sampleJet(new THREE.Vector3(0.3, 1, -60.6), 240, 200);
+    (K as { maxFlight: number }).maxFlight = shippedMaxFlight;
     const l0 = s[0].len;
     const ratio = (x: { len: number; r: number }) => x.len / (2 * x.r);
     console.log(`    length: ${s.filter((_, i) => i % 12 === 0).map((x) => x.len.toFixed(2)).join(" → ")} m; thickness ${s.filter((_, i) => i % 12 === 0).map((x) => (2 * x.r * 100).toFixed(1)).join(" → ")} cm; length / thickness: ${s.filter((_, i) => i % 12 === 0).map((x) => ratio(x).toFixed(1)).join(" → ")}`);
@@ -875,7 +882,7 @@ try {
       // Length sampled at FIXED instants (0.1 s, 0.2 s — multiples of every tested frame time).
       let arrival = -1;
       const at: number[] = [];
-      for (let f = 1; f <= fps * 0.8 + 1e-6; f++) { // 25 m at 71.25 m/s ≈ 0.35 s + the splat (margin for slower speeds)
+      for (let f = 1; f <= fps * 0.8 + 1e-6; f++) { // 25 m at 106.875 m/s ≈ 0.23 s + the splat (margin for slower speeds)
         fx.update(1 / fps, viewer);
         if (arrival < 0 && fx.splats.surfaceCount > n0) arrival = f / fps;
         if (Math.abs(f / fps - 0.1) < 1e-6 || Math.abs(f / fps - 0.2) < 1e-6) {
@@ -896,7 +903,7 @@ try {
     jets.clear();
     fx.clearAll();
     const n0 = fx.splats.surfaceCount;
-    // 15 m at 71.25 m/s ≈ 0.21 s: the whole flight + the splat fit inside ONE 500 ms hitch.
+    // 15 m at 106.875 m/s ≈ 0.14 s: the whole flight + the splat fit inside ONE 500 ms hitch.
     fx.spawn(new THREE.Vector3(0.3, 1, -0.6), new THREE.Vector3(0.3, 1, -15.6), new THREE.Color(1, 0, 0), { normal: new THREE.Vector3(0, 0, 1), seed: 12 });
     fx.update(0, viewer);
     fx.update(0.5, viewer);
@@ -973,7 +980,7 @@ try {
     }
     console.log(`    2 s burst: ≤ ${peakJets} jets / ${peakSeg} instances drawn`);
     assert.ok(peakJets >= 2, "pulses overlap: a continuous paint stream");
-    // 71.25 m/s: a 25 m jet flies ≈ 0.35 s (+ 35 ms draining) → ≈ 4 in the air at 10 shots/s (≤ 7 allowed).
+    // 106.875 m/s: a 25 m jet flies ≈ 0.23 s (+ 35 ms draining) → ≈ 3 in the air at 10 shots/s (≤ 7 allowed).
     assert.ok(peakJets <= 7 && peakSeg <= peakJets, "bounded cost: one instance per jet");
     for (let f = 0; f < 90; f++) fx.update(1 / 60, viewer);
     assert.equal(jets.mesh.count + jets.drops.count, 0, "idle: no instance drawn");

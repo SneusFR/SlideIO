@@ -81,8 +81,10 @@ export class HitFeedbackManager {
   // ------------------------------------------------------------------
 
   private pulse(hit: HitEvent): void {
-    const interval =
-      hit.weapon === KillMethod.OBLITERREUR
+    const paintball = hit.weapon === KillMethod.PAINTBALL_RIFLE;
+    const interval = paintball
+      ? hfc.paintballFeedbackInterval // 0: every ball that connects is confirmed (never throttled)
+      : hit.weapon === KillMethod.OBLITERREUR
         ? hfc.obliterreurFeedbackInterval
         : hit.hitZone === HitZone.HEAD
           ? hfc.headshotHitFeedbackInterval
@@ -95,7 +97,15 @@ export class HitFeedbackManager {
     this.lastPulseAt = this.clock;
     this.lastPulseZone = hit.hitZone;
 
-    this.hud.show(hit.hitZone);
+    // Paintball: a short tick per ball (shorter than the 0.1 s cadence, see HitFeedbackConfig).
+    this.hud.show(
+      hit.hitZone,
+      paintball
+        ? hit.hitZone === HitZone.HEAD
+          ? hfc.paintballHeadHitmarkerDuration
+          : hfc.paintballBodyHitmarkerDuration
+        : undefined,
+    );
     if (hit.weapon === KillMethod.PAINTBALL_RIFLE && this.onPaintballHitSound) {
       this.onPaintballHitSound(hit.hitZone === HitZone.HEAD);
     } else if (hit.hitZone === HitZone.HEAD) this.onHeadshotSound?.();

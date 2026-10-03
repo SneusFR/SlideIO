@@ -37,10 +37,26 @@ export class HitmarkerHUD {
     document.body.appendChild(this.root);
   }
 
-  /** Pulse the hitmarker. Retriggers cleanly even mid-animation. */
-  show(zone: HitZone): void {
+  /** Duration override currently written to the CSS variables (null = the default lifetimes). */
+  private overridden = false;
+
+  /**
+   * Pulse the hitmarker. Retriggers cleanly even mid-animation.
+   * `durationSec` (optional) = a shorter lifetime for THIS pulse only (rapid-fire weapons: every ball restarts a
+   * short tick); omitted = the default lifetimes of HitFeedbackConfig, restored if a previous pulse overrode them.
+   */
+  show(zone: HitZone, durationSec?: number): void {
+    const head = zone === HitZone.HEAD;
+    if (durationSec !== undefined) {
+      this.root.style.setProperty(head ? "--hm-head-dur" : "--hm-body-dur", `${durationSec}s`);
+      this.overridden = true;
+    } else if (this.overridden) {
+      this.root.style.setProperty("--hm-body-dur", `${hfc.bodyHitmarkerDuration}s`);
+      this.root.style.setProperty("--hm-head-dur", `${hfc.headshotHitmarkerDuration}s`);
+      this.overridden = false;
+    }
     this.root.classList.remove("hm-body", "hm-head");
     void this.root.offsetWidth; // reflow → restart the CSS animations
-    this.root.classList.add(zone === HitZone.HEAD ? "hm-head" : "hm-body");
+    this.root.classList.add(head ? "hm-head" : "hm-body");
   }
 }
