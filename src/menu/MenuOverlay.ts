@@ -26,6 +26,7 @@ import {
   saveCrosshairSettings,
   DEFAULT_CROSSHAIR,
   type CrosshairSettings,
+  type CrosshairShape,
 } from "../ui/CrosshairSettings";
 import {
   loadMapSelection,
@@ -308,12 +309,16 @@ export class MenuOverlay {
     const sizeValue = document.getElementById("menu-ch-size-value");
     const colorInput = document.getElementById("menu-ch-color") as HTMLInputElement | null;
     const colorReset = document.getElementById("menu-ch-color-reset") as HTMLButtonElement | null;
-    if (!shapeBtn || !sizeSlider || !colorInput || !colorReset) return;
+    const contrastBtn = document.getElementById("menu-ch-contrast-btn") as HTMLButtonElement | null;
+    const motionBtn = document.getElementById("menu-ch-motion-btn") as HTMLButtonElement | null;
+    if (!shapeBtn || !sizeSlider || !colorInput || !colorReset || !contrastBtn || !motionBtn) return;
 
     let settings: CrosshairSettings = loadCrosshairSettings();
 
     const render = () => {
       shapeBtn.textContent = `SHAPE: ${settings.shape}`;
+      contrastBtn.textContent = `HIGH CONTRAST: ${settings.highContrast ? "ON" : "OFF"}`;
+      motionBtn.textContent = `REDUCED MOTION: ${settings.reducedMotion ? "ON" : "OFF"}`;
       sizeSlider.value = String(Math.round(settings.scale * 100));
       if (sizeValue) sizeValue.textContent = `${Math.round(settings.scale * 100)}%`;
       colorInput.value = settings.color;
@@ -328,7 +333,21 @@ export class MenuOverlay {
 
     const onShape = () => {
       this.sounds.click();
-      settings = { ...settings, shape: settings.shape === "DOT" ? "CROSS" : "DOT" };
+      const next: CrosshairShape =
+        settings.shape === "STICKER" ? "DOT" : settings.shape === "DOT" ? "CROSS" : "STICKER";
+      settings = { ...settings, shape: next };
+      render();
+      commit();
+    };
+    const onContrast = () => {
+      this.sounds.click();
+      settings = { ...settings, highContrast: !settings.highContrast };
+      render();
+      commit();
+    };
+    const onMotion = () => {
+      this.sounds.click();
+      settings = { ...settings, reducedMotion: !settings.reducedMotion };
       render();
       commit();
     };
@@ -352,7 +371,11 @@ export class MenuOverlay {
     sizeSlider.addEventListener("input", onSize);
     colorInput.addEventListener("input", onColor);
     colorReset.addEventListener("click", onReset);
+    contrastBtn.addEventListener("click", onContrast);
+    motionBtn.addEventListener("click", onMotion);
     this.cleanups.push(() => {
+      contrastBtn.removeEventListener("click", onContrast);
+      motionBtn.removeEventListener("click", onMotion);
       shapeBtn.removeEventListener("click", onShape);
       sizeSlider.removeEventListener("input", onSize);
       colorInput.removeEventListener("input", onColor);

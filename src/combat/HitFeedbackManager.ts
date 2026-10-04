@@ -105,6 +105,7 @@ export class HitFeedbackManager {
           ? hfc.paintballHeadHitmarkerDuration
           : hfc.paintballBodyHitmarkerDuration
         : undefined,
+      hit.isKill,
     );
     if (hit.weapon === KillMethod.PAINTBALL_RIFLE && this.onPaintballHitSound) {
       this.onPaintballHitSound(hit.hitZone === HitZone.HEAD);

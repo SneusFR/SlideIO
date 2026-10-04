@@ -99,6 +99,7 @@ import { HitZone } from "../combat/HitZone";
 import { HitFeedbackManager } from "../combat/HitFeedbackManager";
 import { HitFeedbackConfig as hitFeedbackCfg } from "../combat/HitFeedbackConfig";
 import { HitmarkerHUD } from "../ui/HitmarkerHUD";
+import { CrosshairHUD } from "../ui/CrosshairHUD";
 import { DamageNumbersHUD } from "../ui/DamageNumbersHUD";
 import { SpawnManager } from "../combat/SpawnManager";
 import { NavGrid } from "../navigation/NavGrid";
@@ -360,6 +361,8 @@ export class Game {
   private multiplayerClient: MultiplayerClient | null = null;
   private playerCombatant: PlayerCombatant;
   private hitmarkerHud: HitmarkerHUD;
+  /** Crosshair animation layers (aim spacing + fire kick) — driven by REAL shots / aim state. */
+  private crosshairHud: CrosshairHUD;
   private damageNumbersHud: DamageNumbersHUD;
   private hitFeedback: HitFeedbackManager;
   private readonly combatants: Combatant[] = [];
@@ -634,6 +637,7 @@ export class Game {
     // The HitmarkerHUD is kept as a field: in multiplayer the SERVER's
     // HIT_CONFIRMED events drive it directly (source of truth).
     this.hitmarkerHud = new HitmarkerHUD();
+    this.crosshairHud = new CrosshairHUD();
     this.damageNumbersHud = new DamageNumbersHUD();
     this.hitFeedback = new HitFeedbackManager(
       this.hitmarkerHud,
@@ -886,13 +890,19 @@ export class Game {
     this.obliterreur.onBeamEnd = (cancelled) => this.gameAudio.obliterreurBeamEnd(cancelled);
     // Revolver: ballistic gunshot sample + layered throw / explosion /
     // holographic-materialize cues (pure observers, gameplay untouched).
-    this.revolver.onShot = (fanFire) => this.gameAudio.revolverShot(fanFire);
+    this.revolver.onShot = (fanFire) => {
+      this.gameAudio.revolverShot(fanFire);
+      this.crosshairHud.fire("heavy");
+    };
     this.revolver.onThrow = () => this.gameAudio.revolverThrow();
     this.revolver.onExplosion = (pos) => this.gameAudio.revolverExplosion(pos);
     this.revolver.onMaterializeStart = () => this.gameAudio.revolverMaterialize();
     // Bass Blaster: per-note pitched blip layered under the music grain,
     // reload swirl cues and spatial wall "plinks" (pure observers).
-    this.bassBlaster.onShot = (note) => this.gameAudio.bassBlasterShot(note.pitch);
+    this.bassBlaster.onShot = (note) => {
+      this.gameAudio.bassBlasterShot(note.pitch);
+      this.crosshairHud.fire("light");
+    };
     this.bassBlaster.onReloadStart = () => this.gameAudio.bassBlasterReloadStart();
     this.bassBlaster.onReloadEnd = () => this.gameAudio.bassBlasterReloadEnd();
     this.bassBlaster.onWorldImpact = (pos, note) =>
@@ -904,18 +914,27 @@ export class Game {
     this.poison.onReloadEnd = () => this.gameAudio.bassBlasterReloadEnd();
     // Hex Sniper: dedicated creature samples (tongue whip, wet grab, chomp
     // when the victim arrives, jaws on every bite) — pure observers.
-    this.hexSniper.onTongueStart = () => this.gameAudio.hexTongueShot();
+    this.hexSniper.onTongueStart = () => {
+      this.gameAudio.hexTongueShot();
+      this.crosshairHud.fire("heavy");
+    };
     this.hexSniper.onTongueGrab = () => this.gameAudio.hexTongueGrab();
     this.hexSniper.onPlayerArrived = () => this.gameAudio.hexPlayerArrived();
     this.hexSniper.onBiteStart = () => this.gameAudio.hexBite();
     // Goofy Basket: release whoosh scaled by the charge level + real
     // basketball bounces spatialized at every world contact (local AND
     // remote balls — the projectile system is shared). Pure observers.
-    this.goofyBasket.onRelease = (level) => this.gameAudio.basketThrow(level);
+    this.goofyBasket.onRelease = (level) => {
+      this.gameAudio.basketThrow(level);
+      this.crosshairHud.fire("medium");
+    };
     this.goofyBasket.projectiles.onBounce = (pos) => this.gameAudio.basketBounce(pos);
     // Popcorn Shotgun: pack §4 callbacks → SFX (pops voice-limited inside).
     this.popcornShotgun.sfx = {
-      onShot: () => this.gameAudio.popcornShot(),
+      onShot: () => {
+        this.gameAudio.popcornShot();
+        this.crosshairHud.fire("heavy");
+      },
       onDryFire: () => this.gameAudio.popcornDryFire(),
       onPumpBack: () => this.gameAudio.popcornPump(false),
       onPumpForward: () => this.gameAudio.popcornPump(true),
@@ -926,7 +945,10 @@ export class Game {
     };
     // Paintball Rifle: pack §6 callbacks → SFX (the HUD polls the weapon).
     this.paintballRifle.sfx = {
-      onShot: () => this.gameAudio.paintballShot(),
+      onShot: () => {
+        this.gameAudio.paintballShot();
+        this.crosshairHud.fire("light");
+      },
       onDryFire: () => this.gameAudio.paintballDryFire(),
       onHopperRelease: () => this.gameAudio.paintballHopperClick(false),
       onHopperDrop: () => this.gameAudio.paintballHopperDrop(),
@@ -938,7 +960,10 @@ export class Game {
     // Water FAMAS: pack §6 callbacks → SFX (the HUD polls the weapon). One
     // "pssht" per JET (3 per burst), refill events on the authored clock.
     this.waterFamas.sfx = {
-      onJet: (k) => this.gameAudio.famasJet(k),
+      onJet: (k) => {
+        this.gameAudio.famasJet(k);
+        this.crosshairHud.fire("light");
+      },
       onDryFire: () => this.gameAudio.famasDryFire(),
       onCapGrab: () => this.gameAudio.famasCap("grab"),
       onCapOff: () => this.gameAudio.famasCap("off"),
@@ -952,7 +977,10 @@ export class Game {
     };
     // Frisbee Launcher: pack §6 callbacks → SFX (the HUD polls the weapon).
     this.frisbeeLauncher.sfx = {
-      onShot: () => this.gameAudio.frisbeeShot(),
+      onShot: () => {
+        this.gameAudio.frisbeeShot();
+        this.crosshairHud.fire("medium");
+      },
       onDryFire: () => this.gameAudio.frisbeeDryFire(),
       onCocked: () => this.gameAudio.frisbeeCocked(),
       onDiscTaken: () => this.gameAudio.frisbeeDisc(false),
@@ -2778,6 +2806,16 @@ export class Game {
       this.combo.update(dt);
       this.medals.update(dt);
       this.hitFeedback.update(dt);
+      // Crosshair aim spacing: ONLY weapons with a real aim mode (RMB ADS / sight picture,
+      // Hex Sniper zoom) and only while the player can actually act.
+      this.crosshairHud.setAiming(
+        playerAlive &&
+          this.input.pointerLocked &&
+          !meleeBlocked &&
+          (((popcornEquipped || paintballEquipped || famasEquipped || frisbeeEquipped) &&
+            this.input.isMouseDown(2)) ||
+            (hexEquipped && this.input.isMouseDown(2))),
+      );
       this.damageNumbersHud.update(dt, this.fpsCamera.camera);
       this.gameAudio.setComboLayer(this.combo.active, this.combo.comboCount);
     }
@@ -3892,7 +3930,7 @@ export class Game {
     // Continuous plasma confirms ~20 Hz — keep the feedback readable.
     if (!event.killed && this.elapsed - this.lastNetHitFeedback < 0.08) return;
     this.lastNetHitFeedback = this.elapsed;
-    this.hitmarkerHud.show(zone);
+    this.hitmarkerHud.show(zone, undefined, event.killed);
     if (event.weapon === NetworkWeaponId.PAINTBALL_RIFLE) {
       // Killing paintball ball: wet paint splat instead of the generic tick.
       this.gameAudio.paintballHit(zone === HitZone.HEAD);

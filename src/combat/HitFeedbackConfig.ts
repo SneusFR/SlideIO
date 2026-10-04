@@ -8,7 +8,9 @@ export const HitFeedbackConfig = {
   /** Body hitmarker lifetime — quick, subtle confirmation. */
   bodyHitmarkerDuration: 0.16,
   /** Headshot hitmarker lifetime — longer, clearly more intense. */
-  headshotHitmarkerDuration: 0.28,
+  headshotHitmarkerDuration: 0.16,
+  /** Elimination hitmarker lifetime — yellow diagonals, the longest of the three. */
+  killHitmarkerDuration: 0.26,
 
   // ---- Feedback pulse throttling (continuous beams must never spam) ----
   /** Min interval between two body-hit pulses (marker + sound). */

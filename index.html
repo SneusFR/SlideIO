@@ -17,6 +17,7 @@
     <link rel="stylesheet" href="/src/hud.css" />
     <link rel="stylesheet" href="/src/hudWeapons.css" />
   <link rel="stylesheet" href="/src/hudLeaderboard.css" />
+  <link rel="stylesheet" href="/src/crosshair.css" />
   </head>
   <body>
     <div id="app"></div>
@@ -158,7 +159,7 @@
             </div>
             <div class="settings-sep"></div>
             <div class="settings-title">CROSSHAIR</div>
-            <button id="menu-ch-shape-btn" type="button">SHAPE: DOT</button>
+            <button id="menu-ch-shape-btn" type="button">SHAPE: STICKER</button>
             <div class="settings-slider-row">
               <label for="menu-ch-size">CROSSHAIR SIZE</label>
               <input id="menu-ch-size" type="range" min="50" max="250" step="5" />
@@ -166,9 +167,11 @@
             </div>
             <div class="settings-color-row">
               <label for="menu-ch-color">CROSSHAIR COLOR</label>
-              <input id="menu-ch-color" type="color" value="#ffffff" />
-              <button id="menu-ch-color-reset" type="button" title="Back to white">RESET</button>
+              <input id="menu-ch-color" type="color" value="#fbf1da" />
+              <button id="menu-ch-color-reset" type="button" title="Back to the default cream">RESET</button>
             </div>
+            <button id="menu-ch-contrast-btn" type="button">HIGH CONTRAST: OFF</button>
+            <button id="menu-ch-motion-btn" type="button">REDUCED MOTION: OFF</button>
             <div id="menu-outline-section" class="hidden">
               <div class="settings-sep"></div>
               <div class="settings-title">OUTLINE (GIVRE)</div>
@@ -313,7 +316,7 @@
       <div id="lowhp-vignette"></div>
       <div id="heal-flash"></div>
       <div id="damage-dir-container"></div>
-      <div id="crosshair"></div>
+      <div id="crosshair" class="sticker"></div>
 
       <!-- The ONLY info allowed near the aim point: a tiny contextual hint
            (LOW AMMO / RELOAD) that exists only while it matters. -->

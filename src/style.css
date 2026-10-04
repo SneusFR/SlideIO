@@ -674,7 +674,9 @@ body.game-paused .mole-overlay {
 }
 
 /* ---- CROSSHAIR settings (shape toggle + size slider + color picker) ---- */
-#menu-ch-shape-btn {
+#menu-ch-shape-btn,
+#menu-ch-contrast-btn,
+#menu-ch-motion-btn {
   padding: 10px 12px;
   cursor: pointer;
   font-family: var(--mm-font-alt);
@@ -688,7 +690,9 @@ body.game-paused .mole-overlay {
   transition: background 0.15s ease;
 }
 
-#menu-ch-shape-btn:hover {
+#menu-ch-shape-btn:hover,
+#menu-ch-contrast-btn:hover,
+#menu-ch-motion-btn:hover {
   background: rgba(22, 163, 74, 0.32);
 }
 

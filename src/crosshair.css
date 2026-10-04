@@ -1,0 +1,226 @@
+/* ==========================================================================
+   CROSSHAIR (STICKER) + HITMARKER — cream centre dot, 4 radial ticks with an ink
+   outline and a turquoise tip. Pure CSS: the dot never moves; every effect lives on its
+   own child layer (see src/ui/CrosshairHUD.ts):
+     .cx-spread  aim spacing   (transition, 125 ms)
+     .cx-pulse   fire kick     (animation, 32 ms out + 168 ms back — restarts, never stacks)
+     .cx-bar     the visible tick
+   Hitmarker diagonals (#hitmarker) sit BETWEEN the ticks:
+     .hm-body / .hm-head  cream impact, 100–160 ms
+     .hm-kill             yellow elimination + outer accent, ~260 ms
+   Palette falls back to the sticker skin variables when that skin is loaded.
+   Options: body.ch-contrast (thicker ink), body.ch-reduced (fades only, no travel).
+   ========================================================================== */
+:root {
+  --cx-ink: var(--st-ink, #0e0d12);
+  --cx-cream: var(--st-cream, #fbf1da);
+  --cx-accent: #3ee0c5;
+  --cx-gold: #facc15;
+}
+
+/* ---- Centre dot ---- */
+#crosshair.sticker {
+  --cx-o: 1.5px; /* outline thickness */
+  --cx-gap: 8.5; /* px from the centre to the inner end of a tick */
+  --cx-len: 8; /* px, tick length */
+  --cx-kick: 5;
+  /* EVEN size: an odd one is snapped half a pixel off the tick axes by the browser */
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: var(--ch-color, var(--cx-cream));
+  opacity: 1;
+  box-shadow: 0 0 0 var(--cx-o) var(--cx-ink);
+}
+
+body.ch-contrast #crosshair.sticker {
+  --cx-o: 2.75px;
+  --cx-gap: 10;
+  --cx-len: 9;
+}
+
+/* Aim: ticks tighten and shorten (only for weapons with a real aim mode). */
+#crosshair.sticker.cx-aim {
+  --cx-gap: 6.5; /* stays clear of the dot (radius 3 + 1.5 outline) and of the tick outline */
+  --cx-len: 6.5;
+}
+
+body.ch-contrast #crosshair.sticker.cx-aim {
+  --cx-gap: 8.5;
+  --cx-len: 7.5;
+}
+
+/* Beam weapons keep their "burning a target" cue on the dot only. */
+#crosshair.sticker.hit {
+  background: #ffffff;
+  box-shadow: 0 0 0 var(--cx-o) var(--cx-ink), 0 0 8px 1px var(--cx-accent);
+}
+
+/* ---- Ticks (hidden for the DOT / CROSS shapes) ---- */
+#crosshair:not(.sticker) .cx-spread {
+  display: none;
+}
+
+.cx-spread {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transform: rotate(var(--r)) translateY(calc(var(--cx-gap) * -1px));
+  transition: transform 125ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.cx-pulse {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+}
+
+.cx-bar {
+  position: absolute;
+  left: -1.5px;
+  bottom: 0;
+  width: 3px;
+  height: calc(var(--cx-len) * 1px);
+  border-radius: 2px;
+  /* outer end (top) = turquoise tip; the cream part follows the colour setting */
+  background: linear-gradient(to top, var(--ch-color, var(--cx-cream)) 0 62%, var(--cx-accent) 62% 100%);
+  box-shadow: 0 0 0 var(--cx-o, 1.5px) var(--cx-ink);
+  transition: height 125ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Fire: 16 % of 200 ms = 32 ms out, 168 ms back. Same keyframes on every shot → no stacking. */
+#crosshair.cx-firing .cx-pulse {
+  animation: cx-fire 200ms linear both;
+}
+
+@keyframes cx-fire {
+  0% {
+    transform: translateY(0) scaleY(1);
+    animation-timing-function: cubic-bezier(0.1, 0.7, 0.3, 1);
+  }
+  16% {
+    transform: translateY(calc(var(--cx-kick) * -1px)) scaleY(1.22);
+    animation-timing-function: cubic-bezier(0.25, 0.6, 0.35, 1);
+  }
+  100% {
+    transform: translateY(0) scaleY(1);
+  }
+}
+
+/* ---- Hitmarker diagonals ---- */
+#hitmarker {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 22;
+  transform: scale(var(--ch-scale, 1));
+}
+
+.hm-arm {
+  position: absolute;
+  box-sizing: content-box;
+  left: -1.5px;
+  top: -5px;
+  width: 3px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1.5px solid var(--cx-ink);
+  opacity: 0;
+  transform: rotate(var(--r)) translateY(calc(-14px - var(--hm-push, 0px)));
+}
+
+body.ch-contrast .hm-arm {
+  border-width: 2.5px;
+}
+
+/* thicker outlines need more room: the diagonals sit further out so they never touch the ticks */
+body.ch-contrast #hitmarker {
+  --hm-push: 6px;
+}
+
+/* Outer accent (elimination only) */
+.hm-arm::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -9px;
+  width: 3px;
+  height: 3px;
+  margin-left: -1.5px;
+  border-radius: 50%;
+  background: var(--cx-gold);
+  box-shadow: 0 0 0 1.5px var(--cx-ink);
+  opacity: 0;
+}
+
+#hitmarker.hm-body .hm-arm {
+  --hm-s: 1;
+  background: var(--cx-cream);
+  animation: hm-impact var(--hm-body-dur, 0.16s) ease-out forwards;
+}
+
+#hitmarker.hm-head .hm-arm {
+  --hm-s: 1.3;
+  background: var(--cx-cream);
+  animation: hm-impact var(--hm-head-dur, 0.16s) ease-out forwards;
+}
+
+#hitmarker.hm-kill .hm-arm {
+  --hm-s: 1.25;
+  background: var(--cx-gold);
+  animation: hm-kill var(--hm-kill-dur, 0.26s) ease-out forwards;
+}
+
+#hitmarker.hm-kill .hm-arm::after {
+  opacity: 1;
+}
+
+@keyframes hm-impact {
+  0% { opacity: 1; transform: rotate(var(--r)) translateY(calc(-18px - var(--hm-push, 0px))) scale(var(--hm-s)) scaleY(1.3); }
+  35% { opacity: 1; transform: rotate(var(--r)) translateY(calc(-14px - var(--hm-push, 0px))) scale(var(--hm-s)); }
+  100% { opacity: 0; transform: rotate(var(--r)) translateY(calc(-13px - var(--hm-push, 0px))) scale(var(--hm-s)) scaleY(0.85); }
+}
+
+@keyframes hm-kill {
+  /* no scaleY here: it would squash the round accent dot into an ellipse */
+  0% { opacity: 1; transform: rotate(var(--r)) translateY(calc(-23px - var(--hm-push, 0px))) scale(var(--hm-s)); }
+  25% { opacity: 1; transform: rotate(var(--r)) translateY(calc(-17px - var(--hm-push, 0px))) scale(var(--hm-s)); }
+  70% { opacity: 1; transform: rotate(var(--r)) translateY(calc(-16px - var(--hm-push, 0px))) scale(var(--hm-s)); }
+  100% { opacity: 0; transform: rotate(var(--r)) translateY(calc(-15px - var(--hm-push, 0px))) scale(var(--hm-s)); }
+}
+
+/* ---- Reduced motion: nothing travels, everything is a plain fade ---- */
+body.ch-reduced .cx-spread,
+body.ch-reduced .cx-bar {
+  transition: none;
+}
+
+body.ch-reduced #crosshair.cx-firing .cx-pulse {
+  animation: cx-fire-rm 200ms linear both;
+}
+
+@keyframes cx-fire-rm {
+  0% { opacity: 0.35; }
+  16% { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+body.ch-reduced #hitmarker.hm-body .hm-arm,
+body.ch-reduced #hitmarker.hm-head .hm-arm,
+body.ch-reduced #hitmarker.hm-kill .hm-arm {
+  animation-name: hm-fade;
+}
+
+@keyframes hm-fade {
+  0%, 60% { opacity: 1; transform: rotate(var(--r)) translateY(calc(-15px - var(--hm-push, 0px))) scale(var(--hm-s)); }
+  100% { opacity: 0; transform: rotate(var(--r)) translateY(calc(-15px - var(--hm-push, 0px))) scale(var(--hm-s)); }
+}
