@@ -1064,20 +1064,20 @@ test("popcorn: wrong weapon / missing seed / invalid seed refused", () => {
 });
 
 // ---------------------------------------------------------------------
-// PAINTBALL RIFLE (automatic hitscan, 12 / 18, 32 balls, hopper swap)
+// PAINTBALL RIFLE (automatic hitscan, 23 / 34.5, 32 balls, hopper swap)
 // ---------------------------------------------------------------------
 
 const PB = PaintballRifleConfig;
 const paintFires = (rec: Recorded) => rec.actions.filter((e) => e.action === WeaponActionType.PAINTBALL_FIRE);
 
-test("paintball: body ball = 12 immediately, head ball = 18", () => {
+test("paintball: body ball = 23 immediately, head ball = 34.5", () => {
   const { wm, rec, addPlayer, advance } = makeWorld();
   const a = addPlayer("A", -40, 0.9, 16);
   const b = addPlayer("B", -40, 0.9, 10); // 6 m, open ground
   wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
   const chest = dirTo(eyeOf(a), { x: -40, y: 0.9, z: 10 });
   fire(wm, a, WeaponActionType.PAINTBALL_FIRE, eyeOf(a), chest, { sd: 1, sp: 0 });
-  assert.strictEqual(b.health, 200 - 12, "hitscan: damage at the shot time");
+  assert.strictEqual(b.health, 200 - 23, "hitscan: damage at the shot time");
   assert.strictEqual(rec.hits.length, 1);
   assert.strictEqual(rec.hits[0].ev.hitZone, "BODY");
   const conf = paintFires(rec);
@@ -1090,12 +1090,14 @@ test("paintball: body ball = 12 immediately, head ball = 18", () => {
   const head = dirTo(eyeOf(a), { x: -40, y: 0.9 + 0.66, z: 10 });
   fire(wm, a, WeaponActionType.PAINTBALL_FIRE, eyeOf(a), head, { sd: 2, sp: 0 });
   assert.strictEqual(rec.hits[1].ev.hitZone, "HEAD");
-  assert.strictEqual(rec.hits[1].ev.damageDealt, 18);
-  assert.strictEqual(paintballDamage(false), 12);
-  assert.strictEqual(paintballDamage(true), 18);
+  assert.strictEqual(rec.hits[1].ev.damageDealt, 34.5);
+  assert.strictEqual(paintballDamage(false), 23);
+  assert.strictEqual(paintballDamage(true), 34.5);
+  // 200 HP scale: 9 body balls kill (207), 8 do not (184).
+  assert.ok(9 * paintballDamage(false) >= 200 && 8 * paintballDamage(false) < 200);
 });
 
-test("paintball: NO max range — a player 150 m away is hit (12), wall first still blocks", () => {
+test("paintball: NO max range — a player 150 m away is hit (23), wall first still blocks", () => {
   const st = new PaintballRifleState();
   const eye = { x: 0, y: 0.9 + PLAYER_EYE_OFFSET, z: 0 };
   const far = { id: "B", x: 0, y: 0.9, z: -150 };
@@ -1103,7 +1105,7 @@ test("paintball: NO max range — a player 150 m away is hit (12), wall first st
   const r = resolvePaintballFire(st, 1_000_000, eye, chest, 1, 0, [far], "A", []);
   assert.ok(r.accepted);
   assert.ok(r.victim && r.victim.targetId === "B", "hit at 150 m (the pack's 45 m cap is gone)");
-  assert.strictEqual(r.victim!.amount, 12, "no distance falloff");
+  assert.strictEqual(r.victim!.amount, 23, "no distance falloff");
   // A wall in front of him still stops the ball (map bounds / walls = the only limit).
   const wall: [number, number, number, number, number, number][] = [[0, 2, -100, 20, 4, 1]];
   const r2 = resolvePaintballFire(st, 1_000_200, eye, chest, 2, 0, [far], "A", wall);

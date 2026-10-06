@@ -52,8 +52,8 @@ export interface PaintballRifleFrameInput {
  *
  * Gameplay (pack §7 — shared/combat/PaintballRifleRules): AUTOMATIC
  * hitscan, one seeded ball per 0.1 s from the GAME camera (screen centre),
- * no max range (first wall / player / map bounds), owner ignored; 12 body /
- * 18 head applied IMMEDIATELY (no falloff).
+ * no max range (first wall / player / map bounds), owner ignored; 23 body /
+ * 34.5 head applied IMMEDIATELY (no falloff).
  * The visible ball (PaintballFX) leaves the DRAWN muzzle and paints the
  * wall / the character on arrival — purely visual.
  *

@@ -1271,7 +1271,7 @@ export class WeaponManager {
    * PAINTBALL_FIRE: validate ammo / cadence (≥ 0.1 s) / swap gate, rebuild
    * the ball direction from the client's seed + spread + aim (shared rule
    * — identical on every client), hitscan it against the lag-compensated
-   * targets and apply the damage IMMEDIATELY (12 body / 18 head, no
+   * targets and apply the damage IMMEDIATELY (23 body / 34.5 head, no
    * falloff). Every accepted ball is confirmed (sd + sp + am + end point +
    * victim id) so remotes replay the same visual ball and paint.
    */

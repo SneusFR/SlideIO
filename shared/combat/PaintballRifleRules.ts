@@ -7,10 +7,12 @@
  * everywhere: the shooter sends them with PAINTBALL_FIRE, the server
  * recomputes the ray, remote clients replay the visual ball + splat.
  *
- * Reference: src/weapons/paintball/PaintballSpread.ts (pack). Damage,
- * capacity, bloom and the PRNG / draw order of `ballDirection` are
- * IDENTICAL (checked by scripts/test-paintball-rifle.mts). Two deliberate
+ * Reference: src/weapons/paintball/PaintballSpread.ts (pack). Head
+ * multiplier, capacity, bloom and the PRNG / draw order of `ballDirection`
+ * are IDENTICAL (checked by scripts/test-paintball-rifle.mts). Deliberate
  * differences:
+ *   - body damage is SlideIO-tuned (players have 200 HP): 23 body / 34.5
+ *     head (the pack used 12 / 18);
  *   - the cone's "up" axis is the camera up WITHOUT roll (derived from
  *     forward + world Y) — same as the Popcorn Shotgun: the server only
  *     receives the forward direction, a rolled up axis would break parity;
@@ -40,9 +42,12 @@ export const PaintballRifleConfig = {
    * vanishes at this distance.
    */
   maxRange: 400,
-  /** Flat damage of one BODY ball (no distance falloff). */
-  bodyDamage: 12,
-  /** Head multiplier (→ 18). */
+  /**
+   * Flat damage of one BODY ball (no distance falloff). SlideIO tuning
+   * (players have 200 HP — the pack used 12): 9 body balls = 207 = a kill.
+   */
+  bodyDamage: 23,
+  /** Head multiplier (→ 34.5). */
   headMultiplier: 1.5,
   /**
    * Spread cone (degrees): first ball, bloom per ball, cap, recovery.

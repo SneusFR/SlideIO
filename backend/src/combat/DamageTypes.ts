@@ -27,7 +27,7 @@ export enum DamageType {
   GOOFY_BASKET = "GOOFY_BASKET",
   /** POPCORN SHOTGUN pellets (summed per shot and per victim). */
   POPCORN_SHOTGUN = "POPCORN_SHOTGUN",
-  /** PAINTBALL RIFLE balls (hitscan, 12 body / 18 head per ball). */
+  /** PAINTBALL RIFLE balls (hitscan, 23 body / 34.5 head per ball). */
   PAINTBALL_RIFLE = "PAINTBALL_RIFLE",
   /** WATER FAMAS jets (hitscan, 23 body / 34.5 head per jet, 3-jet bursts). */
   WATER_FAMAS = "WATER_FAMAS",

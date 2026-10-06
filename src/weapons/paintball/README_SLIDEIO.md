@@ -22,7 +22,7 @@ Doc technique du pack : `INTEGRATION.md` (même dossier). Prompt d'origine, pipe
 
 ## Réseau
 
-- `PAINTBALL_FIRE` (une bille, ≥ 0,1 s) : `sd` (seed uint32, sert à la forme de la tache), `sp` (cône de dispersion, **toujours 0** : aucune dispersion, le serveur ramène toute valeur reçue à 0), `pc` (couleur de la bille), aim arrondi au 1/1000. Le serveur valide munitions / cadence / recharge, reconstruit **le même rayon** (`paintballBallDirection`), fait **un hitscan** lag-compensé (**pas de portée maximale** : premier mur / joueur ou limites de la carte, comme la langue du Hex Sniper ; le pack prévoyait 45 m) et applique **tout de suite** 12 (corps) / 18 (tête).
+- `PAINTBALL_FIRE` (une bille, ≥ 0,1 s) : `sd` (seed uint32, sert à la forme de la tache), `sp` (cône de dispersion, **toujours 0** : aucune dispersion, le serveur ramène toute valeur reçue à 0), `pc` (couleur de la bille), aim arrondi au 1/1000. Le serveur valide munitions / cadence / recharge, reconstruit **le même rayon** (`paintballBallDirection`), fait **un hitscan** lag-compensé (**pas de portée maximale** : premier mur / joueur ou limites de la carte, comme la langue du Hex Sniper ; le pack prévoyait 45 m) et applique **tout de suite** 23 (corps) / 34,5 (tête, ×1,5). Les joueurs ont 200 PV (le pack prévoyait 12 / 18) : 9 billes au corps = 207 = un kill. Une seule constante à changer : `bodyDamage` dans `shared/combat/PaintballRifleRules.ts`.
 - La confirmation porte `sd`, `sp`, `pc`, `am` (munitions), `hx/hy/hz` (point d'arrivée) et `tid` (victime). Les autres clients rejouent la bille visible depuis la vraie bouche du tireur, la tache sur le mur (même seed = même tache) ou la peinture sur la victime (raycast visuel sur son corps).
 - Cadence serveur : une bille peut arriver jusqu'à 40 ms en avance (gigue) mais la dette ne se reporte jamais : en moyenne, jamais plus de 600 coups/min.
 - `PAINTBALL_RELOAD` / `PAINTBALL_RELOAD_CANCEL` : horloge serveur, munitions au clic (1,52 s), tir à 2,10 s (tolérance 0,1 s). Changer d'arme ou mourir annule avant le clic.
@@ -67,4 +67,4 @@ Doc technique du pack : `INTEGRATION.md` (même dossier). Prompt d'origine, pipe
 ## Tests
 
 - `npm run test:paintball` : règles vs référence du pack, parité client/serveur, profil / JSON, FP sur le vrai `ViewmodelSystem` (rafale auto, FireEnd, recharge, annulation), set TP sur le vrai perso, contrôleur TP, billes / taches / peinture.
-- `cd backend && npm run test:weapons` : 6 tests serveur Paintball (12 / 18 immédiats, pas de portée max (joueur touché à 150 m, mur devant = bloqué), rayon = règle partagée, cadence + 32 billes, recharge / annulation / changement d'arme, seeds invalides).
+- `cd backend && npm run test:weapons` : 6 tests serveur Paintball (23 / 34,5 immédiats, pas de portée max (joueur touché à 150 m, mur devant = bloqué), rayon = règle partagée, cadence + 32 billes, recharge / annulation / changement d'arme, seeds invalides).

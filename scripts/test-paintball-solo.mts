@@ -67,15 +67,15 @@ try {
   const weaponGltf = await read(`${project}/src/assets/potato/PaintballRifle_Weapon.glb`);
 
   // 1. SETTINGS ACTUALLY LOADED (the numbers the tested modules really use)
-  await test("settings in force: maxFlight, feedback interval, hitmarker ticks, damage 12/18, 0 deg spread, 10 shots/s", () => {
+  await test("settings in force: maxFlight, feedback interval, hitmarker ticks, damage 23/34.5, 0 deg spread, 10 shots/s", () => {
     console.log(`    PAINT_JET.maxFlight=${S.PAINT_JET.maxFlight} s, speed=${S.PAINT_JET.speed} m/s, springStep=1/${Math.round(1 / S.PAINT_JET.springStep)} s`);
     console.log(`    paintballFeedbackInterval=${HFC.paintballFeedbackInterval} s (body interval of other weapons=${HFC.bodyHitFeedbackInterval} s), tick body/head=${HFC.paintballBodyHitmarkerDuration}/${HFC.paintballHeadHitmarkerDuration} s`);
     assert.equal(S.PAINT_JET.maxFlight, 0.08);
     assert.equal(HFC.paintballFeedbackInterval, 0);
     assert.ok(HFC.paintballBodyHitmarkerDuration < 0.1 && HFC.paintballHeadHitmarkerDuration < 0.13);
     assert.equal(HFC.bodyHitFeedbackInterval, 0.12, "other weapons keep the 120 ms throttle");
-    assert.equal(R.paintballDamage(false), 12);
-    assert.equal(R.paintballDamage(true), 18);
+    assert.equal(R.paintballDamage(false), 23);
+    assert.equal(R.paintballDamage(true), 34.5);
     assert.equal(R.PaintballRifleConfig.fireInterval, 0.1);
     assert.equal(R.PaintballRifleConfig.spreadMinDeg, 0);
     assert.equal(R.PaintballRifleConfig.spreadMaxDeg, 0);

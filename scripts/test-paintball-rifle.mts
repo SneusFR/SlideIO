@@ -44,11 +44,12 @@ try {
   const P = R.PaintballRifleConfig;
   const profileJson = JSON.parse(fs.readFileSync(`${project}/src/assets/potato/WeaponProfile_PaintballRifle.json`, "utf8"));
 
-  await test("shared rules == pack reference PaintballSpread (damage, capacity, bloom, ball direction); NO max range", async () => {
-    assert.equal(P.bodyDamage, REF.DAMAGE_BODY);
+  await test("shared rules == pack reference PaintballSpread (head multiplier, capacity, bloom, ball direction); damage = SlideIO 200 HP tuning; NO max range", async () => {
     assert.equal(P.headMultiplier, REF.HEADSHOT_MULTIPLIER);
-    assert.equal(R.paintballDamage(false), 12);
-    assert.equal(R.paintballDamage(true), 18);
+    // SlideIO tuning: players have 200 HP (the pack used 12 / 18): 23 body / 34.5 head.
+    assert.ok(P.bodyDamage > REF.DAMAGE_BODY);
+    assert.equal(R.paintballDamage(false), 23);
+    assert.equal(R.paintballDamage(true), 34.5);
     // Deliberate difference with the pack (45 m): no weapon range — the ray
     // is longer than the 3D diagonal of EVERY map (walls / bounds stop it).
     const { MAP_REGISTRY } = await server.ssrLoadModule("/shared/map/MapRegistry.ts");
