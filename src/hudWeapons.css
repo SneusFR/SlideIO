@@ -323,27 +323,55 @@
 .ammo-drop .ammo-pip:not(.on).pip-b { animation: none; }
 @keyframes drop-pop { 0% { transform: rotate(45deg) scale(0.2); } 100% { transform: rotate(45deg); } }
 
-/* FRISBEE — orange: the big disc on the DECK flies off, the cage is a stack
-   of discs seen edge-on. Tab = bevelled disc profile. */
+/* FRISBEE — matte charcoal face in a thin ivory shell with a turquoise inner
+   line, small orange "FRISBEE" tab, cream digits first. The weapon badge is
+   replaced by the 3D launcher fork (<canvas class="frisbee-mech">, see
+   src/ui/frisbee/FrisbeeMechanism.ts) sitting on the left edge of the module.
+   The rail = one small disc per real disc (deck + cage). */
 .wpn-plate[data-icon="frisbee"] {
-  --pl-face: #20150f;
-  --pl-edge: #ffd0a8;
-  --pl-tab-clip: polygon(7% 0, 93% 0, 100% 50%, 93% 100%, 7% 100%, 0 50%);
-  --pl-tab-radius: 4px;
+  --pl-face: #17161b;
+  --pl-rail: #111015;
+  --pl-edge: #f6ecd6;
+  --pl-teal: #22b8b0;
+  --pl-tab-radius: 9px;
 }
-.ammo-deck .ammo-pip {
-  width: 26px;
-  height: 11px;
+.wpn-plate[data-icon="frisbee"] .wpn-body::before,
+.wpn-plate[data-icon="frisbee"] .wpn-ammo {
+  box-shadow: inset 0 0 0 1.5px var(--pl-teal), 0 3px 0 rgba(8, 7, 12, 0.5);
+}
+.wpn-plate[data-icon="frisbee"] .wpn-ribbon { min-width: 74px; }
+/* 3D available: the fork takes the badge's place (the flat badge stays as the no-WebGL fallback). */
+.wpn-plate[data-icon="frisbee"].mech-3d .wpn-badge { visibility: hidden; }
+.frisbee-mech {
+  position: absolute;
+  pointer-events: none;
+  z-index: 3;
+}
+/* Digits stay above every effect. */
+.wpn-plate[data-icon="frisbee"] .wpn-count { z-index: 4; }
+.wpn-plate[data-icon="frisbee"].mech-3d .wpn-ammo { padding-left: 22px; }
+
+/* Rail discs: a small disc seen slightly from above — orange body, yellow ring,
+   ivory centre, deeper orange edge underneath. Spent = empty socket. */
+.ammo-frisbee { gap: 3px; }
+.ammo-frisbee .ammo-pip {
+  width: 13px;
+  height: 7px;
   border-radius: 50%;
-  background: radial-gradient(ellipse at 50% 42%, #ffd0a8 0 28%, rgba(255, 208, 168, 0) 31%), var(--pip, #ff8a3d);
-  box-shadow: 0 1.5px 0 rgba(0, 0, 0, 0.55);
+  background:
+    radial-gradient(ellipse 34% 34% at 50% 44%, #f6ecd6 0 70%, transparent 76%),
+    radial-gradient(ellipse 60% 58% at 50% 44%, #ffc845 0 72%, transparent 78%),
+    #ff8a3d;
+  box-shadow: 0 1.6px 0 #c8561f, 0 2.6px 0 rgba(0, 0, 0, 0.45);
 }
-.ammo-deck .ammo-pip:not(.on).pip-a { animation: disc-fly-a 0.4s ease-out; }
-.ammo-deck .ammo-pip:not(.on).pip-b { animation: disc-fly-b 0.4s ease-out; }
-@keyframes disc-fly-a { 0% { transform: translate(-14px, -9px) rotate(-18deg); opacity: 1; filter: none; } 100% { transform: none; } }
-@keyframes disc-fly-b { 0% { transform: translate(-14px, -9px) rotate(-18deg); opacity: 1; filter: none; } 100% { transform: none; } }
-.ammo-stack { gap: 2px; margin-left: 6px; }
-.ammo-stack .ammo-pip { width: 5px; height: 14px; border-radius: 2px; background: linear-gradient(90deg, #ffd0a8, #ff8a3d); }
+.ammo-frisbee .ammo-pip:not(.on) {
+  opacity: 1;
+  filter: none;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.2px rgba(246, 236, 214, 0.28);
+}
+.ammo-frisbee .ammo-pip:not(.on).pip-a,
+.ammo-frisbee .ammo-pip:not(.on).pip-b { animation: none; }
 
 /* REVOLVER — parchment, square tab, brass cartridges. */
 .wpn-plate[data-icon="revolver"] {

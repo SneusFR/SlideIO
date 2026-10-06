@@ -676,7 +676,9 @@ body.game-paused .mole-overlay {
 }
 
 /* ---- CROSSHAIR settings (shape toggle + size slider + color picker) ---- */
-#menu-ch-shape-btn {
+#menu-ch-shape-btn,
+#menu-ch-contrast-btn,
+#menu-ch-motion-btn {
   padding: 10px 12px;
   cursor: pointer;
   font-family: var(--mm-font-alt);
@@ -690,7 +692,40 @@ body.game-paused .mole-overlay {
   transition: background 0.15s ease;
 }
 
-#menu-ch-shape-btn:hover {
+#menu-ch-shape-btn:hover,
+#menu-ch-contrast-btn:hover,
+#menu-ch-motion-btn:hover {
+  background: rgba(22, 163, 74, 0.32);
+}
+
+/* ---- OUTLINE settings (Givre cel-shading — shown only on that map) ---- */
+#menu-outline-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#menu-outline-section.hidden {
+  display: none;
+}
+
+#menu-outline-btn,
+#menu-outline-debug-btn {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-family: var(--mm-font-alt);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: #f0fdf4;
+  background: rgba(22, 163, 74, 0.18);
+  border: 1px solid rgba(74, 222, 128, 0.5);
+  border-radius: 10px;
+  transition: background 0.15s ease;
+}
+
+#menu-outline-btn:hover,
+#menu-outline-debug-btn:hover {
   background: rgba(22, 163, 74, 0.32);
 }
 
@@ -3748,79 +3783,6 @@ body.game-paused .mole-overlay {
   100% { transform: none; }
 }
 
-/* ==========================================================================
-   HITMARKER — cartoon "tick" around the crosshair (pure CSS, zero JS/frame)
-   BODY: 4 cream diagonal sticks with ink outline, quick punch.
-   HEAD: gold sticks thrown further out + a double bounce + a "star" core.
-   Durations from HitFeedbackConfig via --hm-body-dur / --hm-head-dur.
-   ========================================================================== */
-#hitmarker {
-  position: fixed;
-  left: 50%;
-  top: 50%;
-  width: 0;
-  height: 0;
-  pointer-events: none;
-  z-index: 22;
-}
-
-.hm-arm {
-  position: absolute;
-  left: -2px;
-  top: -6px;
-  width: 4px;
-  height: 12px;
-  border-radius: 3px;
-  border: 1.5px solid var(--ink);
-  opacity: 0;
-  transform: rotate(var(--r)) translateY(-11px);
-}
-
-.hm-center {
-  position: absolute;
-  left: -5px;
-  top: -5px;
-  width: 10px;
-  height: 10px;
-  opacity: 0;
-  background: var(--gold);
-  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
-}
-
-#hitmarker.hm-body .hm-arm {
-  background: var(--cream);
-  animation: hm-body-arm var(--hm-body-dur, 0.16s) ease-out forwards;
-}
-
-@keyframes hm-body-arm {
-  0% { opacity: 1; transform: rotate(var(--r)) translateY(-15px) scaleY(1.35); }
-  40% { opacity: 1; transform: rotate(var(--r)) translateY(-11px) scaleY(1); }
-  100% { opacity: 0; transform: rotate(var(--r)) translateY(-10px) scaleY(0.85); }
-}
-
-#hitmarker.hm-head .hm-arm {
-  background: var(--gold);
-  animation: hm-head-arm var(--hm-head-dur, 0.28s) ease-out forwards;
-}
-
-@keyframes hm-head-arm {
-  0% { opacity: 1; transform: rotate(var(--r)) translateY(-26px) scaleY(1.7); }
-  30% { opacity: 1; transform: rotate(var(--r)) translateY(-15px) scaleY(1.05); }
-  50% { opacity: 1; transform: rotate(var(--r)) translateY(-21px) scaleY(1.3); }
-  70% { opacity: 0.9; transform: rotate(var(--r)) translateY(-14px) scaleY(1); }
-  100% { opacity: 0; transform: rotate(var(--r)) translateY(-12px) scaleY(0.8); }
-}
-
-#hitmarker.hm-head .hm-center {
-  animation: hm-head-center var(--hm-head-dur, 0.28s) ease-out forwards;
-}
-
-@keyframes hm-head-center {
-  0% { opacity: 1; transform: scale(2) rotate(0deg); }
-  45% { opacity: 1; transform: scale(1.1) rotate(45deg); }
-  100% { opacity: 0; transform: scale(0.5) rotate(90deg); }
-}
-
 /* Crosshair "hit" (beam burning a target): bean-green glow. */
 #crosshair.hit {
   background: #f4ffd9;
@@ -3831,173 +3793,6 @@ body.game-paused .mole-overlay {
 #crosshair.cross.hit::after {
   background: #f4ffd9;
   box-shadow: 0 0 8px rgba(168, 217, 74, 0.95);
-}
-
-/* ==========================================================================
-   LEADERBOARD (top-right) — a wooden scoreboard, compact and quiet.
-   Row height MUST stay 21px (LeaderboardHUD.ROW_HEIGHT).
-   ========================================================================== */
-#leaderboard-hud {
-  position: absolute;
-  top: 60px;
-  right: 16px;
-  width: 252px;
-  padding: 6px 10px 8px;
-  background: var(--sticker-bg);
-  border: 2.5px solid var(--ink);
-  border-radius: 14px;
-  box-shadow: var(--sticker-shadow);
-  font-family: var(--hud-font-alt);
-  color: var(--cream);
-  pointer-events: none;
-  z-index: 5;
-  opacity: 0.92;
-}
-
-#leaderboard-hud.hidden {
-  display: none;
-}
-
-#leaderboard-title {
-  font-family: var(--hud-font);
-  font-size: 13px;
-  letter-spacing: 2px;
-  text-align: center;
-  color: var(--gold);
-  -webkit-text-stroke: 2px var(--ink);
-  paint-order: stroke fill;
-  margin-bottom: 3px;
-}
-
-#leaderboard-header,
-.lb-row {
-  display: grid;
-  grid-template-columns: 16px 1fr 24px 24px 24px 36px;
-  align-items: center;
-  column-gap: 2px;
-}
-
-#leaderboard-hud.with-ping #leaderboard-header,
-#leaderboard-hud.with-ping .lb-row {
-  grid-template-columns: 16px 28px 1fr 22px 22px 22px 34px;
-}
-
-#leaderboard-header {
-  font-family: var(--hud-font);
-  font-size: 10px;
-  letter-spacing: 1px;
-  color: var(--cream-dim);
-  padding: 0 4px 3px;
-  border-bottom: 2px dashed rgba(255, 246, 224, 0.16);
-  margin-bottom: 3px;
-}
-
-#leaderboard-rows {
-  position: relative;
-  transition: height 0.2s ease;
-}
-
-.lb-row {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 21px;
-  padding: 0 4px;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 21px;
-  color: rgba(255, 246, 224, 0.88);
-  border-radius: 8px;
-  transition: transform 0.28s var(--pop);
-  will-change: transform;
-}
-
-.lb-rank {
-  font-family: var(--hud-font);
-  font-size: 11px;
-  color: var(--cream-dim);
-}
-
-.lb-ping {
-  display: none;
-  text-align: right;
-  padding-right: 4px;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--cream-dim);
-}
-
-#leaderboard-hud.with-ping .lb-ping {
-  display: block;
-}
-
-.lb-ping.good { color: #a8d94a; }
-.lb-ping.ok { color: #facc15; }
-.lb-ping.bad { color: #ff9a3d; }
-.lb-ping.awful { color: #ff5a4e; }
-
-.lb-name {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  letter-spacing: 0.3px;
-}
-
-.lb-k,
-.lb-d,
-.lb-a,
-.lb-kd {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.lb-kd {
-  color: var(--cream-dim);
-}
-
-/* Local player: a bean-green highlight + YOU tag. */
-.lb-row.local {
-  background: rgba(168, 217, 74, 0.2);
-  color: #ffffff;
-}
-
-.lb-row.local .lb-rank {
-  color: var(--bean);
-}
-
-.lb-you {
-  display: inline-block;
-  margin-left: 5px;
-  padding: 0 4px;
-  font-family: var(--hud-font);
-  font-size: 9px;
-  letter-spacing: 0.5px;
-  line-height: 13px;
-  vertical-align: 1px;
-  color: var(--ink);
-  background: var(--bean);
-  border-radius: 5px;
-}
-
-.lb-row.kill-pulse {
-  animation: lb-kill-pulse 0.5s var(--pop);
-}
-
-@keyframes lb-kill-pulse {
-  0% { background: rgba(250, 204, 21, 0.55); }
-  100% { background: rgba(168, 217, 74, 0.2); }
-}
-
-@media (max-width: 1280px) {
-  #leaderboard-hud {
-    width: 216px;
-    right: 10px;
-    top: 54px;
-  }
-  .lb-row {
-    font-size: 12px;
-  }
 }
 
 /* ---- Controls hint: shown when the HUD appears, then politely leaves ---- */
@@ -4037,7 +3832,6 @@ body.game-paused .mole-overlay {
 @media (min-width: 2200px) {
   #bean-buddy,
   #right-hud-col,
-  #leaderboard-hud,
   #top-center {
     zoom: 1.3;
   }
@@ -4046,7 +3840,6 @@ body.game-paused .mole-overlay {
 @media (min-width: 3200px) {
   #bean-buddy,
   #right-hud-col,
-  #leaderboard-hud,
   #top-center {
     zoom: 1.8;
   }
@@ -4377,27 +4170,55 @@ body.game-paused .mole-overlay {
 .ammo-drop .ammo-pip:not(.on).pip-b { animation: none; }
 @keyframes drop-pop { 0% { transform: rotate(45deg) scale(0.2); } 100% { transform: rotate(45deg); } }
 
-/* FRISBEE — orange: the big disc on the DECK flies off, the cage is a stack
-   of discs seen edge-on. Tab = bevelled disc profile. */
+/* FRISBEE — matte charcoal face in a thin ivory shell with a turquoise inner
+   line, small orange "FRISBEE" tab, cream digits first. The weapon badge is
+   replaced by the 3D launcher fork (<canvas class="frisbee-mech">, see
+   src/ui/frisbee/FrisbeeMechanism.ts) sitting on the left edge of the module.
+   The rail = one small disc per real disc (deck + cage). */
 .wpn-plate[data-icon="frisbee"] {
-  --pl-face: #20150f;
-  --pl-edge: #ffd0a8;
-  --pl-tab-clip: polygon(7% 0, 93% 0, 100% 50%, 93% 100%, 7% 100%, 0 50%);
-  --pl-tab-radius: 4px;
+  --pl-face: #17161b;
+  --pl-rail: #111015;
+  --pl-edge: #f6ecd6;
+  --pl-teal: #22b8b0;
+  --pl-tab-radius: 9px;
 }
-.ammo-deck .ammo-pip {
-  width: 26px;
-  height: 11px;
+.wpn-plate[data-icon="frisbee"] .wpn-body::before,
+.wpn-plate[data-icon="frisbee"] .wpn-ammo {
+  box-shadow: inset 0 0 0 1.5px var(--pl-teal), 0 3px 0 rgba(8, 7, 12, 0.5);
+}
+.wpn-plate[data-icon="frisbee"] .wpn-ribbon { min-width: 74px; }
+/* 3D available: the fork takes the badge's place (the flat badge stays as the no-WebGL fallback). */
+.wpn-plate[data-icon="frisbee"].mech-3d .wpn-badge { visibility: hidden; }
+.frisbee-mech {
+  position: absolute;
+  pointer-events: none;
+  z-index: 3;
+}
+/* Digits stay above every effect. */
+.wpn-plate[data-icon="frisbee"] .wpn-count { z-index: 4; }
+.wpn-plate[data-icon="frisbee"].mech-3d .wpn-ammo { padding-left: 22px; }
+
+/* Rail discs: a small disc seen slightly from above — orange body, yellow ring,
+   ivory centre, deeper orange edge underneath. Spent = empty socket. */
+.ammo-frisbee { gap: 3px; }
+.ammo-frisbee .ammo-pip {
+  width: 13px;
+  height: 7px;
   border-radius: 50%;
-  background: radial-gradient(ellipse at 50% 42%, #ffd0a8 0 28%, rgba(255, 208, 168, 0) 31%), var(--pip, #ff8a3d);
-  box-shadow: 0 1.5px 0 rgba(0, 0, 0, 0.55);
+  background:
+    radial-gradient(ellipse 34% 34% at 50% 44%, #f6ecd6 0 70%, transparent 76%),
+    radial-gradient(ellipse 60% 58% at 50% 44%, #ffc845 0 72%, transparent 78%),
+    #ff8a3d;
+  box-shadow: 0 1.6px 0 #c8561f, 0 2.6px 0 rgba(0, 0, 0, 0.45);
 }
-.ammo-deck .ammo-pip:not(.on).pip-a { animation: disc-fly-a 0.4s ease-out; }
-.ammo-deck .ammo-pip:not(.on).pip-b { animation: disc-fly-b 0.4s ease-out; }
-@keyframes disc-fly-a { 0% { transform: translate(-14px, -9px) rotate(-18deg); opacity: 1; filter: none; } 100% { transform: none; } }
-@keyframes disc-fly-b { 0% { transform: translate(-14px, -9px) rotate(-18deg); opacity: 1; filter: none; } 100% { transform: none; } }
-.ammo-stack { gap: 2px; margin-left: 6px; }
-.ammo-stack .ammo-pip { width: 5px; height: 14px; border-radius: 2px; background: linear-gradient(90deg, #ffd0a8, #ff8a3d); }
+.ammo-frisbee .ammo-pip:not(.on) {
+  opacity: 1;
+  filter: none;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.2px rgba(246, 236, 214, 0.28);
+}
+.ammo-frisbee .ammo-pip:not(.on).pip-a,
+.ammo-frisbee .ammo-pip:not(.on).pip-b { animation: none; }
 
 /* REVOLVER — parchment, square tab, brass cartridges. */
 .wpn-plate[data-icon="revolver"] {
@@ -4498,7 +4319,520 @@ body.game-paused .mole-overlay {
 @media (min-width: 2400px) { .wpn-plate { zoom: 2; } }
 /* Room on the right for the paint that hangs past the plate (reference: ~38 px margin). */
 #weapon-row { padding-right: 56px; margin-bottom: 24px; }
-</style>
+</style><style>/* ==========================================================================
+   LEADERBOARD (top-right) — five separate capsules under a cream "CLASSEMENT"
+   tab. Own identity: flat matte dark capsules, one ink outline, a sober drop
+   shadow, no drips / stripes / gloss.
+
+   DESIGN SPACE = the 1816x866 reference frame, in plain px. The whole block is
+   scaled by --lb-s (= innerWidth / 1816, set by LeaderboardHUD on resize) so it
+   stays ~15% of the screen width. Row geometry MUST match LB_GEOM
+   (src/ui/leaderboard/leaderboardLogic.ts): rows 42px, local row 48px and 9px
+   wider on each side, 2px gap.
+
+   Motion is driven by LeaderboardHUD with the Web Animations API:
+   .lb-row   -> position (transform)
+   .lb-shell -> squash / stretch of the capsule only (text never deforms)
+   .lb-score -> the independent score counter
+   ========================================================================== */
+#leaderboard-hud {
+  --lb-ink: #0b0b10;
+  --lb-dark: #1b1b23;
+  --lb-pill: #121218;
+  --lb-ring: #5a5a66;
+  --lb-cyan: #22e3f0;
+  --lb-gold: #ffd60a;
+  --lb-cream: #f7f0e2;
+  --lb-silver: #d9d9dd;
+  --lb-text: #f6f4ef;
+  position: absolute;
+  top: calc(28px * var(--lb-s, 1));
+  right: calc(46px * var(--lb-s, 1));
+  width: 267px;
+  transform: scale(var(--lb-s, 1));
+  transform-origin: 100% 0;
+  font-family: var(--hud-font-alt);
+  font-weight: 800;
+  color: var(--lb-text);
+  pointer-events: none;
+  z-index: 5;
+}
+
+#leaderboard-hud.hidden {
+  display: none;
+}
+
+/* ---- Header tab ---- */
+#leaderboard-hud .lb-head {
+  position: relative;
+  width: 170px;
+  height: 38px;
+  margin: 0 0 10px 37px;
+}
+
+#leaderboard-hud .lb-title {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding-top: 3px;
+  border: 3px solid var(--lb-ink);
+  border-radius: 999px;
+  background: var(--lb-cream);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.35);
+  color: var(--lb-ink);
+  font-size: 20px;
+  line-height: 1;
+  letter-spacing: 0.3px;
+}
+
+#leaderboard-hud .lb-dot {
+  position: absolute;
+  left: 178px;
+  top: 9px;
+  width: 19px;
+  height: 19px;
+  box-sizing: border-box;
+  border: 2.5px solid var(--lb-ink);
+  border-radius: 50%;
+  background: var(--lb-gold);
+}
+
+/* ---- Rows ---- */
+#lb-list {
+  position: relative;
+  width: 267px;
+}
+
+#leaderboard-hud .lb-row {
+  --bleed: 0px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 267px;
+  height: 41px;
+  z-index: 1;
+}
+
+#leaderboard-hud .lb-row.local {
+  --bleed: 9px;
+  left: -9px;
+  width: 285px;
+  height: 48px;
+  z-index: 2;
+}
+
+/* The crown's owner stays above its neighbours while the crown travels. */
+#leaderboard-hud .lb-row.has-crown {
+  z-index: 3;
+}
+
+/* The capsule: flat, matte, one ink outline, sober shadow. */
+#leaderboard-hud .lb-shell {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 3px solid var(--lb-ink);
+  border-radius: 22px;
+  background: var(--lb-dark);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.38);
+}
+
+#leaderboard-hud .lb-row.local .lb-shell {
+  border-radius: 25px;
+  background: var(--lb-cyan);
+}
+
+/* Rank badge (left). */
+#leaderboard-hud .lb-badge {
+  position: absolute;
+  top: 50%;
+  left: calc(11px + var(--bleed));
+  width: 34px;
+  height: 34px;
+  margin-top: -17px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 2px;
+  border: 2.5px solid var(--lb-ink);
+  border-radius: 50%;
+  background: var(--lb-silver);
+  color: var(--lb-ink);
+  font-size: 21px;
+  line-height: 1;
+}
+#leaderboard-hud .lb-row.local .lb-badge { background: var(--lb-cream); }
+#leaderboard-hud .lb-row.r1 .lb-badge { background: var(--lb-gold); }
+
+/* Name (centre). Fixed column: long names get an ellipsis, never push. */
+#leaderboard-hud .lb-name {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 72px;
+  right: 77px;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--lb-text);
+  font-size: 20px;
+  line-height: 1;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+#leaderboard-hud .lb-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 3px 0 0;
+  line-height: 1.25;
+}
+#leaderboard-hud .lb-row.local .lb-name {
+  left: 70px;
+  right: 85px;
+  color: var(--lb-ink);
+}
+
+/* The real bean portrait (BEAN_BUDDY_SVG, happy face), perfectly calm. */
+#leaderboard-hud .lb-avatar {
+  display: none;
+  flex: none;
+  width: 42px;
+  height: 42px;
+  margin-right: 9px;
+}
+#leaderboard-hud .lb-row.local .lb-avatar { display: block; }
+#leaderboard-hud .lb-avatar .buddy-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+#leaderboard-hud .lb-avatar .bb-face { display: none; }
+#leaderboard-hud .lb-avatar .bb-happy { display: inline; }
+#leaderboard-hud .lb-avatar .bb-leaf,
+#leaderboard-hud .lb-avatar .bb-eyes,
+#leaderboard-hud .lb-avatar .bb-sweat { animation: none; }
+
+/* Independent score counter (right). Fixed width: digits never move columns. */
+#leaderboard-hud .lb-score {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  width: 62px;
+  height: 31px;
+  margin-top: -15.5px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--lb-ring);
+  border-radius: 999px;
+  background: var(--lb-pill);
+  box-shadow: 0 0 0 2px var(--lb-ink);
+  color: #ffffff;
+}
+#leaderboard-hud .lb-row.local .lb-score {
+  right: 12px;
+  width: 65px;
+  height: 32px;
+  margin-top: -16px;
+  border: 3px solid var(--lb-ink);
+  box-shadow: none;
+}
+#leaderboard-hud .lb-score-val {
+  padding-top: 2px;
+  font-size: 20px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+#leaderboard-hud .lb-score.d4 .lb-score-val { font-size: 16.5px; }
+#leaderboard-hud .lb-score.d5 .lb-score-val { font-size: 13.5px; }
+
+/* +N lives inside its row, so it follows it wherever the row goes. */
+#leaderboard-hud .lb-gain {
+  position: absolute;
+  top: 50%;
+  right: 77px;
+  margin-top: -11px;
+  z-index: 2;
+  color: #ffe45c;
+  font-size: 18px;
+  line-height: 22px;
+  white-space: nowrap;
+  -webkit-text-stroke: 3.5px var(--lb-ink);
+  paint-order: stroke fill;
+  opacity: 0;
+}
+#leaderboard-hud .lb-row.local .lb-gain { right: 84px; }
+
+/* The single crown: a child of whichever row owns it. */
+#leaderboard-hud .lb-crown {
+  position: absolute;
+  transform-origin: 50% 100%;
+  left: calc(16px + var(--bleed));
+  top: -16px;
+  width: 24px;
+  height: 19px;
+  z-index: 2;
+}
+#leaderboard-hud .lb-crown svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* Pooled landing particles (at most 8 exist, ever). */
+#leaderboard-hud .lb-fx {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+}
+#leaderboard-hud .lb-p {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--lb-ink);
+  border-radius: 50%;
+  opacity: 0;
+}
+
+
+</style><style>/* ==========================================================================
+   CROSSHAIR (STICKER) + HITMARKER — cream centre dot, 4 radial ticks with an ink
+   outline and a turquoise tip. Pure CSS: the dot never moves; every effect lives on its
+   own child layer (see src/ui/CrosshairHUD.ts):
+     .cx-spread  aim spacing   (transition, 125 ms)
+     .cx-pulse   fire kick     (animation, 32 ms out + 168 ms back — restarts, never stacks)
+     .cx-bar     the visible tick
+   Hitmarker diagonals (#hitmarker) sit BETWEEN the ticks:
+     .hm-body / .hm-head  cream impact, 100–160 ms
+     .hm-kill             yellow elimination + outer accent, ~260 ms
+   Palette falls back to the sticker skin variables when that skin is loaded.
+   Options: body.ch-contrast (thicker ink), body.ch-reduced (fades only, no travel).
+   ========================================================================== */
+:root {
+  --cx-ink: var(--st-ink, #0e0d12);
+  --cx-cream: var(--st-cream, #fbf1da);
+  --cx-accent: #3ee0c5;
+  --cx-gold: #facc15;
+}
+
+/* ---- Centre dot ---- */
+#crosshair.sticker {
+  --cx-o: 1.5px; /* outline thickness */
+  --cx-gap: 8.5; /* px from the centre to the inner end of a tick */
+  --cx-len: 8; /* px, tick length */
+  --cx-kick: 5;
+  /* EVEN size: an odd one is snapped half a pixel off the tick axes by the browser */
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: var(--ch-color, var(--cx-cream));
+  opacity: 1;
+  box-shadow: 0 0 0 var(--cx-o) var(--cx-ink);
+}
+
+body.ch-contrast #crosshair.sticker {
+  --cx-o: 2.75px;
+  --cx-gap: 10;
+  --cx-len: 9;
+}
+
+/* Aim: ticks tighten and shorten (only for weapons with a real aim mode). */
+#crosshair.sticker.cx-aim {
+  --cx-gap: 6.5; /* stays clear of the dot (radius 3 + 1.5 outline) and of the tick outline */
+  --cx-len: 6.5;
+}
+
+body.ch-contrast #crosshair.sticker.cx-aim {
+  --cx-gap: 8.5;
+  --cx-len: 7.5;
+}
+
+/* Beam weapons keep their "burning a target" cue on the dot only. */
+#crosshair.sticker.hit {
+  background: #ffffff;
+  box-shadow: 0 0 0 var(--cx-o) var(--cx-ink), 0 0 8px 1px var(--cx-accent);
+}
+
+/* ---- Ticks (hidden for the DOT / CROSS shapes) ---- */
+#crosshair:not(.sticker) .cx-spread {
+  display: none;
+}
+
+.cx-spread {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transform: rotate(var(--r)) translateY(calc(var(--cx-gap) * -1px));
+  transition: transform 125ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.cx-pulse {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+}
+
+.cx-bar {
+  position: absolute;
+  left: -1.5px;
+  bottom: 0;
+  width: 3px;
+  height: calc(var(--cx-len) * 1px);
+  border-radius: 2px;
+  /* outer end (top) = turquoise tip; the cream part follows the colour setting */
+  background: linear-gradient(to top, var(--ch-color, var(--cx-cream)) 0 62%, var(--cx-accent) 62% 100%);
+  box-shadow: 0 0 0 var(--cx-o, 1.5px) var(--cx-ink);
+  transition: height 125ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Fire: 16 % of 200 ms = 32 ms out, 168 ms back. Same keyframes on every shot → no stacking. */
+#crosshair.cx-firing .cx-pulse {
+  animation: cx-fire 200ms linear both;
+}
+
+@keyframes cx-fire {
+  0% {
+    transform: translateY(0) scaleY(1);
+    animation-timing-function: cubic-bezier(0.1, 0.7, 0.3, 1);
+  }
+  16% {
+    transform: translateY(calc(var(--cx-kick) * -1px)) scaleY(1.22);
+    animation-timing-function: cubic-bezier(0.25, 0.6, 0.35, 1);
+  }
+  100% {
+    transform: translateY(0) scaleY(1);
+  }
+}
+
+/* ---- Hitmarker diagonals ---- */
+#hitmarker {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 22;
+  transform: scale(var(--ch-scale, 1));
+}
+
+.hm-arm {
+  position: absolute;
+  box-sizing: content-box;
+  left: -1.5px;
+  top: -5px;
+  width: 3px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1.5px solid var(--cx-ink);
+  opacity: 0;
+  transform: rotate(var(--r)) translateY(calc(-14px - var(--hm-push, 0px)));
+}
+
+body.ch-contrast .hm-arm {
+  border-width: 2.5px;
+}
+
+/* thicker outlines need more room: the diagonals sit further out so they never touch the ticks */
+body.ch-contrast #hitmarker {
+  --hm-push: 6px;
+}
+
+/* Outer accent (elimination only) */
+.hm-arm::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -9px;
+  width: 3px;
+  height: 3px;
+  margin-left: -1.5px;
+  border-radius: 50%;
+  background: var(--cx-gold);
+  box-shadow: 0 0 0 1.5px var(--cx-ink);
+  opacity: 0;
+}
+
+#hitmarker.hm-body .hm-arm {
+  --hm-s: 1;
+  background: var(--cx-cream);
+  animation: hm-impact var(--hm-body-dur, 0.16s) ease-out forwards;
+}
+
+#hitmarker.hm-head .hm-arm {
+  --hm-s: 1.3;
+  background: var(--cx-cream);
+  animation: hm-impact var(--hm-head-dur, 0.16s) ease-out forwards;
+}
+
+#hitmarker.hm-kill .hm-arm {
+  --hm-s: 1.25;
+  background: var(--cx-gold);
+  animation: hm-kill var(--hm-kill-dur, 0.26s) ease-out forwards;
+}
+
+#hitmarker.hm-kill .hm-arm::after {
+  opacity: 1;
+}
+
+@keyframes hm-impact {
+  0% { opacity: 1; transform: rotate(var(--r)) translateY(calc(-18px - var(--hm-push, 0px))) scale(var(--hm-s)) scaleY(1.3); }
+  35% { opacity: 1; transform: rotate(var(--r)) translateY(calc(-14px - var(--hm-push, 0px))) scale(var(--hm-s)); }
+  100% { opacity: 0; transform: rotate(var(--r)) translateY(calc(-13px - var(--hm-push, 0px))) scale(var(--hm-s)) scaleY(0.85); }
+}
+
+@keyframes hm-kill {
+  /* no scaleY here: it would squash the round accent dot into an ellipse */
+  0% { opacity: 1; transform: rotate(var(--r)) translateY(calc(-23px - var(--hm-push, 0px))) scale(var(--hm-s)); }
+  25% { opacity: 1; transform: rotate(var(--r)) translateY(calc(-17px - var(--hm-push, 0px))) scale(var(--hm-s)); }
+  70% { opacity: 1; transform: rotate(var(--r)) translateY(calc(-16px - var(--hm-push, 0px))) scale(var(--hm-s)); }
+  100% { opacity: 0; transform: rotate(var(--r)) translateY(calc(-15px - var(--hm-push, 0px))) scale(var(--hm-s)); }
+}
+
+/* ---- Reduced motion: nothing travels, everything is a plain fade ---- */
+body.ch-reduced .cx-spread,
+body.ch-reduced .cx-bar {
+  transition: none;
+}
+
+body.ch-reduced #crosshair.cx-firing .cx-pulse {
+  animation: cx-fire-rm 200ms linear both;
+}
+
+@keyframes cx-fire-rm {
+  0% { opacity: 0.35; }
+  16% { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+body.ch-reduced #hitmarker.hm-body .hm-arm,
+body.ch-reduced #hitmarker.hm-head .hm-arm,
+body.ch-reduced #hitmarker.hm-kill .hm-arm {
+  animation-name: hm-fade;
+}
+
+@keyframes hm-fade {
+  0%, 60% { opacity: 1; transform: rotate(var(--r)) translateY(calc(-15px - var(--hm-push, 0px))) scale(var(--hm-s)); }
+  100% { opacity: 0; transform: rotate(var(--r)) translateY(calc(-15px - var(--hm-push, 0px))) scale(var(--hm-s)); }
+}</style>
 <style>
 html,body{margin:0;height:100%;overflow:hidden;background:#3b2415}
 body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b2415 100%)}
@@ -4511,7 +4845,7 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
       <div id="lowhp-vignette"></div>
       <div id="heal-flash"></div>
       <div id="damage-dir-container"></div>
-      <div id="crosshair"></div>
+      <div id="crosshair" class="sticker"></div>
 
       <!-- The ONLY info allowed near the aim point: a tiny contextual hint
            (LOW AMMO / RELOAD) that exists only while it matters. -->
@@ -4592,18 +4926,11 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
            top-centre stack. Content is built once by MedalHUD. -->
       <div id="medal-display" class="hidden"></div>
 
+      <!-- Leaderboard: cream tab + five separate capsules. Rows, crown and
+           particles are created once by LeaderboardHUD (src/ui/leaderboard/). -->
       <div id="leaderboard-hud" class="hidden">
-        <div id="leaderboard-title">FFA</div>
-        <div id="leaderboard-header">
-          <span class="lb-rank">#</span>
-          <span class="lb-ping">MS</span>
-          <span class="lb-name">PLAYER</span>
-          <span class="lb-k">K</span>
-          <span class="lb-d">D</span>
-          <span class="lb-a">A</span>
-          <span class="lb-kd">K/D</span>
-        </div>
-        <div id="leaderboard-rows"></div>
+        <div class="lb-head"><div class="lb-title">CLASSEMENT</div><span class="lb-dot"></span></div>
+        <div id="lb-list"></div>
       </div>
 
       <!-- Knockdown banner: bottom-centre, above the controls hint. -->
@@ -5059,6 +5386,7 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
   var GreaterEqualCompare = 518;
   var AlwaysCompare = 519;
   var StaticDrawUsage = 35044;
+  var DynamicDrawUsage = 35048;
   var GLSL3 = "300 es";
   var WebGLCoordinateSystem = 2e3;
   var WebGPUCoordinateSystem = 2001;
@@ -7663,17 +7991,17 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
      * @return {Matrix3} A reference to this matrix.
      */
     transpose() {
-      let tmp;
+      let tmp3;
       const m = this.elements;
-      tmp = m[1];
+      tmp3 = m[1];
       m[1] = m[3];
-      m[3] = tmp;
-      tmp = m[2];
+      m[3] = tmp3;
+      tmp3 = m[2];
       m[2] = m[6];
-      m[6] = tmp;
-      tmp = m[5];
+      m[6] = tmp3;
+      tmp3 = m[5];
       m[5] = m[7];
-      m[7] = tmp;
+      m[7] = tmp3;
       return this;
     }
     /**
@@ -10100,25 +10428,25 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
      */
     transpose() {
       const te = this.elements;
-      let tmp;
-      tmp = te[1];
+      let tmp3;
+      tmp3 = te[1];
       te[1] = te[4];
-      te[4] = tmp;
-      tmp = te[2];
+      te[4] = tmp3;
+      tmp3 = te[2];
       te[2] = te[8];
-      te[8] = tmp;
-      tmp = te[6];
+      te[8] = tmp3;
+      tmp3 = te[6];
       te[6] = te[9];
-      te[9] = tmp;
-      tmp = te[3];
+      te[9] = tmp3;
+      tmp3 = te[3];
       te[3] = te[12];
-      te[12] = tmp;
-      tmp = te[7];
+      te[12] = tmp3;
+      tmp3 = te[7];
       te[7] = te[13];
-      te[13] = tmp;
-      tmp = te[11];
+      te[13] = tmp3;
+      tmp3 = te[11];
       te[11] = te[14];
-      te[14] = tmp;
+      te[14] = tmp3;
       return this;
     }
     /**
@@ -11691,11 +12019,11 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
       this.matrix.compose(this.position, this.quaternion, this.scale);
       const pivot = this.pivot;
       if (pivot !== null) {
-        const px = pivot.x, py = pivot.y, pz = pivot.z;
+        const px2 = pivot.x, py2 = pivot.y, pz2 = pivot.z;
         const te = this.matrix.elements;
-        te[12] += px - te[0] * px - te[4] * py - te[8] * pz;
-        te[13] += py - te[1] * px - te[5] * py - te[9] * pz;
-        te[14] += pz - te[2] * px - te[6] * py - te[10] * pz;
+        te[12] += px2 - te[0] * px2 - te[4] * py2 - te[8] * pz2;
+        te[13] += py2 - te[1] * px2 - te[5] * py2 - te[9] * pz2;
+        te[14] += pz2 - te[2] * px2 - te[6] * py2 - te[10] * pz2;
       }
       this.matrixWorldNeedsUpdate = true;
     }
@@ -15176,18 +15504,18 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
           );
         }
       }
-      const tmp = new Vector3(), tmp2 = new Vector3();
+      const tmp3 = new Vector3(), tmp22 = new Vector3();
       const n = new Vector3(), n2 = new Vector3();
       function handleVertex(v) {
         n.fromBufferAttribute(normalAttribute, v);
         n2.copy(n);
         const t = tan1[v];
-        tmp.copy(t);
-        tmp.sub(n.multiplyScalar(n.dot(t))).normalize();
-        tmp2.crossVectors(n2, t);
-        const test = tmp2.dot(tan2[v]);
+        tmp3.copy(t);
+        tmp3.sub(n.multiplyScalar(n.dot(t))).normalize();
+        tmp22.crossVectors(n2, t);
+        const test = tmp22.dot(tan2[v]);
         const w = test < 0 ? -1 : 1;
-        tangentAttribute.setXYZW(v, tmp.x, tmp.y, tmp.z, w);
+        tangentAttribute.setXYZW(v, tmp3.x, tmp3.y, tmp3.z, w);
       }
       for (let i = 0, il = groups.length; i < il; ++i) {
         const group = groups[i];
@@ -16742,6 +17070,242 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
       this.unpackAlignment = 1;
     }
   };
+  var InstancedBufferAttribute = class extends BufferAttribute {
+    /**
+     * Constructs a new instanced buffer attribute.
+     *
+     * @param {TypedArray} array - The array holding the attribute data.
+     * @param {number} itemSize - The item size.
+     * @param {boolean} [normalized=false] - Whether the data are normalized or not.
+     * @param {number} [meshPerAttribute=1] - How often a value of this buffer attribute should be repeated.
+     */
+    constructor(array, itemSize, normalized, meshPerAttribute = 1) {
+      super(array, itemSize, normalized);
+      this.isInstancedBufferAttribute = true;
+      this.meshPerAttribute = meshPerAttribute;
+    }
+    copy(source) {
+      super.copy(source);
+      this.meshPerAttribute = source.meshPerAttribute;
+      return this;
+    }
+    toJSON() {
+      const data = super.toJSON();
+      data.meshPerAttribute = this.meshPerAttribute;
+      data.isInstancedBufferAttribute = true;
+      return data;
+    }
+  };
+  var _instanceLocalMatrix = /* @__PURE__ */ new Matrix4();
+  var _instanceWorldMatrix = /* @__PURE__ */ new Matrix4();
+  var _instanceIntersects = [];
+  var _box3 = /* @__PURE__ */ new Box3();
+  var _identity = /* @__PURE__ */ new Matrix4();
+  var _mesh$1 = /* @__PURE__ */ new Mesh();
+  var _sphere$4 = /* @__PURE__ */ new Sphere();
+  var InstancedMesh = class extends Mesh {
+    /**
+     * Constructs a new instanced mesh.
+     *
+     * @param {BufferGeometry} [geometry] - The mesh geometry.
+     * @param {Material|Array<Material>} [material] - The mesh material.
+     * @param {number} count - The number of instances.
+     */
+    constructor(geometry, material, count) {
+      super(geometry, material);
+      this.isInstancedMesh = true;
+      this.instanceMatrix = new InstancedBufferAttribute(new Float32Array(count * 16), 16);
+      this.instanceColor = null;
+      this.morphTexture = null;
+      this.count = count;
+      this.boundingBox = null;
+      this.boundingSphere = null;
+      for (let i = 0; i < count; i++) {
+        this.setMatrixAt(i, _identity);
+      }
+    }
+    /**
+     * Computes the bounding box of the instanced mesh, and updates {@link InstancedMesh#boundingBox}.
+     * The bounding box is not automatically computed by the engine; this method must be called by your app.
+     * You may need to recompute the bounding box if an instance is transformed via {@link InstancedMesh#setMatrixAt}.
+     */
+    computeBoundingBox() {
+      const geometry = this.geometry;
+      const count = this.count;
+      if (this.boundingBox === null) {
+        this.boundingBox = new Box3();
+      }
+      if (geometry.boundingBox === null) {
+        geometry.computeBoundingBox();
+      }
+      this.boundingBox.makeEmpty();
+      for (let i = 0; i < count; i++) {
+        this.getMatrixAt(i, _instanceLocalMatrix);
+        _box3.copy(geometry.boundingBox).applyMatrix4(_instanceLocalMatrix);
+        this.boundingBox.union(_box3);
+      }
+    }
+    /**
+     * Computes the bounding sphere of the instanced mesh, and updates {@link InstancedMesh#boundingSphere}
+     * The engine automatically computes the bounding sphere when it is needed, e.g., for ray casting or view frustum culling.
+     * You may need to recompute the bounding sphere if an instance is transformed via {@link InstancedMesh#setMatrixAt}.
+     */
+    computeBoundingSphere() {
+      const geometry = this.geometry;
+      const count = this.count;
+      if (this.boundingSphere === null) {
+        this.boundingSphere = new Sphere();
+      }
+      if (geometry.boundingSphere === null) {
+        geometry.computeBoundingSphere();
+      }
+      this.boundingSphere.makeEmpty();
+      for (let i = 0; i < count; i++) {
+        this.getMatrixAt(i, _instanceLocalMatrix);
+        _sphere$4.copy(geometry.boundingSphere).applyMatrix4(_instanceLocalMatrix);
+        this.boundingSphere.union(_sphere$4);
+      }
+    }
+    copy(source, recursive) {
+      super.copy(source, recursive);
+      this.instanceMatrix.copy(source.instanceMatrix);
+      if (source.morphTexture !== null) this.morphTexture = source.morphTexture.clone();
+      if (source.instanceColor !== null) this.instanceColor = source.instanceColor.clone();
+      this.count = source.count;
+      if (source.boundingBox !== null) this.boundingBox = source.boundingBox.clone();
+      if (source.boundingSphere !== null) this.boundingSphere = source.boundingSphere.clone();
+      return this;
+    }
+    /**
+     * Gets the color of the defined instance.
+     *
+     * @param {number} index - The instance index.
+     * @param {Color} color - The target object that is used to store the method's result.
+     * @return {Color} A reference to the target color.
+     */
+    getColorAt(index, color) {
+      if (this.instanceColor === null) {
+        return color.setRGB(1, 1, 1);
+      } else {
+        return color.fromArray(this.instanceColor.array, index * 3);
+      }
+    }
+    /**
+     * Gets the local transformation matrix of the defined instance.
+     *
+     * @param {number} index - The instance index.
+     * @param {Matrix4} matrix - The target object that is used to store the method's result.
+     * @return {Matrix4} A reference to the target matrix.
+     */
+    getMatrixAt(index, matrix) {
+      return matrix.fromArray(this.instanceMatrix.array, index * 16);
+    }
+    /**
+     * Gets the morph target weights of the defined instance.
+     *
+     * @param {number} index - The instance index.
+     * @param {Mesh} object - The target object that is used to store the method's result.
+     */
+    getMorphAt(index, object) {
+      const objectInfluences = object.morphTargetInfluences;
+      const array = this.morphTexture.source.data.data;
+      const len = objectInfluences.length + 1;
+      const dataIndex = index * len + 1;
+      for (let i = 0; i < objectInfluences.length; i++) {
+        objectInfluences[i] = array[dataIndex + i];
+      }
+    }
+    raycast(raycaster, intersects) {
+      const matrixWorld = this.matrixWorld;
+      const raycastTimes = this.count;
+      _mesh$1.geometry = this.geometry;
+      _mesh$1.material = this.material;
+      if (_mesh$1.material === void 0) return;
+      if (this.boundingSphere === null) this.computeBoundingSphere();
+      _sphere$4.copy(this.boundingSphere);
+      _sphere$4.applyMatrix4(matrixWorld);
+      if (raycaster.ray.intersectsSphere(_sphere$4) === false) return;
+      for (let instanceId = 0; instanceId < raycastTimes; instanceId++) {
+        this.getMatrixAt(instanceId, _instanceLocalMatrix);
+        _instanceWorldMatrix.multiplyMatrices(matrixWorld, _instanceLocalMatrix);
+        _mesh$1.matrixWorld = _instanceWorldMatrix;
+        _mesh$1.raycast(raycaster, _instanceIntersects);
+        for (let i = 0, l = _instanceIntersects.length; i < l; i++) {
+          const intersect = _instanceIntersects[i];
+          intersect.instanceId = instanceId;
+          intersect.object = this;
+          intersects.push(intersect);
+        }
+        _instanceIntersects.length = 0;
+      }
+    }
+    /**
+     * Sets the given color to the defined instance. Make sure you set the `needsUpdate` flag of
+     * {@link InstancedMesh#instanceColor} to `true` after updating all the colors.
+     *
+     * @param {number} index - The instance index.
+     * @param {Color} color - The instance color.
+     * @return {InstancedMesh} A reference to this instanced mesh.
+     */
+    setColorAt(index, color) {
+      if (this.instanceColor === null) {
+        this.instanceColor = new InstancedBufferAttribute(new Float32Array(this.instanceMatrix.count * 3).fill(1), 3);
+      }
+      color.toArray(this.instanceColor.array, index * 3);
+      return this;
+    }
+    /**
+     * Sets the given local transformation matrix to the defined instance. Make sure you set the `needsUpdate` flag of
+     * {@link InstancedMesh#instanceMatrix} to `true` after updating all the matrices.
+     *
+     * @param {number} index - The instance index.
+     * @param {Matrix4} matrix - The local transformation.
+     * @return {InstancedMesh} A reference to this instanced mesh.
+     */
+    setMatrixAt(index, matrix) {
+      matrix.toArray(this.instanceMatrix.array, index * 16);
+      return this;
+    }
+    /**
+     * Sets the morph target weights to the defined instance. Make sure you set the `needsUpdate` flag of
+     * {@link InstancedMesh#morphTexture} to `true` after updating all the influences.
+     *
+     * @param {number} index - The instance index.
+     * @param {Mesh} object -  A mesh which `morphTargetInfluences` property containing the morph target weights
+     * of a single instance.
+     * @return {InstancedMesh} A reference to this instanced mesh.
+     */
+    setMorphAt(index, object) {
+      const objectInfluences = object.morphTargetInfluences;
+      const len = objectInfluences.length + 1;
+      if (this.morphTexture === null) {
+        this.morphTexture = new DataTexture(new Float32Array(len * this.count), len, this.count, RedFormat, FloatType);
+      }
+      const array = this.morphTexture.source.data.data;
+      let morphInfluencesSum = 0;
+      for (let i = 0; i < objectInfluences.length; i++) {
+        morphInfluencesSum += objectInfluences[i];
+      }
+      const morphBaseInfluence = this.geometry.morphTargetsRelative ? 1 : 1 - morphInfluencesSum;
+      const dataIndex = len * index;
+      array[dataIndex] = morphBaseInfluence;
+      array.set(objectInfluences, dataIndex + 1);
+      return this;
+    }
+    updateMorphTargets() {
+    }
+    /**
+     * Frees the GPU-related resources allocated by this instance. Call this
+     * method whenever this instance is no longer used in your app.
+     */
+    dispose() {
+      this.dispatchEvent({ type: "dispose" });
+      if (this.morphTexture !== null) {
+        this.morphTexture.dispose();
+        this.morphTexture = null;
+      }
+    }
+  };
   var _vector1 = /* @__PURE__ */ new Vector3();
   var _vector2 = /* @__PURE__ */ new Vector3();
   var _normalMatrix = /* @__PURE__ */ new Matrix3();
@@ -17386,6 +17950,1146 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
       return new _BoxGeometry(data.width, data.height, data.depth, data.widthSegments, data.heightSegments, data.depthSegments);
     }
   };
+  var Curve = class {
+    /**
+     * Constructs a new curve.
+     */
+    constructor() {
+      this.type = "Curve";
+      this.arcLengthDivisions = 200;
+      this.needsUpdate = false;
+      this.cacheArcLengths = null;
+    }
+    /**
+     * This method returns a vector in 2D or 3D space (depending on the curve definition)
+     * for the given interpolation factor.
+     *
+     * @abstract
+     * @param {number} t - A interpolation factor representing a position on the curve. Must be in the range `[0,1]`.
+     * @param {(Vector2|Vector3)} [optionalTarget] - The optional target vector the result is written to.
+     * @return {(Vector2|Vector3)} The position on the curve. It can be a 2D or 3D vector depending on the curve definition.
+     */
+    getPoint() {
+      warn("Curve: .getPoint() not implemented.");
+    }
+    /**
+     * This method returns a vector in 2D or 3D space (depending on the curve definition)
+     * for the given interpolation factor. Unlike {@link Curve#getPoint}, this method honors the length
+     * of the curve which equidistant samples.
+     *
+     * @param {number} u - A interpolation factor representing a position on the curve. Must be in the range `[0,1]`.
+     * @param {(Vector2|Vector3)} [optionalTarget] - The optional target vector the result is written to.
+     * @return {(Vector2|Vector3)} The position on the curve. It can be a 2D or 3D vector depending on the curve definition.
+     */
+    getPointAt(u, optionalTarget) {
+      const t = this.getUtoTmapping(u);
+      return this.getPoint(t, optionalTarget);
+    }
+    /**
+     * This method samples the curve via {@link Curve#getPoint} and returns an array of points representing
+     * the curve shape.
+     *
+     * @param {number} [divisions=5] - The number of divisions.
+     * @return {Array<(Vector2|Vector3)>} An array holding the sampled curve values. The number of points is `divisions + 1`.
+     */
+    getPoints(divisions = 5) {
+      const points = [];
+      for (let d = 0; d <= divisions; d++) {
+        points.push(this.getPoint(d / divisions));
+      }
+      return points;
+    }
+    // Get sequence of points using getPointAt( u )
+    /**
+     * This method samples the curve via {@link Curve#getPointAt} and returns an array of points representing
+     * the curve shape. Unlike {@link Curve#getPoints}, this method returns equi-spaced points across the entire
+     * curve.
+     *
+     * @param {number} [divisions=5] - The number of divisions.
+     * @return {Array<(Vector2|Vector3)>} An array holding the sampled curve values. The number of points is `divisions + 1`.
+     */
+    getSpacedPoints(divisions = 5) {
+      const points = [];
+      for (let d = 0; d <= divisions; d++) {
+        points.push(this.getPointAt(d / divisions));
+      }
+      return points;
+    }
+    /**
+     * Returns the total arc length of the curve.
+     *
+     * @return {number} The length of the curve.
+     */
+    getLength() {
+      const lengths = this.getLengths();
+      return lengths[lengths.length - 1];
+    }
+    /**
+     * Returns an array of cumulative segment lengths of the curve.
+     *
+     * @param {number} [divisions=this.arcLengthDivisions] - The number of divisions.
+     * @return {Array<number>} An array holding the cumulative segment lengths.
+     */
+    getLengths(divisions = this.arcLengthDivisions) {
+      if (this.cacheArcLengths && this.cacheArcLengths.length === divisions + 1 && !this.needsUpdate) {
+        return this.cacheArcLengths;
+      }
+      this.needsUpdate = false;
+      const cache = [];
+      let current2, last2 = this.getPoint(0);
+      let sum = 0;
+      cache.push(0);
+      for (let p = 1; p <= divisions; p++) {
+        current2 = this.getPoint(p / divisions);
+        sum += current2.distanceTo(last2);
+        cache.push(sum);
+        last2 = current2;
+      }
+      this.cacheArcLengths = cache;
+      return cache;
+    }
+    /**
+     * Update the cumulative segment distance cache. The method must be called
+     * every time curve parameters are changed. If an updated curve is part of a
+     * composed curve like {@link CurvePath}, this method must be called on the
+     * composed curve, too.
+     */
+    updateArcLengths() {
+      this.needsUpdate = true;
+      this.getLengths();
+    }
+    /**
+     * Given an interpolation factor in the range `[0,1]`, this method returns an updated
+     * interpolation factor in the same range that can be ued to sample equidistant points
+     * from a curve.
+     *
+     * @param {number} u - The interpolation factor.
+     * @param {?number} distance - An optional distance on the curve.
+     * @return {number} The updated interpolation factor.
+     */
+    getUtoTmapping(u, distance = null) {
+      const arcLengths = this.getLengths();
+      let i = 0;
+      const il = arcLengths.length;
+      let targetArcLength;
+      if (distance) {
+        targetArcLength = distance;
+      } else {
+        targetArcLength = u * arcLengths[il - 1];
+      }
+      let low = 0, high = il - 1, comparison;
+      while (low <= high) {
+        i = Math.floor(low + (high - low) / 2);
+        comparison = arcLengths[i] - targetArcLength;
+        if (comparison < 0) {
+          low = i + 1;
+        } else if (comparison > 0) {
+          high = i - 1;
+        } else {
+          high = i;
+          break;
+        }
+      }
+      i = high;
+      if (arcLengths[i] === targetArcLength) {
+        return i / (il - 1);
+      }
+      const lengthBefore = arcLengths[i];
+      const lengthAfter = arcLengths[i + 1];
+      const segmentLength = lengthAfter - lengthBefore;
+      const segmentFraction = (targetArcLength - lengthBefore) / segmentLength;
+      const t = (i + segmentFraction) / (il - 1);
+      return t;
+    }
+    /**
+     * Returns a unit vector tangent for the given interpolation factor.
+     * If the derived curve does not implement its tangent derivation,
+     * two points a small delta apart will be used to find its gradient
+     * which seems to give a reasonable approximation.
+     *
+     * @param {number} t - The interpolation factor.
+     * @param {(Vector2|Vector3)} [optionalTarget] - The optional target vector the result is written to.
+     * @return {(Vector2|Vector3)} The tangent vector.
+     */
+    getTangent(t, optionalTarget) {
+      const delta = 1e-4;
+      let t1 = t - delta;
+      let t2 = t + delta;
+      if (t1 < 0) t1 = 0;
+      if (t2 > 1) t2 = 1;
+      const pt1 = this.getPoint(t1);
+      const pt2 = this.getPoint(t2);
+      const tangent = optionalTarget || (pt1.isVector2 ? new Vector2() : new Vector3());
+      tangent.copy(pt2).sub(pt1).normalize();
+      return tangent;
+    }
+    /**
+     * Same as {@link Curve#getTangent} but with equidistant samples.
+     *
+     * @param {number} u - The interpolation factor.
+     * @param {(Vector2|Vector3)} [optionalTarget] - The optional target vector the result is written to.
+     * @return {(Vector2|Vector3)} The tangent vector.
+     * @see {@link Curve#getPointAt}
+     */
+    getTangentAt(u, optionalTarget) {
+      const t = this.getUtoTmapping(u);
+      return this.getTangent(t, optionalTarget);
+    }
+    /**
+     * Generates the Frenet Frames. Requires a curve definition in 3D space. Used
+     * in geometries like {@link TubeGeometry} or {@link ExtrudeGeometry}.
+     *
+     * @param {number} segments - The number of segments.
+     * @param {boolean} [closed=false] - Whether the curve is closed or not.
+     * @return {{tangents: Array<Vector3>, normals: Array<Vector3>, binormals: Array<Vector3>}} The Frenet Frames.
+     */
+    computeFrenetFrames(segments, closed = false) {
+      const normal = new Vector3();
+      const tangents = [];
+      const normals = [];
+      const binormals = [];
+      const vec = new Vector3();
+      const mat = new Matrix4();
+      for (let i = 0; i <= segments; i++) {
+        const u = i / segments;
+        tangents[i] = this.getTangentAt(u, new Vector3());
+      }
+      normals[0] = new Vector3();
+      binormals[0] = new Vector3();
+      let min = Number.MAX_VALUE;
+      const tx = Math.abs(tangents[0].x);
+      const ty = Math.abs(tangents[0].y);
+      const tz = Math.abs(tangents[0].z);
+      if (tx <= min) {
+        min = tx;
+        normal.set(1, 0, 0);
+      }
+      if (ty <= min) {
+        min = ty;
+        normal.set(0, 1, 0);
+      }
+      if (tz <= min) {
+        normal.set(0, 0, 1);
+      }
+      vec.crossVectors(tangents[0], normal).normalize();
+      normals[0].crossVectors(tangents[0], vec);
+      binormals[0].crossVectors(tangents[0], normals[0]);
+      for (let i = 1; i <= segments; i++) {
+        normals[i] = normals[i - 1].clone();
+        binormals[i] = binormals[i - 1].clone();
+        vec.crossVectors(tangents[i - 1], tangents[i]);
+        if (vec.length() > Number.EPSILON) {
+          vec.normalize();
+          const theta = Math.acos(clamp(tangents[i - 1].dot(tangents[i]), -1, 1));
+          normals[i].applyMatrix4(mat.makeRotationAxis(vec, theta));
+        }
+        binormals[i].crossVectors(tangents[i], normals[i]);
+      }
+      if (closed === true) {
+        let theta = Math.acos(clamp(normals[0].dot(normals[segments]), -1, 1));
+        theta /= segments;
+        if (tangents[0].dot(vec.crossVectors(normals[0], normals[segments])) > 0) {
+          theta = -theta;
+        }
+        for (let i = 1; i <= segments; i++) {
+          normals[i].applyMatrix4(mat.makeRotationAxis(tangents[i], theta * i));
+          binormals[i].crossVectors(tangents[i], normals[i]);
+        }
+      }
+      return {
+        tangents,
+        normals,
+        binormals
+      };
+    }
+    /**
+     * Returns a new curve with copied values from this instance.
+     *
+     * @return {Curve} A clone of this instance.
+     */
+    clone() {
+      return new this.constructor().copy(this);
+    }
+    /**
+     * Copies the values of the given curve to this instance.
+     *
+     * @param {Curve} source - The curve to copy.
+     * @return {Curve} A reference to this curve.
+     */
+    copy(source) {
+      this.arcLengthDivisions = source.arcLengthDivisions;
+      return this;
+    }
+    /**
+     * Serializes the curve into JSON.
+     *
+     * @return {Object} A JSON object representing the serialized curve.
+     * @see {@link ObjectLoader#parse}
+     */
+    toJSON() {
+      const data = {
+        metadata: {
+          version: 4.7,
+          type: "Curve",
+          generator: "Curve.toJSON"
+        }
+      };
+      data.arcLengthDivisions = this.arcLengthDivisions;
+      data.type = this.type;
+      return data;
+    }
+    /**
+     * Deserializes the curve from the given JSON.
+     *
+     * @param {Object} json - The JSON holding the serialized curve.
+     * @return {Curve} A reference to this curve.
+     */
+    fromJSON(json) {
+      this.arcLengthDivisions = json.arcLengthDivisions;
+      return this;
+    }
+  };
+  var EllipseCurve = class extends Curve {
+    /**
+     * Constructs a new ellipse curve.
+     *
+     * @param {number} [aX=0] - The X center of the ellipse.
+     * @param {number} [aY=0] - The Y center of the ellipse.
+     * @param {number} [xRadius=1] - The radius of the ellipse in the x direction.
+     * @param {number} [yRadius=1] - The radius of the ellipse in the y direction.
+     * @param {number} [aStartAngle=0] - The start angle of the curve in radians starting from the positive X axis.
+     * @param {number} [aEndAngle=Math.PI*2] - The end angle of the curve in radians starting from the positive X axis.
+     * @param {boolean} [aClockwise=false] - Whether the ellipse is drawn clockwise or not.
+     * @param {number} [aRotation=0] - The rotation angle of the ellipse in radians, counterclockwise from the positive X axis.
+     */
+    constructor(aX = 0, aY = 0, xRadius = 1, yRadius = 1, aStartAngle = 0, aEndAngle = Math.PI * 2, aClockwise = false, aRotation = 0) {
+      super();
+      this.isEllipseCurve = true;
+      this.type = "EllipseCurve";
+      this.aX = aX;
+      this.aY = aY;
+      this.xRadius = xRadius;
+      this.yRadius = yRadius;
+      this.aStartAngle = aStartAngle;
+      this.aEndAngle = aEndAngle;
+      this.aClockwise = aClockwise;
+      this.aRotation = aRotation;
+    }
+    /**
+     * Returns a point on the curve.
+     *
+     * @param {number} t - A interpolation factor representing a position on the curve. Must be in the range `[0,1]`.
+     * @param {Vector2} [optionalTarget] - The optional target vector the result is written to.
+     * @return {Vector2} The position on the curve.
+     */
+    getPoint(t, optionalTarget = new Vector2()) {
+      const point = optionalTarget;
+      const twoPi = Math.PI * 2;
+      let deltaAngle = this.aEndAngle - this.aStartAngle;
+      const samePoints = Math.abs(deltaAngle) < Number.EPSILON;
+      while (deltaAngle < 0) deltaAngle += twoPi;
+      while (deltaAngle > twoPi) deltaAngle -= twoPi;
+      if (deltaAngle < Number.EPSILON) {
+        if (samePoints) {
+          deltaAngle = 0;
+        } else {
+          deltaAngle = twoPi;
+        }
+      }
+      if (this.aClockwise === true && !samePoints) {
+        if (deltaAngle === twoPi) {
+          deltaAngle = -twoPi;
+        } else {
+          deltaAngle = deltaAngle - twoPi;
+        }
+      }
+      const angle = this.aStartAngle + t * deltaAngle;
+      let x = this.aX + this.xRadius * Math.cos(angle);
+      let y = this.aY + this.yRadius * Math.sin(angle);
+      if (this.aRotation !== 0) {
+        const cos = Math.cos(this.aRotation);
+        const sin = Math.sin(this.aRotation);
+        const tx = x - this.aX;
+        const ty = y - this.aY;
+        x = tx * cos - ty * sin + this.aX;
+        y = tx * sin + ty * cos + this.aY;
+      }
+      return point.set(x, y);
+    }
+    copy(source) {
+      super.copy(source);
+      this.aX = source.aX;
+      this.aY = source.aY;
+      this.xRadius = source.xRadius;
+      this.yRadius = source.yRadius;
+      this.aStartAngle = source.aStartAngle;
+      this.aEndAngle = source.aEndAngle;
+      this.aClockwise = source.aClockwise;
+      this.aRotation = source.aRotation;
+      return this;
+    }
+    toJSON() {
+      const data = super.toJSON();
+      data.aX = this.aX;
+      data.aY = this.aY;
+      data.xRadius = this.xRadius;
+      data.yRadius = this.yRadius;
+      data.aStartAngle = this.aStartAngle;
+      data.aEndAngle = this.aEndAngle;
+      data.aClockwise = this.aClockwise;
+      data.aRotation = this.aRotation;
+      return data;
+    }
+    fromJSON(json) {
+      super.fromJSON(json);
+      this.aX = json.aX;
+      this.aY = json.aY;
+      this.xRadius = json.xRadius;
+      this.yRadius = json.yRadius;
+      this.aStartAngle = json.aStartAngle;
+      this.aEndAngle = json.aEndAngle;
+      this.aClockwise = json.aClockwise;
+      this.aRotation = json.aRotation;
+      return this;
+    }
+  };
+  var ArcCurve = class extends EllipseCurve {
+    /**
+     * Constructs a new arc curve.
+     *
+     * @param {number} [aX=0] - The X center of the ellipse.
+     * @param {number} [aY=0] - The Y center of the ellipse.
+     * @param {number} [aRadius=1] - The radius of the ellipse in the x direction.
+     * @param {number} [aStartAngle=0] - The start angle of the curve in radians starting from the positive X axis.
+     * @param {number} [aEndAngle=Math.PI*2] - The end angle of the curve in radians starting from the positive X axis.
+     * @param {boolean} [aClockwise=false] - Whether the ellipse is drawn clockwise or not.
+     */
+    constructor(aX, aY, aRadius, aStartAngle, aEndAngle, aClockwise) {
+      super(aX, aY, aRadius, aRadius, aStartAngle, aEndAngle, aClockwise);
+      this.isArcCurve = true;
+      this.type = "ArcCurve";
+    }
+  };
+  function CubicPoly() {
+    let c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+    function init(x0, x1, t0, t1) {
+      c0 = x0;
+      c1 = t0;
+      c2 = -3 * x0 + 3 * x1 - 2 * t0 - t1;
+      c3 = 2 * x0 - 2 * x1 + t0 + t1;
+    }
+    return {
+      initCatmullRom: function(x0, x1, x2, x3, tension) {
+        init(x1, x2, tension * (x2 - x0), tension * (x3 - x1));
+      },
+      initNonuniformCatmullRom: function(x0, x1, x2, x3, dt0, dt1, dt2) {
+        let t1 = (x1 - x0) / dt0 - (x2 - x0) / (dt0 + dt1) + (x2 - x1) / dt1;
+        let t2 = (x2 - x1) / dt1 - (x3 - x1) / (dt1 + dt2) + (x3 - x2) / dt2;
+        t1 *= dt1;
+        t2 *= dt1;
+        init(x1, x2, t1, t2);
+      },
+      calc: function(t) {
+        const t2 = t * t;
+        const t3 = t2 * t;
+        return c0 + c1 * t + c2 * t2 + c3 * t3;
+      }
+    };
+  }
+  var tmp = /* @__PURE__ */ new Vector3();
+  var tmp2 = /* @__PURE__ */ new Vector3();
+  var px = /* @__PURE__ */ new CubicPoly();
+  var py = /* @__PURE__ */ new CubicPoly();
+  var pz = /* @__PURE__ */ new CubicPoly();
+  var CatmullRomCurve3 = class extends Curve {
+    /**
+     * Constructs a new Catmull-Rom curve.
+     *
+     * @param {Array<Vector3>} [points] - An array of 3D points defining the curve.
+     * @param {boolean} [closed=false] - Whether the curve is closed or not.
+     * @param {('centripetal'|'chordal'|'catmullrom')} [curveType='centripetal'] - The curve type.
+     * @param {number} [tension=0.5] - Tension of the curve.
+     */
+    constructor(points = [], closed = false, curveType = "centripetal", tension = 0.5) {
+      super();
+      this.isCatmullRomCurve3 = true;
+      this.type = "CatmullRomCurve3";
+      this.points = points;
+      this.closed = closed;
+      this.curveType = curveType;
+      this.tension = tension;
+    }
+    /**
+     * Returns a point on the curve.
+     *
+     * @param {number} t - A interpolation factor representing a position on the curve. Must be in the range `[0,1]`.
+     * @param {Vector3} [optionalTarget] - The optional target vector the result is written to.
+     * @return {Vector3} The position on the curve.
+     */
+    getPoint(t, optionalTarget = new Vector3()) {
+      const point = optionalTarget;
+      const points = this.points;
+      const l = points.length;
+      const p = (l - (this.closed ? 0 : 1)) * t;
+      let intPoint = Math.floor(p);
+      let weight = p - intPoint;
+      if (this.closed) {
+        intPoint += intPoint > 0 ? 0 : (Math.floor(Math.abs(intPoint) / l) + 1) * l;
+      } else if (weight === 0 && intPoint === l - 1) {
+        intPoint = l - 2;
+        weight = 1;
+      }
+      let p0, p3;
+      if (this.closed || intPoint > 0) {
+        p0 = points[(intPoint - 1) % l];
+      } else {
+        tmp2.subVectors(points[0], points[1]).add(points[0]);
+        p0 = tmp2;
+      }
+      const p1 = points[intPoint % l];
+      const p2 = points[(intPoint + 1) % l];
+      if (this.closed || intPoint + 2 < l) {
+        p3 = points[(intPoint + 2) % l];
+      } else {
+        tmp.subVectors(points[l - 1], points[l - 2]).add(points[l - 1]);
+        p3 = tmp;
+      }
+      if (this.curveType === "centripetal" || this.curveType === "chordal") {
+        const pow = this.curveType === "chordal" ? 0.5 : 0.25;
+        let dt0 = Math.pow(p0.distanceToSquared(p1), pow);
+        let dt1 = Math.pow(p1.distanceToSquared(p2), pow);
+        let dt2 = Math.pow(p2.distanceToSquared(p3), pow);
+        if (dt1 < 1e-4) dt1 = 1;
+        if (dt0 < 1e-4) dt0 = dt1;
+        if (dt2 < 1e-4) dt2 = dt1;
+        px.initNonuniformCatmullRom(p0.x, p1.x, p2.x, p3.x, dt0, dt1, dt2);
+        py.initNonuniformCatmullRom(p0.y, p1.y, p2.y, p3.y, dt0, dt1, dt2);
+        pz.initNonuniformCatmullRom(p0.z, p1.z, p2.z, p3.z, dt0, dt1, dt2);
+      } else if (this.curveType === "catmullrom") {
+        px.initCatmullRom(p0.x, p1.x, p2.x, p3.x, this.tension);
+        py.initCatmullRom(p0.y, p1.y, p2.y, p3.y, this.tension);
+        pz.initCatmullRom(p0.z, p1.z, p2.z, p3.z, this.tension);
+      }
+      point.set(
+        px.calc(weight),
+        py.calc(weight),
+        pz.calc(weight)
+      );
+      return point;
+    }
+    copy(source) {
+      super.copy(source);
+      this.points = [];
+      for (let i = 0, l = source.points.length; i < l; i++) {
+        const point = source.points[i];
+        this.points.push(point.clone());
+      }
+      this.closed = source.closed;
+      this.curveType = source.curveType;
+      this.tension = source.tension;
+      return this;
+    }
+    toJSON() {
+      const data = super.toJSON();
+      data.points = [];
+      for (let i = 0, l = this.points.length; i < l; i++) {
+        const point = this.points[i];
+        data.points.push(point.toArray());
+      }
+      data.closed = this.closed;
+      data.curveType = this.curveType;
+      data.tension = this.tension;
+      return data;
+    }
+    fromJSON(json) {
+      super.fromJSON(json);
+      this.points = [];
+      for (let i = 0, l = json.points.length; i < l; i++) {
+        const point = json.points[i];
+        this.points.push(new Vector3().fromArray(point));
+      }
+      this.closed = json.closed;
+      this.curveType = json.curveType;
+      this.tension = json.tension;
+      return this;
+    }
+  };
+  function CatmullRom(t, p0, p1, p2, p3) {
+    const v0 = (p2 - p0) * 0.5;
+    const v1 = (p3 - p1) * 0.5;
+    const t2 = t * t;
+    const t3 = t * t2;
+    return (2 * p1 - 2 * p2 + v0 + v1) * t3 + (-3 * p1 + 3 * p2 - 2 * v0 - v1) * t2 + v0 * t + p1;
+  }
+  function QuadraticBezierP0(t, p) {
+    const k = 1 - t;
+    return k * k * p;
+  }
+  function QuadraticBezierP1(t, p) {
+    return 2 * (1 - t) * t * p;
+  }
+  function QuadraticBezierP2(t, p) {
+    return t * t * p;
+  }
+  function QuadraticBezier(t, p0, p1, p2) {
+    return QuadraticBezierP0(t, p0) + QuadraticBezierP1(t, p1) + QuadraticBezierP2(t, p2);
+  }
+  function CubicBezierP0(t, p) {
+    const k = 1 - t;
+    return k * k * k * p;
+  }
+  function CubicBezierP1(t, p) {
+    const k = 1 - t;
+    return 3 * k * k * t * p;
+  }
+  function CubicBezierP2(t, p) {
+    return 3 * (1 - t) * t * t * p;
+  }
+  function CubicBezierP3(t, p) {
+    return t * t * t * p;
+  }
+  function CubicBezier(t, p0, p1, p2, p3) {
+    return CubicBezierP0(t, p0) + CubicBezierP1(t, p1) + CubicBezierP2(t, p2) + CubicBezierP3(t, p3);
+  }
+  var CubicBezierCurve = class extends Curve {
+    /**
+     * Constructs a new Cubic Bezier curve.
+     *
+     * @param {Vector2} [v0] - The start point.
+     * @param {Vector2} [v1] - The first control point.
+     * @param {Vector2} [v2] - The second control point.
+     * @param {Vector2} [v3] - The end point.
+     */
+    constructor(v0 = new Vector2(), v1 = new Vector2(), v2 = new Vector2(), v3 = new Vector2()) {
+      super();
+      this.isCubicBezierCurve = true;
+      this.type = "CubicBezierCurve";
+      this.v0 = v0;
+      this.v1 = v1;
+      this.v2 = v2;
+      this.v3 = v3;
+    }
+    /**
+     * Returns a point on the curve.
+     *
+     * @param {number} t - A interpolation factor representing a position on the curve. Must be in the range `[0,1]`.
+     * @param {Vector2} [optionalTarget] - The optional target vector the result is written to.
+     * @return {Vector2} The position on the curve.
+     */
+    getPoint(t, optionalTarget = new Vector2()) {
+      const point = optionalTarget;
+      const v0 = this.v0, v1 = this.v1, v2 = this.v2, v3 = this.v3;
+      point.set(
+        CubicBezier(t, v0.x, v1.x, v2.x, v3.x),
+        CubicBezier(t, v0.y, v1.y, v2.y, v3.y)
+      );
+      return point;
+    }
+    copy(source) {
+      super.copy(source);
+      this.v0.copy(source.v0);
+      this.v1.copy(source.v1);
+      this.v2.copy(source.v2);
+      this.v3.copy(source.v3);
+      return this;
+    }
+    toJSON() {
+      const data = super.toJSON();
+      data.v0 = this.v0.toArray();
+      data.v1 = this.v1.toArray();
+      data.v2 = this.v2.toArray();
+      data.v3 = this.v3.toArray();
+      return data;
+    }
+    fromJSON(json) {
+      super.fromJSON(json);
+      this.v0.fromArray(json.v0);
+      this.v1.fromArray(json.v1);
+      this.v2.fromArray(json.v2);
+      this.v3.fromArray(json.v3);
+      return this;
+    }
+  };
+  var CubicBezierCurve3 = class extends Curve {
+    /**
+     * Constructs a new Cubic Bezier curve.
+     *
+     * @param {Vector3} [v0] - The start point.
+     * @param {Vector3} [v1] - The first control point.
+     * @param {Vector3} [v2] - The second control point.
+     * @param {Vector3} [v3] - The end point.
+     */
+    constructor(v0 = new Vector3(), v1 = new Vector3(), v2 = new Vector3(), v3 = new Vector3()) {
+      super();
+      this.isCubicBezierCurve3 = true;
+      this.type = "CubicBezierCurve3";
+      this.v0 = v0;
+      this.v1 = v1;
+      this.v2 = v2;
+      this.v3 = v3;
+    }
+    /**
+     * Returns a point on the curve.
+     *
+     * @param {number} t - A interpolation factor representing a position on the curve. Must be in the range `[0,1]`.
+     * @param {Vector3} [optionalTarget] - The optional target vector the result is written to.
+     * @return {Vector3} The position on the curve.
+     */
+    getPoint(t, optionalTarget = new Vector3()) {
+      const point = optionalTarget;
+      const v0 = this.v0, v1 = this.v1, v2 = this.v2, v3 = this.v3;
+      point.set(
+        CubicBezier(t, v0.x, v1.x, v2.x, v3.x),
+        CubicBezier(t, v0.y, v1.y, v2.y, v3.y),
+        CubicBezier(t, v0.z, v1.z, v2.z, v3.z)
+      );
+      return point;
+    }
+    copy(source) {
+      super.copy(source);
+      this.v0.copy(source.v0);
+      this.v1.copy(source.v1);
+      this.v2.copy(source.v2);
+      this.v3.copy(source.v3);
+      return this;
+    }
+    toJSON() {
+      const data = super.toJSON();
+      data.v0 = this.v0.toArray();
+      data.v1 = this.v1.toArray();
+      data.v2 = this.v2.toArray();
+      data.v3 = this.v3.toArray();
+      return data;
+    }
+    fromJSON(json) {
+      super.fromJSON(json);
+      this.v0.fromArray(json.v0);
+      this.v1.fromArray(json.v1);
+      this.v2.fromArray(json.v2);
+      this.v3.fromArray(json.v3);
+      return this;
+    }
+  };
+  var LineCurve = class extends Curve {
+    /**
+     * Constructs a new line curve.
+     *
+     * @param {Vector2} [v1] - The start point.
+     * @param {Vector2} [v2] - The end point.
+     */
+    constructor(v1 = new Vector2(), v2 = new Vector2()) {
+      super();
+      this.isLineCurve = true;
+      this.type = "LineCurve";
+      this.v1 = v1;
+      this.v2 = v2;
+    }
+    /**
+     * Returns a point on the line.
+     *
+     * @param {number} t - A interpolation factor representing a position on the line. Must be in the range `[0,1]`.
+     * @param {Vector2} [optionalTarget] - The optional target vector the result is written to.
+     * @return {Vector2} The position on the line.
+     */
+    getPoint(t, optionalTarget = new Vector2()) {
+      const point = optionalTarget;
+      if (t === 1) {
+        point.copy(this.v2);
+      } else {
+        point.copy(this.v2).sub(this.v1);
+        point.multiplyScalar(t).add(this.v1);
+      }
+      return point;
+    }
+    // Line curve is linear, so we can overwrite default getPointAt
+    getPointAt(u, optionalTarget) {
+      return this.getPoint(u, optionalTarget);
+    }
+    getTangent(t, optionalTarget = new Vector2()) {
+      return optionalTarget.subVectors(this.v2, this.v1).normalize();
+    }
+    getTangentAt(u, optionalTarget) {
+      return this.getTangent(u, optionalTarget);
+    }
+    copy(source) {
+      super.copy(source);
+      this.v1.copy(source.v1);
+      this.v2.copy(source.v2);
+      return this;
+    }
+    toJSON() {
+      const data = super.toJSON();
+      data.v1 = this.v1.toArray();
+      data.v2 = this.v2.toArray();
+      return data;
+    }
+    fromJSON(json) {
+      super.fromJSON(json);
+      this.v1.fromArray(json.v1);
+      this.v2.fromArray(json.v2);
+      return this;
+    }
+  };
+  var LineCurve3 = class extends Curve {
+    /**
+     * Constructs a new line curve.
+     *
+     * @param {Vector3} [v1] - The start point.
+     * @param {Vector3} [v2] - The end point.
+     */
+    constructor(v1 = new Vector3(), v2 = new Vector3()) {
+      super();
+      this.isLineCurve3 = true;
+      this.type = "LineCurve3";
+      this.v1 = v1;
+      this.v2 = v2;
+    }
+    /**
+     * Returns a point on the line.
+     *
+     * @param {number} t - A interpolation factor representing a position on the line. Must be in the range `[0,1]`.
+     * @param {Vector3} [optionalTarget] - The optional target vector the result is written to.
+     * @return {Vector3} The position on the line.
+     */
+    getPoint(t, optionalTarget = new Vector3()) {
+      const point = optionalTarget;
+      if (t === 1) {
+        point.copy(this.v2);
+      } else {
+        point.copy(this.v2).sub(this.v1);
+        point.multiplyScalar(t).add(this.v1);
+      }
+      return point;
+    }
+    // Line curve is linear, so we can overwrite default getPointAt
+    getPointAt(u, optionalTarget) {
+      return this.getPoint(u, optionalTarget);
+    }
+    getTangent(t, optionalTarget = new Vector3()) {
+      return optionalTarget.subVectors(this.v2, this.v1).normalize();
+    }
+    getTangentAt(u, optionalTarget) {
+      return this.getTangent(u, optionalTarget);
+    }
+    copy(source) {
+      super.copy(source);
+      this.v1.copy(source.v1);
+      this.v2.copy(source.v2);
+      return this;
+    }
+    toJSON() {
+      const data = super.toJSON();
+      data.v1 = this.v1.toArray();
+      data.v2 = this.v2.toArray();
+      return data;
+    }
+    fromJSON(json) {
+      super.fromJSON(json);
+      this.v1.fromArray(json.v1);
+      this.v2.fromArray(json.v2);
+      return this;
+    }
+  };
+  var QuadraticBezierCurve = class extends Curve {
+    /**
+     * Constructs a new Quadratic Bezier curve.
+     *
+     * @param {Vector2} [v0] - The start point.
+     * @param {Vector2} [v1] - The control point.
+     * @param {Vector2} [v2] - The end point.
+     */
+    constructor(v0 = new Vector2(), v1 = new Vector2(), v2 = new Vector2()) {
+      super();
+      this.isQuadraticBezierCurve = true;
+      this.type = "QuadraticBezierCurve";
+      this.v0 = v0;
+      this.v1 = v1;
+      this.v2 = v2;
+    }
+    /**
+     * Returns a point on the curve.
+     *
+     * @param {number} t - A interpolation factor representing a position on the curve. Must be in the range `[0,1]`.
+     * @param {Vector2} [optionalTarget] - The optional target vector the result is written to.
+     * @return {Vector2} The position on the curve.
+     */
+    getPoint(t, optionalTarget = new Vector2()) {
+      const point = optionalTarget;
+      const v0 = this.v0, v1 = this.v1, v2 = this.v2;
+      point.set(
+        QuadraticBezier(t, v0.x, v1.x, v2.x),
+        QuadraticBezier(t, v0.y, v1.y, v2.y)
+      );
+      return point;
+    }
+    copy(source) {
+      super.copy(source);
+      this.v0.copy(source.v0);
+      this.v1.copy(source.v1);
+      this.v2.copy(source.v2);
+      return this;
+    }
+    toJSON() {
+      const data = super.toJSON();
+      data.v0 = this.v0.toArray();
+      data.v1 = this.v1.toArray();
+      data.v2 = this.v2.toArray();
+      return data;
+    }
+    fromJSON(json) {
+      super.fromJSON(json);
+      this.v0.fromArray(json.v0);
+      this.v1.fromArray(json.v1);
+      this.v2.fromArray(json.v2);
+      return this;
+    }
+  };
+  var QuadraticBezierCurve3 = class extends Curve {
+    /**
+     * Constructs a new Quadratic Bezier curve.
+     *
+     * @param {Vector3} [v0] - The start point.
+     * @param {Vector3} [v1] - The control point.
+     * @param {Vector3} [v2] - The end point.
+     */
+    constructor(v0 = new Vector3(), v1 = new Vector3(), v2 = new Vector3()) {
+      super();
+      this.isQuadraticBezierCurve3 = true;
+      this.type = "QuadraticBezierCurve3";
+      this.v0 = v0;
+      this.v1 = v1;
+      this.v2 = v2;
+    }
+    /**
+     * Returns a point on the curve.
+     *
+     * @param {number} t - A interpolation factor representing a position on the curve. Must be in the range `[0,1]`.
+     * @param {Vector3} [optionalTarget] - The optional target vector the result is written to.
+     * @return {Vector3} The position on the curve.
+     */
+    getPoint(t, optionalTarget = new Vector3()) {
+      const point = optionalTarget;
+      const v0 = this.v0, v1 = this.v1, v2 = this.v2;
+      point.set(
+        QuadraticBezier(t, v0.x, v1.x, v2.x),
+        QuadraticBezier(t, v0.y, v1.y, v2.y),
+        QuadraticBezier(t, v0.z, v1.z, v2.z)
+      );
+      return point;
+    }
+    copy(source) {
+      super.copy(source);
+      this.v0.copy(source.v0);
+      this.v1.copy(source.v1);
+      this.v2.copy(source.v2);
+      return this;
+    }
+    toJSON() {
+      const data = super.toJSON();
+      data.v0 = this.v0.toArray();
+      data.v1 = this.v1.toArray();
+      data.v2 = this.v2.toArray();
+      return data;
+    }
+    fromJSON(json) {
+      super.fromJSON(json);
+      this.v0.fromArray(json.v0);
+      this.v1.fromArray(json.v1);
+      this.v2.fromArray(json.v2);
+      return this;
+    }
+  };
+  var SplineCurve = class extends Curve {
+    /**
+     * Constructs a new 2D spline curve.
+     *
+     * @param {Array<Vector2>} [points] -  An array of 2D points defining the curve.
+     */
+    constructor(points = []) {
+      super();
+      this.isSplineCurve = true;
+      this.type = "SplineCurve";
+      this.points = points;
+    }
+    /**
+     * Returns a point on the curve.
+     *
+     * @param {number} t - A interpolation factor representing a position on the curve. Must be in the range `[0,1]`.
+     * @param {Vector2} [optionalTarget] - The optional target vector the result is written to.
+     * @return {Vector2} The position on the curve.
+     */
+    getPoint(t, optionalTarget = new Vector2()) {
+      const point = optionalTarget;
+      const points = this.points;
+      const p = (points.length - 1) * t;
+      const intPoint = Math.floor(p);
+      const weight = p - intPoint;
+      const p0 = points[intPoint === 0 ? intPoint : intPoint - 1];
+      const p1 = points[intPoint];
+      const p2 = points[intPoint > points.length - 2 ? points.length - 1 : intPoint + 1];
+      const p3 = points[intPoint > points.length - 3 ? points.length - 1 : intPoint + 2];
+      point.set(
+        CatmullRom(weight, p0.x, p1.x, p2.x, p3.x),
+        CatmullRom(weight, p0.y, p1.y, p2.y, p3.y)
+      );
+      return point;
+    }
+    copy(source) {
+      super.copy(source);
+      this.points = [];
+      for (let i = 0, l = source.points.length; i < l; i++) {
+        const point = source.points[i];
+        this.points.push(point.clone());
+      }
+      return this;
+    }
+    toJSON() {
+      const data = super.toJSON();
+      data.points = [];
+      for (let i = 0, l = this.points.length; i < l; i++) {
+        const point = this.points[i];
+        data.points.push(point.toArray());
+      }
+      return data;
+    }
+    fromJSON(json) {
+      super.fromJSON(json);
+      this.points = [];
+      for (let i = 0, l = json.points.length; i < l; i++) {
+        const point = json.points[i];
+        this.points.push(new Vector2().fromArray(point));
+      }
+      return this;
+    }
+  };
+  var Curves = /* @__PURE__ */ Object.freeze({
+    __proto__: null,
+    ArcCurve,
+    CatmullRomCurve3,
+    CubicBezierCurve,
+    CubicBezierCurve3,
+    EllipseCurve,
+    LineCurve,
+    LineCurve3,
+    QuadraticBezierCurve,
+    QuadraticBezierCurve3,
+    SplineCurve
+  });
+  var LatheGeometry = class _LatheGeometry extends BufferGeometry {
+    /**
+     * Constructs a new lathe geometry.
+     *
+     * @param {Array<Vector2|Vector3>} [points] - An array of points in 2D space. The x-coordinate of each point
+     * must be greater than zero.
+     * @param {number} [segments=12] - The number of circumference segments to generate.
+     * @param {number} [phiStart=0] - The starting angle in radians.
+     * @param {number} [phiLength=Math.PI*2] - The radian (0 to 2PI) range of the lathed section 2PI is a
+     * closed lathe, less than 2PI is a portion.
+     */
+    constructor(points = [new Vector2(0, -0.5), new Vector2(0.5, 0), new Vector2(0, 0.5)], segments = 12, phiStart = 0, phiLength = Math.PI * 2) {
+      super();
+      this.type = "LatheGeometry";
+      this.parameters = {
+        points,
+        segments,
+        phiStart,
+        phiLength
+      };
+      segments = Math.floor(segments);
+      phiLength = clamp(phiLength, 0, Math.PI * 2);
+      const indices = [];
+      const vertices = [];
+      const uvs = [];
+      const initNormals = [];
+      const normals = [];
+      const inverseSegments = 1 / segments;
+      const vertex2 = new Vector3();
+      const uv = new Vector2();
+      const normal = new Vector3();
+      const curNormal = new Vector3();
+      const prevNormal = new Vector3();
+      let dx = 0;
+      let dy = 0;
+      for (let j = 0; j <= points.length - 1; j++) {
+        switch (j) {
+          case 0:
+            dx = points[j + 1].x - points[j].x;
+            dy = points[j + 1].y - points[j].y;
+            normal.x = dy * 1;
+            normal.y = -dx;
+            normal.z = dy * 0;
+            prevNormal.copy(normal);
+            normal.normalize();
+            initNormals.push(normal.x, normal.y, normal.z);
+            break;
+          case points.length - 1:
+            initNormals.push(prevNormal.x, prevNormal.y, prevNormal.z);
+            break;
+          default:
+            dx = points[j + 1].x - points[j].x;
+            dy = points[j + 1].y - points[j].y;
+            normal.x = dy * 1;
+            normal.y = -dx;
+            normal.z = dy * 0;
+            curNormal.copy(normal);
+            normal.x += prevNormal.x;
+            normal.y += prevNormal.y;
+            normal.z += prevNormal.z;
+            normal.normalize();
+            initNormals.push(normal.x, normal.y, normal.z);
+            prevNormal.copy(curNormal);
+        }
+      }
+      for (let i = 0; i <= segments; i++) {
+        const phi = phiStart + i * inverseSegments * phiLength;
+        const sin = Math.sin(phi);
+        const cos = Math.cos(phi);
+        for (let j = 0; j <= points.length - 1; j++) {
+          vertex2.x = points[j].x * sin;
+          vertex2.y = points[j].y;
+          vertex2.z = points[j].x * cos;
+          vertices.push(vertex2.x, vertex2.y, vertex2.z);
+          uv.x = i / segments;
+          uv.y = j / (points.length - 1);
+          uvs.push(uv.x, uv.y);
+          const x = initNormals[3 * j + 0] * sin;
+          const y = initNormals[3 * j + 1];
+          const z = initNormals[3 * j + 0] * cos;
+          normals.push(x, y, z);
+        }
+      }
+      for (let i = 0; i < segments; i++) {
+        for (let j = 0; j < points.length - 1; j++) {
+          const base = j + i * points.length;
+          const a = base;
+          const b = base + points.length;
+          const c = base + points.length + 1;
+          const d = base + 1;
+          indices.push(a, b, d);
+          indices.push(c, d, b);
+        }
+      }
+      this.setIndex(indices);
+      this.setAttribute("position", new Float32BufferAttribute(vertices, 3));
+      this.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
+      this.setAttribute("normal", new Float32BufferAttribute(normals, 3));
+    }
+    copy(source) {
+      super.copy(source);
+      this.parameters = Object.assign({}, source.parameters);
+      return this;
+    }
+    /**
+     * Factory method for creating an instance of this class from the given
+     * JSON object.
+     *
+     * @param {Object} data - A JSON object representing the serialized geometry.
+     * @return {LatheGeometry} A new instance.
+     */
+    static fromJSON(data) {
+      return new _LatheGeometry(data.points, data.segments, data.phiStart, data.phiLength);
+    }
+  };
   var PlaneGeometry = class _PlaneGeometry extends BufferGeometry {
     /**
      * Constructs a new plane geometry.
@@ -17457,6 +19161,237 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
       return new _PlaneGeometry(data.width, data.height, data.widthSegments, data.heightSegments);
     }
   };
+  var SphereGeometry = class _SphereGeometry extends BufferGeometry {
+    /**
+     * Constructs a new sphere geometry.
+     *
+     * @param {number} [radius=1] - The sphere radius.
+     * @param {number} [widthSegments=32] - The number of horizontal segments. Minimum value is `3`.
+     * @param {number} [heightSegments=16] - The number of vertical segments. Minimum value is `2`.
+     * @param {number} [phiStart=0] - The horizontal starting angle in radians.
+     * @param {number} [phiLength=Math.PI*2] - The horizontal sweep angle size.
+     * @param {number} [thetaStart=0] - The vertical starting angle in radians.
+     * @param {number} [thetaLength=Math.PI] - The vertical sweep angle size.
+     */
+    constructor(radius = 1, widthSegments = 32, heightSegments = 16, phiStart = 0, phiLength = Math.PI * 2, thetaStart = 0, thetaLength = Math.PI) {
+      super();
+      this.type = "SphereGeometry";
+      this.parameters = {
+        radius,
+        widthSegments,
+        heightSegments,
+        phiStart,
+        phiLength,
+        thetaStart,
+        thetaLength
+      };
+      widthSegments = Math.max(3, Math.floor(widthSegments));
+      heightSegments = Math.max(2, Math.floor(heightSegments));
+      const thetaEnd = Math.min(thetaStart + thetaLength, Math.PI);
+      let index = 0;
+      const grid = [];
+      const vertex2 = new Vector3();
+      const normal = new Vector3();
+      const indices = [];
+      const vertices = [];
+      const normals = [];
+      const uvs = [];
+      for (let iy = 0; iy <= heightSegments; iy++) {
+        const verticesRow = [];
+        const v = iy / heightSegments;
+        const theta = thetaStart + v * thetaLength;
+        const y = radius * Math.cos(theta);
+        const ringRadius = Math.sqrt(radius * radius - y * y);
+        let uOffset = 0;
+        if (iy === 0 && thetaStart === 0) {
+          uOffset = 0.5 / widthSegments;
+        } else if (iy === heightSegments && thetaEnd === Math.PI) {
+          uOffset = -0.5 / widthSegments;
+        }
+        for (let ix = 0; ix <= widthSegments; ix++) {
+          const u = ix / widthSegments;
+          const phi = phiStart + u * phiLength;
+          vertex2.x = -ringRadius * Math.cos(phi);
+          vertex2.y = y;
+          vertex2.z = ringRadius * Math.sin(phi);
+          vertices.push(vertex2.x, vertex2.y, vertex2.z);
+          normal.copy(vertex2).normalize();
+          normals.push(normal.x, normal.y, normal.z);
+          uvs.push(u + uOffset, 1 - v);
+          verticesRow.push(index++);
+        }
+        grid.push(verticesRow);
+      }
+      for (let iy = 0; iy < heightSegments; iy++) {
+        for (let ix = 0; ix < widthSegments; ix++) {
+          const a = grid[iy][ix + 1];
+          const b = grid[iy][ix];
+          const c = grid[iy + 1][ix];
+          const d = grid[iy + 1][ix + 1];
+          if (iy !== 0 || thetaStart > 0) indices.push(a, b, d);
+          if (iy !== heightSegments - 1 || thetaEnd < Math.PI) indices.push(b, c, d);
+        }
+      }
+      this.setIndex(indices);
+      this.setAttribute("position", new Float32BufferAttribute(vertices, 3));
+      this.setAttribute("normal", new Float32BufferAttribute(normals, 3));
+      this.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
+    }
+    copy(source) {
+      super.copy(source);
+      this.parameters = Object.assign({}, source.parameters);
+      return this;
+    }
+    /**
+     * Factory method for creating an instance of this class from the given
+     * JSON object.
+     *
+     * @param {Object} data - A JSON object representing the serialized geometry.
+     * @return {SphereGeometry} A new instance.
+     */
+    static fromJSON(data) {
+      return new _SphereGeometry(data.radius, data.widthSegments, data.heightSegments, data.phiStart, data.phiLength, data.thetaStart, data.thetaLength);
+    }
+  };
+  var TubeGeometry = class _TubeGeometry extends BufferGeometry {
+    /**
+     * Constructs a new tube geometry.
+     *
+     * @param {Curve} [path=QuadraticBezierCurve3] - A 3D curve defining the path of the tube.
+     * @param {number} [tubularSegments=64] - The number of segments that make up the tube.
+     * @param {number} [radius=1] -The radius of the tube.
+     * @param {number} [radialSegments=8] - The number of segments that make up the cross-section.
+     * @param {boolean} [closed=false] - Whether the tube is closed or not.
+     */
+    constructor(path = new QuadraticBezierCurve3(new Vector3(-1, -1, 0), new Vector3(-1, 1, 0), new Vector3(1, 1, 0)), tubularSegments = 64, radius = 1, radialSegments = 8, closed = false) {
+      super();
+      this.type = "TubeGeometry";
+      this.parameters = {
+        path,
+        tubularSegments,
+        radius,
+        radialSegments,
+        closed
+      };
+      const frames = path.computeFrenetFrames(tubularSegments, closed);
+      this.tangents = frames.tangents;
+      this.normals = frames.normals;
+      this.binormals = frames.binormals;
+      const vertex2 = new Vector3();
+      const normal = new Vector3();
+      const uv = new Vector2();
+      let P = new Vector3();
+      const vertices = [];
+      const normals = [];
+      const uvs = [];
+      const indices = [];
+      generateBufferData();
+      this.setIndex(indices);
+      this.setAttribute("position", new Float32BufferAttribute(vertices, 3));
+      this.setAttribute("normal", new Float32BufferAttribute(normals, 3));
+      this.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
+      function generateBufferData() {
+        for (let i = 0; i < tubularSegments; i++) {
+          generateSegment(i);
+        }
+        generateSegment(closed === false ? tubularSegments : 0);
+        generateUVs();
+        generateIndices();
+      }
+      function generateSegment(i) {
+        P = path.getPointAt(i / tubularSegments, P);
+        const N = frames.normals[i];
+        const B = frames.binormals[i];
+        for (let j = 0; j <= radialSegments; j++) {
+          const v = j / radialSegments * Math.PI * 2;
+          const sin = Math.sin(v);
+          const cos = -Math.cos(v);
+          normal.x = cos * N.x + sin * B.x;
+          normal.y = cos * N.y + sin * B.y;
+          normal.z = cos * N.z + sin * B.z;
+          normal.normalize();
+          normals.push(normal.x, normal.y, normal.z);
+          vertex2.x = P.x + radius * normal.x;
+          vertex2.y = P.y + radius * normal.y;
+          vertex2.z = P.z + radius * normal.z;
+          vertices.push(vertex2.x, vertex2.y, vertex2.z);
+        }
+      }
+      function generateIndices() {
+        for (let j = 1; j <= tubularSegments; j++) {
+          for (let i = 1; i <= radialSegments; i++) {
+            const a = (radialSegments + 1) * (j - 1) + (i - 1);
+            const b = (radialSegments + 1) * j + (i - 1);
+            const c = (radialSegments + 1) * j + i;
+            const d = (radialSegments + 1) * (j - 1) + i;
+            indices.push(a, b, d);
+            indices.push(b, c, d);
+          }
+        }
+      }
+      function generateUVs() {
+        for (let i = 0; i <= tubularSegments; i++) {
+          for (let j = 0; j <= radialSegments; j++) {
+            uv.x = i / tubularSegments;
+            uv.y = j / radialSegments;
+            uvs.push(uv.x, uv.y);
+          }
+        }
+      }
+    }
+    copy(source) {
+      super.copy(source);
+      this.parameters = Object.assign({}, source.parameters);
+      return this;
+    }
+    toJSON() {
+      const data = super.toJSON();
+      data.path = this.parameters.path.toJSON();
+      return data;
+    }
+    /**
+     * Factory method for creating an instance of this class from the given
+     * JSON object.
+     *
+     * @param {Object} data - A JSON object representing the serialized geometry.
+     * @return {TubeGeometry} A new instance.
+     */
+    static fromJSON(data) {
+      return new _TubeGeometry(
+        new Curves[data.path.type]().fromJSON(data.path),
+        data.tubularSegments,
+        data.radius,
+        data.radialSegments,
+        data.closed
+      );
+    }
+  };
+  var ShadowMaterial = class extends Material {
+    /**
+     * Constructs a new shadow material.
+     *
+     * @param {Object} [parameters] - An object with one or more properties
+     * defining the material's appearance. Any property of the material
+     * (including any property from inherited materials) can be passed
+     * in here. Color values can be passed any type of value accepted
+     * by {@link Color#set}.
+     */
+    constructor(parameters) {
+      super();
+      this.isShadowMaterial = true;
+      this.type = "ShadowMaterial";
+      this.color = new Color(0);
+      this.transparent = true;
+      this.fog = true;
+      this.setValues(parameters);
+    }
+    copy(source) {
+      super.copy(source);
+      this.color.copy(source.color);
+      this.fog = source.fog;
+      return this;
+    }
+  };
   function cloneUniforms(src) {
     const dst = {};
     for (const u in src) {
@@ -17490,9 +19425,9 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
   function mergeUniforms(uniforms) {
     const merged = {};
     for (let u = 0; u < uniforms.length; u++) {
-      const tmp = cloneUniforms(uniforms[u]);
-      for (const p in tmp) {
-        merged[p] = tmp[p];
+      const tmp3 = cloneUniforms(uniforms[u]);
+      for (const p in tmp3) {
+        merged[p] = tmp3[p];
       }
     }
     return merged;
@@ -17711,6 +19646,374 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
       super(parameters);
       this.isRawShaderMaterial = true;
       this.type = "RawShaderMaterial";
+    }
+  };
+  var MeshStandardMaterial = class extends Material {
+    /**
+     * Constructs a new mesh standard material.
+     *
+     * @param {Object} [parameters] - An object with one or more properties
+     * defining the material's appearance. Any property of the material
+     * (including any property from inherited materials) can be passed
+     * in here. Color values can be passed any type of value accepted
+     * by {@link Color#set}.
+     */
+    constructor(parameters) {
+      super();
+      this.isMeshStandardMaterial = true;
+      this.type = "MeshStandardMaterial";
+      this.defines = { "STANDARD": "" };
+      this.color = new Color(16777215);
+      this.roughness = 1;
+      this.metalness = 0;
+      this.map = null;
+      this.lightMap = null;
+      this.lightMapIntensity = 1;
+      this.aoMap = null;
+      this.aoMapIntensity = 1;
+      this.emissive = new Color(0);
+      this.emissiveIntensity = 1;
+      this.emissiveMap = null;
+      this.bumpMap = null;
+      this.bumpScale = 1;
+      this.normalMap = null;
+      this.normalMapType = TangentSpaceNormalMap;
+      this.normalScale = new Vector2(1, 1);
+      this.displacementMap = null;
+      this.displacementScale = 1;
+      this.displacementBias = 0;
+      this.roughnessMap = null;
+      this.metalnessMap = null;
+      this.alphaMap = null;
+      this.envMap = null;
+      this.envMapRotation = new Euler();
+      this.envMapIntensity = 1;
+      this.wireframe = false;
+      this.wireframeLinewidth = 1;
+      this.wireframeLinecap = "round";
+      this.wireframeLinejoin = "round";
+      this.flatShading = false;
+      this.fog = true;
+      this.setValues(parameters);
+    }
+    copy(source) {
+      super.copy(source);
+      this.defines = { "STANDARD": "" };
+      this.color.copy(source.color);
+      this.roughness = source.roughness;
+      this.metalness = source.metalness;
+      this.map = source.map;
+      this.lightMap = source.lightMap;
+      this.lightMapIntensity = source.lightMapIntensity;
+      this.aoMap = source.aoMap;
+      this.aoMapIntensity = source.aoMapIntensity;
+      this.emissive.copy(source.emissive);
+      this.emissiveMap = source.emissiveMap;
+      this.emissiveIntensity = source.emissiveIntensity;
+      this.bumpMap = source.bumpMap;
+      this.bumpScale = source.bumpScale;
+      this.normalMap = source.normalMap;
+      this.normalMapType = source.normalMapType;
+      this.normalScale.copy(source.normalScale);
+      this.displacementMap = source.displacementMap;
+      this.displacementScale = source.displacementScale;
+      this.displacementBias = source.displacementBias;
+      this.roughnessMap = source.roughnessMap;
+      this.metalnessMap = source.metalnessMap;
+      this.alphaMap = source.alphaMap;
+      this.envMap = source.envMap;
+      this.envMapRotation.copy(source.envMapRotation);
+      this.envMapIntensity = source.envMapIntensity;
+      this.wireframe = source.wireframe;
+      this.wireframeLinewidth = source.wireframeLinewidth;
+      this.wireframeLinecap = source.wireframeLinecap;
+      this.wireframeLinejoin = source.wireframeLinejoin;
+      this.flatShading = source.flatShading;
+      this.fog = source.fog;
+      return this;
+    }
+  };
+  var MeshPhysicalMaterial = class extends MeshStandardMaterial {
+    /**
+     * Constructs a new mesh physical material.
+     *
+     * @param {Object} [parameters] - An object with one or more properties
+     * defining the material's appearance. Any property of the material
+     * (including any property from inherited materials) can be passed
+     * in here. Color values can be passed any type of value accepted
+     * by {@link Color#set}.
+     */
+    constructor(parameters) {
+      super();
+      this.isMeshPhysicalMaterial = true;
+      this.defines = {
+        "STANDARD": "",
+        "PHYSICAL": ""
+      };
+      this.type = "MeshPhysicalMaterial";
+      this.anisotropyRotation = 0;
+      this.anisotropyMap = null;
+      this.clearcoatMap = null;
+      this.clearcoatRoughness = 0;
+      this.clearcoatRoughnessMap = null;
+      this.clearcoatNormalScale = new Vector2(1, 1);
+      this.clearcoatNormalMap = null;
+      this.ior = 1.5;
+      Object.defineProperty(this, "reflectivity", {
+        get: function() {
+          return clamp(2.5 * (this.ior - 1) / (this.ior + 1), 0, 1);
+        },
+        set: function(reflectivity) {
+          this.ior = (1 + 0.4 * reflectivity) / (1 - 0.4 * reflectivity);
+        }
+      });
+      this.iridescenceMap = null;
+      this.iridescenceIOR = 1.3;
+      this.iridescenceThicknessRange = [100, 400];
+      this.iridescenceThicknessMap = null;
+      this.sheenColor = new Color(0);
+      this.sheenColorMap = null;
+      this.sheenRoughness = 1;
+      this.sheenRoughnessMap = null;
+      this.transmissionMap = null;
+      this.thickness = 0;
+      this.thicknessMap = null;
+      this.attenuationDistance = Infinity;
+      this.attenuationColor = new Color(1, 1, 1);
+      this.specularIntensity = 1;
+      this.specularIntensityMap = null;
+      this.specularColor = new Color(1, 1, 1);
+      this.specularColorMap = null;
+      this._anisotropy = 0;
+      this._clearcoat = 0;
+      this._dispersion = 0;
+      this._iridescence = 0;
+      this._sheen = 0;
+      this._transmission = 0;
+      this.setValues(parameters);
+    }
+    /**
+     * The anisotropy strength, from `0.0` to `1.0`.
+     *
+     * @type {number}
+     * @default 0
+     */
+    get anisotropy() {
+      return this._anisotropy;
+    }
+    set anisotropy(value) {
+      if (this._anisotropy > 0 !== value > 0) {
+        this.version++;
+      }
+      this._anisotropy = value;
+    }
+    /**
+     * Represents the intensity of the clear coat layer, from `0.0` to `1.0`. Use
+     * clear coat related properties to enable multilayer materials that have a
+     * thin translucent layer over the base layer.
+     *
+     * @type {number}
+     * @default 0
+     */
+    get clearcoat() {
+      return this._clearcoat;
+    }
+    set clearcoat(value) {
+      if (this._clearcoat > 0 !== value > 0) {
+        this.version++;
+      }
+      this._clearcoat = value;
+    }
+    /**
+     * The intensity of the iridescence layer, simulating RGB color shift based on the angle between
+     * the surface and the viewer, from `0.0` to `1.0`.
+     *
+     * @type {number}
+     * @default 0
+     */
+    get iridescence() {
+      return this._iridescence;
+    }
+    set iridescence(value) {
+      if (this._iridescence > 0 !== value > 0) {
+        this.version++;
+      }
+      this._iridescence = value;
+    }
+    /**
+     * Defines the strength of the angular separation of colors (chromatic aberration) transmitting
+     * through a relatively clear volume. Any value zero or larger is valid, the typical range of
+     * realistic values is `[0, 1]`. This property can be only be used with transmissive objects.
+     *
+     * @type {number}
+     * @default 0
+     */
+    get dispersion() {
+      return this._dispersion;
+    }
+    set dispersion(value) {
+      if (this._dispersion > 0 !== value > 0) {
+        this.version++;
+      }
+      this._dispersion = value;
+    }
+    /**
+     * The intensity of the sheen layer, from `0.0` to `1.0`.
+     *
+     * @type {number}
+     * @default 0
+     */
+    get sheen() {
+      return this._sheen;
+    }
+    set sheen(value) {
+      if (this._sheen > 0 !== value > 0) {
+        this.version++;
+      }
+      this._sheen = value;
+    }
+    /**
+     * Degree of transmission (or optical transparency), from `0.0` to `1.0`.
+     *
+     * Thin, transparent or semitransparent, plastic or glass materials remain
+     * largely reflective even if they are fully transmissive. The transmission
+     * property can be used to model these materials.
+     *
+     * When transmission is non-zero, `opacity` should be  set to `1`.
+     *
+     * @type {number}
+     * @default 0
+     */
+    get transmission() {
+      return this._transmission;
+    }
+    set transmission(value) {
+      if (this._transmission > 0 !== value > 0) {
+        this.version++;
+      }
+      this._transmission = value;
+    }
+    copy(source) {
+      super.copy(source);
+      this.defines = {
+        "STANDARD": "",
+        "PHYSICAL": ""
+      };
+      this.anisotropy = source.anisotropy;
+      this.anisotropyRotation = source.anisotropyRotation;
+      this.anisotropyMap = source.anisotropyMap;
+      this.clearcoat = source.clearcoat;
+      this.clearcoatMap = source.clearcoatMap;
+      this.clearcoatRoughness = source.clearcoatRoughness;
+      this.clearcoatRoughnessMap = source.clearcoatRoughnessMap;
+      this.clearcoatNormalMap = source.clearcoatNormalMap;
+      this.clearcoatNormalScale.copy(source.clearcoatNormalScale);
+      this.dispersion = source.dispersion;
+      this.ior = source.ior;
+      this.iridescence = source.iridescence;
+      this.iridescenceMap = source.iridescenceMap;
+      this.iridescenceIOR = source.iridescenceIOR;
+      this.iridescenceThicknessRange = [...source.iridescenceThicknessRange];
+      this.iridescenceThicknessMap = source.iridescenceThicknessMap;
+      this.sheen = source.sheen;
+      this.sheenColor.copy(source.sheenColor);
+      this.sheenColorMap = source.sheenColorMap;
+      this.sheenRoughness = source.sheenRoughness;
+      this.sheenRoughnessMap = source.sheenRoughnessMap;
+      this.transmission = source.transmission;
+      this.transmissionMap = source.transmissionMap;
+      this.thickness = source.thickness;
+      this.thicknessMap = source.thicknessMap;
+      this.attenuationDistance = source.attenuationDistance;
+      this.attenuationColor.copy(source.attenuationColor);
+      this.specularIntensity = source.specularIntensity;
+      this.specularIntensityMap = source.specularIntensityMap;
+      this.specularColor.copy(source.specularColor);
+      this.specularColorMap = source.specularColorMap;
+      return this;
+    }
+  };
+  var MeshLambertMaterial = class extends Material {
+    /**
+     * Constructs a new mesh lambert material.
+     *
+     * @param {Object} [parameters] - An object with one or more properties
+     * defining the material's appearance. Any property of the material
+     * (including any property from inherited materials) can be passed
+     * in here. Color values can be passed any type of value accepted
+     * by {@link Color#set}.
+     */
+    constructor(parameters) {
+      super();
+      this.isMeshLambertMaterial = true;
+      this.type = "MeshLambertMaterial";
+      this.color = new Color(16777215);
+      this.map = null;
+      this.lightMap = null;
+      this.lightMapIntensity = 1;
+      this.aoMap = null;
+      this.aoMapIntensity = 1;
+      this.emissive = new Color(0);
+      this.emissiveIntensity = 1;
+      this.emissiveMap = null;
+      this.bumpMap = null;
+      this.bumpScale = 1;
+      this.normalMap = null;
+      this.normalMapType = TangentSpaceNormalMap;
+      this.normalScale = new Vector2(1, 1);
+      this.displacementMap = null;
+      this.displacementScale = 1;
+      this.displacementBias = 0;
+      this.specularMap = null;
+      this.alphaMap = null;
+      this.envMap = null;
+      this.envMapRotation = new Euler();
+      this.combine = MultiplyOperation;
+      this.reflectivity = 1;
+      this.envMapIntensity = 1;
+      this.refractionRatio = 0.98;
+      this.wireframe = false;
+      this.wireframeLinewidth = 1;
+      this.wireframeLinecap = "round";
+      this.wireframeLinejoin = "round";
+      this.flatShading = false;
+      this.fog = true;
+      this.setValues(parameters);
+    }
+    copy(source) {
+      super.copy(source);
+      this.color.copy(source.color);
+      this.map = source.map;
+      this.lightMap = source.lightMap;
+      this.lightMapIntensity = source.lightMapIntensity;
+      this.aoMap = source.aoMap;
+      this.aoMapIntensity = source.aoMapIntensity;
+      this.emissive.copy(source.emissive);
+      this.emissiveMap = source.emissiveMap;
+      this.emissiveIntensity = source.emissiveIntensity;
+      this.bumpMap = source.bumpMap;
+      this.bumpScale = source.bumpScale;
+      this.normalMap = source.normalMap;
+      this.normalMapType = source.normalMapType;
+      this.normalScale.copy(source.normalScale);
+      this.displacementMap = source.displacementMap;
+      this.displacementScale = source.displacementScale;
+      this.displacementBias = source.displacementBias;
+      this.specularMap = source.specularMap;
+      this.alphaMap = source.alphaMap;
+      this.envMap = source.envMap;
+      this.envMapRotation.copy(source.envMapRotation);
+      this.combine = source.combine;
+      this.reflectivity = source.reflectivity;
+      this.envMapIntensity = source.envMapIntensity;
+      this.refractionRatio = source.refractionRatio;
+      this.wireframe = source.wireframe;
+      this.wireframeLinewidth = source.wireframeLinewidth;
+      this.wireframeLinecap = source.wireframeLinecap;
+      this.wireframeLinejoin = source.wireframeLinejoin;
+      this.flatShading = source.flatShading;
+      this.fog = source.fog;
+      return this;
     }
   };
   var MeshDepthMaterial = class extends Material {
@@ -18766,6 +21069,246 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
     }
   };
   Loader.DEFAULT_MATERIAL_NAME = "__DEFAULT";
+  var Light = class extends Object3D {
+    /**
+     * Constructs a new light.
+     *
+     * @param {(number|Color|string)} [color=0xffffff] - The light's color.
+     * @param {number} [intensity=1] - The light's strength/intensity.
+     */
+    constructor(color, intensity = 1) {
+      super();
+      this.isLight = true;
+      this.type = "Light";
+      this.color = new Color(color);
+      this.intensity = intensity;
+    }
+    /**
+     * Frees the GPU-related resources allocated by this instance. Call this
+     * method whenever this instance is no longer used in your app.
+     */
+    dispose() {
+      this.dispatchEvent({ type: "dispose" });
+    }
+    copy(source, recursive) {
+      super.copy(source, recursive);
+      this.color.copy(source.color);
+      this.intensity = source.intensity;
+      return this;
+    }
+    toJSON(meta) {
+      const data = super.toJSON(meta);
+      data.object.color = this.color.getHex();
+      data.object.intensity = this.intensity;
+      return data;
+    }
+  };
+  var HemisphereLight = class extends Light {
+    /**
+     * Constructs a new hemisphere light.
+     *
+     * @param {(number|Color|string)} [skyColor=0xffffff] - The light's sky color.
+     * @param {(number|Color|string)} [groundColor=0xffffff] - The light's ground color.
+     * @param {number} [intensity=1] - The light's strength/intensity.
+     */
+    constructor(skyColor, groundColor, intensity) {
+      super(skyColor, intensity);
+      this.isHemisphereLight = true;
+      this.type = "HemisphereLight";
+      this.position.copy(Object3D.DEFAULT_UP);
+      this.updateMatrix();
+      this.groundColor = new Color(groundColor);
+    }
+    copy(source, recursive) {
+      super.copy(source, recursive);
+      this.groundColor.copy(source.groundColor);
+      return this;
+    }
+    toJSON(meta) {
+      const data = super.toJSON(meta);
+      data.object.groundColor = this.groundColor.getHex();
+      return data;
+    }
+  };
+  var _projScreenMatrix = /* @__PURE__ */ new Matrix4();
+  var _lightPositionWorld = /* @__PURE__ */ new Vector3();
+  var _lookTarget = /* @__PURE__ */ new Vector3();
+  var LightShadow = class {
+    /**
+     * Constructs a new light shadow.
+     *
+     * @param {Camera} camera - The light's view of the world.
+     */
+    constructor(camera) {
+      this.camera = camera;
+      this.intensity = 1;
+      this.bias = 0;
+      this.biasNode = null;
+      this.normalBias = 0;
+      this.radius = 1;
+      this.blurSamples = 8;
+      this.mapSize = new Vector2(512, 512);
+      this.mapType = UnsignedByteType;
+      this.map = null;
+      this.mapPass = null;
+      this.matrix = new Matrix4();
+      this.autoUpdate = true;
+      this.needsUpdate = false;
+      this._frustum = new Frustum();
+      this._frameExtents = new Vector2(1, 1);
+      this._viewportCount = 1;
+      this._viewports = [
+        new Vector4(0, 0, 1, 1)
+      ];
+    }
+    /**
+     * Used internally by the renderer to get the number of viewports that need
+     * to be rendered for this shadow.
+     *
+     * @return {number} The viewport count.
+     */
+    getViewportCount() {
+      return this._viewportCount;
+    }
+    /**
+     * Gets the shadow cameras frustum. Used internally by the renderer to cull objects.
+     *
+     * @return {Frustum} The shadow camera frustum.
+     */
+    getFrustum() {
+      return this._frustum;
+    }
+    /**
+     * Update the matrices for the camera and shadow, used internally by the renderer.
+     *
+     * @param {Light} light - The light for which the shadow is being rendered.
+     */
+    updateMatrices(light) {
+      const shadowCamera = this.camera;
+      const shadowMatrix = this.matrix;
+      _lightPositionWorld.setFromMatrixPosition(light.matrixWorld);
+      shadowCamera.position.copy(_lightPositionWorld);
+      _lookTarget.setFromMatrixPosition(light.target.matrixWorld);
+      shadowCamera.lookAt(_lookTarget);
+      shadowCamera.updateMatrixWorld();
+      _projScreenMatrix.multiplyMatrices(shadowCamera.projectionMatrix, shadowCamera.matrixWorldInverse);
+      this._frustum.setFromProjectionMatrix(_projScreenMatrix, shadowCamera.coordinateSystem, shadowCamera.reversedDepth);
+      if (shadowCamera.coordinateSystem === WebGPUCoordinateSystem || shadowCamera.reversedDepth) {
+        shadowMatrix.set(
+          0.5,
+          0,
+          0,
+          0.5,
+          0,
+          0.5,
+          0,
+          0.5,
+          0,
+          0,
+          1,
+          0,
+          // Identity Z (preserving the correct [0, 1] range from the projection matrix)
+          0,
+          0,
+          0,
+          1
+        );
+      } else {
+        shadowMatrix.set(
+          0.5,
+          0,
+          0,
+          0.5,
+          0,
+          0.5,
+          0,
+          0.5,
+          0,
+          0,
+          0.5,
+          0.5,
+          0,
+          0,
+          0,
+          1
+        );
+      }
+      shadowMatrix.multiply(_projScreenMatrix);
+    }
+    /**
+     * Returns a viewport definition for the given viewport index.
+     *
+     * @param {number} viewportIndex - The viewport index.
+     * @return {Vector4} The viewport.
+     */
+    getViewport(viewportIndex) {
+      return this._viewports[viewportIndex];
+    }
+    /**
+     * Returns the frame extends.
+     *
+     * @return {Vector2} The frame extends.
+     */
+    getFrameExtents() {
+      return this._frameExtents;
+    }
+    /**
+     * Frees the GPU-related resources allocated by this instance. Call this
+     * method whenever this instance is no longer used in your app.
+     */
+    dispose() {
+      if (this.map) {
+        this.map.dispose();
+      }
+      if (this.mapPass) {
+        this.mapPass.dispose();
+      }
+    }
+    /**
+     * Copies the values of the given light shadow instance to this instance.
+     *
+     * @param {LightShadow} source - The light shadow to copy.
+     * @return {LightShadow} A reference to this light shadow instance.
+     */
+    copy(source) {
+      this.camera = source.camera.clone();
+      this.intensity = source.intensity;
+      this.bias = source.bias;
+      this.radius = source.radius;
+      this.autoUpdate = source.autoUpdate;
+      this.needsUpdate = source.needsUpdate;
+      this.normalBias = source.normalBias;
+      this.blurSamples = source.blurSamples;
+      this.mapSize.copy(source.mapSize);
+      this.biasNode = source.biasNode;
+      return this;
+    }
+    /**
+     * Returns a new light shadow instance with copied values from this instance.
+     *
+     * @return {LightShadow} A clone of this instance.
+     */
+    clone() {
+      return new this.constructor().copy(this);
+    }
+    /**
+     * Serializes the light shadow into JSON.
+     *
+     * @return {Object} A JSON object representing the serialized light shadow.
+     * @see {@link ObjectLoader#parse}
+     */
+    toJSON() {
+      const object = {};
+      if (this.intensity !== 1) object.intensity = this.intensity;
+      if (this.bias !== 0) object.bias = this.bias;
+      if (this.normalBias !== 0) object.normalBias = this.normalBias;
+      if (this.radius !== 1) object.radius = this.radius;
+      if (this.mapSize.x !== 512 || this.mapSize.y !== 512) object.mapSize = this.mapSize.toArray();
+      object.camera = this.camera.toJSON(false).object;
+      delete object.camera.matrix;
+      return object;
+    }
+  };
   var _position$2 = /* @__PURE__ */ new Vector3();
   var _quaternion$2 = /* @__PURE__ */ new Quaternion();
   var _scale$2 = /* @__PURE__ */ new Vector3();
@@ -19061,6 +21604,63 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
       return data;
     }
   };
+  var PointLightShadow = class extends LightShadow {
+    /**
+     * Constructs a new point light shadow.
+     */
+    constructor() {
+      super(new PerspectiveCamera(90, 1, 0.5, 500));
+      this.isPointLightShadow = true;
+    }
+  };
+  var PointLight = class extends Light {
+    /**
+     * Constructs a new point light.
+     *
+     * @param {(number|Color|string)} [color=0xffffff] - The light's color.
+     * @param {number} [intensity=1] - The light's strength/intensity measured in candela (cd).
+     * @param {number} [distance=0] - Maximum range of the light. `0` means no limit.
+     * @param {number} [decay=2] - The amount the light dims along the distance of the light.
+     */
+    constructor(color, intensity, distance = 0, decay = 2) {
+      super(color, intensity);
+      this.isPointLight = true;
+      this.type = "PointLight";
+      this.distance = distance;
+      this.decay = decay;
+      this.shadow = new PointLightShadow();
+    }
+    /**
+     * The light's power. Power is the luminous power of the light measured in lumens (lm).
+     * Changing the power will also change the light's intensity.
+     *
+     * @type {number}
+     */
+    get power() {
+      return this.intensity * 4 * Math.PI;
+    }
+    set power(power) {
+      this.intensity = power / (4 * Math.PI);
+    }
+    dispose() {
+      super.dispose();
+      this.shadow.dispose();
+    }
+    copy(source, recursive) {
+      super.copy(source, recursive);
+      this.distance = source.distance;
+      this.decay = source.decay;
+      this.shadow = source.shadow.clone();
+      return this;
+    }
+    toJSON(meta) {
+      const data = super.toJSON(meta);
+      data.object.distance = this.distance;
+      data.object.decay = this.decay;
+      data.object.shadow = this.shadow.toJSON();
+      return data;
+    }
+  };
   var OrthographicCamera = class extends Camera {
     /**
      * Constructs a new orthographic camera.
@@ -19174,6 +21774,48 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
       data.object.near = this.near;
       data.object.far = this.far;
       if (this.view !== null) data.object.view = Object.assign({}, this.view);
+      return data;
+    }
+  };
+  var DirectionalLightShadow = class extends LightShadow {
+    /**
+     * Constructs a new directional light shadow.
+     */
+    constructor() {
+      super(new OrthographicCamera(-5, 5, 5, -5, 0.5, 500));
+      this.isDirectionalLightShadow = true;
+    }
+  };
+  var DirectionalLight = class extends Light {
+    /**
+     * Constructs a new directional light.
+     *
+     * @param {(number|Color|string)} [color=0xffffff] - The light's color.
+     * @param {number} [intensity=1] - The light's strength/intensity.
+     */
+    constructor(color, intensity) {
+      super(color, intensity);
+      this.isDirectionalLight = true;
+      this.type = "DirectionalLight";
+      this.position.copy(Object3D.DEFAULT_UP);
+      this.updateMatrix();
+      this.target = new Object3D();
+      this.shadow = new DirectionalLightShadow();
+    }
+    dispose() {
+      super.dispose();
+      this.shadow.dispose();
+    }
+    copy(source) {
+      super.copy(source);
+      this.target = source.target.clone();
+      this.shadow = source.shadow.clone();
+      return this;
+    }
+    toJSON(meta) {
+      const data = super.toJSON(meta);
+      data.object.shadow = this.shadow.toJSON();
+      data.object.target = this.target.uuid;
       return data;
     }
   };
@@ -25604,9 +28246,9 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
     /* @__PURE__ */ new Vector3(0, -1, 0),
     /* @__PURE__ */ new Vector3(0, -1, 0)
   ];
-  var _projScreenMatrix = /* @__PURE__ */ new Matrix4();
-  var _lightPositionWorld = /* @__PURE__ */ new Vector3();
-  var _lookTarget = /* @__PURE__ */ new Vector3();
+  var _projScreenMatrix2 = /* @__PURE__ */ new Matrix4();
+  var _lightPositionWorld2 = /* @__PURE__ */ new Vector3();
+  var _lookTarget2 = /* @__PURE__ */ new Vector3();
   function WebGLShadowMap(renderer, objects, capabilities) {
     let _frustum = new Frustum();
     const _shadowMapSize = new Vector2(), _viewportSize = new Vector2(), _viewport = new Vector4(), _depthMaterial = new MeshDepthMaterial(), _distanceMaterial = new MeshDistanceMaterial(), _materialCache = {}, _maxTextureSize = capabilities.maxTextureSize;
@@ -25774,16 +28416,16 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
               camera2.far = far;
               camera2.updateProjectionMatrix();
             }
-            _lightPositionWorld.setFromMatrixPosition(light.matrixWorld);
-            camera2.position.copy(_lightPositionWorld);
-            _lookTarget.copy(camera2.position);
-            _lookTarget.add(_cubeDirections[face]);
+            _lightPositionWorld2.setFromMatrixPosition(light.matrixWorld);
+            camera2.position.copy(_lightPositionWorld2);
+            _lookTarget2.copy(camera2.position);
+            _lookTarget2.add(_cubeDirections[face]);
             camera2.up.copy(_cubeUps[face]);
-            camera2.lookAt(_lookTarget);
+            camera2.lookAt(_lookTarget2);
             camera2.updateMatrixWorld();
-            shadowMatrix.makeTranslation(-_lightPositionWorld.x, -_lightPositionWorld.y, -_lightPositionWorld.z);
-            _projScreenMatrix.multiplyMatrices(camera2.projectionMatrix, camera2.matrixWorldInverse);
-            shadow._frustum.setFromProjectionMatrix(_projScreenMatrix, camera2.coordinateSystem, camera2.reversedDepth);
+            shadowMatrix.makeTranslation(-_lightPositionWorld2.x, -_lightPositionWorld2.y, -_lightPositionWorld2.z);
+            _projScreenMatrix2.multiplyMatrices(camera2.projectionMatrix, camera2.matrixWorldInverse);
+            shadow._frustum.setFromProjectionMatrix(_projScreenMatrix2, camera2.coordinateSystem, camera2.reversedDepth);
           } else {
             shadow.updateMatrices(light);
           }
@@ -29879,7 +32521,7 @@ void main() {
       const _frustum = new Frustum();
       let _clippingEnabled = false;
       let _localClippingEnabled = false;
-      const _projScreenMatrix2 = new Matrix4();
+      const _projScreenMatrix3 = new Matrix4();
       const _vector3 = new Vector3();
       const _vector4 = new Vector4();
       const _emptyScene = { background: null, fog: null, environment: null, overrideMaterial: null, isScene: true };
@@ -30418,8 +33060,8 @@ void main() {
         currentRenderState.init(camera);
         currentRenderState.state.textureUnits = textures.getTextureUnits();
         renderStateStack.push(currentRenderState);
-        _projScreenMatrix2.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-        _frustum.setFromProjectionMatrix(_projScreenMatrix2, WebGLCoordinateSystem, camera.reversedDepth);
+        _projScreenMatrix3.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+        _frustum.setFromProjectionMatrix(_projScreenMatrix3, WebGLCoordinateSystem, camera.reversedDepth);
         _localClippingEnabled = this.localClippingEnabled;
         _clippingEnabled = clipping.init(this.clippingPlanes, _localClippingEnabled);
         currentRenderList = renderLists.get(scene, renderListStack.length);
@@ -30517,7 +33159,7 @@ void main() {
           } else if (object.isSprite) {
             if (!object.frustumCulled || _frustum.intersectsSprite(object)) {
               if (sortObjects) {
-                _vector4.setFromMatrixPosition(object.matrixWorld).applyMatrix4(_projScreenMatrix2);
+                _vector4.setFromMatrixPosition(object.matrixWorld).applyMatrix4(_projScreenMatrix3);
               }
               const geometry = objects.update(object);
               const material = object.material;
@@ -30537,7 +33179,7 @@ void main() {
                   if (geometry.boundingSphere === null) geometry.computeBoundingSphere();
                   _vector4.copy(geometry.boundingSphere.center);
                 }
-                _vector4.applyMatrix4(object.matrixWorld).applyMatrix4(_projScreenMatrix2);
+                _vector4.applyMatrix4(object.matrixWorld).applyMatrix4(_projScreenMatrix3);
               }
               if (Array.isArray(material)) {
                 const groups = geometry.groups;
@@ -32550,44 +35192,959 @@ void main() {
     }
   };
 
+  // node_modules/three/examples/jsm/environments/RoomEnvironment.js
+  var RoomEnvironment = class extends Scene {
+    constructor() {
+      super();
+      this.name = "RoomEnvironment";
+      this.position.y = -3.5;
+      const geometry = new BoxGeometry();
+      geometry.deleteAttribute("uv");
+      const roomMaterial = new MeshStandardMaterial({ side: BackSide });
+      const boxMaterial = new MeshStandardMaterial();
+      const mainLight = new PointLight(16777215, 900, 28, 2);
+      mainLight.position.set(0.418, 16.199, 0.3);
+      this.add(mainLight);
+      const room = new Mesh(geometry, roomMaterial);
+      room.position.set(-0.757, 13.219, 0.717);
+      room.scale.set(31.713, 28.305, 28.591);
+      this.add(room);
+      const boxes = new InstancedMesh(geometry, boxMaterial, 6);
+      const transform = new Object3D();
+      transform.position.set(-10.906, 2.009, 1.846);
+      transform.rotation.set(0, -0.195, 0);
+      transform.scale.set(2.328, 7.905, 4.651);
+      transform.updateMatrix();
+      boxes.setMatrixAt(0, transform.matrix);
+      transform.position.set(-5.607, -0.754, -0.758);
+      transform.rotation.set(0, 0.994, 0);
+      transform.scale.set(1.97, 1.534, 3.955);
+      transform.updateMatrix();
+      boxes.setMatrixAt(1, transform.matrix);
+      transform.position.set(6.167, 0.857, 7.803);
+      transform.rotation.set(0, 0.561, 0);
+      transform.scale.set(3.927, 6.285, 3.687);
+      transform.updateMatrix();
+      boxes.setMatrixAt(2, transform.matrix);
+      transform.position.set(-2.017, 0.018, 6.124);
+      transform.rotation.set(0, 0.333, 0);
+      transform.scale.set(2.002, 4.566, 2.064);
+      transform.updateMatrix();
+      boxes.setMatrixAt(3, transform.matrix);
+      transform.position.set(2.291, -0.756, -2.621);
+      transform.rotation.set(0, -0.286, 0);
+      transform.scale.set(1.546, 1.552, 1.496);
+      transform.updateMatrix();
+      boxes.setMatrixAt(4, transform.matrix);
+      transform.position.set(-2.193, -0.369, -5.547);
+      transform.rotation.set(0, 0.516, 0);
+      transform.scale.set(3.875, 3.487, 2.986);
+      transform.updateMatrix();
+      boxes.setMatrixAt(5, transform.matrix);
+      this.add(boxes);
+      const light1 = new Mesh(geometry, createAreaLightMaterial(50));
+      light1.position.set(-16.116, 14.37, 8.208);
+      light1.scale.set(0.1, 2.428, 2.739);
+      this.add(light1);
+      const light2 = new Mesh(geometry, createAreaLightMaterial(50));
+      light2.position.set(-16.109, 18.021, -8.207);
+      light2.scale.set(0.1, 2.425, 2.751);
+      this.add(light2);
+      const light3 = new Mesh(geometry, createAreaLightMaterial(17));
+      light3.position.set(14.904, 12.198, -1.832);
+      light3.scale.set(0.15, 4.265, 6.331);
+      this.add(light3);
+      const light4 = new Mesh(geometry, createAreaLightMaterial(43));
+      light4.position.set(-0.462, 8.89, 14.52);
+      light4.scale.set(4.38, 5.441, 0.088);
+      this.add(light4);
+      const light5 = new Mesh(geometry, createAreaLightMaterial(20));
+      light5.position.set(3.235, 11.486, -12.541);
+      light5.scale.set(2.5, 2, 0.1);
+      this.add(light5);
+      const light6 = new Mesh(geometry, createAreaLightMaterial(100));
+      light6.position.set(0, 20, 0);
+      light6.scale.set(1, 0.1, 1);
+      this.add(light6);
+    }
+    /**
+     * Frees internal resources. This method should be called
+     * when the environment is no longer required.
+     */
+    dispose() {
+      const resources = /* @__PURE__ */ new Set();
+      this.traverse((object) => {
+        if (object.isMesh) {
+          resources.add(object.geometry);
+          resources.add(object.material);
+        }
+      });
+      for (const resource of resources) {
+        resource.dispose();
+      }
+    }
+  };
+  function createAreaLightMaterial(intensity) {
+    const material = new MeshLambertMaterial({
+      color: 0,
+      emissive: 16777215,
+      emissiveIntensity: intensity
+    });
+    return material;
+  }
+
+  // src/ui/frisbee/frisbeeHudGeometry.ts
+  var FRISBEE_HUD_COLORS = {
+    orange: 16747069,
+    orangeDeep: 14246442,
+    yellow: 16762949,
+    ivory: 16182486,
+    ivoryShade: 13615266,
+    turquoise: 2275504,
+    navy: 2042453
+  };
+  var C = FRISBEE_HUD_COLORS;
+  var DISC_T = 4.2;
+  var SLOT_Y = [2.2, -2.9, -8];
+  var HIDDEN_Y = -11.4;
+  var SEAT_LIFT = 1.6;
+  var ARM_PIVOT = new Vector3(16.2, -11.5, 0);
+  var CAP_POS = new Vector3(19, 9.6, 0);
+  var BAND_R = 13.8;
+  function latheColored(profile, segments, yOffset = 0) {
+    const pts = profile.map(([r, y]) => new Vector2(r, y + yOffset));
+    const geo = new LatheGeometry(pts, segments);
+    const n = pts.length;
+    const count = geo.attributes.position.count;
+    const colors = new Float32Array(count * 3);
+    const c = new Color();
+    for (let v = 0; v < count; v++) {
+      c.setHex(profile[v % n][2]);
+      colors[v * 3] = c.r;
+      colors[v * 3 + 1] = c.g;
+      colors[v * 3 + 2] = c.b;
+    }
+    geo.setAttribute("color", new BufferAttribute(colors, 3));
+    return geo;
+  }
+  function discGeometry() {
+    const top = (r) => 3.5 + 0.6 * (r / 11.2) ** 2;
+    const profile = [
+      [0, 2.25, C.orangeDeep],
+      [5.5, 2.2, C.orangeDeep],
+      [9.4, 1.95, C.orangeDeep],
+      [10.25, 1.45, C.orangeDeep],
+      [10.6, 0.65, C.orangeDeep],
+      [11, 0.12, C.orange],
+      [11.8, 0, C.orange],
+      [12.5, 0.3, C.orange],
+      [12.9, 1, C.orange],
+      [13, 2, C.orange],
+      [12.9, 3, C.orange],
+      [12.5, 3.7, C.orange],
+      [11.9, 4.15, C.orange],
+      [11.2, top(11.2), C.orange],
+      [10.3, top(10.3), C.orange],
+      [9.5, top(9.5), C.orange],
+      [9.3, top(9.3), C.yellow],
+      [8.5, top(8.5), C.yellow],
+      [7.7, top(7.7), C.yellow],
+      [7.5, top(7.5), C.orange],
+      [6, top(6), C.orange],
+      [4.3, top(4.3), C.orange],
+      [4.1, top(4.1), C.ivory],
+      [2.4, top(2.4), C.ivory],
+      [0, top(0), C.ivory]
+    ];
+    return latheColored(profile, 48, -DISC_T / 2);
+  }
+  function wellGeometry() {
+    const profile = [
+      [0, -15.2, C.turquoise],
+      [13.6, -15.2, C.turquoise],
+      [14.6, -14.9, C.turquoise],
+      [15, -14.2, C.turquoise],
+      [15, -10.6, C.turquoise],
+      [15, -10.45, C.ivory],
+      [15, -8, C.ivory],
+      [14.85, -7.2, C.ivory],
+      [14.4, -6.85, C.ivory],
+      [13.9, -7, C.ivory],
+      [13.6, -7.6, C.ivoryShade],
+      [13.6, -13.4, C.ivoryShade],
+      [13.2, -14, C.ivoryShade],
+      [0, -14, C.ivoryShade]
+    ];
+    return latheColored(profile, 48);
+  }
+  function colorTube(geo, colorAt) {
+    const { tubularSegments, radialSegments } = geo.parameters;
+    const count = geo.attributes.position.count;
+    const colors = new Float32Array(count * 3);
+    const c = new Color();
+    for (let i = 0; i <= tubularSegments; i++) {
+      c.setHex(colorAt(i / tubularSegments));
+      for (let j = 0; j <= radialSegments; j++) {
+        const v = i * (radialSegments + 1) + j;
+        colors[v * 3] = c.r;
+        colors[v * 3 + 1] = c.g;
+        colors[v * 3 + 2] = c.b;
+      }
+    }
+    geo.setAttribute("color", new BufferAttribute(colors, 3));
+  }
+  function armGeometry() {
+    const tip = CAP_POS.clone().sub(ARM_PIVOT);
+    const curve = new CatmullRomCurve3([
+      new Vector3(-1.4, -0.6, 0),
+      new Vector3(1.2, 3.2, 0),
+      new Vector3(2.9, 9, 0),
+      new Vector3(3.2, 14.5, 0),
+      new Vector3(tip.x, tip.y - 2.2, 0)
+    ]);
+    const geo = new TubeGeometry(curve, 40, 2.05, 12, false);
+    colorTube(geo, (u) => u < 0.13 || u > 0.6 && u < 0.71 ? C.ivory : C.turquoise);
+    return geo;
+  }
+  function handleGeometry() {
+    const profile = [
+      [0, -26, C.turquoise],
+      [2.7, -25.6, C.turquoise],
+      [2.9, -23.4, C.turquoise],
+      [3.15, -23.2, C.ivory],
+      [3.15, -21.6, C.ivory],
+      [2.9, -21.4, C.turquoise],
+      [2.9, -19.6, C.turquoise],
+      [3.15, -19.4, C.ivory],
+      [3.15, -17.8, C.ivory],
+      [2.9, -17.6, C.turquoise],
+      [3.6, -15.6, C.turquoise],
+      [0, -15.2, C.turquoise]
+    ];
+    return latheColored(profile, 24);
+  }
+  var FrisbeeHudKit = class {
+    disc = discGeometry();
+    well = wellGeometry();
+    arm = armGeometry();
+    handle = handleGeometry();
+    cap = new SphereGeometry(2.75, 20, 14);
+    pommel = new SphereGeometry(3.5, 20, 14);
+    /** Satin opaque plastic: no metal, a soft clear coat, restrained highlights. */
+    plastic = new MeshPhysicalMaterial({
+      vertexColors: true,
+      roughness: 0.46,
+      metalness: 0,
+      clearcoat: 0.28,
+      clearcoatRoughness: 0.5
+    });
+    capPlastic = new MeshPhysicalMaterial({
+      color: C.orange,
+      roughness: 0.42,
+      metalness: 0,
+      clearcoat: 0.3,
+      clearcoatRoughness: 0.45
+    });
+    /** Elastic cords: matte navy rubber. */
+    cord = new MeshStandardMaterial({ color: C.navy, roughness: 0.78, metalness: 0 });
+    /** A fading copy of the disc plastic (one per ejected disc: each fades on its own clock). */
+    ejectMaterial() {
+      const m = this.plastic.clone();
+      m.transparent = true;
+      return m;
+    }
+    dispose() {
+      for (const g of [this.disc, this.well, this.arm, this.handle, this.cap, this.pommel]) g.dispose();
+      for (const m of [this.plastic, this.capPlastic, this.cord]) m.dispose();
+    }
+  };
+  var CordTube = class {
+    constructor(samples, radius, radial = 6) {
+      this.samples = samples;
+      this.radius = radius;
+      this.radial = radial;
+      const ring = radial + 1;
+      this.pos = new Float32Array(samples * ring * 3);
+      this.nor = new Float32Array(samples * ring * 3);
+      const idx = [];
+      for (let i = 0; i < samples - 1; i++) {
+        for (let j = 0; j < radial; j++) {
+          const a = i * ring + j;
+          const b = (i + 1) * ring + j;
+          idx.push(a, b, a + 1, b, b + 1, a + 1);
+        }
+      }
+      this.geometry.setIndex(idx);
+      this.geometry.setAttribute("position", new BufferAttribute(this.pos, 3).setUsage(DynamicDrawUsage));
+      this.geometry.setAttribute("normal", new BufferAttribute(this.nor, 3).setUsage(DynamicDrawUsage));
+    }
+    geometry = new BufferGeometry();
+    pos;
+    nor;
+    t = new Vector3();
+    n = new Vector3();
+    b = new Vector3();
+    ref = new Vector3();
+    update(points) {
+      const { samples, radial, radius } = this;
+      const ring = radial + 1;
+      for (let i = 0; i < samples; i++) {
+        const p = points[i];
+        const a = points[Math.max(0, i - 1)];
+        const c = points[Math.min(samples - 1, i + 1)];
+        this.t.subVectors(c, a).normalize();
+        this.ref.set(0, 1, 0);
+        if (Math.abs(this.t.y) > 0.9) this.ref.set(0, 0, 1);
+        this.n.crossVectors(this.ref, this.t).normalize();
+        this.b.crossVectors(this.t, this.n);
+        for (let j = 0; j < ring; j++) {
+          const ang = j / radial * Math.PI * 2;
+          const cs = Math.cos(ang);
+          const sn = Math.sin(ang);
+          const nx = this.n.x * cs + this.b.x * sn;
+          const ny = this.n.y * cs + this.b.y * sn;
+          const nz = this.n.z * cs + this.b.z * sn;
+          const k = (i * ring + j) * 3;
+          this.nor[k] = nx;
+          this.nor[k + 1] = ny;
+          this.nor[k + 2] = nz;
+          this.pos[k] = p.x + nx * radius;
+          this.pos[k + 1] = p.y + ny * radius;
+          this.pos[k + 2] = p.z + nz * radius;
+        }
+      }
+      this.geometry.attributes.position.needsUpdate = true;
+      this.geometry.attributes.normal.needsUpdate = true;
+      this.geometry.computeBoundingSphere();
+    }
+    dispose() {
+      this.geometry.dispose();
+    }
+  };
+
+  // src/ui/frisbee/FrisbeeMechanism.ts
+  var DEG = Math.PI / 180;
+  var MECH_CANVAS = { x: -8, y: -10, w: 62, h: 80 };
+  var FRISBEE_MECH_TUNING = {
+    /** Ejected disc: travel time, rise, sideways drift (left = away from the digits), toward-camera drift. */
+    ejectMove: 0.15,
+    ejectRise: 14,
+    ejectDrift: -3.5,
+    ejectToward: 2,
+    /** Tilt reached during the travel and the slow precession of its axis (readability: edge + underside). */
+    ejectTilt: 12 * DEG,
+    ejectAxis0: 0.5,
+    ejectPrecession: 0.6,
+    /** Fade window: the disc stays a HUD object, it never "flies off" like the scene projectile. */
+    fadeStart: 0.13,
+    fadeEnd: 0.23,
+    /** Arms: inward kick (rad/s) on a shot, damped return (ω, ζ) ≈ 190 ms. */
+    armKick: 2.4,
+    armW: 34,
+    armZ: 0.62,
+    /** Cords: release snap ≈ 40 ms with one small elastic overshoot; slower grab when the next disc is seated. */
+    bandReleaseW: 55,
+    bandReleaseZ: 0.55,
+    bandGrabW: 30,
+    bandGrabZ: 0.8,
+    /** Stack advance: one level, one small damped settle. */
+    stackW: 26,
+    stackZ: 0.62,
+    /** Seated disc lift into the cords. */
+    seatW: 28,
+    seatZ: 0.7,
+    /** Refill (new cage): discs rise out of the well one after the other. */
+    refillW: 22,
+    refillZ: 0.72,
+    refillStagger: 0.055
+  };
+  var T = FRISBEE_MECH_TUNING;
+  var VIEW_TARGET_Y = -6;
+  var CAM_FOV = 18;
+  var CAM_ELEVATION = 26 * DEG;
+  var MECH_SCALE = 1.12;
+  var CAM_DIST = MECH_CANVAS.h / (2 * Math.tan(CAM_FOV / 2 * DEG)) / MECH_SCALE;
+  var SUBSTEP2 = 1 / 240;
+  var MAX_EJECTS = 2;
+  var CORD_SAMPLES = 33;
+  var ARM_LOAD = 0.03;
+  var CAP_REL = CAP_POS.clone().sub(ARM_PIVOT);
+  var Spring = class {
+    constructor(w, z) {
+      this.w = w;
+      this.z = z;
+    }
+    x = 0;
+    v = 0;
+    target = 0;
+    step(dt) {
+      const a = -2 * this.z * this.w * this.v - this.w * this.w * (this.x - this.target);
+      this.v += a * dt;
+      this.x += this.v * dt;
+    }
+    get settled() {
+      return Math.abs(this.x - this.target) < 4e-3 && Math.abs(this.v) < 0.02;
+    }
+    snap(to = this.target) {
+      this.target = to;
+      this.x = to;
+      this.v = 0;
+    }
+  };
+  var slotY = (i) => i < SLOT_Y.length ? SLOT_Y[i] : HIDDEN_Y;
+  var easeOut = (t) => 1 - (1 - t) ** 3;
+  var smooth2 = (a, b, t) => {
+    const x = Math.min(1, Math.max(0, (t - a) / (b - a)));
+    return x * x * (3 - 2 * x);
+  };
+  var FrisbeeMechanism = class {
+    constructor(host, capacity) {
+      this.capacity = capacity;
+      this.count = capacity;
+      this.canvas = document.createElement("canvas");
+      this.canvas.className = "frisbee-mech";
+      this.canvas.style.cssText = `left:${MECH_CANVAS.x}px;top:${MECH_CANVAS.y}px;width:${MECH_CANVAS.w}px;height:${MECH_CANVAS.h}px;`;
+      host.appendChild(this.canvas);
+      window.addEventListener("resize", this.onResize);
+      document.addEventListener("visibilitychange", this.onPageVisibility);
+    }
+    canvas;
+    /** Debug / preview: slow-motion factor of the mechanism clock. */
+    timeScale = 1;
+    /** Called with false when the 3D cannot be drawn (no WebGL / context lost), true when it is back. */
+    onAvailability = null;
+    renderer = null;
+    kit = null;
+    envTex = null;
+    scene = new Scene();
+    camera = new PerspectiveCamera(CAM_FOV, MECH_CANVAS.w / MECH_CANVAS.h, 40, 600);
+    armR = new Group();
+    armL = new Group();
+    slots = [];
+    ejects = [];
+    cords = [];
+    /** Scene-only resources (shadow catcher) released by dispose(). */
+    owned = [];
+    cordPts = Array.from({ length: CORD_SAMPLES }, () => new Vector3());
+    capL = new Vector3();
+    capR = new Vector3();
+    axis = new Vector3();
+    arm = new Spring(T.armW, T.armZ);
+    band = new Spring(T.bandGrabW, T.bandGrabZ);
+    seat = new Spring(T.seatW, T.seatZ);
+    visible = false;
+    failed = false;
+    lost = false;
+    raf = 0;
+    last = 0;
+    acc = 0;
+    scale = 0;
+    sizeDirty = true;
+    /** Discs on the weapon (deck + hand + cage) and "a disc is seated in the cords". */
+    count;
+    seated = true;
+    /** True when the 3D is actually drawn (created, context alive). */
+    get available() {
+      return this.renderer !== null && !this.lost;
+    }
+    setVisible(visible) {
+      if (visible === this.visible) return;
+      this.visible = visible;
+      if (visible) {
+        if (!this.ensure()) return;
+        this.settleAll();
+        this.sizeDirty = true;
+        this.render();
+      } else {
+        if (this.raf) cancelAnimationFrame(this.raf);
+        this.raf = 0;
+        this.settleAll();
+      }
+    }
+    /**
+     * Real ammo state. `count` = discs on the weapon, `seated` = a disc sits in
+     * the cords (the deck is loaded). More discs → they rise out of the well
+     * (a new cage); fewer WITHOUT a shot (cancelled swap / server correction) →
+     * they sink back in. `instant` = no motion (respawn, first sync).
+     */
+    setState(count, seated, instant = false) {
+      const n = Math.max(0, Math.min(this.capacity, Math.round(count)));
+      const s = seated && n > 0;
+      if (n === this.count && s === this.seated && !instant) return;
+      this.count = n;
+      this.seated = s;
+      if (!this.renderer) return;
+      this.applyState(instant || !this.visible);
+    }
+    /**
+     * A disc was REALLY thrown: the seated disc leaves the cords (a local HUD
+     * object: short rise, tilt + precession, fade — never a scene projectile),
+     * the cords snap, the arms rebound a little and the column moves up one
+     * level. Call BEFORE the matching setState(). Rapid fire is capped: at most
+     * MAX_EJECTS discs are alive (the oldest is recycled) and the arm kick is
+     * clamped, so nothing accumulates or restarts abruptly.
+     */
+    shot() {
+      if (!this.renderer || !this.visible || this.lost) return;
+      const top = this.slots[0];
+      if (!top.on) return;
+      let e = this.ejects.find((x) => !x.alive);
+      if (!e) e = this.ejects.reduce((a, b) => a.t >= b.t ? a : b);
+      e.alive = true;
+      e.t = 0;
+      e.y0 = top.mesh.position.y;
+      e.mesh.position.copy(top.mesh.position);
+      e.mesh.quaternion.identity();
+      e.mat.opacity = 1;
+      e.mesh.visible = true;
+      top.on = false;
+      top.sinking = false;
+      top.delay = 0;
+      top.y.snap(HIDDEN_Y);
+      top.mesh.visible = false;
+      this.slots.push(this.slots.shift());
+      for (let i = 0; i < this.slots.length; i++) {
+        const s = this.slots[i];
+        if (!s.on) continue;
+        s.y.w = T.stackW;
+        s.y.z = T.stackZ;
+        s.y.target = slotY(i);
+      }
+      this.band.w = T.bandReleaseW;
+      this.band.z = T.bandReleaseZ;
+      this.band.target = 0;
+      this.seat.snap(0);
+      this.arm.target = 0;
+      this.arm.v = Math.max(this.arm.v - T.armKick, -T.armKick * 1.25);
+      this.seated = false;
+      this.count = Math.max(0, this.count - 1);
+      this.wake();
+    }
+    dispose() {
+      this.stopLoop();
+      window.removeEventListener("resize", this.onResize);
+      document.removeEventListener("visibilitychange", this.onPageVisibility);
+      for (const e of this.ejects) e.mat.dispose();
+      for (const c of this.cords) c.dispose();
+      for (const o2 of this.owned) o2.dispose();
+      this.kit?.dispose();
+      this.envTex?.dispose();
+      if (this.renderer) {
+        this.renderer.dispose();
+        this.renderer.forceContextLoss();
+      }
+      this.renderer = null;
+      this.kit = null;
+      this.canvas.remove();
+    }
+    // ------------------------------------------------------------------
+    // Scene
+    // ------------------------------------------------------------------
+    /** Lazy creation (first show). false = no WebGL: the plate keeps its flat badge. */
+    ensure() {
+      if (this.renderer) return !this.lost;
+      if (this.failed) return false;
+      let r;
+      try {
+        r = new WebGLRenderer({
+          canvas: this.canvas,
+          alpha: true,
+          antialias: true,
+          premultipliedAlpha: true,
+          powerPreference: "low-power"
+        });
+      } catch {
+        this.failed = true;
+        this.onAvailability?.(false);
+        return false;
+      }
+      r.setPixelRatio(1);
+      r.setClearColor(0, 0);
+      r.toneMapping = NeutralToneMapping;
+      r.shadowMap.enabled = true;
+      r.shadowMap.type = PCFShadowMap;
+      this.canvas.addEventListener("webglcontextlost", (ev) => {
+        ev.preventDefault();
+        this.lost = true;
+        this.stopLoop();
+        this.onAvailability?.(false);
+      });
+      this.canvas.addEventListener("webglcontextrestored", () => {
+        this.lost = false;
+        this.sizeDirty = true;
+        this.scale = 0;
+        this.onAvailability?.(true);
+        this.settleAll();
+        if (this.visible) this.render();
+      });
+      this.renderer = r;
+      this.build(r);
+      this.applyState(true);
+      this.onAvailability?.(true);
+      return true;
+    }
+    build(r) {
+      const kit = this.kit = new FrisbeeHudKit();
+      const pmrem = new PMREMGenerator(r);
+      const room = new RoomEnvironment();
+      this.envTex = pmrem.fromScene(room, 0.04).texture;
+      room.dispose();
+      pmrem.dispose();
+      this.scene.environment = this.envTex;
+      this.scene.environmentIntensity = 0.3;
+      const key = new DirectionalLight(16774114, 2.3);
+      const target = new Object3D();
+      target.position.set(0, VIEW_TARGET_Y, 0);
+      key.target = target;
+      key.position.set(-0.34, 0.62, 0.71).normalize().multiplyScalar(140).add(target.position);
+      key.castShadow = true;
+      key.shadow.mapSize.set(512, 512);
+      const sc = key.shadow.camera;
+      sc.left = -42;
+      sc.right = 42;
+      sc.top = 42;
+      sc.bottom = -42;
+      sc.near = 40;
+      sc.far = 260;
+      key.shadow.bias = -6e-4;
+      key.shadow.normalBias = 0.35;
+      key.shadow.radius = 2;
+      this.scene.add(key, target, new HemisphereLight(14677247, 4863014, 0.55));
+      const add = (geo, mat, parent = this.scene) => {
+        const m = new Mesh(geo, mat);
+        m.castShadow = true;
+        m.receiveShadow = true;
+        parent.add(m);
+        return m;
+      };
+      add(kit.well, kit.plastic);
+      add(kit.handle, kit.plastic);
+      add(kit.pommel, kit.capPlastic).position.set(0, -27.2, 0);
+      this.armR.position.copy(ARM_PIVOT);
+      this.armL.position.set(-ARM_PIVOT.x, ARM_PIVOT.y, 0);
+      this.armL.scale.x = -1;
+      for (const g of [this.armR, this.armL]) {
+        add(kit.arm, kit.plastic, g);
+        add(kit.cap, kit.capPlastic, g).position.copy(CAP_REL);
+        this.scene.add(g);
+      }
+      for (let i = 0; i < this.capacity; i++) {
+        const mesh = add(kit.disc, kit.plastic);
+        mesh.position.y = HIDDEN_Y;
+        mesh.visible = false;
+        this.slots.push({ mesh, y: new Spring(T.stackW, T.stackZ), on: false, sinking: false, delay: 0 });
+      }
+      for (let i = 0; i < MAX_EJECTS; i++) {
+        const mat = kit.ejectMaterial();
+        const mesh = new Mesh(kit.disc, mat);
+        mesh.visible = false;
+        mesh.renderOrder = 2;
+        this.scene.add(mesh);
+        this.ejects.push({ mesh, mat, t: 0, y0: 0, alive: false });
+      }
+      const cord = new CordTube(CORD_SAMPLES, 0.8);
+      add(cord.geometry, kit.cord).frustumCulled = false;
+      this.cords.push(cord);
+      const catcher = new Mesh(
+        new PlaneGeometry(64, 76),
+        new ShadowMaterial({ color: 526092, opacity: 0.16 })
+      );
+      catcher.position.set(0, VIEW_TARGET_Y, -16.5);
+      catcher.receiveShadow = true;
+      this.scene.add(catcher);
+      this.owned.push(catcher.geometry, catcher.material);
+      this.camera.position.set(0, VIEW_TARGET_Y + CAM_DIST * Math.sin(CAM_ELEVATION), CAM_DIST * Math.cos(CAM_ELEVATION));
+      this.camera.lookAt(0, VIEW_TARGET_Y, 0);
+    }
+    // ------------------------------------------------------------------
+    // State → targets
+    // ------------------------------------------------------------------
+    /**
+     * Retarget every spring on the real state. Discs that appear rise out of
+     * the well one after the other (new cage); discs that vanish without a shot
+     * sink back in. instant = snap everything (respawn, hidden, first build).
+     */
+    applyState(instant) {
+      const n = this.count;
+      let k = 0;
+      let refill = false;
+      for (let i = 0; i < this.slots.length; i++) {
+        const s = this.slots[i];
+        const want = i < n;
+        const ty = want ? slotY(i) : HIDDEN_Y;
+        if (instant) {
+          s.on = want;
+          s.sinking = false;
+          s.delay = 0;
+          s.y.snap(ty);
+          continue;
+        }
+        if (want && !s.on) {
+          s.on = true;
+          refill = true;
+          if (!s.sinking) s.y.snap(HIDDEN_Y);
+          s.sinking = false;
+          s.delay = i < SLOT_Y.length ? T.refillStagger * k++ : 0;
+          s.y.w = T.refillW;
+          s.y.z = T.refillZ;
+        } else if (!want && s.on) {
+          s.on = false;
+          s.sinking = true;
+          s.delay = 0;
+          s.y.w = T.refillW;
+          s.y.z = T.refillZ;
+        }
+        s.y.target = ty;
+      }
+      if (refill) {
+        for (const s of this.slots) {
+          if (s.on && s.delay <= 0 && Math.abs(s.y.x - s.y.target) < 0.2 && s.y.target > HIDDEN_Y) s.y.v += 32;
+        }
+      }
+      const seatT = this.seated ? 1 : 0;
+      const armT = this.seated ? ARM_LOAD : 0;
+      if (instant) {
+        this.seat.snap(seatT);
+        this.band.snap(seatT);
+        this.arm.snap(armT);
+        for (const e of this.ejects) {
+          e.alive = false;
+          e.mesh.visible = false;
+        }
+        this.acc = 0;
+        return;
+      }
+      if (this.seat.target !== seatT) {
+        this.seat.target = seatT;
+        this.band.w = seatT ? T.bandGrabW : T.bandReleaseW;
+        this.band.z = seatT ? T.bandGrabZ : T.bandReleaseZ;
+        this.band.target = seatT;
+      }
+      this.arm.target = armT;
+      this.wake();
+    }
+    /** Weapon switch / hide / context restored: everything at rest on the current state, no replay. */
+    settleAll() {
+      if (!this.renderer) return;
+      this.applyState(true);
+    }
+    // ------------------------------------------------------------------
+    // Loop (on demand)
+    // ------------------------------------------------------------------
+    wake() {
+      if (this.raf || !this.visible || this.lost || !this.renderer || document.hidden) return;
+      this.last = performance.now();
+      this.raf = requestAnimationFrame(this.loop);
+    }
+    stopLoop() {
+      if (this.raf) cancelAnimationFrame(this.raf);
+      this.raf = 0;
+    }
+    loop = (now) => {
+      this.raf = 0;
+      if (!this.visible || this.lost) return;
+      const dt = Math.min((now - this.last) / 1e3, 0.1) * this.timeScale;
+      this.last = now;
+      this.acc += dt;
+      while (this.acc >= SUBSTEP2) {
+        this.step(SUBSTEP2);
+        this.acc -= SUBSTEP2;
+      }
+      const moving = this.moving();
+      if (!moving) this.restAll();
+      this.render();
+      if (moving && !document.hidden) this.raf = requestAnimationFrame(this.loop);
+    };
+    step(h) {
+      this.arm.step(h);
+      this.band.step(h);
+      this.seat.step(h);
+      for (const s of this.slots) {
+        if (s.delay > 0) {
+          s.delay -= h;
+          continue;
+        }
+        s.y.step(h);
+        if (s.sinking && s.y.x <= HIDDEN_Y + 0.3) {
+          s.sinking = false;
+          s.y.snap(HIDDEN_Y);
+        }
+      }
+      for (const e of this.ejects) {
+        if (!e.alive) continue;
+        e.t += h;
+        if (e.t >= T.fadeEnd) {
+          e.alive = false;
+          e.mesh.visible = false;
+        }
+      }
+    }
+    moving() {
+      if (!this.arm.settled || !this.band.settled || !this.seat.settled) return true;
+      for (const e of this.ejects) if (e.alive) return true;
+      for (const s of this.slots) if (s.delay > 0 || s.sinking || !s.y.settled) return true;
+      return false;
+    }
+    /** Motion over: land exactly on the targets (no residual drift between two events). */
+    restAll() {
+      this.arm.snap();
+      this.band.snap();
+      this.seat.snap();
+      for (const s of this.slots) s.y.snap();
+      this.acc = 0;
+    }
+    // ------------------------------------------------------------------
+    // Pose + draw
+    // ------------------------------------------------------------------
+    pose() {
+      const a = this.arm.x;
+      this.armR.rotation.z = a;
+      this.armL.rotation.z = -a;
+      for (let i = 0; i < this.slots.length; i++) {
+        const s = this.slots[i];
+        const show2 = (s.on || s.sinking) && s.delay <= 0 && s.y.x > HIDDEN_Y + 0.05;
+        s.mesh.visible = show2;
+        if (!show2) continue;
+        s.mesh.position.set(0, s.y.x + (i === 0 && s.on ? SEAT_LIFT * this.seat.x : 0), 0);
+      }
+      this.poseEjects();
+      this.poseCords();
+    }
+    /** Ejected disc: ease-out rise + drift, tilt toward the camera with a slow precession, then a short fade. */
+    poseEjects() {
+      for (const e of this.ejects) {
+        if (!e.alive) continue;
+        const u = easeOut(Math.min(1, e.t / T.ejectMove));
+        e.mesh.position.set(T.ejectDrift * u, e.y0 + T.ejectRise * u, T.ejectToward * u);
+        const ang = T.ejectAxis0 + T.ejectPrecession * u;
+        this.axis.set(Math.cos(ang), 0, Math.sin(ang));
+        e.mesh.quaternion.setFromAxisAngle(this.axis, T.ejectTilt * u);
+        const fade = 1 - smooth2(T.fadeStart, T.fadeEnd, e.t);
+        e.mat.opacity = fade;
+        e.mat.depthWrite = fade > 0.98;
+      }
+    }
+    /**
+     * Cords: one navy band from the left cap, across the FRONT of the seated
+     * disc's edge (navy on orange: always readable), to the right cap.
+     * band = 1 → holding the disc; band = 0 → straight between the caps
+     * (released), the spring overshoot giving one tiny elastic flick. The band
+     * follows the caps (arm rotation).
+     */
+    poseCords() {
+      const capW = (g, out) => out.copy(CAP_REL).multiply(g.scale).applyEuler(g.rotation).add(g.position);
+      capW(this.armL, this.capL);
+      capW(this.armR, this.capR);
+      const top = this.slots[0];
+      const discY = top.mesh.position.y - 0.1;
+      const b = this.band.x;
+      const half = (CORD_SAMPLES - 1) / 2;
+      for (let i = 0; i < CORD_SAMPLES; i++) {
+        const u = i / (CORD_SAMPLES - 1);
+        const p = this.cordPts[i];
+        const sx = this.capL.x + (this.capR.x - this.capL.x) * u;
+        const sy = this.capL.y + (this.capR.y - this.capL.y) * u - Math.sin(Math.PI * u) * 1.2;
+        const th = Math.PI * (1 - u);
+        const wx = Math.cos(th) * BAND_R;
+        const wz = Math.sin(th) * BAND_R * 0.92;
+        const edge = Math.min(1, Math.abs(i - half) / half);
+        const toCap = smooth2(0.78, 1, edge);
+        const capP = u < 0.5 ? this.capL : this.capR;
+        const wxx = wx + (capP.x - wx) * toCap;
+        const wy = discY + (capP.y - discY) * toCap;
+        const wzz = wz * (1 - toCap);
+        p.set(sx + (wxx - sx) * b, sy + (wy - sy) * b, wzz * b);
+      }
+      this.cords[0].update(this.cordPts);
+    }
+    render() {
+      const r = this.renderer;
+      if (!r || this.lost || !this.visible) return;
+      if (this.sizeDirty) this.resize(r);
+      this.pose();
+      r.render(this.scene, this.camera);
+    }
+    /** Backing store = CSS size × the real on-screen scale (HUD zoom × devicePixelRatio), capped. */
+    resize(r) {
+      this.sizeDirty = false;
+      const rect = this.canvas.getBoundingClientRect();
+      const zoom = rect.width > 0 ? rect.width / MECH_CANVAS.w : 1;
+      const s = Math.min(4, Math.max(1, zoom * (window.devicePixelRatio || 1)));
+      if (Math.abs(s - this.scale) < 0.01) return;
+      this.scale = s;
+      r.setSize(Math.round(MECH_CANVAS.w * s), Math.round(MECH_CANVAS.h * s), false);
+    }
+    onResize = () => {
+      this.sizeDirty = true;
+      if (this.visible && !this.raf) this.render();
+    };
+    onPageVisibility = () => {
+      if (document.hidden) {
+        this.stopLoop();
+        return;
+      }
+      if (this.visible && this.renderer && !this.lost) {
+        this.restAll();
+        for (const e of this.ejects) {
+          e.alive = false;
+          e.mesh.visible = false;
+        }
+        this.render();
+      }
+    };
+  };
+
   // src/ui/FrisbeeLauncherHUD.ts
   var ACCENT4 = "#ff8a3d";
-  var CAGE_DISC = "#ffd0a8";
   var FrisbeeLauncherHUD = class {
     plate;
-    deck;
-    cage;
+    rail;
+    mech;
+    capacity;
+    lastTotal = -1;
     lastDeck = null;
-    lastCage = -1;
     lastReloading = null;
+    lastShot = -1;
     lastVisible = null;
     constructor(cageCapacity) {
-      this.plate = new WeaponPlate("frisbee-launcher-hud", "LANCE-FRISBEE", "frisbee", ACCENT4, null);
-      this.deck = createPips(this.plate.ammo, 1, "deck", [ACCENT4])[0];
-      this.cage = createPips(this.plate.ammo, cageCapacity, "stack", [CAGE_DISC]);
+      this.capacity = cageCapacity + 1;
+      this.plate = new WeaponPlate("frisbee-launcher-hud", "FRISBEE", "frisbee", ACCENT4, this.capacity);
+      this.rail = createPips(this.plate.ammo, this.capacity, "frisbee");
+      this.mech = new FrisbeeMechanism(this.plate.root, this.capacity);
+      this.mech.onAvailability = (ok) => this.plate.root.classList.toggle("mech-3d", ok);
+    }
+    /** The 3D mechanism (preview / debug: slow motion via `timeScale`). */
+    get mechanism() {
+      return this.mech;
     }
     setVisible(visible) {
       if (visible === this.lastVisible) return;
       this.lastVisible = visible;
       this.plate.setVisible(visible);
+      this.mech.setVisible(visible);
     }
     update(weapon) {
       if (this.lastVisible === false) return;
       const deck = weapon.deckLoaded;
-      const cage = weapon.cageCount;
+      const total = (deck ? 1 : 0) + (weapon.discInHand ? 1 : 0) + weapon.cageCount;
       const reloading = weapon.isReloading;
-      if (deck === this.lastDeck && cage === this.lastCage && reloading === this.lastReloading) return;
-      if (this.lastDeck === true && !deck && !reloading) this.plate.kick();
+      const serial = weapon.shotSerial;
+      if (total === this.lastTotal && deck === this.lastDeck && reloading === this.lastReloading && serial === this.lastShot) return;
+      const first = this.lastShot < 0;
+      if (!first && serial !== this.lastShot) {
+        this.mech.shot();
+        this.plate.kick();
+      }
+      this.mech.setState(total, deck, first);
+      this.lastShot = serial;
+      this.lastTotal = total;
       this.lastDeck = deck;
-      this.lastCage = cage;
       this.lastReloading = reloading;
-      const total = (deck ? 1 : 0) + cage;
       this.plate.setName(reloading ? "CAGE" : void 0);
       this.plate.setCount(String(total));
       this.plate.setState(reloading ? "reload" : total <= 1 ? "low" : "");
       this.plate.setRing(reloading ? RING_SPIN : -1);
-      setPip(this.deck, deck);
-      setPips(this.cage, cage);
+      setPips(this.rail, total);
     }
   };
 
@@ -32829,9 +36386,9 @@ void main() {
      */
     cadenceToleranceSeconds: 0.04
   };
-  var C = PaintballRifleConfig;
-  var DEG = Math.PI / 180;
-  var PAINTBALL_MIN_SPREAD_DEG = C.spreadMinDeg * C.aimSpreadFactor;
+  var C2 = PaintballRifleConfig;
+  var DEG2 = Math.PI / 180;
+  var PAINTBALL_MIN_SPREAD_DEG = C2.spreadMinDeg * C2.aimSpreadFactor;
 
   // shared/combat/NetworkWeapons.ts
   var CHARACTER_HITBOX_SCALE = 1.25;
@@ -32897,7 +36454,7 @@ void main() {
      */
     netToleranceSeconds: 0.1
   };
-  var DEG2 = Math.PI / 180;
+  var DEG3 = Math.PI / 180;
 
   // shared/combat/WaterFamasRules.ts
   var WaterFamasConfig = {
@@ -32941,7 +36498,7 @@ void main() {
     /** A jet message of a running burst is accepted until this long after the burst start (s). */
     burstWindowSeconds: 0.6
   };
-  var DEG3 = Math.PI / 180;
+  var DEG4 = Math.PI / 180;
 
   // shared/combat/FrisbeeLauncherRules.ts
   var FrisbeeLauncherConfig = {
@@ -33008,14 +36565,14 @@ void main() {
     /** Discs in flight for the whole room (server) / the whole game (client). */
     maxDiscs: 24
   };
-  var DEG4 = Math.PI / 180;
+  var DEG5 = Math.PI / 180;
 
   // tools/hud-preview/weapons-entry.ts
   var state = {
     paintball: { ammo: PaintballRifleConfig.capacity, isReloading: false },
     popcorn: { ammo: PopcornShotgunConfig.shots, isReloading: false },
     water: { ammo: WaterFamasConfig.capacity, isReloading: false },
-    frisbee: { deckLoaded: true, cageCount: FrisbeeLauncherConfig.cageCapacity, isReloading: false },
+    frisbee: { deckLoaded: true, cageCount: FrisbeeLauncherConfig.cageCapacity, discInHand: false, isReloading: false, shotSerial: 0 },
     revolver: { currentAmmo: 6, isMaterializing: false },
     bass: { currentAmmo: 30, maxAmmo: 30, isReloading: false, reloadProgress: 0 },
     poison: { fillFraction: 1, isReloading: false },
@@ -33067,7 +36624,11 @@ void main() {
       const r = document.getElementById("weapon-slot").getBoundingClientRect();
       return { x: r.x, y: r.y, w: r.width, h: r.height };
     },
-    state
+    state,
+    /** Frisbee 3D mechanism slow motion (1 = real time). */
+    slow(f) {
+      huds.frisbee.mechanism.timeScale = f;
+    }
   };
   show("paintball");
 })();

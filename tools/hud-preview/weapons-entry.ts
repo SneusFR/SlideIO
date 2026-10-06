@@ -22,7 +22,7 @@ const state: Record<string, Fake> = {
   paintball: { ammo: PaintballRifleConfig.capacity, isReloading: false },
   popcorn: { ammo: PopcornShotgunConfig.shots, isReloading: false },
   water: { ammo: WaterFamasConfig.capacity, isReloading: false },
-  frisbee: { deckLoaded: true, cageCount: FrisbeeLauncherConfig.cageCapacity, isReloading: false },
+  frisbee: { deckLoaded: true, cageCount: FrisbeeLauncherConfig.cageCapacity, discInHand: false, isReloading: false, shotSerial: 0 },
   revolver: { currentAmmo: 6, isMaterializing: false },
   bass: { currentAmmo: 30, maxAmmo: 30, isReloading: false, reloadProgress: 0 },
   poison: { fillFraction: 1, isReloading: false },
@@ -81,5 +81,9 @@ function show(id: Id): void {
     return { x: r.x, y: r.y, w: r.width, h: r.height };
   },
   state,
+  /** Frisbee 3D mechanism slow motion (1 = real time). */
+  slow(f: number): void {
+    huds.frisbee.mechanism.timeScale = f;
+  },
 };
 show("paintball");

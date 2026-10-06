@@ -183,6 +183,11 @@ export class FrisbeeLauncherController {
     get capacity(): number { return 1 + this.cageCapacity; }
     get reloading(): boolean { return this.mode === "reload"; }
     get busy(): boolean { return this.mode === "reload" || this.mode === "fire"; }
+    /** A disc is between the cage and the deck: taken for the re-cock (discTaken) and not seated yet (HUD read-out). */
+    get discInHand(): boolean {
+        const recock = (this.mode === "fire" && this.action === "fire") || (this.mode === "reload" && this.action === "reloadEmpty");
+        return recock && this.fired.has("discTaken") && !this.fired.has("discSeated");
+    }
     /** The running action key ("fire", "fireLast", "reload", "reloadEmpty"…) or "". */
     get currentAction(): string { return this.mode === "idle" || this.mode === "inspect" ? "" : this.action; }
     /** true when a trigger pull would throw a disc now. */

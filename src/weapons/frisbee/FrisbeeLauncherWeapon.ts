@@ -111,6 +111,8 @@ export class FrisbeeLauncherWeapon {
   private readonly tmp2 = new THREE.Vector3();
   /** Seed of the shot being fired (read by onShot, called from inside controller.fire()). */
   private shotSeed = 0;
+  /** Discs thrown by this launcher since load (see shotSerial). */
+  private shots = 0;
 
   constructor(
     private readonly camera: THREE.Camera,
@@ -202,6 +204,14 @@ export class FrisbeeLauncherWeapon {
   }
   get isReloading(): boolean {
     return this.controller?.reloading ?? false;
+  }
+  /** A disc taken from the cage for the re-cock, not on the deck yet (still on the weapon: the HUD counts it). */
+  get discInHand(): boolean {
+    return this.controller?.discInHand ?? false;
+  }
+  /** Bumped once per disc ACTUALLY thrown by the local launcher (onShot) — the HUD reacts to this only. */
+  get shotSerial(): number {
+    return this.shots;
   }
   /** True while a shot's re-cock or a cage swap runs. */
   get isBusy(): boolean {
@@ -366,6 +376,7 @@ export class FrisbeeLauncherWeapon {
   private onShot(aiming: boolean): void {
     const c = this.controller;
     const projectiles = this.projectiles;
+    this.shots++;
     this.sfx.onShot?.(aiming);
     if (!c || !projectiles) return;
     this.camera.getWorldPosition(this.camPos);
