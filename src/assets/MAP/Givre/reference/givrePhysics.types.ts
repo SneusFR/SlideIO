@@ -54,7 +54,7 @@ export interface GivreSpawn {
   yaw: number;
   /** Vecteur avant normalise (y = 0). */
   forward: Vec3;
-  /** STOCK | CHAUFFERIE | ATELIER | TRANSIT */
+  /** STOCK | CHAUFFERIE | VESTIBULE_SUD_OUEST | COUDE_EST */
   room: string;
 }
 

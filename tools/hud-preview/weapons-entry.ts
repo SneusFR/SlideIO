@@ -20,7 +20,7 @@ import { FrisbeeLauncherConfig } from "../../shared/combat/FrisbeeLauncherRules"
 type Fake = Record<string, number | boolean>;
 const state: Record<string, Fake> = {
   paintball: { ammo: PaintballRifleConfig.capacity, isReloading: false },
-  popcorn: { ammo: PopcornShotgunConfig.shots, isReloading: false },
+  popcorn: { ammo: PopcornShotgunConfig.shots, isReloading: false, shotSerial: 0 },
   water: { ammo: WaterFamasConfig.capacity, isReloading: false },
   frisbee: { deckLoaded: true, cageCount: FrisbeeLauncherConfig.cageCapacity, discInHand: false, isReloading: false, shotSerial: 0 },
   revolver: { currentAmmo: 6, isMaterializing: false },
@@ -84,6 +84,7 @@ function show(id: Id): void {
   /** Frisbee 3D mechanism slow motion (1 = real time). */
   slow(f: number): void {
     huds.frisbee.mechanism.timeScale = f;
+    huds.popcorn.mechanism.timeScale = f;
   },
 };
 show("paintball");

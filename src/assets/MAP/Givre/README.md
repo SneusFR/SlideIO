@@ -1,6 +1,6 @@
 # Givre · paquet d'intégration (givre_01)
 
-Map « Givre · Station alpine » pour un FPS rapide à 8 joueurs. Elle a été construite dans Blender 4.3 d'après la minimap concept : plan de 280 × 280 unités, 1 unité = 1 m. Les mesures du personnage et le format d'export (GLB + JSON physique) reprennent ceux de Yard.
+Map « Givre · Station alpine » pour un FPS rapide à 8 joueurs. Elle a été construite dans Blender 4.3 d'après la minimap concept : plan de 280 × 220 unités (v2), 1 unité = 1 m. Les mesures du personnage et le format d'export (GLB + JSON physique) reprennent ceux de Yard.
 
 ## Contenu
 
@@ -10,8 +10,7 @@ givre_integration/
 ├─ README.md                    ce fichier (spécification)
 ├─ assets/
 │  ├─ givre_01.glb              visuel jouable : sol, bâtiments, salles, galerie, couvertures, décor
-│  ├─ givre_01_fond.glb         plaine et montagnes hors limites (ni collision, ni ombre)
-│  └─ givre_01_colliders.glb    debug : un mesh par collider, extras {collider, role, source}
+│  └─ givre_01_fond.glb         plaine et montagnes hors limites (ni collision, ni ombre)
 ├─ data/
 │  └─ givre_01.physics.json     colliders, playerClips, rampes, spawns, zones, points de vue, éclairage
 ├─ reference/
@@ -28,7 +27,7 @@ givre_integration/
 ## Repère et unités
 
 - Les distances sont en mètres. Le repère est celui de three.js / glTF : Y vers le haut, main droite, nord = −Z, est = +X.
-- La zone jouable couvre X ∈ [−140, 140] et Z ∈ [−140, 140]. Le sol est à Y = 0 et la galerie Nord à Y = 6.
+- La zone jouable couvre X ∈ [−140, 140] et Z ∈ [−140, 80]. Le sol est à Y = 0 et la galerie Nord à Y = 6.
 - Blender → three.js : (x, y, z) → (x, z, −y). L'export glTF le fait déjà, donc il ne faut ajouter aucune rotation au chargement.
 - Minimap concept (u, v de 0 à 280, v vers le sud) → x = u − 140, z = v − 140.
 - `givre_minimap.png` : le pixel (px, py) correspond à x = px / 4 − 140, z = py / 4 − 140.
@@ -37,16 +36,16 @@ givre_integration/
 
 | Élément | Valeur |
 |---|---|
-| Emprise | 280 × 280 m, traversée ≈ 29 s à 9,5 m/s |
-| Salles d'angle (Stock, Chaufferie, Atelier, Transit) | intérieur ≈ 64 × 62 m, 8 m sous plafond, 4 piliers de 1,1 m |
+| Emprise | 280 × 220 m |
+| Salles d'angle nord (Stock, Chaufferie) | intérieur ≈ 64 × 62 m, 8 m sous plafond, 4 piliers de 1,1 m |
 | Portes des salles | 12,4 m de large × 5 m de haut en passage libre, cadres orange inclus dans les colliders |
-| Traverse couverte | 21,5 m de large, 5,5 m sous plafond, portails de 4,7 m |
+| Liaison couverte sud | de 4,7 m sous le linteau des portails ; portail cour centrale ↔ jonction : 22,5 × 4,7 m |
 | Galerie Nord | plateforme à +6 m, garde-corps à 1,25 m du sol de la galerie |
 | Rampes | 3 rampes de 6 m de dénivelé, ≈ 12° : ouest et est sur 27,45 m, sud sur 28,55 m |
 | Couvertures basses | caisses de 1,2 à 1,3 m ; muret ouest de la cour centrale de 1,2 m, franchissable au saut |
 | Couvertures hautes | caisses de 2,4 m, blocs ardoise de 2,4 à 2,8 m, bloc central de 2,9 m |
 | Bâtiments (non accessibles) | de 4 à 18 m ; les deux toits bas devant la galerie sont à 4 m (couverts par les playerClips) |
-| Spawns | 8, deux par salle d'angle, centre de capsule à 0,93 m, orientés vers le centre de la salle |
+| Spawns | 8 : 2 en Stock, 2 en Chaufferie, 2 au vestibule sud-ouest, 2 au coude est ; centre de capsule à 0,93 m |
 
 ## givre_01.physics.json (format `givre.physics.v1`)
 
@@ -54,14 +53,14 @@ Toutes les coordonnées sont dans le repère three.js. Les types complets sont d
 
 | Clé | Contenu |
 |---|---|
-| `colliders[]` | 185 colliders statiques et fixes, qui bloquent les joueurs et les tirs. `shape: "box"` (171) : `center`, `halfExtents`, `min`, `max`, alignés sur les axes, sans rotation. `shape: "convexHull"` (14) : `points` ; ce sont les rampes, les garde-corps, le bloc central octogonal et les conduites de la chaudière. `source` donne l'objet Blender d'origine. |
+| `colliders[]` | 130 colliders statiques et fixes, qui bloquent les joueurs et les tirs. `shape: "box"` (117) : `center`, `halfExtents`, `min`, `max`, alignés sur les axes, sans rotation. `shape: "convexHull"` (13) : `points` ; ce sont les rampes, les garde-corps, le bloc central octogonal et les conduites de la chaudière. `source` donne l'objet Blender d'origine. |
 | `playerClips[]` | 2 boîtes au-dessus des toits bas P1 et Q1 (Y de 4 à 16). Elles bloquent le personnage mais **pas les tirs** : la galerie garde sa vue sur la cour centrale. |
 | `ramps[]` | 3 rampes : `lowCenter`, `highCenter`, `width`, `run`, `rise`, `slopeDeg`, et `colliderId` qui renvoie au convexHull correspondant dans `colliders`. |
 | `spawns[]` | `position` (centre de capsule), `feet` (pieds), `yaw` en radians (convention `Object3D.rotation.y`, l'avant étant −Z local), `forward`, `room`. |
 | `hazards[]` | Vide : il n'y a pas de zone mortelle. `killPlaneY` = −10. |
 | `envelope` | Bornes XZ de la zone jouable, équivalent de `expansion.mapEnvelope` dans Yard. |
-| `zones[]` | 18 rectangles XZ nommés, pour les callouts, la minimap ou les statistiques. `floorY` vaut 6 pour la galerie. |
-| `viewpoints[]` | Les 5 points de vue de la minimap et une vue aérienne : `position`, `lookAt`, `horizontalFovDeg`. |
+| `zones[]` | 16 rectangles XZ nommés, pour les callouts, la minimap ou les statistiques. `floorY` vaut 6 pour la galerie. |
+| `viewpoints[]` | Les 6 points de vue de la minimap (dont `CAM_2_LiaisonSud` et `CAM_6_CoudeEst`) et une vue aérienne : `position`, `lookAt`, `horizontalFovDeg`. |
 | `lighting`, `materials` | Réglages de rendu et palette repris de Blender. |
 
 ## Matériaux (glTF PBR sans texture, métal 0)
@@ -100,7 +99,7 @@ Toutes les coordonnées sont dans le repère three.js. Les types complets sont d
 
 ## Performance
 
-- `givre_01.glb` contient 89 objets, 225 primitives, 43 342 triangles et 15 matériaux. Fusionner les meshes statiques par matériau au chargement ramène le tout à environ 15 draw calls (voir `loadGivreVisual`).
+- `givre_01.glb` contient 74 objets, 190 primitives, 38 152 triangles et 15 matériaux. Fusionner les meshes statiques par matériau au chargement ramène le tout à environ 15 draw calls (voir `loadGivreVisual`).
 - `givre_01_fond.glb` contient 2 objets et 2 116 triangles, sans ombres.
 
 ## Points d'attention

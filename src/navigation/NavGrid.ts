@@ -44,16 +44,17 @@ export const YARD_NAV_BOUNDS: NavGridBounds = {
   minFloorY: -0.5,
 };
 
-/** GIVRE 01 (280 × 280 m, perimeter buildings at ±140, North gallery at
- *  +6 m). maxFloorY 6.2 keeps the gallery walkable but excludes the
- *  covered traverse roof (6.3 m); the low roofs P1/Q1 (4 m) are excluded
- *  by their player clips (the ground ray starts inside them). */
+/** GIVRE 01 (280 × 220 m: X ∈ [−140, 140], Z ∈ [−140, 80], perimeter
+ *  buildings on the border, North gallery at +6 m). maxFloorY 6.05 keeps
+ *  the gallery (6.0 m) walkable but excludes the roof of the covered south
+ *  link (6.1 m); the low roofs P1/Q1 (4 m) are excluded by their player
+ *  clips (the ground ray starts inside them). */
 export const GIVRE_NAV_BOUNDS: NavGridBounds = {
   minX: -138,
   maxX: 138,
   minZ: -138,
-  maxZ: 138,
-  maxFloorY: 6.2,
+  maxZ: 78,
+  maxFloorY: 6.05,
   minFloorY: -0.5,
 };
 

@@ -83,6 +83,8 @@ export class PopcornShotgunWeapon {
   private presentationToken = 0;
   private viewmodelVisible = false;
   private inspecting = false;
+  /** Shots fired by this shotgun since load (see shotSerial). */
+  private shotCount = 0;
 
   private readonly raycaster = new THREE.Raycaster();
   /** Visual floor search under wall / character impacts (static world only). */
@@ -182,6 +184,11 @@ export class PopcornShotgunWeapon {
 
   get isReloading(): boolean {
     return this.controller?.reloading ?? false;
+  }
+
+  /** Bumped once per shot ACTUALLY fired by the local shotgun (a refused dry-fire click never counts) — the HUD reacts to this only. */
+  get shotSerial(): number {
+    return this.shotCount;
   }
 
   /** True while a fire / reload clip runs. */
@@ -338,6 +345,7 @@ export class PopcornShotgunWeapon {
     if (!c) return;
     if (this.inspecting) this.cancelInspection(); // an attack always wins
     if (!c.fire()) return;
+    this.shotCount++;
     // The trigger must be RELEASED before an empty-tank click (holding it
     // after the last load never clicks / auto-reloads mid FireLast).
     this.dryFireReady = false;

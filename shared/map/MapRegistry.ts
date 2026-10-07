@@ -84,10 +84,10 @@ export const MAP_REGISTRY: Record<MapId, MapDefinition> = {
     colliderBoxes: GIVRE_COLLIDER_BOXES,
     spawnPoints: GIVRE_SPAWN_POINTS,
     hazards: [],
-    // Flat ground at Y = 0 over the whole 280 × 280 m envelope.
+    // Flat ground at Y = 0 over the whole 280 × 220 m envelope.
     killPlaneY: -10,
-    // expansion.mapEnvelope of givre_01.physics.json (280 × 280 m, centred).
-    envelope: { minX: -140, maxX: 140, minZ: -140, maxZ: 140 },
+    // envelope of givre_01.physics.json (280 × 220 m, X ∈ [−140, 140], Z ∈ [−140, 80]).
+    envelope: { minX: -140, maxX: 140, minZ: -140, maxZ: 80 },
   },
 };
 

@@ -4140,13 +4140,28 @@ body.game-paused .mole-overlay {
   --pl-tab-radius: 6px;
   --pl-rail: #1b1410;
 }
+/* 3D available: the little popcorn machine (<canvas class="popcorn-mech">, see
+   src/ui/popcorn/PopcornMechanism.ts) takes the badge's place on the left edge
+   (the flat badge stays as the no-WebGL fallback). Z-order: 3D (1) under the
+   panel texts (tab 2, digits 2) — the canvas ends at x 39, left of the tab
+   (46) and of the face (49): it never covers the name or the counter. */
+.wpn-plate[data-icon="popcorn"] .wpn-ribbon { min-width: 84px; }
+.wpn-plate[data-icon="popcorn"].mech-3d .wpn-badge { visibility: hidden; }
+.popcorn-mech {
+  position: absolute;
+  pointer-events: none;
+  z-index: 1;
+}
+.wpn-plate[data-icon="popcorn"] .wpn-count { z-index: 4; }
 .ammo-puff { gap: 0; }
 .ammo-puff .ammo-pip { width: 22px; height: 18px; color: var(--pip, #fff3c4); }
 .ammo-puff .ammo-pip svg { width: 100%; height: 100%; display: block; }
-.ammo-puff .ammo-pip:not(.on).pip-a { animation: puff-fly-a 0.4s ease-out; }
-.ammo-puff .ammo-pip:not(.on).pip-b { animation: puff-fly-b 0.4s ease-out; }
-@keyframes puff-fly-a { 0% { transform: translateY(-12px) rotate(-24deg) scale(1.25); opacity: 1; filter: none; } 100% { transform: none; } }
-@keyframes puff-fly-b { 0% { transform: translateY(-12px) rotate(24deg) scale(1.25); opacity: 1; filter: none; } 100% { transform: none; } }
+/* A spent puff stays IN its rail slot (a tiny in-place pop, no travel): nothing
+   leaves the rail, so nothing ever crosses the digits or reads as a second grain. */
+.ammo-puff .ammo-pip:not(.on).pip-a { animation: puff-spent-a 0.18s ease-out; }
+.ammo-puff .ammo-pip:not(.on).pip-b { animation: puff-spent-b 0.18s ease-out; }
+@keyframes puff-spent-a { 0% { transform: scale(1.12); opacity: 1; filter: none; } 100% { transform: none; } }
+@keyframes puff-spent-b { 0% { transform: scale(1.12); opacity: 1; filter: none; } 100% { transform: none; } }
 
 /* WATER FAMAS — glass TANK: blue-black face, the rail is a glass tube with a
    sloshing level, one droplet per burst. */
@@ -17950,6 +17965,180 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
       return new _BoxGeometry(data.width, data.height, data.depth, data.widthSegments, data.heightSegments, data.depthSegments);
     }
   };
+  var PolyhedronGeometry = class _PolyhedronGeometry extends BufferGeometry {
+    /**
+     * Constructs a new polyhedron geometry.
+     *
+     * @param {Array<number>} [vertices] - A flat array of vertices describing the base shape.
+     * @param {Array<number>} [indices] - A flat array of indices describing the base shape.
+     * @param {number} [radius=1] - The radius of the shape.
+     * @param {number} [detail=0] - How many levels to subdivide the geometry. The more detail, the smoother the shape.
+     */
+    constructor(vertices = [], indices = [], radius = 1, detail = 0) {
+      super();
+      this.type = "PolyhedronGeometry";
+      this.parameters = {
+        vertices,
+        indices,
+        radius,
+        detail
+      };
+      const vertexBuffer = [];
+      const uvBuffer = [];
+      subdivide(detail);
+      applyRadius(radius);
+      generateUVs();
+      this.setAttribute("position", new Float32BufferAttribute(vertexBuffer, 3));
+      this.setAttribute("normal", new Float32BufferAttribute(vertexBuffer.slice(), 3));
+      this.setAttribute("uv", new Float32BufferAttribute(uvBuffer, 2));
+      if (detail === 0) {
+        this.computeVertexNormals();
+      } else {
+        this.normalizeNormals();
+      }
+      function subdivide(detail2) {
+        const a = new Vector3();
+        const b = new Vector3();
+        const c = new Vector3();
+        for (let i = 0; i < indices.length; i += 3) {
+          getVertexByIndex(indices[i + 0], a);
+          getVertexByIndex(indices[i + 1], b);
+          getVertexByIndex(indices[i + 2], c);
+          subdivideFace(a, b, c, detail2);
+        }
+      }
+      function subdivideFace(a, b, c, detail2) {
+        const cols = detail2 + 1;
+        const v = [];
+        for (let i = 0; i <= cols; i++) {
+          v[i] = [];
+          const aj = a.clone().lerp(c, i / cols);
+          const bj = b.clone().lerp(c, i / cols);
+          const rows = cols - i;
+          for (let j = 0; j <= rows; j++) {
+            if (j === 0 && i === cols) {
+              v[i][j] = aj;
+            } else {
+              v[i][j] = aj.clone().lerp(bj, j / rows);
+            }
+          }
+        }
+        for (let i = 0; i < cols; i++) {
+          for (let j = 0; j < 2 * (cols - i) - 1; j++) {
+            const k = Math.floor(j / 2);
+            if (j % 2 === 0) {
+              pushVertex(v[i][k + 1]);
+              pushVertex(v[i + 1][k]);
+              pushVertex(v[i][k]);
+            } else {
+              pushVertex(v[i][k + 1]);
+              pushVertex(v[i + 1][k + 1]);
+              pushVertex(v[i + 1][k]);
+            }
+          }
+        }
+      }
+      function applyRadius(radius2) {
+        const vertex2 = new Vector3();
+        for (let i = 0; i < vertexBuffer.length; i += 3) {
+          vertex2.x = vertexBuffer[i + 0];
+          vertex2.y = vertexBuffer[i + 1];
+          vertex2.z = vertexBuffer[i + 2];
+          vertex2.normalize().multiplyScalar(radius2);
+          vertexBuffer[i + 0] = vertex2.x;
+          vertexBuffer[i + 1] = vertex2.y;
+          vertexBuffer[i + 2] = vertex2.z;
+        }
+      }
+      function generateUVs() {
+        const vertex2 = new Vector3();
+        for (let i = 0; i < vertexBuffer.length; i += 3) {
+          vertex2.x = vertexBuffer[i + 0];
+          vertex2.y = vertexBuffer[i + 1];
+          vertex2.z = vertexBuffer[i + 2];
+          const u = azimuth(vertex2) / 2 / Math.PI + 0.5;
+          const v = inclination(vertex2) / Math.PI + 0.5;
+          uvBuffer.push(u, 1 - v);
+        }
+        correctUVs();
+        correctSeam();
+      }
+      function correctSeam() {
+        for (let i = 0; i < uvBuffer.length; i += 6) {
+          const x0 = uvBuffer[i + 0];
+          const x1 = uvBuffer[i + 2];
+          const x2 = uvBuffer[i + 4];
+          const max = Math.max(x0, x1, x2);
+          const min = Math.min(x0, x1, x2);
+          if (max > 0.9 && min < 0.1) {
+            if (x0 < 0.2) uvBuffer[i + 0] += 1;
+            if (x1 < 0.2) uvBuffer[i + 2] += 1;
+            if (x2 < 0.2) uvBuffer[i + 4] += 1;
+          }
+        }
+      }
+      function pushVertex(vertex2) {
+        vertexBuffer.push(vertex2.x, vertex2.y, vertex2.z);
+      }
+      function getVertexByIndex(index, vertex2) {
+        const stride = index * 3;
+        vertex2.x = vertices[stride + 0];
+        vertex2.y = vertices[stride + 1];
+        vertex2.z = vertices[stride + 2];
+      }
+      function correctUVs() {
+        const a = new Vector3();
+        const b = new Vector3();
+        const c = new Vector3();
+        const centroid = new Vector3();
+        const uvA = new Vector2();
+        const uvB = new Vector2();
+        const uvC = new Vector2();
+        for (let i = 0, j = 0; i < vertexBuffer.length; i += 9, j += 6) {
+          a.set(vertexBuffer[i + 0], vertexBuffer[i + 1], vertexBuffer[i + 2]);
+          b.set(vertexBuffer[i + 3], vertexBuffer[i + 4], vertexBuffer[i + 5]);
+          c.set(vertexBuffer[i + 6], vertexBuffer[i + 7], vertexBuffer[i + 8]);
+          uvA.set(uvBuffer[j + 0], uvBuffer[j + 1]);
+          uvB.set(uvBuffer[j + 2], uvBuffer[j + 3]);
+          uvC.set(uvBuffer[j + 4], uvBuffer[j + 5]);
+          centroid.copy(a).add(b).add(c).divideScalar(3);
+          const azi = azimuth(centroid);
+          correctUV(uvA, j + 0, a, azi);
+          correctUV(uvB, j + 2, b, azi);
+          correctUV(uvC, j + 4, c, azi);
+        }
+      }
+      function correctUV(uv, stride, vector, azimuth2) {
+        if (azimuth2 < 0 && uv.x === 1) {
+          uvBuffer[stride] = uv.x - 1;
+        }
+        if (vector.x === 0 && vector.z === 0) {
+          uvBuffer[stride] = azimuth2 / 2 / Math.PI + 0.5;
+        }
+      }
+      function azimuth(vector) {
+        return Math.atan2(vector.z, -vector.x);
+      }
+      function inclination(vector) {
+        return Math.atan2(-vector.y, Math.sqrt(vector.x * vector.x + vector.z * vector.z));
+      }
+    }
+    copy(source) {
+      super.copy(source);
+      this.parameters = Object.assign({}, source.parameters);
+      return this;
+    }
+    /**
+     * Factory method for creating an instance of this class from the given
+     * JSON object.
+     *
+     * @param {Object} data - A JSON object representing the serialized geometry.
+     * @return {PolyhedronGeometry} A new instance.
+     */
+    static fromJSON(data) {
+      return new _PolyhedronGeometry(data.vertices, data.indices, data.radius, data.detail);
+    }
+  };
   var Curve = class {
     /**
      * Constructs a new curve.
@@ -18975,6 +19164,133 @@ body{background:linear-gradient(90deg,#8a5a34 0%,#8a5a34 62%,#3b2415 62.5%,#3b24
     QuadraticBezierCurve3,
     SplineCurve
   });
+  var IcosahedronGeometry = class _IcosahedronGeometry extends PolyhedronGeometry {
+    /**
+     * Constructs a new icosahedron geometry.
+     *
+     * @param {number} [radius=1] - Radius of the icosahedron.
+     * @param {number} [detail=0] - Setting this to a value greater than `0` adds vertices making it no longer a icosahedron.
+     */
+    constructor(radius = 1, detail = 0) {
+      const t = (1 + Math.sqrt(5)) / 2;
+      const vertices = [
+        -1,
+        t,
+        0,
+        1,
+        t,
+        0,
+        -1,
+        -t,
+        0,
+        1,
+        -t,
+        0,
+        0,
+        -1,
+        t,
+        0,
+        1,
+        t,
+        0,
+        -1,
+        -t,
+        0,
+        1,
+        -t,
+        t,
+        0,
+        -1,
+        t,
+        0,
+        1,
+        -t,
+        0,
+        -1,
+        -t,
+        0,
+        1
+      ];
+      const indices = [
+        0,
+        11,
+        5,
+        0,
+        5,
+        1,
+        0,
+        1,
+        7,
+        0,
+        7,
+        10,
+        0,
+        10,
+        11,
+        1,
+        5,
+        9,
+        5,
+        11,
+        4,
+        11,
+        10,
+        2,
+        10,
+        7,
+        6,
+        7,
+        1,
+        8,
+        3,
+        9,
+        4,
+        3,
+        4,
+        2,
+        3,
+        2,
+        6,
+        3,
+        6,
+        8,
+        3,
+        8,
+        9,
+        4,
+        9,
+        5,
+        2,
+        4,
+        11,
+        6,
+        2,
+        10,
+        8,
+        6,
+        7,
+        9,
+        8,
+        1
+      ];
+      super(vertices, indices, radius, detail);
+      this.type = "IcosahedronGeometry";
+      this.parameters = {
+        radius,
+        detail
+      };
+    }
+    /**
+     * Factory method for creating an instance of this class from the given
+     * JSON object.
+     *
+     * @param {Object} data - A JSON object representing the serialized geometry.
+     * @return {IcosahedronGeometry} A new instance.
+     */
+    static fromJSON(data) {
+      return new _IcosahedronGeometry(data.radius, data.detail);
+    }
+  };
   var LatheGeometry = class _LatheGeometry extends BufferGeometry {
     /**
      * Constructs a new lathe geometry.
@@ -35119,79 +35435,6 @@ void main() {
     }
   };
 
-  // src/ui/PopcornShotgunHUD.ts
-  var ACCENT2 = "#ffd23f";
-  var KERNEL = "#fff3c4";
-  var PopcornShotgunHUD = class {
-    plate;
-    puffs;
-    lastAmmo = -1;
-    lastReloading = null;
-    lastVisible = null;
-    constructor(shots) {
-      this.plate = new WeaponPlate("popcorn-shotgun-hud", "POPCORN", "popcorn", ACCENT2, null);
-      this.puffs = createPips(this.plate.ammo, shots, "puff", [KERNEL], 0, POPCORN_PIP_SVG);
-    }
-    setVisible(visible) {
-      if (visible === this.lastVisible) return;
-      this.lastVisible = visible;
-      this.plate.setVisible(visible);
-    }
-    update(weapon) {
-      if (this.lastVisible === false) return;
-      const ammo = weapon.ammo;
-      const reloading = weapon.isReloading;
-      if (ammo === this.lastAmmo && reloading === this.lastReloading) return;
-      if (ammo < this.lastAmmo && !reloading) this.plate.kick();
-      this.lastAmmo = ammo;
-      this.lastReloading = reloading;
-      this.plate.setName(reloading ? "RECHARGE" : void 0);
-      this.plate.setCount(String(ammo));
-      this.plate.setState(reloading ? "reload" : ammo === 0 ? "low" : "");
-      this.plate.setRing(reloading ? RING_SPIN : -1);
-      setPips(this.puffs, ammo);
-    }
-  };
-
-  // src/ui/WaterFamasHUD.ts
-  var ACCENT3 = "#38c6ff";
-  var JETS_PER_BURST = 3;
-  var WaterFamasHUD = class {
-    plate;
-    setLevel;
-    drops;
-    capacity;
-    lastAmmo = -1;
-    lastReloading = null;
-    lastVisible = null;
-    constructor(capacity) {
-      this.capacity = capacity;
-      this.plate = new WeaponPlate("water-famas-hud", "FAMAS \xC0 EAU", "water", ACCENT3, capacity);
-      this.setLevel = createGauge(this.plate.ammo, "water");
-      this.drops = createPips(this.plate.ammo, Math.ceil(capacity / JETS_PER_BURST), "drop");
-    }
-    setVisible(visible) {
-      if (visible === this.lastVisible) return;
-      this.lastVisible = visible;
-      this.plate.setVisible(visible);
-    }
-    update(weapon) {
-      if (this.lastVisible === false) return;
-      const ammo = weapon.ammo;
-      const reloading = weapon.isReloading;
-      if (ammo === this.lastAmmo && reloading === this.lastReloading) return;
-      if (ammo < this.lastAmmo && !reloading) this.plate.kick();
-      this.lastAmmo = ammo;
-      this.lastReloading = reloading;
-      this.plate.setName(reloading ? "REMPLISSAGE" : void 0);
-      this.plate.setCount(String(ammo));
-      this.plate.setState(reloading ? "reload" : ammo <= JETS_PER_BURST ? "low" : "");
-      this.plate.setRing(reloading ? RING_SPIN : -1);
-      this.setLevel(ammo / this.capacity);
-      setPips(this.drops, Math.ceil(ammo / JETS_PER_BURST));
-    }
-  };
-
   // node_modules/three/examples/jsm/environments/RoomEnvironment.js
   var RoomEnvironment = class extends Scene {
     constructor() {
@@ -35293,6 +35536,1070 @@ void main() {
     return material;
   }
 
+  // node_modules/three/examples/jsm/geometries/RoundedBoxGeometry.js
+  var _tempNormal = new Vector3();
+  function getUv(faceDirVector, normal, uvAxis, projectionAxis, radius, sideLength) {
+    const totArcLength = 2 * Math.PI * radius / 4;
+    const centerLength = Math.max(sideLength - 2 * radius, 0);
+    const halfArc = Math.PI / 4;
+    _tempNormal.copy(normal);
+    _tempNormal[projectionAxis] = 0;
+    _tempNormal.normalize();
+    const arcUvRatio = 0.5 * totArcLength / (totArcLength + centerLength);
+    const arcAngleRatio = 1 - _tempNormal.angleTo(faceDirVector) / halfArc;
+    if (Math.sign(_tempNormal[uvAxis]) === 1) {
+      return arcAngleRatio * arcUvRatio;
+    } else {
+      const lenUv = centerLength / (totArcLength + centerLength);
+      return lenUv + arcUvRatio + arcUvRatio * (1 - arcAngleRatio);
+    }
+  }
+  var RoundedBoxGeometry = class _RoundedBoxGeometry extends BoxGeometry {
+    /**
+     * Constructs a new rounded box geometry.
+     *
+     * @param {number} [width=1] - The width. That is, the length of the edges parallel to the X axis.
+     * @param {number} [height=1] - The height. That is, the length of the edges parallel to the Y axis.
+     * @param {number} [depth=1] - The depth. That is, the length of the edges parallel to the Z axis.
+     * @param {number} [segments=2] - Number of segments that form the rounded corners.
+     * @param {number} [radius=0.1] - The radius of the rounded corners.
+     */
+    constructor(width = 1, height = 1, depth = 1, segments = 2, radius = 0.1) {
+      const totalSegments = segments * 2 + 1;
+      radius = Math.min(width / 2, height / 2, depth / 2, radius);
+      super(1, 1, 1, totalSegments, totalSegments, totalSegments);
+      this.type = "RoundedBoxGeometry";
+      this.parameters = {
+        width,
+        height,
+        depth,
+        segments,
+        radius
+      };
+      if (totalSegments === 1) return;
+      const geometry2 = this.toNonIndexed();
+      this.index = null;
+      this.attributes.position = geometry2.attributes.position;
+      this.attributes.normal = geometry2.attributes.normal;
+      this.attributes.uv = geometry2.attributes.uv;
+      const position = new Vector3();
+      const normal = new Vector3();
+      const box = new Vector3(width, height, depth).divideScalar(2).subScalar(radius);
+      const positions = this.attributes.position.array;
+      const normals = this.attributes.normal.array;
+      const uvs = this.attributes.uv.array;
+      const faceTris = positions.length / 6;
+      const faceDirVector = new Vector3();
+      const halfSegmentSize = 0.5 / totalSegments;
+      for (let i = 0, j = 0; i < positions.length; i += 3, j += 2) {
+        position.fromArray(positions, i);
+        normal.copy(position);
+        normal.x -= Math.sign(normal.x) * halfSegmentSize;
+        normal.y -= Math.sign(normal.y) * halfSegmentSize;
+        normal.z -= Math.sign(normal.z) * halfSegmentSize;
+        normal.normalize();
+        positions[i + 0] = box.x * Math.sign(position.x) + normal.x * radius;
+        positions[i + 1] = box.y * Math.sign(position.y) + normal.y * radius;
+        positions[i + 2] = box.z * Math.sign(position.z) + normal.z * radius;
+        normals[i + 0] = normal.x;
+        normals[i + 1] = normal.y;
+        normals[i + 2] = normal.z;
+        const side = Math.floor(i / faceTris);
+        switch (side) {
+          case 0:
+            faceDirVector.set(1, 0, 0);
+            uvs[j + 0] = getUv(faceDirVector, normal, "z", "y", radius, depth);
+            uvs[j + 1] = 1 - getUv(faceDirVector, normal, "y", "z", radius, height);
+            break;
+          case 1:
+            faceDirVector.set(-1, 0, 0);
+            uvs[j + 0] = 1 - getUv(faceDirVector, normal, "z", "y", radius, depth);
+            uvs[j + 1] = 1 - getUv(faceDirVector, normal, "y", "z", radius, height);
+            break;
+          case 2:
+            faceDirVector.set(0, 1, 0);
+            uvs[j + 0] = 1 - getUv(faceDirVector, normal, "x", "z", radius, width);
+            uvs[j + 1] = getUv(faceDirVector, normal, "z", "x", radius, depth);
+            break;
+          case 3:
+            faceDirVector.set(0, -1, 0);
+            uvs[j + 0] = 1 - getUv(faceDirVector, normal, "x", "z", radius, width);
+            uvs[j + 1] = 1 - getUv(faceDirVector, normal, "z", "x", radius, depth);
+            break;
+          case 4:
+            faceDirVector.set(0, 0, 1);
+            uvs[j + 0] = 1 - getUv(faceDirVector, normal, "x", "y", radius, width);
+            uvs[j + 1] = 1 - getUv(faceDirVector, normal, "y", "x", radius, height);
+            break;
+          case 5:
+            faceDirVector.set(0, 0, -1);
+            uvs[j + 0] = getUv(faceDirVector, normal, "x", "y", radius, width);
+            uvs[j + 1] = 1 - getUv(faceDirVector, normal, "y", "x", radius, height);
+            break;
+        }
+      }
+    }
+    /**
+     * Factory method for creating an instance of this class from the given
+     * JSON object.
+     *
+     * @param {Object} data - A JSON object representing the serialized geometry.
+     * @returns {RoundedBoxGeometry} A new instance.
+     */
+    static fromJSON(data) {
+      return new _RoundedBoxGeometry(
+        data.width,
+        data.height,
+        data.depth,
+        data.segments,
+        data.radius
+      );
+    }
+  };
+
+  // node_modules/three/examples/jsm/utils/BufferGeometryUtils.js
+  function mergeGeometries(geometries, useGroups = false) {
+    const isIndexed = geometries[0].index !== null;
+    const attributesUsed = new Set(Object.keys(geometries[0].attributes));
+    const morphAttributesUsed = new Set(Object.keys(geometries[0].morphAttributes));
+    const attributes = {};
+    const morphAttributes = {};
+    const morphTargetsRelative = geometries[0].morphTargetsRelative;
+    const mergedGeometry = new BufferGeometry();
+    let offset = 0;
+    for (let i = 0; i < geometries.length; ++i) {
+      const geometry = geometries[i];
+      let attributesCount = 0;
+      if (isIndexed !== (geometry.index !== null)) {
+        console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ". All geometries must have compatible attributes; make sure index attribute exists among all geometries, or in none of them.");
+        return null;
+      }
+      for (const name in geometry.attributes) {
+        if (!attributesUsed.has(name)) {
+          console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + '. All geometries must have compatible attributes; make sure "' + name + '" attribute exists among all geometries, or in none of them.');
+          return null;
+        }
+        if (attributes[name] === void 0) attributes[name] = [];
+        attributes[name].push(geometry.attributes[name]);
+        attributesCount++;
+      }
+      if (attributesCount !== attributesUsed.size) {
+        console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ". Make sure all geometries have the same number of attributes.");
+        return null;
+      }
+      if (morphTargetsRelative !== geometry.morphTargetsRelative) {
+        console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ". .morphTargetsRelative must be consistent throughout all geometries.");
+        return null;
+      }
+      for (const name in geometry.morphAttributes) {
+        if (!morphAttributesUsed.has(name)) {
+          console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ".  .morphAttributes must be consistent throughout all geometries.");
+          return null;
+        }
+        if (morphAttributes[name] === void 0) morphAttributes[name] = [];
+        morphAttributes[name].push(geometry.morphAttributes[name]);
+      }
+      if (useGroups) {
+        let count;
+        if (isIndexed) {
+          count = geometry.index.count;
+        } else if (geometry.attributes.position !== void 0) {
+          count = geometry.attributes.position.count;
+        } else {
+          console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ". The geometry must have either an index or a position attribute");
+          return null;
+        }
+        mergedGeometry.addGroup(offset, count, i);
+        offset += count;
+      }
+    }
+    if (isIndexed) {
+      let indexOffset = 0;
+      const mergedIndex = [];
+      for (let i = 0; i < geometries.length; ++i) {
+        const index = geometries[i].index;
+        for (let j = 0; j < index.count; ++j) {
+          mergedIndex.push(index.getX(j) + indexOffset);
+        }
+        indexOffset += geometries[i].attributes.position.count;
+      }
+      mergedGeometry.setIndex(mergedIndex);
+    }
+    for (const name in attributes) {
+      const mergedAttribute = mergeAttributes(attributes[name]);
+      if (!mergedAttribute) {
+        console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed while trying to merge the " + name + " attribute.");
+        return null;
+      }
+      mergedGeometry.setAttribute(name, mergedAttribute);
+    }
+    for (const name in morphAttributes) {
+      const numMorphTargets = morphAttributes[name][0].length;
+      if (numMorphTargets === 0) continue;
+      mergedGeometry.morphAttributes = mergedGeometry.morphAttributes || {};
+      mergedGeometry.morphAttributes[name] = [];
+      for (let i = 0; i < numMorphTargets; ++i) {
+        const morphAttributesToMerge = [];
+        for (let j = 0; j < morphAttributes[name].length; ++j) {
+          morphAttributesToMerge.push(morphAttributes[name][j][i]);
+        }
+        const mergedMorphAttribute = mergeAttributes(morphAttributesToMerge);
+        if (!mergedMorphAttribute) {
+          console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed while trying to merge the " + name + " morphAttribute.");
+          return null;
+        }
+        mergedGeometry.morphAttributes[name].push(mergedMorphAttribute);
+      }
+    }
+    return mergedGeometry;
+  }
+  function mergeAttributes(attributes) {
+    let TypedArray;
+    let itemSize;
+    let normalized;
+    let gpuType = -1;
+    let arrayLength = 0;
+    for (let i = 0; i < attributes.length; ++i) {
+      const attribute = attributes[i];
+      if (TypedArray === void 0) TypedArray = attribute.array.constructor;
+      if (TypedArray !== attribute.array.constructor) {
+        console.error("THREE.BufferGeometryUtils: .mergeAttributes() failed. BufferAttribute.array must be of consistent array types across matching attributes.");
+        return null;
+      }
+      if (itemSize === void 0) itemSize = attribute.itemSize;
+      if (itemSize !== attribute.itemSize) {
+        console.error("THREE.BufferGeometryUtils: .mergeAttributes() failed. BufferAttribute.itemSize must be consistent across matching attributes.");
+        return null;
+      }
+      if (normalized === void 0) normalized = attribute.normalized;
+      if (normalized !== attribute.normalized) {
+        console.error("THREE.BufferGeometryUtils: .mergeAttributes() failed. BufferAttribute.normalized must be consistent across matching attributes.");
+        return null;
+      }
+      if (gpuType === -1) gpuType = attribute.gpuType;
+      if (gpuType !== attribute.gpuType) {
+        console.error("THREE.BufferGeometryUtils: .mergeAttributes() failed. BufferAttribute.gpuType must be consistent across matching attributes.");
+        return null;
+      }
+      arrayLength += attribute.count * itemSize;
+    }
+    const array = new TypedArray(arrayLength);
+    const result = new BufferAttribute(array, itemSize, normalized);
+    let offset = 0;
+    for (let i = 0; i < attributes.length; ++i) {
+      const attribute = attributes[i];
+      if (attribute.isInterleavedBufferAttribute) {
+        const tupleOffset = offset / itemSize;
+        for (let j = 0, l = attribute.count; j < l; j++) {
+          for (let c = 0; c < itemSize; c++) {
+            const value = attribute.getComponent(j, c);
+            result.setComponent(j + tupleOffset, c, value);
+          }
+        }
+      } else {
+        array.set(attribute.array, offset);
+      }
+      offset += attribute.count * itemSize;
+    }
+    if (gpuType !== void 0) {
+      result.gpuType = gpuType;
+    }
+    return result;
+  }
+  function mergeVertices(geometry, tolerance = 1e-4) {
+    tolerance = Math.max(tolerance, Number.EPSILON);
+    const hashToIndex = {};
+    const indices = geometry.getIndex();
+    const positions = geometry.getAttribute("position");
+    const vertexCount = indices ? indices.count : positions.count;
+    let nextIndex = 0;
+    const attributeNames = Object.keys(geometry.attributes);
+    const tmpAttributes = {};
+    const tmpMorphAttributes = {};
+    const newIndices = [];
+    const getters = ["getX", "getY", "getZ", "getW"];
+    const setters = ["setX", "setY", "setZ", "setW"];
+    for (let i = 0, l = attributeNames.length; i < l; i++) {
+      const name = attributeNames[i];
+      const attr = geometry.attributes[name];
+      tmpAttributes[name] = new attr.constructor(
+        new attr.array.constructor(attr.count * attr.itemSize),
+        attr.itemSize,
+        attr.normalized
+      );
+      const morphAttributes = geometry.morphAttributes[name];
+      if (morphAttributes) {
+        if (!tmpMorphAttributes[name]) tmpMorphAttributes[name] = [];
+        morphAttributes.forEach((morphAttr, i2) => {
+          const array = new morphAttr.array.constructor(morphAttr.count * morphAttr.itemSize);
+          tmpMorphAttributes[name][i2] = new morphAttr.constructor(array, morphAttr.itemSize, morphAttr.normalized);
+        });
+      }
+    }
+    const halfTolerance = tolerance * 0.5;
+    const exponent = Math.log10(1 / tolerance);
+    const hashMultiplier = Math.pow(10, exponent);
+    const hashAdditive = halfTolerance * hashMultiplier;
+    for (let i = 0; i < vertexCount; i++) {
+      const index = indices ? indices.getX(i) : i;
+      let hash = "";
+      for (let j = 0, l = attributeNames.length; j < l; j++) {
+        const name = attributeNames[j];
+        const attribute = geometry.getAttribute(name);
+        const itemSize = attribute.itemSize;
+        for (let k = 0; k < itemSize; k++) {
+          hash += `${~~(attribute[getters[k]](index) * hashMultiplier + hashAdditive)},`;
+        }
+      }
+      if (hash in hashToIndex) {
+        newIndices.push(hashToIndex[hash]);
+      } else {
+        for (let j = 0, l = attributeNames.length; j < l; j++) {
+          const name = attributeNames[j];
+          const attribute = geometry.getAttribute(name);
+          const morphAttributes = geometry.morphAttributes[name];
+          const itemSize = attribute.itemSize;
+          const newArray = tmpAttributes[name];
+          const newMorphArrays = tmpMorphAttributes[name];
+          for (let k = 0; k < itemSize; k++) {
+            const getterFunc = getters[k];
+            const setterFunc = setters[k];
+            newArray[setterFunc](nextIndex, attribute[getterFunc](index));
+            if (morphAttributes) {
+              for (let m = 0, ml = morphAttributes.length; m < ml; m++) {
+                newMorphArrays[m][setterFunc](nextIndex, morphAttributes[m][getterFunc](index));
+              }
+            }
+          }
+        }
+        hashToIndex[hash] = nextIndex;
+        newIndices.push(nextIndex);
+        nextIndex++;
+      }
+    }
+    const result = geometry.clone();
+    for (const name in geometry.attributes) {
+      const tmpAttribute = tmpAttributes[name];
+      result.setAttribute(name, new tmpAttribute.constructor(
+        tmpAttribute.array.slice(0, nextIndex * tmpAttribute.itemSize),
+        tmpAttribute.itemSize,
+        tmpAttribute.normalized
+      ));
+      if (!(name in tmpMorphAttributes)) continue;
+      for (let j = 0; j < tmpMorphAttributes[name].length; j++) {
+        const tmpMorphAttribute = tmpMorphAttributes[name][j];
+        result.morphAttributes[name][j] = new tmpMorphAttribute.constructor(
+          tmpMorphAttribute.array.slice(0, nextIndex * tmpMorphAttribute.itemSize),
+          tmpMorphAttribute.itemSize,
+          tmpMorphAttribute.normalized
+        );
+      }
+    }
+    result.setIndex(newIndices);
+    return result;
+  }
+
+  // src/ui/popcorn/popcornHudGeometry.ts
+  var POPCORN_HUD_COLORS = {
+    red: 14168620,
+    ivory: 16182486,
+    cream: 16773577,
+    golden: 15315018,
+    toasted: 12088351,
+    butter: 16766330
+  };
+  var C = POPCORN_HUD_COLORS;
+  var WIN = { w: 24, h: 24, d: 16, y0: -15 };
+  var LID_HINGE = new Vector3(0, 11.6, -9.5);
+  var LID_T = 2.8;
+  var LID_TOP_Y = LID_HINGE.y + LID_T;
+  var LID_D = 19;
+  var GRAIN_VARIANTS = 4;
+  function prng(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = a + 1831565813 >>> 0;
+      let t = a;
+      t = Math.imul(t ^ t >>> 15, t | 1);
+      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function grainGeometry(variant) {
+    const rnd = prng(10226225 + variant * 7919);
+    const parts = [];
+    const lobes = 4 + variant % 3;
+    const make = (r, x, y, z, sy) => {
+      const g = new IcosahedronGeometry(r, 2);
+      g.deleteAttribute("normal");
+      g.deleteAttribute("uv");
+      g.scale(1, sy, 1);
+      g.translate(x, y, z);
+      parts.push(g);
+    };
+    make(2.15 + rnd() * 0.3, 0, 0, 0, 0.92);
+    for (let k = 0; k < lobes; k++) {
+      const a = k / lobes * Math.PI * 2 + rnd() * 0.9;
+      const cr = 1.45 + rnd() * 0.85;
+      make(1.35 + rnd() * 0.95, Math.cos(a) * cr, (rnd() - 0.5) * 2.1, Math.sin(a) * cr, 0.85 + rnd() * 0.3);
+    }
+    const merged = mergeVertices(mergeGeometries(parts, false), 1e-3);
+    for (const p of parts) p.dispose();
+    const pos = merged.getAttribute("position");
+    const n = pos.count;
+    const s1 = rnd() * 6;
+    const s2 = rnd() * 6;
+    const s3 = rnd() * 6;
+    const noise = (x, y, z) => 0.55 * Math.sin(x * 1.9 + s1) * Math.sin(y * 2.3 + s2) + 0.45 * Math.sin(z * 2.7 + s3) * Math.sin(x * 3.1 + s2) + 0.3 * Math.sin((x + y + z) * 5.3 + s3);
+    let minY = Infinity;
+    for (let i = 0; i < n; i++) {
+      const x = pos.getX(i);
+      const y = pos.getY(i);
+      const z = pos.getZ(i);
+      const d = 1 + 0.11 * noise(x, y, z);
+      pos.setXYZ(i, x * d, y * d, z * d);
+      minY = Math.min(minY, y * d);
+    }
+    merged.computeVertexNormals();
+    const colors = new Float32Array(n * 3);
+    const cream = new Color(C.cream);
+    const golden = new Color(C.golden);
+    const toasted = new Color(C.toasted);
+    const col = new Color();
+    for (let i = 0; i < n; i++) {
+      const x = pos.getX(i);
+      const y = pos.getY(i);
+      const z = pos.getZ(i);
+      const pit = Math.min(1, Math.max(0, (0.25 - noise(x, y, z)) / 1.1));
+      col.copy(cream).lerp(golden, pit * 0.75);
+      const foot = Math.min(1, Math.max(0, (minY + 1.1 - y) / 1.1));
+      col.lerp(toasted, foot * 0.55);
+      colors[i * 3] = col.r;
+      colors[i * 3 + 1] = col.g;
+      colors[i * 3 + 2] = col.b;
+    }
+    merged.setAttribute("color", new BufferAttribute(colors, 3));
+    merged.computeBoundingSphere();
+    return merged;
+  }
+  var PopcornHudKit = class {
+    base = new RoundedBoxGeometry(28, 6, 20, 3, 1.3);
+    rim = new RoundedBoxGeometry(28, 2.6, 20, 3, 1);
+    post = new RoundedBoxGeometry(2.6, 24.6, 2.6, 2, 0.6);
+    glass = new BoxGeometry(WIN.w, WIN.h, WIN.d);
+    lid = new RoundedBoxGeometry(29, LID_T, LID_D, 3, 1.1);
+    knob = new SphereGeometry(1.6, 14, 10);
+    grains = Array.from({ length: GRAIN_VARIANTS }, (_, v) => grainGeometry(v));
+    /** Red satin plastic: soft sheen, never chrome. */
+    red = new MeshPhysicalMaterial({
+      color: C.red,
+      roughness: 0.46,
+      metalness: 0,
+      clearcoat: 0.22,
+      clearcoatRoughness: 0.55
+    });
+    ivory = new MeshPhysicalMaterial({
+      color: C.ivory,
+      roughness: 0.55,
+      metalness: 0,
+      clearcoat: 0.12,
+      clearcoatRoughness: 0.6
+    });
+    /** Transparent window: faint tint, a hint of reflection, never hides the grains. */
+    window = new MeshPhysicalMaterial({
+      color: 14151413,
+      roughness: 0.06,
+      metalness: 0,
+      transparent: true,
+      opacity: 0.14,
+      depthWrite: false,
+      clearcoat: 0.6,
+      clearcoatRoughness: 0.1
+    });
+    /** Matte, slightly porous grain with a hint of buttery sheen. */
+    grain = new MeshPhysicalMaterial({
+      vertexColors: true,
+      roughness: 0.84,
+      metalness: 0,
+      sheen: 0.55,
+      sheenColor: new Color(C.butter),
+      sheenRoughness: 0.55,
+      clearcoat: 0.06,
+      clearcoatRoughness: 0.7
+    });
+    dispose() {
+      for (const g of [this.base, this.rim, this.post, this.glass, this.lid, this.knob, ...this.grains]) g.dispose();
+      for (const m of [this.red, this.ivory, this.window, this.grain]) m.dispose();
+    }
+  };
+
+  // src/ui/popcorn/popcornMotion.ts
+  var DEG = Math.PI / 180;
+  var MECH_CANVAS = { x: -15, y: -10, w: 54, h: 80 };
+  var MECH_SCALE = 1.15;
+  var VIEW_TARGET_Y = 4;
+  var POPCORN_MECH_TUNING = {
+    /** Miniature impulse: spring (ω, ζ) kicked at t = 0 — peak after ≈ 40 ms, peak ≈ 1.5 plate px, back in ≈ 200 ms. */
+    kickW: 26,
+    kickZ: 0.75,
+    kickV: 100,
+    /** Lid: tilt kick (rad/s) → peak ≈ 9° (clamped 12°), one small damped return. */
+    lidW: 26,
+    lidZ: 0.62,
+    lidKick: 9.5,
+    /** Lid while the weapon really reloads: wide open, a soft spring. */
+    lidOpen: 62 * DEG,
+    lidOpenW: 18,
+    lidOpenZ: 0.55,
+    /** Loads appearing in the window (refill): pop-in per grain; removed without a shot: quick shrink. */
+    popW: 26,
+    popZ: 0.5,
+    popStagger: 0.035,
+    dropW: 60,
+    dropZ: 1
+  };
+  var FLIGHTS = [
+    { delay: 0, rise: 0.13, fall: 0.2, px: 12.5, x: -5.5, z: -0.5, bounce: 0, spin: [2.2, 1.4, -3.1] },
+    { delay: 0.01, rise: 0.14, fall: 0.19, px: 16.5, x: 1.2, z: 7, bounce: 0.07, spin: [-1.6, 2.6, 2] },
+    { delay: 0.03, rise: 0.12, fall: 0.18, px: 14.5, x: 6.4, z: 0.8, bounce: 0, spin: [1.1, -2.4, 2.8] }
+  ];
+  var MAX_JUMPS = FLIGHTS.length;
+  var BOUNCE_PX = 3;
+  var GRAIN_R = 2.4;
+  var REST_SCALE = 1.2;
+  var JUMP_SCALE = 1.1;
+  var LAYER = [
+    [-7, 0, 3.5],
+    [0, 0, 4.8],
+    [7, 0, 3.5],
+    [-3.6, 0.3, -3.2],
+    [4, 0, -3.5],
+    [0.5, 3.6, 0.2]
+  ];
+  var LOAD_PITCH = 9.5;
+  var LOAD_Y0 = 3.4;
+  var SINK_Y = -2.8;
+  var SINK_T = 0.03;
+  var FLIGHT_END = FLIGHTS.reduce((m, f) => Math.max(m, f.delay + f.rise + f.fall + (f.bounce > 0 ? f.bounce + SINK_T : 0)), 0);
+  function flightHeight(f, t) {
+    const rest = GRAIN_R * JUMP_SCALE * 0.9;
+    if (t < 0) return null;
+    if (t < f.rise) {
+      const u = t / f.rise;
+      return SINK_Y + (f.px - SINK_Y) * (1 - (1 - u) * (1 - u));
+    }
+    t -= f.rise;
+    if (t < f.fall) {
+      const u = t / f.fall;
+      const end = f.bounce > 0 ? rest : SINK_Y;
+      return f.px + (end - f.px) * u ** 1.6;
+    }
+    t -= f.fall;
+    if (f.bounce <= 0) return null;
+    if (t < f.bounce) {
+      const v = t / f.bounce;
+      return rest + BOUNCE_PX * 4 * v * (1 - v);
+    }
+    t -= f.bounce;
+    if (t < SINK_T) return rest + (SINK_Y - rest) * (t / SINK_T);
+    return null;
+  }
+  var Spring = class {
+    constructor(w, z) {
+      this.w = w;
+      this.z = z;
+    }
+    x = 0;
+    v = 0;
+    target = 0;
+    step(dt) {
+      const a = -2 * this.z * this.w * this.v - this.w * this.w * (this.x - this.target);
+      this.v += a * dt;
+      this.x += this.v * dt;
+    }
+    get settled() {
+      return Math.abs(this.x - this.target) < 2e-3 && Math.abs(this.v) < 0.01;
+    }
+    snap(to = this.target) {
+      this.target = to;
+      this.x = to;
+      this.v = 0;
+    }
+  };
+
+  // src/ui/popcorn/PopcornMechanism.ts
+  var DEG2 = Math.PI / 180;
+  var CAM_FOV = 18;
+  var CAM_ELEVATION = 20 * DEG2;
+  var CAM_DIST = MECH_CANVAS.h / (2 * Math.tan(CAM_FOV / 2 * DEG2)) / MECH_SCALE;
+  var SUBSTEP2 = 1 / 240;
+  var TILT_MAX = 12 * DEG2;
+  var PopcornMechanism = class {
+    constructor(host, capacity) {
+      this.capacity = capacity;
+      this.count = capacity;
+      this.canvas = document.createElement("canvas");
+      this.canvas.className = "popcorn-mech";
+      this.canvas.style.cssText = `left:${MECH_CANVAS.x}px;top:${MECH_CANVAS.y}px;width:${MECH_CANVAS.w}px;height:${MECH_CANVAS.h}px;`;
+      host.appendChild(this.canvas);
+      window.addEventListener("resize", this.onResize);
+      document.addEventListener("visibilitychange", this.onPageVisibility);
+    }
+    canvas;
+    /** Debug / preview: slow-motion factor of the mechanism clock. */
+    timeScale = 1;
+    /** Called with false when the 3D cannot be drawn (no WebGL / context lost), true when it is back. */
+    onAvailability = null;
+    renderer = null;
+    kit = null;
+    envTex = null;
+    scene = new Scene();
+    camera = new PerspectiveCamera(CAM_FOV, MECH_CANVAS.w / MECH_CANVAS.h, 40, 600);
+    machine = new Group();
+    lid = new Group();
+    loads = [];
+    jumpers = [];
+    kick = new Spring(POPCORN_MECH_TUNING.kickW, POPCORN_MECH_TUNING.kickZ);
+    tilt = new Spring(POPCORN_MECH_TUNING.lidW, POPCORN_MECH_TUNING.lidZ);
+    open = new Spring(POPCORN_MECH_TUNING.lidOpenW, POPCORN_MECH_TUNING.lidOpenZ);
+    visible = false;
+    failed = false;
+    lost = false;
+    raf = 0;
+    last = 0;
+    acc = 0;
+    scale = 0;
+    sizeDirty = true;
+    /** Seconds since the last real shot, -1 = no grain in the air. */
+    flightT = -1;
+    /** Real loads on the weapon and "the weapon is really reloading". */
+    count;
+    reloading = false;
+    /** True when the 3D is actually drawn (created, context alive). */
+    get available() {
+      return this.renderer !== null && !this.lost;
+    }
+    setVisible(visible) {
+      if (visible === this.visible) return;
+      this.visible = visible;
+      if (visible) {
+        if (!this.ensure()) return;
+        this.settleAll();
+        this.sizeDirty = true;
+        this.render();
+      } else {
+        this.stopLoop();
+        this.settleAll();
+      }
+    }
+    /**
+     * Real weapon state: `count` = loads left in the machine, `reloading` = the
+     * weapon is really reloading (the lid opens). More loads → they pop in
+     * (reload refill); fewer WITHOUT a shot (cancelled reload / server
+     * correction) → they shrink away. `instant` = no motion (respawn, first sync).
+     */
+    setState(count, reloading, instant = false) {
+      const n = Math.max(0, Math.min(this.capacity, Math.round(count)));
+      if (n === this.count && reloading === this.reloading && !instant) return;
+      this.count = n;
+      this.reloading = reloading;
+      if (!this.renderer) return;
+      this.applyState(instant || !this.visible);
+    }
+    /**
+     * A shot was REALLY fired. Call BEFORE the matching setState(). One impulse
+     * of the miniature, one tilt of the lid, 3 pooled grains. A new shot
+     * restarts the same motion (springs keep their value, grains restart from
+     * the lid): nothing accumulates, nothing grows with the fire rate.
+     */
+    shot() {
+      if (!this.renderer || !this.visible || this.lost) return;
+      this.kick.v = POPCORN_MECH_TUNING.kickV;
+      this.tilt.v = POPCORN_MECH_TUNING.lidKick;
+      this.tilt.x = Math.min(this.tilt.x, TILT_MAX * 0.6);
+      this.flightT = 0;
+      this.wake();
+    }
+    dispose() {
+      this.stopLoop();
+      window.removeEventListener("resize", this.onResize);
+      document.removeEventListener("visibilitychange", this.onPageVisibility);
+      this.kit?.dispose();
+      this.envTex?.dispose();
+      if (this.renderer) {
+        this.renderer.dispose();
+        this.renderer.forceContextLoss();
+      }
+      this.renderer = null;
+      this.kit = null;
+      this.canvas.remove();
+    }
+    // ------------------------------------------------------------------
+    // Scene
+    // ------------------------------------------------------------------
+    /** Lazy creation (first show). false = no WebGL: the plate keeps its flat badge. */
+    ensure() {
+      if (this.renderer) return !this.lost;
+      if (this.failed) return false;
+      let r;
+      try {
+        r = new WebGLRenderer({
+          canvas: this.canvas,
+          alpha: true,
+          antialias: true,
+          premultipliedAlpha: true,
+          powerPreference: "low-power"
+        });
+      } catch {
+        this.failed = true;
+        this.onAvailability?.(false);
+        return false;
+      }
+      r.setPixelRatio(1);
+      r.setClearColor(0, 0);
+      r.toneMapping = NeutralToneMapping;
+      this.canvas.addEventListener("webglcontextlost", (ev) => {
+        ev.preventDefault();
+        this.lost = true;
+        this.stopLoop();
+        this.onAvailability?.(false);
+      });
+      this.canvas.addEventListener("webglcontextrestored", () => {
+        this.lost = false;
+        this.sizeDirty = true;
+        this.scale = 0;
+        this.onAvailability?.(true);
+        this.settleAll();
+        if (this.visible) this.render();
+      });
+      this.renderer = r;
+      this.build(r);
+      this.applyState(true);
+      this.onAvailability?.(true);
+      return true;
+    }
+    build(r) {
+      const kit = this.kit = new PopcornHudKit();
+      const pmrem = new PMREMGenerator(r);
+      const room = new RoomEnvironment();
+      this.envTex = pmrem.fromScene(room, 0.04).texture;
+      room.dispose();
+      pmrem.dispose();
+      this.scene.environment = this.envTex;
+      this.scene.environmentIntensity = 0.3;
+      const key = new DirectionalLight(16774114, 2.3);
+      key.position.set(-0.34, 0.62, 0.71).normalize().multiplyScalar(140);
+      this.scene.add(key, new HemisphereLight(14677247, 4863014, 0.6), this.machine);
+      const add = (geo, mat, parent = this.machine) => {
+        const m = new Mesh(geo, mat);
+        parent.add(m);
+        return m;
+      };
+      add(kit.base, kit.ivory).position.set(0, WIN.y0 - 3, 0);
+      add(kit.rim, kit.red).position.set(0, WIN.y0 + WIN.h + 1.3, 0);
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) add(kit.post, kit.red).position.set(sx * 12.7, WIN.y0 + WIN.h / 2, sz * 8.4);
+      }
+      this.lid.position.copy(LID_HINGE);
+      this.machine.add(this.lid);
+      add(kit.lid, kit.red, this.lid).position.set(0, LID_T / 2, LID_D / 2);
+      add(kit.knob, kit.red, this.lid).position.set(-11, LID_T, LID_D / 2);
+      const span = WIN.h - 2 * LOAD_Y0 - 3;
+      const pitch = this.capacity > 1 ? Math.min(LOAD_PITCH, span / (this.capacity - 1)) : LOAD_PITCH;
+      for (let i = 0; i < this.capacity; i++) {
+        const row = [];
+        for (let k = 0; k < LAYER.length; k++) {
+          const [x, dy, z] = LAYER[k];
+          const id = i * LAYER.length + k;
+          const m = add(kit.grains[id % GRAIN_VARIANTS], kit.grain);
+          m.position.set(i % 2 ? -x : x, WIN.y0 + LOAD_Y0 + i * pitch + dy, i % 2 ? -z * 0.6 : z);
+          m.rotation.set(id * 1.7, id * 2.3, id * 0.9);
+          m.visible = false;
+          row.push({ mesh: m, s: new Spring(POPCORN_MECH_TUNING.popW, POPCORN_MECH_TUNING.popZ), delay: 0 });
+        }
+        this.loads.push(row);
+      }
+      for (let j = 0; j < MAX_JUMPS; j++) {
+        const m = add(kit.grains[(j + 1) % GRAIN_VARIANTS], kit.grain);
+        m.scale.setScalar(JUMP_SCALE);
+        m.visible = false;
+        this.jumpers.push(m);
+      }
+      const glass = add(kit.glass, kit.window);
+      glass.position.set(0, WIN.y0 + WIN.h / 2, 0);
+      glass.renderOrder = 2;
+      this.camera.position.set(0, VIEW_TARGET_Y + CAM_DIST * Math.sin(CAM_ELEVATION), CAM_DIST * Math.cos(CAM_ELEVATION));
+      this.camera.lookAt(0, VIEW_TARGET_Y, 0);
+    }
+    // ------------------------------------------------------------------
+    // State → targets
+    // ------------------------------------------------------------------
+    /**
+     * Retarget every spring on the real state. Loads that appear pop in one
+     * after the other (the reload refill); loads that vanish without a shot
+     * shrink away. The lid opens while the weapon really reloads.
+     * instant = snap everything (respawn, hidden, first build).
+     */
+    applyState(instant) {
+      let k = 0;
+      for (let i = 0; i < this.loads.length; i++) {
+        const want = i < this.count;
+        for (const g of this.loads[i]) {
+          const tgt = want ? 1 : 0;
+          if (instant) {
+            g.s.snap(tgt);
+            g.delay = 0;
+            g.mesh.visible = want;
+            continue;
+          }
+          if (want && g.s.target === 0) {
+            g.s.snap(0);
+            g.s.target = 1;
+            g.s.w = POPCORN_MECH_TUNING.popW;
+            g.s.z = POPCORN_MECH_TUNING.popZ;
+            g.delay = POPCORN_MECH_TUNING.popStagger * k++;
+          } else if (!want && g.s.target === 1) {
+            g.s.target = 0;
+            g.s.w = POPCORN_MECH_TUNING.dropW;
+            g.s.z = POPCORN_MECH_TUNING.dropZ;
+            g.delay = 0;
+          }
+        }
+      }
+      this.open.target = this.reloading ? POPCORN_MECH_TUNING.lidOpen : 0;
+      if (instant) {
+        this.open.snap();
+        this.tilt.snap(0);
+        this.kick.snap(0);
+        this.flightT = -1;
+        this.acc = 0;
+        for (const m of this.jumpers) m.visible = false;
+        return;
+      }
+      this.wake();
+    }
+    /** Weapon switch / hide / context restored: everything at rest on the current state, no replay. */
+    settleAll() {
+      if (!this.renderer) return;
+      this.applyState(true);
+    }
+    // ------------------------------------------------------------------
+    // Loop (on demand)
+    // ------------------------------------------------------------------
+    wake() {
+      if (this.raf || !this.visible || this.lost || !this.renderer || document.hidden) return;
+      this.last = performance.now();
+      this.raf = requestAnimationFrame(this.loop);
+    }
+    stopLoop() {
+      if (this.raf) cancelAnimationFrame(this.raf);
+      this.raf = 0;
+    }
+    loop = (now) => {
+      this.raf = 0;
+      if (!this.visible || this.lost) return;
+      const dt = Math.min((now - this.last) / 1e3, 0.1) * this.timeScale;
+      this.last = now;
+      this.acc += dt;
+      while (this.acc >= SUBSTEP2) {
+        this.step(SUBSTEP2);
+        this.acc -= SUBSTEP2;
+      }
+      const moving = this.moving();
+      if (!moving) this.restAll();
+      this.render();
+      if (moving && !document.hidden) this.raf = requestAnimationFrame(this.loop);
+    };
+    step(h) {
+      this.kick.step(h);
+      this.tilt.step(h);
+      this.open.step(h);
+      for (const row of this.loads) {
+        for (const g of row) {
+          if (g.delay > 0) {
+            g.delay -= h;
+            continue;
+          }
+          g.s.step(h);
+        }
+      }
+      if (this.flightT >= 0) {
+        this.flightT += h;
+        if (this.flightT >= FLIGHT_END) this.flightT = -1;
+      }
+    }
+    moving() {
+      if (this.flightT >= 0) return true;
+      if (!this.kick.settled || !this.tilt.settled || !this.open.settled) return true;
+      for (const row of this.loads) for (const g of row) if (g.delay > 0 || !g.s.settled) return true;
+      return false;
+    }
+    /** Motion over: land exactly on the targets (no residual drift between two events). */
+    restAll() {
+      this.kick.snap(0);
+      this.tilt.snap(0);
+      this.open.snap();
+      for (const row of this.loads) for (const g of row) g.s.snap();
+      this.flightT = -1;
+      this.acc = 0;
+    }
+    // ------------------------------------------------------------------
+    // Pose + draw
+    // ------------------------------------------------------------------
+    pose() {
+      const k = this.kick.x;
+      this.machine.position.set(0, -k * 0.5, k * 0.6);
+      this.machine.rotation.z = k * 0.012;
+      const tilt = Math.max(-TILT_MAX, Math.min(TILT_MAX, this.tilt.x));
+      this.lid.rotation.x = -(this.open.x + tilt);
+      for (const row of this.loads) {
+        for (const g of row) {
+          const s = g.delay > 0 ? 0 : Math.max(0, g.s.x);
+          g.mesh.visible = s > 0.02;
+          g.mesh.scale.setScalar(REST_SCALE * s);
+        }
+      }
+      for (let j = 0; j < this.jumpers.length; j++) {
+        const m = this.jumpers[j];
+        const f = FLIGHTS[j];
+        const h = this.flightT >= 0 ? flightHeight(f, this.flightT - f.delay) : null;
+        if (h === null) {
+          m.visible = false;
+          continue;
+        }
+        m.visible = true;
+        m.position.set(f.x, LID_TOP_Y + h, LID_HINGE.z + LID_D * 0.62 + f.z);
+        const a = this.flightT - f.delay;
+        m.rotation.set(f.spin[0] * a, f.spin[1] * a, f.spin[2] * a);
+      }
+    }
+    render() {
+      const r = this.renderer;
+      if (!r || this.lost || !this.visible) return;
+      if (this.sizeDirty) this.resize(r);
+      this.pose();
+      r.render(this.scene, this.camera);
+    }
+    /** Backing store = CSS size × the real on-screen scale (HUD zoom × devicePixelRatio), capped. */
+    resize(r) {
+      this.sizeDirty = false;
+      const rect = this.canvas.getBoundingClientRect();
+      const zoom = rect.width > 0 ? rect.width / MECH_CANVAS.w : 1;
+      const s = Math.min(4, Math.max(1, zoom * (window.devicePixelRatio || 1)));
+      if (Math.abs(s - this.scale) < 0.01) return;
+      this.scale = s;
+      r.setSize(Math.round(MECH_CANVAS.w * s), Math.round(MECH_CANVAS.h * s), false);
+    }
+    onResize = () => {
+      this.sizeDirty = true;
+      if (this.visible && !this.raf) this.render();
+    };
+    onPageVisibility = () => {
+      if (document.hidden) {
+        this.stopLoop();
+        return;
+      }
+      if (this.visible && this.renderer && !this.lost) {
+        this.restAll();
+        this.render();
+      }
+    };
+  };
+
+  // src/ui/PopcornShotgunHUD.ts
+  var ACCENT2 = "#ffd23f";
+  var KERNEL = "#fff3c4";
+  var PopcornShotgunHUD = class {
+    plate;
+    puffs;
+    mech;
+    lastAmmo = -1;
+    lastReloading = null;
+    lastShot = -1;
+    lastVisible = null;
+    constructor(shots) {
+      this.plate = new WeaponPlate("popcorn-shotgun-hud", "POPCORN", "popcorn", ACCENT2, null);
+      this.puffs = createPips(this.plate.ammo, shots, "puff", [KERNEL], 0, POPCORN_PIP_SVG);
+      this.mech = new PopcornMechanism(this.plate.root, shots);
+      this.mech.onAvailability = (ok) => this.plate.root.classList.toggle("mech-3d", ok);
+    }
+    /** The 3D mechanism (preview / debug: slow motion via `timeScale`). */
+    get mechanism() {
+      return this.mech;
+    }
+    setVisible(visible) {
+      if (visible === this.lastVisible) return;
+      this.lastVisible = visible;
+      this.plate.setVisible(visible);
+      this.mech.setVisible(visible);
+      if (!visible) {
+        this.lastAmmo = -1;
+        this.lastReloading = null;
+        this.lastShot = -1;
+      }
+    }
+    update(weapon) {
+      if (this.lastVisible === false) return;
+      const ammo = weapon.ammo;
+      const reloading = weapon.isReloading;
+      const serial = weapon.shotSerial;
+      if (ammo === this.lastAmmo && reloading === this.lastReloading && serial === this.lastShot) return;
+      const first = this.lastShot < 0;
+      if (!first && serial !== this.lastShot) {
+        this.mech.shot();
+        if (!this.mech.available) this.plate.kick();
+      }
+      this.mech.setState(ammo, reloading, first);
+      this.lastShot = serial;
+      this.lastAmmo = ammo;
+      this.lastReloading = reloading;
+      this.plate.setName(reloading ? "RECHARGE" : void 0);
+      this.plate.setCount(String(ammo));
+      this.plate.setState(reloading ? "reload" : ammo === 0 ? "low" : "");
+      this.plate.setRing(reloading ? RING_SPIN : -1);
+      setPips(this.puffs, ammo);
+    }
+  };
+
+  // src/ui/WaterFamasHUD.ts
+  var ACCENT3 = "#38c6ff";
+  var JETS_PER_BURST = 3;
+  var WaterFamasHUD = class {
+    plate;
+    setLevel;
+    drops;
+    capacity;
+    lastAmmo = -1;
+    lastReloading = null;
+    lastVisible = null;
+    constructor(capacity) {
+      this.capacity = capacity;
+      this.plate = new WeaponPlate("water-famas-hud", "FAMAS \xC0 EAU", "water", ACCENT3, capacity);
+      this.setLevel = createGauge(this.plate.ammo, "water");
+      this.drops = createPips(this.plate.ammo, Math.ceil(capacity / JETS_PER_BURST), "drop");
+    }
+    setVisible(visible) {
+      if (visible === this.lastVisible) return;
+      this.lastVisible = visible;
+      this.plate.setVisible(visible);
+    }
+    update(weapon) {
+      if (this.lastVisible === false) return;
+      const ammo = weapon.ammo;
+      const reloading = weapon.isReloading;
+      if (ammo === this.lastAmmo && reloading === this.lastReloading) return;
+      if (ammo < this.lastAmmo && !reloading) this.plate.kick();
+      this.lastAmmo = ammo;
+      this.lastReloading = reloading;
+      this.plate.setName(reloading ? "REMPLISSAGE" : void 0);
+      this.plate.setCount(String(ammo));
+      this.plate.setState(reloading ? "reload" : ammo <= JETS_PER_BURST ? "low" : "");
+      this.plate.setRing(reloading ? RING_SPIN : -1);
+      this.setLevel(ammo / this.capacity);
+      setPips(this.drops, Math.ceil(ammo / JETS_PER_BURST));
+    }
+  };
+
   // src/ui/frisbee/frisbeeHudGeometry.ts
   var FRISBEE_HUD_COLORS = {
     orange: 16747069,
@@ -35303,7 +36610,7 @@ void main() {
     turquoise: 2275504,
     navy: 2042453
   };
-  var C = FRISBEE_HUD_COLORS;
+  var C2 = FRISBEE_HUD_COLORS;
   var DISC_T = 4.2;
   var SLOT_Y = [2.2, -2.9, -8];
   var HIDDEN_Y = -11.4;
@@ -35330,50 +36637,50 @@ void main() {
   function discGeometry() {
     const top = (r) => 3.5 + 0.6 * (r / 11.2) ** 2;
     const profile = [
-      [0, 2.25, C.orangeDeep],
-      [5.5, 2.2, C.orangeDeep],
-      [9.4, 1.95, C.orangeDeep],
-      [10.25, 1.45, C.orangeDeep],
-      [10.6, 0.65, C.orangeDeep],
-      [11, 0.12, C.orange],
-      [11.8, 0, C.orange],
-      [12.5, 0.3, C.orange],
-      [12.9, 1, C.orange],
-      [13, 2, C.orange],
-      [12.9, 3, C.orange],
-      [12.5, 3.7, C.orange],
-      [11.9, 4.15, C.orange],
-      [11.2, top(11.2), C.orange],
-      [10.3, top(10.3), C.orange],
-      [9.5, top(9.5), C.orange],
-      [9.3, top(9.3), C.yellow],
-      [8.5, top(8.5), C.yellow],
-      [7.7, top(7.7), C.yellow],
-      [7.5, top(7.5), C.orange],
-      [6, top(6), C.orange],
-      [4.3, top(4.3), C.orange],
-      [4.1, top(4.1), C.ivory],
-      [2.4, top(2.4), C.ivory],
-      [0, top(0), C.ivory]
+      [0, 2.25, C2.orangeDeep],
+      [5.5, 2.2, C2.orangeDeep],
+      [9.4, 1.95, C2.orangeDeep],
+      [10.25, 1.45, C2.orangeDeep],
+      [10.6, 0.65, C2.orangeDeep],
+      [11, 0.12, C2.orange],
+      [11.8, 0, C2.orange],
+      [12.5, 0.3, C2.orange],
+      [12.9, 1, C2.orange],
+      [13, 2, C2.orange],
+      [12.9, 3, C2.orange],
+      [12.5, 3.7, C2.orange],
+      [11.9, 4.15, C2.orange],
+      [11.2, top(11.2), C2.orange],
+      [10.3, top(10.3), C2.orange],
+      [9.5, top(9.5), C2.orange],
+      [9.3, top(9.3), C2.yellow],
+      [8.5, top(8.5), C2.yellow],
+      [7.7, top(7.7), C2.yellow],
+      [7.5, top(7.5), C2.orange],
+      [6, top(6), C2.orange],
+      [4.3, top(4.3), C2.orange],
+      [4.1, top(4.1), C2.ivory],
+      [2.4, top(2.4), C2.ivory],
+      [0, top(0), C2.ivory]
     ];
     return latheColored(profile, 48, -DISC_T / 2);
   }
   function wellGeometry() {
     const profile = [
-      [0, -15.2, C.turquoise],
-      [13.6, -15.2, C.turquoise],
-      [14.6, -14.9, C.turquoise],
-      [15, -14.2, C.turquoise],
-      [15, -10.6, C.turquoise],
-      [15, -10.45, C.ivory],
-      [15, -8, C.ivory],
-      [14.85, -7.2, C.ivory],
-      [14.4, -6.85, C.ivory],
-      [13.9, -7, C.ivory],
-      [13.6, -7.6, C.ivoryShade],
-      [13.6, -13.4, C.ivoryShade],
-      [13.2, -14, C.ivoryShade],
-      [0, -14, C.ivoryShade]
+      [0, -15.2, C2.turquoise],
+      [13.6, -15.2, C2.turquoise],
+      [14.6, -14.9, C2.turquoise],
+      [15, -14.2, C2.turquoise],
+      [15, -10.6, C2.turquoise],
+      [15, -10.45, C2.ivory],
+      [15, -8, C2.ivory],
+      [14.85, -7.2, C2.ivory],
+      [14.4, -6.85, C2.ivory],
+      [13.9, -7, C2.ivory],
+      [13.6, -7.6, C2.ivoryShade],
+      [13.6, -13.4, C2.ivoryShade],
+      [13.2, -14, C2.ivoryShade],
+      [0, -14, C2.ivoryShade]
     ];
     return latheColored(profile, 48);
   }
@@ -35403,23 +36710,23 @@ void main() {
       new Vector3(tip.x, tip.y - 2.2, 0)
     ]);
     const geo = new TubeGeometry(curve, 40, 2.05, 12, false);
-    colorTube(geo, (u) => u < 0.13 || u > 0.6 && u < 0.71 ? C.ivory : C.turquoise);
+    colorTube(geo, (u) => u < 0.13 || u > 0.6 && u < 0.71 ? C2.ivory : C2.turquoise);
     return geo;
   }
   function handleGeometry() {
     const profile = [
-      [0, -26, C.turquoise],
-      [2.7, -25.6, C.turquoise],
-      [2.9, -23.4, C.turquoise],
-      [3.15, -23.2, C.ivory],
-      [3.15, -21.6, C.ivory],
-      [2.9, -21.4, C.turquoise],
-      [2.9, -19.6, C.turquoise],
-      [3.15, -19.4, C.ivory],
-      [3.15, -17.8, C.ivory],
-      [2.9, -17.6, C.turquoise],
-      [3.6, -15.6, C.turquoise],
-      [0, -15.2, C.turquoise]
+      [0, -26, C2.turquoise],
+      [2.7, -25.6, C2.turquoise],
+      [2.9, -23.4, C2.turquoise],
+      [3.15, -23.2, C2.ivory],
+      [3.15, -21.6, C2.ivory],
+      [2.9, -21.4, C2.turquoise],
+      [2.9, -19.6, C2.turquoise],
+      [3.15, -19.4, C2.ivory],
+      [3.15, -17.8, C2.ivory],
+      [2.9, -17.6, C2.turquoise],
+      [3.6, -15.6, C2.turquoise],
+      [0, -15.2, C2.turquoise]
     ];
     return latheColored(profile, 24);
   }
@@ -35439,14 +36746,14 @@ void main() {
       clearcoatRoughness: 0.5
     });
     capPlastic = new MeshPhysicalMaterial({
-      color: C.orange,
+      color: C2.orange,
       roughness: 0.42,
       metalness: 0,
       clearcoat: 0.3,
       clearcoatRoughness: 0.45
     });
     /** Elastic cords: matte navy rubber. */
-    cord = new MeshStandardMaterial({ color: C.navy, roughness: 0.78, metalness: 0 });
+    cord = new MeshStandardMaterial({ color: C2.navy, roughness: 0.78, metalness: 0 });
     /** A fading copy of the disc plastic (one per ejected disc: each fades on its own clock). */
     ejectMaterial() {
       const m = this.plastic.clone();
@@ -35523,8 +36830,8 @@ void main() {
   };
 
   // src/ui/frisbee/FrisbeeMechanism.ts
-  var DEG = Math.PI / 180;
-  var MECH_CANVAS = { x: -8, y: -10, w: 62, h: 80 };
+  var DEG3 = Math.PI / 180;
+  var MECH_CANVAS2 = { x: -8, y: -10, w: 62, h: 80 };
   var FRISBEE_MECH_TUNING = {
     /** Ejected disc: travel time, rise, sideways drift (left = away from the digits), toward-camera drift. */
     ejectMove: 0.15,
@@ -35532,7 +36839,7 @@ void main() {
     ejectDrift: -3.5,
     ejectToward: 2,
     /** Tilt reached during the travel and the slow precession of its axis (readability: edge + underside). */
-    ejectTilt: 12 * DEG,
+    ejectTilt: 12 * DEG3,
     ejectAxis0: 0.5,
     ejectPrecession: 0.6,
     /** Fade window: the disc stays a HUD object, it never "flies off" like the scene projectile. */
@@ -35559,17 +36866,17 @@ void main() {
     refillStagger: 0.055
   };
   var T = FRISBEE_MECH_TUNING;
-  var VIEW_TARGET_Y = -6;
-  var CAM_FOV = 18;
-  var CAM_ELEVATION = 26 * DEG;
-  var MECH_SCALE = 1.12;
-  var CAM_DIST = MECH_CANVAS.h / (2 * Math.tan(CAM_FOV / 2 * DEG)) / MECH_SCALE;
-  var SUBSTEP2 = 1 / 240;
+  var VIEW_TARGET_Y2 = -6;
+  var CAM_FOV2 = 18;
+  var CAM_ELEVATION2 = 26 * DEG3;
+  var MECH_SCALE2 = 1.12;
+  var CAM_DIST2 = MECH_CANVAS2.h / (2 * Math.tan(CAM_FOV2 / 2 * DEG3)) / MECH_SCALE2;
+  var SUBSTEP3 = 1 / 240;
   var MAX_EJECTS = 2;
   var CORD_SAMPLES = 33;
   var ARM_LOAD = 0.03;
   var CAP_REL = CAP_POS.clone().sub(ARM_PIVOT);
-  var Spring = class {
+  var Spring2 = class {
     constructor(w, z) {
       this.w = w;
       this.z = z;
@@ -35603,7 +36910,7 @@ void main() {
       this.count = capacity;
       this.canvas = document.createElement("canvas");
       this.canvas.className = "frisbee-mech";
-      this.canvas.style.cssText = `left:${MECH_CANVAS.x}px;top:${MECH_CANVAS.y}px;width:${MECH_CANVAS.w}px;height:${MECH_CANVAS.h}px;`;
+      this.canvas.style.cssText = `left:${MECH_CANVAS2.x}px;top:${MECH_CANVAS2.y}px;width:${MECH_CANVAS2.w}px;height:${MECH_CANVAS2.h}px;`;
       host.appendChild(this.canvas);
       window.addEventListener("resize", this.onResize);
       document.addEventListener("visibilitychange", this.onPageVisibility);
@@ -35617,7 +36924,7 @@ void main() {
     kit = null;
     envTex = null;
     scene = new Scene();
-    camera = new PerspectiveCamera(CAM_FOV, MECH_CANVAS.w / MECH_CANVAS.h, 40, 600);
+    camera = new PerspectiveCamera(CAM_FOV2, MECH_CANVAS2.w / MECH_CANVAS2.h, 40, 600);
     armR = new Group();
     armL = new Group();
     slots = [];
@@ -35629,9 +36936,9 @@ void main() {
     capL = new Vector3();
     capR = new Vector3();
     axis = new Vector3();
-    arm = new Spring(T.armW, T.armZ);
-    band = new Spring(T.bandGrabW, T.bandGrabZ);
-    seat = new Spring(T.seatW, T.seatZ);
+    arm = new Spring2(T.armW, T.armZ);
+    band = new Spring2(T.bandGrabW, T.bandGrabZ);
+    seat = new Spring2(T.seatW, T.seatZ);
     visible = false;
     failed = false;
     lost = false;
@@ -35794,7 +37101,7 @@ void main() {
       this.scene.environmentIntensity = 0.3;
       const key = new DirectionalLight(16774114, 2.3);
       const target = new Object3D();
-      target.position.set(0, VIEW_TARGET_Y, 0);
+      target.position.set(0, VIEW_TARGET_Y2, 0);
       key.target = target;
       key.position.set(-0.34, 0.62, 0.71).normalize().multiplyScalar(140).add(target.position);
       key.castShadow = true;
@@ -35832,7 +37139,7 @@ void main() {
         const mesh = add(kit.disc, kit.plastic);
         mesh.position.y = HIDDEN_Y;
         mesh.visible = false;
-        this.slots.push({ mesh, y: new Spring(T.stackW, T.stackZ), on: false, sinking: false, delay: 0 });
+        this.slots.push({ mesh, y: new Spring2(T.stackW, T.stackZ), on: false, sinking: false, delay: 0 });
       }
       for (let i = 0; i < MAX_EJECTS; i++) {
         const mat = kit.ejectMaterial();
@@ -35849,12 +37156,12 @@ void main() {
         new PlaneGeometry(64, 76),
         new ShadowMaterial({ color: 526092, opacity: 0.16 })
       );
-      catcher.position.set(0, VIEW_TARGET_Y, -16.5);
+      catcher.position.set(0, VIEW_TARGET_Y2, -16.5);
       catcher.receiveShadow = true;
       this.scene.add(catcher);
       this.owned.push(catcher.geometry, catcher.material);
-      this.camera.position.set(0, VIEW_TARGET_Y + CAM_DIST * Math.sin(CAM_ELEVATION), CAM_DIST * Math.cos(CAM_ELEVATION));
-      this.camera.lookAt(0, VIEW_TARGET_Y, 0);
+      this.camera.position.set(0, VIEW_TARGET_Y2 + CAM_DIST2 * Math.sin(CAM_ELEVATION2), CAM_DIST2 * Math.cos(CAM_ELEVATION2));
+      this.camera.lookAt(0, VIEW_TARGET_Y2, 0);
     }
     // ------------------------------------------------------------------
     // State → targets
@@ -35946,9 +37253,9 @@ void main() {
       const dt = Math.min((now - this.last) / 1e3, 0.1) * this.timeScale;
       this.last = now;
       this.acc += dt;
-      while (this.acc >= SUBSTEP2) {
-        this.step(SUBSTEP2);
-        this.acc -= SUBSTEP2;
+      while (this.acc >= SUBSTEP3) {
+        this.step(SUBSTEP3);
+        this.acc -= SUBSTEP3;
       }
       const moving = this.moving();
       if (!moving) this.restAll();
@@ -36068,11 +37375,11 @@ void main() {
     resize(r) {
       this.sizeDirty = false;
       const rect = this.canvas.getBoundingClientRect();
-      const zoom = rect.width > 0 ? rect.width / MECH_CANVAS.w : 1;
+      const zoom = rect.width > 0 ? rect.width / MECH_CANVAS2.w : 1;
       const s = Math.min(4, Math.max(1, zoom * (window.devicePixelRatio || 1)));
       if (Math.abs(s - this.scale) < 0.01) return;
       this.scale = s;
-      r.setSize(Math.round(MECH_CANVAS.w * s), Math.round(MECH_CANVAS.h * s), false);
+      r.setSize(Math.round(MECH_CANVAS2.w * s), Math.round(MECH_CANVAS2.h * s), false);
     }
     onResize = () => {
       this.sizeDirty = true;
@@ -36348,9 +37655,12 @@ void main() {
      * vanishes at this distance.
      */
     maxRange: 400,
-    /** Flat damage of one BODY ball (no distance falloff). */
-    bodyDamage: 12,
-    /** Head multiplier (→ 18). */
+    /**
+     * Flat damage of one BODY ball (no distance falloff). SlideIO tuning
+     * (players have 200 HP — the pack used 12): 9 body balls = 207 = a kill.
+     */
+    bodyDamage: 23,
+    /** Head multiplier (→ 34.5). */
     headMultiplier: 1.5,
     /**
      * Spread cone (degrees): first ball, bloom per ball, cap, recovery.
@@ -36386,9 +37696,9 @@ void main() {
      */
     cadenceToleranceSeconds: 0.04
   };
-  var C2 = PaintballRifleConfig;
-  var DEG2 = Math.PI / 180;
-  var PAINTBALL_MIN_SPREAD_DEG = C2.spreadMinDeg * C2.aimSpreadFactor;
+  var C3 = PaintballRifleConfig;
+  var DEG4 = Math.PI / 180;
+  var PAINTBALL_MIN_SPREAD_DEG = C3.spreadMinDeg * C3.aimSpreadFactor;
 
   // shared/combat/NetworkWeapons.ts
   var CHARACTER_HITBOX_SCALE = 1.25;
@@ -36454,7 +37764,7 @@ void main() {
      */
     netToleranceSeconds: 0.1
   };
-  var DEG3 = Math.PI / 180;
+  var DEG5 = Math.PI / 180;
 
   // shared/combat/WaterFamasRules.ts
   var WaterFamasConfig = {
@@ -36498,7 +37808,7 @@ void main() {
     /** A jet message of a running burst is accepted until this long after the burst start (s). */
     burstWindowSeconds: 0.6
   };
-  var DEG4 = Math.PI / 180;
+  var DEG6 = Math.PI / 180;
 
   // shared/combat/FrisbeeLauncherRules.ts
   var FrisbeeLauncherConfig = {
@@ -36565,12 +37875,12 @@ void main() {
     /** Discs in flight for the whole room (server) / the whole game (client). */
     maxDiscs: 24
   };
-  var DEG5 = Math.PI / 180;
+  var DEG7 = Math.PI / 180;
 
   // tools/hud-preview/weapons-entry.ts
   var state = {
     paintball: { ammo: PaintballRifleConfig.capacity, isReloading: false },
-    popcorn: { ammo: PopcornShotgunConfig.shots, isReloading: false },
+    popcorn: { ammo: PopcornShotgunConfig.shots, isReloading: false, shotSerial: 0 },
     water: { ammo: WaterFamasConfig.capacity, isReloading: false },
     frisbee: { deckLoaded: true, cageCount: FrisbeeLauncherConfig.cageCapacity, discInHand: false, isReloading: false, shotSerial: 0 },
     revolver: { currentAmmo: 6, isMaterializing: false },
@@ -36628,6 +37938,7 @@ void main() {
     /** Frisbee 3D mechanism slow motion (1 = real time). */
     slow(f) {
       huds.frisbee.mechanism.timeScale = f;
+      huds.popcorn.mechanism.timeScale = f;
     }
   };
   show("paintball");

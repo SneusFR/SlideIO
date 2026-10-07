@@ -64,7 +64,14 @@ const add = (c, groups) => {
 };
 data.colliders.forEach((c) => add(c));
 data.playerClips.forEach((c) => add(c, PLAYER_CLIP));
-check(cuboids === 171 + 2 && hulls === 14, `colliders: ${cuboids} cuboids (incl. 2 clips) + ${hulls} hulls`);
+check(cuboids === 117 + 2 && hulls === 13, `colliders: ${cuboids} cuboids (incl. 2 clips) + ${hulls} hulls`);
+check(
+  data.expansion.mapEnvelope[0] === 280 &&
+    data.expansion.mapEnvelope[1] === 220 &&
+    data.expansion.envelopeMin.join() === "-140,-140" &&
+    data.expansion.envelopeMax.join() === "140,80",
+  `envelope 280 × 220 m: X [-140, 140], Z [-140, 80]`,
+);
 world.timestep = 0;
 world.step();
 
@@ -138,9 +145,21 @@ for (const s of data.spawns) {
   const cx = (zone.min[0] + zone.max[0]) / 2 - x;
   const cz = (zone.min[1] + zone.max[1]) / 2 - z;
   const facing = (fx * cx + fz * cz) / Math.hypot(cx, cz);
+  // Spawns 1-4 (corner rooms) face the room centre; spawns 5-8 (south
+  // vestibule / east elbow, open courtyards) only need to be forward-looking
+  // into the playable area, so their facing is reported, not enforced.
+  const cornerRoom = s.room === "STOCK" || s.room === "CHAUFFERIE";
+  // "Au sol, sans collision": no collider (static world, clips included)
+  // intersects the standing capsule.
+  const overlap = world.intersectionWithShape(
+    { x, y, z },
+    { x: 0, y: 0, z: 0, w: 1 },
+    new RAPIER.Capsule(HALF, RADIUS),
+  );
   check(
-    near(g, 0, 0.05) && near(y - g, 0.93, 0.01) && inRoom && facing > 0.9,
-    `${s.id} ${s.room}: ground ${g.toFixed(2)}, centre +${(y - g).toFixed(2)} m, faces room centre (cos ${facing.toFixed(2)})`,
+    near(g, 0, 0.05) && near(y - g, 0.93, 0.01) && inRoom && !overlap && (!cornerRoom || facing > 0.9),
+    `${s.id} ${s.room}: ground ${g.toFixed(2)}, centre +${(y - g).toFixed(2)} m, in zone, no overlap, ` +
+      `facing room centre cos ${facing.toFixed(2)}${cornerRoom ? "" : " (informational)"}`,
   );
 }
 
@@ -190,9 +209,24 @@ for (const [key, list] of Object.entries(byGroup)) {
     openings++;
   }
 }
-// Export: Stock / Chaufferie / Atelier have 2 doors each, Transit 3 → 9
-// room doors, + 4 traverse portals = 13 framed openings.
-check(openings === 13, `${openings} framed openings tested (9 room doors + 4 traverse portals)`);
+// Export v2: Stock and Chaufferie have 2 doors each → 4 room doors, + 4
+// covered-link portals (COL_LIAISON_Cadres: courtyard ↔ junction, junction ↔
+// link, west and east link ends) = 8 framed openings.
+check(openings === 8, `${openings} framed openings tested (4 room doors + 4 covered-link portals)`);
+// Courtyard ↔ junction portal: 22.5 m outer width (jambs included) × 4.7 m high.
+{
+  const [a, b, lintel] = data.colliders.filter((c) => /^COL_LIAISON_Cadres_0[0-2]$/.test(c.id));
+  const outer = Math.abs(b.position[0] - a.position[0]) + a.halfExtents[0] + b.halfExtents[0];
+  const clearH = lintel.position[1] - lintel.halfExtents[1];
+  check(near(outer, 22.5, 0.1) && near(clearH, 4.7, 0.01), `courtyard ↔ junction portal: ${outer.toFixed(2)} × ${clearH.toFixed(2)} m`);
+}
+// Covered link end to end (west end x = −64.5 → east end x = 83.8, Z ≈ 55):
+// start 5.5 m before the west portal, walk 18 s (≈ 170 m of free run), the
+// east elbow is open until the building at x = 107.
+{
+  const end = simulate([-70, 0, 55.2], [1, 0], 18);
+  check(end.x > 90, `covered south link crossed end to end (x ${end.x.toFixed(1)}, feet ${end.y.toFixed(2)} m)`);
+}
 
 // ---- 5. low roofs P1/Q1: player clips block landing, NOT shots ----
 for (const clip of data.playerClips) {
@@ -246,7 +280,11 @@ for (const [id, clearable] of jumpCases) {
 const sharedColliders = readFileSync(join(root, "shared/map/GivreColliders.ts"), "utf8");
 const sharedSpawns = readFileSync(join(root, "shared/map/GivreSpawns.ts"), "utf8");
 const boxLines = (sharedColliders.match(/^\s+\[[^\]]+\],/gm) ?? []).length;
-check(boxLines === 171 + 18 + 11, `GivreColliders.ts: ${boxLines} AABBs (171 cuboids + 18 ramp slabs + 11 hull AABBs)`);
+check(boxLines === 117 + 18 + 10, `GivreColliders.ts: ${boxLines} AABBs (117 cuboids + 18 ramp slabs + 10 hull AABBs)`);
+check(
+  /minZ: -140, maxZ: 80/.test(readFileSync(join(root, "shared/map/MapRegistry.ts"), "utf8")),
+  "MapRegistry GIVRE envelope Z = [-140, 80]",
+);
 check(!/CLIP_/.test(sharedColliders), "GivreColliders.ts: player clips absent (shots pass through)");
 for (const s of data.spawns) {
   check(sharedSpawns.includes(`yaw: ${s.yaw} }, // ${s.id}`), `GivreSpawns.ts contains ${s.id}`);

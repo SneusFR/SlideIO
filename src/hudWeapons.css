@@ -293,13 +293,28 @@
   --pl-tab-radius: 6px;
   --pl-rail: #1b1410;
 }
+/* 3D available: the little popcorn machine (<canvas class="popcorn-mech">, see
+   src/ui/popcorn/PopcornMechanism.ts) takes the badge's place on the left edge
+   (the flat badge stays as the no-WebGL fallback). Z-order: 3D (1) under the
+   panel texts (tab 2, digits 2) — the canvas ends at x 39, left of the tab
+   (46) and of the face (49): it never covers the name or the counter. */
+.wpn-plate[data-icon="popcorn"] .wpn-ribbon { min-width: 84px; }
+.wpn-plate[data-icon="popcorn"].mech-3d .wpn-badge { visibility: hidden; }
+.popcorn-mech {
+  position: absolute;
+  pointer-events: none;
+  z-index: 1;
+}
+.wpn-plate[data-icon="popcorn"] .wpn-count { z-index: 4; }
 .ammo-puff { gap: 0; }
 .ammo-puff .ammo-pip { width: 22px; height: 18px; color: var(--pip, #fff3c4); }
 .ammo-puff .ammo-pip svg { width: 100%; height: 100%; display: block; }
-.ammo-puff .ammo-pip:not(.on).pip-a { animation: puff-fly-a 0.4s ease-out; }
-.ammo-puff .ammo-pip:not(.on).pip-b { animation: puff-fly-b 0.4s ease-out; }
-@keyframes puff-fly-a { 0% { transform: translateY(-12px) rotate(-24deg) scale(1.25); opacity: 1; filter: none; } 100% { transform: none; } }
-@keyframes puff-fly-b { 0% { transform: translateY(-12px) rotate(24deg) scale(1.25); opacity: 1; filter: none; } 100% { transform: none; } }
+/* A spent puff stays IN its rail slot (a tiny in-place pop, no travel): nothing
+   leaves the rail, so nothing ever crosses the digits or reads as a second grain. */
+.ammo-puff .ammo-pip:not(.on).pip-a { animation: puff-spent-a 0.18s ease-out; }
+.ammo-puff .ammo-pip:not(.on).pip-b { animation: puff-spent-b 0.18s ease-out; }
+@keyframes puff-spent-a { 0% { transform: scale(1.12); opacity: 1; filter: none; } 100% { transform: none; } }
+@keyframes puff-spent-b { 0% { transform: scale(1.12); opacity: 1; filter: none; } 100% { transform: none; } }
 
 /* WATER FAMAS — glass TANK: blue-black face, the rail is a glass tube with a
    sloshing level, one droplet per burst. */

@@ -9,7 +9,7 @@
   "north": "-Z",
   "east": "+X",
   "fromBlender": "(x, y, z)_blender -> (x, z, -y)_three",
-  "fromMinimap": "(u, v)_minimap (0..280, v vers le sud) -> x = u - 140, z = v - 140"
+  "fromMinimap": "(u, v)_minimap (u 0..280, v 0..220 vers le sud) -> x = u - 140, z = v - 140"
  },
  "envelope": {
   "min": [
@@ -18,12 +18,12 @@
   ],
   "max": [
    140.0,
-   140.0
+   80.0
   ],
   "axes": "xz",
   "size": [
    280.0,
-   280.0
+   220.0
   ]
  },
  "floorY": 0.0,
@@ -37,56 +37,6 @@
   "note": "valeurs de Yard, a titre de reference"
  },
  "colliders": [
-  {
-   "id": "COL_BAT_CS1_00",
-   "shape": "box",
-   "center": [
-    -36.95,
-    4.5,
-    72.75
-   ],
-   "halfExtents": [
-    24.3,
-    4.5,
-    9.75
-   ],
-   "min": [
-    -61.25,
-    0.0,
-    63.0
-   ],
-   "max": [
-    -12.65,
-    9.0,
-    82.5
-   ],
-   "source": "BAT_CS1"
-  },
-  {
-   "id": "COL_BAT_CS2_00",
-   "shape": "box",
-   "center": [
-    35.7,
-    4.25,
-    72.75
-   ],
-   "halfExtents": [
-    25.8,
-    4.25,
-    9.75
-   ],
-   "min": [
-    9.9,
-    0.0,
-    63.0
-   ],
-   "max": [
-    61.5,
-    8.5,
-    82.5
-   ],
-   "source": "BAT_CS2"
-  },
   {
    "id": "COL_BAT_E_MID1_00",
    "shape": "box",
@@ -143,12 +93,12 @@
    "center": [
     123.525,
     7.0,
-    43.2
+    44.95
    ],
    "halfExtents": [
     16.475,
     7.0,
-    18.3
+    20.05
    ],
    "min": [
     107.05,
@@ -158,7 +108,7 @@
    "max": [
     140.0,
     14.0,
-    61.5
+    65.0
    ],
    "source": "BAT_E_MID3"
   },
@@ -263,31 +213,6 @@
    "source": "BAT_PE1"
   },
   {
-   "id": "COL_BAT_PE3_00",
-   "shape": "box",
-   "center": [
-    133.5,
-    7.5,
-    93.25
-   ],
-   "halfExtents": [
-    6.5,
-    7.5,
-    31.75
-   ],
-   "min": [
-    127.0,
-    0.0,
-    61.5
-   ],
-   "max": [
-    140.0,
-    15.0,
-    125.0
-   ],
-   "source": "BAT_PE3"
-  },
-  {
    "id": "COL_BAT_PN1_00",
    "shape": "box",
    "center": [
@@ -366,24 +291,24 @@
    "id": "COL_BAT_PS1_00",
    "shape": "box",
    "center": [
-    -100.625,
-    8.0,
-    132.5
+    -102.625,
+    7.5,
+    72.5
    ],
    "halfExtents": [
-    39.375,
-    8.0,
+    37.375,
+    7.5,
     7.5
    ],
    "min": [
     -140.0,
     0.0,
-    125.0
+    65.0
    ],
    "max": [
-    -61.25,
-    16.0,
-    140.0
+    -65.25,
+    15.0,
+    80.0
    ],
    "source": "BAT_PS1"
   },
@@ -391,24 +316,24 @@
    "id": "COL_BAT_PS2A_00",
    "shape": "box",
    "center": [
-    -30.625,
-    6.75,
-    122.525
+    -38.2,
+    6.25,
+    72.5
    ],
    "halfExtents": [
-    30.625,
-    6.75,
-    17.475
+    27.05,
+    6.25,
+    7.5
    ],
    "min": [
-    -61.25,
+    -65.25,
     0.0,
-    105.05
+    65.0
    ],
    "max": [
-    0.0,
-    13.5,
-    140.0
+    -11.15,
+    12.5,
+    80.0
    ],
    "source": "BAT_PS2A"
   },
@@ -416,49 +341,74 @@
    "id": "COL_BAT_PS2B_00",
    "shape": "box",
    "center": [
-    30.75,
-    7.5,
-    122.525
+    -1.375,
+    7.0,
+    69.525
    ],
    "halfExtents": [
-    30.75,
-    7.5,
-    17.475
+    9.775,
+    7.0,
+    10.475
    ],
    "min": [
+    -11.15,
     0.0,
-    0.0,
-    105.05
+    59.05
    ],
    "max": [
-    61.5,
-    15.0,
-    140.0
+    8.4,
+    14.0,
+    80.0
    ],
    "source": "BAT_PS2B"
+  },
+  {
+   "id": "COL_BAT_PS2C_00",
+   "shape": "box",
+   "center": [
+    46.475,
+    6.75,
+    72.5
+   ],
+   "halfExtents": [
+    38.075,
+    6.75,
+    7.5
+   ],
+   "min": [
+    8.4,
+    0.0,
+    65.0
+   ],
+   "max": [
+    84.55,
+    13.5,
+    80.0
+   ],
+   "source": "BAT_PS2C"
   },
   {
    "id": "COL_BAT_PS3_00",
    "shape": "box",
    "center": [
-    100.75,
-    8.25,
-    132.5
+    112.275,
+    8.0,
+    72.5
    ],
    "halfExtents": [
-    39.25,
-    8.25,
+    27.725,
+    8.0,
     7.5
    ],
    "min": [
-    61.5,
+    84.55,
     0.0,
-    125.0
+    65.0
    ],
    "max": [
     140.0,
-    16.5,
-    140.0
+    16.0,
+    80.0
    ],
    "source": "BAT_PS3"
   },
@@ -486,31 +436,6 @@
     -61.25
    ],
    "source": "BAT_PW1"
-  },
-  {
-   "id": "COL_BAT_PW3_00",
-   "shape": "box",
-   "center": [
-    -133.5,
-    7.5,
-    93.25
-   ],
-   "halfExtents": [
-    6.5,
-    7.5,
-    31.75
-   ],
-   "min": [
-    -140.0,
-    0.0,
-    61.5
-   ],
-   "max": [
-    -127.0,
-    15.0,
-    125.0
-   ],
-   "source": "BAT_PW3"
   },
   {
    "id": "COL_BAT_Q1_00",
@@ -593,12 +518,12 @@
    "center": [
     53.75,
     4.5,
-    18.675
+    20.65
    ],
    "halfExtents": [
     7.75,
     4.5,
-    22.825
+    24.8
    ],
    "min": [
     46.0,
@@ -608,7 +533,7 @@
    "max": [
     61.5,
     9.0,
-    41.5
+    45.45
    ],
    "source": "BAT_R1"
   },
@@ -618,12 +543,12 @@
    "center": [
     73.025,
     5.0,
-    33.2
+    35.175
    ],
    "halfExtents": [
     11.525,
     5.0,
-    8.3
+    10.275
    ],
    "min": [
     61.5,
@@ -633,72 +558,97 @@
    "max": [
     84.55,
     10.0,
-    41.5
+    45.45
    ],
    "source": "BAT_R2"
   },
   {
-   "id": "COL_BAT_SB_00",
+   "id": "COL_BAT_T1A_00",
    "shape": "box",
    "center": [
-    -74.0,
-    4.0,
-    51.75
+    -38.2,
+    3.3,
+    41.225
    ],
    "halfExtents": [
-    11.25,
-    4.0,
-    9.75
+    7.5,
+    3.3,
+    4.225
    ],
    "min": [
-    -85.25,
+    -45.7,
     0.0,
-    42.0
+    37.0
    ],
    "max": [
-    -62.75,
-    8.0,
-    61.5
+    -30.7,
+    6.6,
+    45.45
    ],
-   "source": "BAT_SB"
+   "source": "BAT_T1A"
   },
   {
-   "id": "COL_BAT_T1_00",
+   "id": "COL_BAT_T1B_00",
    "shape": "box",
    "center": [
-    -31.375,
+    -21.675,
     3.3,
-    39.25
+    38.225
    ],
    "halfExtents": [
-    18.725,
+    9.025,
     3.3,
-    2.25
+    1.225
    ],
    "min": [
-    -50.1,
+    -30.7,
     0.0,
     37.0
    ],
    "max": [
     -12.65,
     6.6,
-    41.5
+    39.45
    ],
-   "source": "BAT_T1"
+   "source": "BAT_T1B"
   },
   {
-   "id": "COL_BAT_T2_00",
+   "id": "COL_BAT_T2A_00",
    "shape": "box",
    "center": [
-    27.95,
+    36.975,
     3.3,
-    39.25
+    41.225
    ],
    "halfExtents": [
-    18.05,
+    9.025,
     3.3,
-    2.25
+    4.225
+   ],
+   "min": [
+    27.95,
+    0.0,
+    37.0
+   ],
+   "max": [
+    46.0,
+    6.6,
+    45.45
+   ],
+   "source": "BAT_T2A"
+  },
+  {
+   "id": "COL_BAT_T2B_00",
+   "shape": "box",
+   "center": [
+    18.925,
+    3.3,
+    38.225
+   ],
+   "halfExtents": [
+    9.025,
+    3.3,
+    1.225
    ],
    "min": [
     9.9,
@@ -706,24 +656,24 @@
     37.0
    ],
    "max": [
-    46.0,
+    27.95,
     6.6,
-    41.5
+    39.45
    ],
-   "source": "BAT_T2"
+   "source": "BAT_T2B"
   },
   {
    "id": "COL_BAT_TW_00",
    "shape": "box",
    "center": [
     -64.0,
-    2.5,
-    37.5
+    3.3,
+    39.225
    ],
    "halfExtents": [
     1.25,
-    2.5,
-    4.5
+    3.3,
+    6.225
    ],
    "min": [
     -65.25,
@@ -732,8 +682,8 @@
    ],
    "max": [
     -62.75,
-    5.0,
-    42.0
+    6.6,
+    45.45
    ],
    "source": "BAT_TW"
   },
@@ -768,12 +718,12 @@
    "center": [
     -123.375,
     6.25,
-    40.45
+    42.2
    ],
    "halfExtents": [
     16.625,
     6.25,
-    21.05
+    22.8
    ],
    "min": [
     -140.0,
@@ -783,7 +733,7 @@
    "max": [
     -106.75,
     12.5,
-    61.5
+    65.0
    ],
    "source": "BAT_W_LOW"
   },
@@ -811,231 +761,6 @@
     19.4
    ],
    "source": "BAT_W_MID"
-  },
-  {
-   "id": "COL_COUV_Atelier_Caisses_00",
-   "shape": "box",
-   "center": [
-    -69.608,
-    1.2,
-    113.604
-   ],
-   "halfExtents": [
-    2.408,
-    1.2,
-    2.496
-   ],
-   "min": [
-    -72.016,
-    0.0,
-    111.108
-   ],
-   "max": [
-    -67.2,
-    2.4,
-    116.1
-   ],
-   "source": "COUV_Atelier_Caisses"
-  },
-  {
-   "id": "COL_COUV_Atelier_Caisses_01",
-   "shape": "box",
-   "center": [
-    -70.984,
-    0.6,
-    108.036
-   ],
-   "halfExtents": [
-    3.784,
-    0.6,
-    1.536
-   ],
-   "min": [
-    -74.768,
-    0.0,
-    106.5
-   ],
-   "max": [
-    -67.2,
-    1.2,
-    109.572
-   ],
-   "source": "COUV_Atelier_Caisses"
-  },
-  {
-   "id": "COL_COUV_Atelier_Caisses_02",
-   "shape": "box",
-   "center": [
-    -74.51,
-    0.65,
-    114.372
-   ],
-   "halfExtents": [
-    1.29,
-    0.65,
-    1.728
-   ],
-   "min": [
-    -75.8,
-    0.0,
-    112.644
-   ],
-   "max": [
-    -73.22,
-    1.3,
-    116.1
-   ],
-   "source": "COUV_Atelier_Caisses"
-  },
-  {
-   "id": "COL_COUV_Atelier_Etablis_00",
-   "shape": "box",
-   "center": [
-    -108.6,
-    0.5,
-    79.05
-   ],
-   "halfExtents": [
-    8.0,
-    0.5,
-    1.65
-   ],
-   "min": [
-    -116.6,
-    0.0,
-    77.4
-   ],
-   "max": [
-    -100.6,
-    1.0,
-    80.7
-   ],
-   "source": "COUV_Atelier_Etablis"
-  },
-  {
-   "id": "COL_COUV_Atelier_Etablis_01",
-   "shape": "box",
-   "center": [
-    -110.3,
-    1.91,
-    79.05
-   ],
-   "halfExtents": [
-    1.5,
-    0.79,
-    1.35
-   ],
-   "min": [
-    -111.8,
-    1.12,
-    77.7
-   ],
-   "max": [
-    -108.8,
-    2.7,
-    80.4
-   ],
-   "source": "COUV_Atelier_Etablis"
-  },
-  {
-   "id": "COL_COUV_Atelier_Etablis_02",
-   "shape": "box",
-   "center": [
-    -110.3,
-    3.05,
-    79.05
-   ],
-   "halfExtents": [
-    0.7,
-    0.35,
-    0.75
-   ],
-   "min": [
-    -111.0,
-    2.7,
-    78.3
-   ],
-   "max": [
-    -109.6,
-    3.4,
-    79.8
-   ],
-   "source": "COUV_Atelier_Etablis"
-  },
-  {
-   "id": "COL_COUV_Atelier_Etablis_03",
-   "shape": "box",
-   "center": [
-    -108.6,
-    0.5,
-    72.45
-   ],
-   "halfExtents": [
-    8.0,
-    0.5,
-    1.65
-   ],
-   "min": [
-    -116.6,
-    0.0,
-    70.8
-   ],
-   "max": [
-    -100.6,
-    1.0,
-    74.1
-   ],
-   "source": "COUV_Atelier_Etablis"
-  },
-  {
-   "id": "COL_COUV_Atelier_Etablis_04",
-   "shape": "box",
-   "center": [
-    -105.18,
-    1.91,
-    72.45
-   ],
-   "halfExtents": [
-    1.5,
-    0.79,
-    1.35
-   ],
-   "min": [
-    -106.68,
-    1.12,
-    71.1
-   ],
-   "max": [
-    -103.68,
-    2.7,
-    73.8
-   ],
-   "source": "COUV_Atelier_Etablis"
-  },
-  {
-   "id": "COL_COUV_Atelier_Etablis_05",
-   "shape": "box",
-   "center": [
-    -105.18,
-    3.05,
-    72.45
-   ],
-   "halfExtents": [
-    0.7,
-    0.35,
-    0.75
-   ],
-   "min": [
-    -105.88,
-    2.7,
-    71.7
-   ],
-   "max": [
-    -104.48,
-    3.4,
-    73.2
-   ],
-   "source": "COUV_Atelier_Etablis"
   },
   {
    "id": "COL_COUV_Chaufferie_Chaudiere_00",
@@ -2006,6 +1731,56 @@
    "source": "COUV_CourLivraison_Caisses2"
   },
   {
+   "id": "COL_COUV_Liaison_BlocEst_00",
+   "shape": "box",
+   "center": [
+    47.7,
+    1.2,
+    48.725
+   ],
+   "halfExtents": [
+    4.3,
+    1.2,
+    3.275
+   ],
+   "min": [
+    43.4,
+    0.0,
+    45.45
+   ],
+   "max": [
+    52.0,
+    2.4,
+    52.0
+   ],
+   "source": "COUV_Liaison_BlocEst"
+  },
+  {
+   "id": "COL_COUV_Liaison_BlocOuest_00",
+   "shape": "box",
+   "center": [
+    -41.45,
+    1.2,
+    61.7
+   ],
+   "halfExtents": [
+    4.35,
+    1.2,
+    3.3
+   ],
+   "min": [
+    -45.8,
+    0.0,
+    58.4
+   ],
+   "max": [
+    -37.1,
+    2.4,
+    65.0
+   ],
+   "source": "COUV_Liaison_BlocOuest"
+  },
+  {
    "id": "COL_COUV_Stock_Bloc_00",
    "shape": "box",
    "center": [
@@ -2154,156 +1929,6 @@
     -122.1
    ],
    "source": "COUV_Stock_Etageres"
-  },
-  {
-   "id": "COL_COUV_Transit_Caisses_00",
-   "shape": "box",
-   "center": [
-    90.148,
-    1.2,
-    107.256
-   ],
-   "halfExtents": [
-    4.648,
-    1.2,
-    2.756
-   ],
-   "min": [
-    85.5,
-    0.0,
-    104.5
-   ],
-   "max": [
-    94.796,
-    2.4,
-    110.012
-   ],
-   "source": "COUV_Transit_Caisses"
-  },
-  {
-   "id": "COL_COUV_Transit_Caisses_01",
-   "shape": "box",
-   "center": [
-    92.804,
-    0.6,
-    113.404
-   ],
-   "halfExtents": [
-    7.304,
-    0.6,
-    1.696
-   ],
-   "min": [
-    85.5,
-    0.0,
-    111.708
-   ],
-   "max": [
-    100.108,
-    1.2,
-    115.1
-   ],
-   "source": "COUV_Transit_Caisses"
-  },
-  {
-   "id": "COL_COUV_Transit_Caisses_02",
-   "shape": "box",
-   "center": [
-    99.61,
-    0.65,
-    106.408
-   ],
-   "halfExtents": [
-    2.49,
-    0.65,
-    1.908
-   ],
-   "min": [
-    97.12,
-    0.0,
-    104.5
-   ],
-   "max": [
-    102.1,
-    1.3,
-    108.316
-   ],
-   "source": "COUV_Transit_Caisses"
-  },
-  {
-   "id": "COL_COUV_Transit_Guerite_00",
-   "shape": "box",
-   "center": [
-    115.8,
-    1.45,
-    77.75
-   ],
-   "halfExtents": [
-    4.0,
-    1.45,
-    5.95
-   ],
-   "min": [
-    111.8,
-    0.0,
-    71.8
-   ],
-   "max": [
-    119.8,
-    2.9,
-    83.7
-   ],
-   "source": "COUV_Transit_Guerite"
-  },
-  {
-   "id": "COL_COUV_Transit_Guerite_01",
-   "shape": "box",
-   "center": [
-    115.8,
-    3.025,
-    77.75
-   ],
-   "halfExtents": [
-    4.4,
-    0.125,
-    6.35
-   ],
-   "min": [
-    111.4,
-    2.9,
-    71.4
-   ],
-   "max": [
-    120.2,
-    3.15,
-    84.1
-   ],
-   "source": "COUV_Transit_Guerite"
-  },
-  {
-   "id": "COL_COUV_Traverse_Bloc_00",
-   "shape": "box",
-   "center": [
-    20.65,
-    1.2,
-    58.85
-   ],
-   "halfExtents": [
-    4.95,
-    1.2,
-    4.15
-   ],
-   "min": [
-    15.7,
-    0.0,
-    54.7
-   ],
-   "max": [
-    25.6,
-    2.4,
-    63.0
-   ],
-   "source": "COUV_Traverse_Bloc"
   },
   {
    "id": "COL_GALERIE_GardeCorps_00",
@@ -2663,6 +2288,431 @@
    "source": "GALERIE_Nord"
   },
   {
+   "id": "COL_LIAISON_Cadres_00",
+   "shape": "box",
+   "center": [
+    -12.25,
+    2.35,
+    38.225
+   ],
+   "halfExtents": [
+    0.4,
+    2.35,
+    1.475
+   ],
+   "min": [
+    -12.65,
+    0.0,
+    36.75
+   ],
+   "max": [
+    -11.85,
+    4.7,
+    39.7
+   ],
+   "source": "LIAISON_Cadres"
+  },
+  {
+   "id": "COL_LIAISON_Cadres_01",
+   "shape": "box",
+   "center": [
+    9.5,
+    2.35,
+    38.225
+   ],
+   "halfExtents": [
+    0.4,
+    2.35,
+    1.475
+   ],
+   "min": [
+    9.1,
+    0.0,
+    36.75
+   ],
+   "max": [
+    9.9,
+    4.7,
+    39.7
+   ],
+   "source": "LIAISON_Cadres"
+  },
+  {
+   "id": "COL_LIAISON_Cadres_02",
+   "shape": "box",
+   "center": [
+    -1.375,
+    5.1,
+    38.225
+   ],
+   "halfExtents": [
+    11.275,
+    0.4,
+    1.475
+   ],
+   "min": [
+    -12.65,
+    4.7,
+    36.75
+   ],
+   "max": [
+    9.9,
+    5.5,
+    39.7
+   ],
+   "source": "LIAISON_Cadres"
+  },
+  {
+   "id": "COL_LIAISON_Cadres_03",
+   "shape": "box",
+   "center": [
+    -63.2,
+    2.35,
+    46.15
+   ],
+   "halfExtents": [
+    0.4,
+    2.35,
+    0.95
+   ],
+   "min": [
+    -63.6,
+    0.0,
+    45.2
+   ],
+   "max": [
+    -62.8,
+    4.7,
+    47.1
+   ],
+   "source": "LIAISON_Cadres"
+  },
+  {
+   "id": "COL_LIAISON_Cadres_04",
+   "shape": "box",
+   "center": [
+    -46.1,
+    2.35,
+    46.15
+   ],
+   "halfExtents": [
+    0.4,
+    2.35,
+    0.95
+   ],
+   "min": [
+    -46.5,
+    0.0,
+    45.2
+   ],
+   "max": [
+    -45.7,
+    4.7,
+    47.1
+   ],
+   "source": "LIAISON_Cadres"
+  },
+  {
+   "id": "COL_LIAISON_Cadres_05",
+   "shape": "box",
+   "center": [
+    -54.65,
+    5.1,
+    46.15
+   ],
+   "halfExtents": [
+    8.95,
+    0.4,
+    0.95
+   ],
+   "min": [
+    -63.6,
+    4.7,
+    45.2
+   ],
+   "max": [
+    -45.7,
+    5.5,
+    47.1
+   ],
+   "source": "LIAISON_Cadres"
+  },
+  {
+   "id": "COL_LIAISON_Cadres_06",
+   "shape": "box",
+   "center": [
+    -64.55,
+    2.35,
+    64.6
+   ],
+   "halfExtents": [
+    0.95,
+    2.35,
+    0.4
+   ],
+   "min": [
+    -65.5,
+    0.0,
+    64.2
+   ],
+   "max": [
+    -63.6,
+    4.7,
+    65.0
+   ],
+   "source": "LIAISON_Cadres"
+  },
+  {
+   "id": "COL_LIAISON_Cadres_07",
+   "shape": "box",
+   "center": [
+    -64.55,
+    2.35,
+    45.85
+   ],
+   "halfExtents": [
+    0.95,
+    2.35,
+    0.4
+   ],
+   "min": [
+    -65.5,
+    0.0,
+    45.45
+   ],
+   "max": [
+    -63.6,
+    4.7,
+    46.25
+   ],
+   "source": "LIAISON_Cadres"
+  },
+  {
+   "id": "COL_LIAISON_Cadres_08",
+   "shape": "box",
+   "center": [
+    -64.55,
+    5.1,
+    55.225
+   ],
+   "halfExtents": [
+    0.95,
+    0.4,
+    9.775
+   ],
+   "min": [
+    -65.5,
+    4.7,
+    45.45
+   ],
+   "max": [
+    -63.6,
+    5.5,
+    65.0
+   ],
+   "source": "LIAISON_Cadres"
+  },
+  {
+   "id": "COL_LIAISON_Cadres_09",
+   "shape": "box",
+   "center": [
+    83.85,
+    2.35,
+    64.6
+   ],
+   "halfExtents": [
+    0.95,
+    2.35,
+    0.4
+   ],
+   "min": [
+    82.9,
+    0.0,
+    64.2
+   ],
+   "max": [
+    84.8,
+    4.7,
+    65.0
+   ],
+   "source": "LIAISON_Cadres"
+  },
+  {
+   "id": "COL_LIAISON_Cadres_10",
+   "shape": "box",
+   "center": [
+    83.85,
+    2.35,
+    45.85
+   ],
+   "halfExtents": [
+    0.95,
+    2.35,
+    0.4
+   ],
+   "min": [
+    82.9,
+    0.0,
+    45.45
+   ],
+   "max": [
+    84.8,
+    4.7,
+    46.25
+   ],
+   "source": "LIAISON_Cadres"
+  },
+  {
+   "id": "COL_LIAISON_Cadres_11",
+   "shape": "box",
+   "center": [
+    83.85,
+    5.1,
+    55.225
+   ],
+   "halfExtents": [
+    0.95,
+    0.4,
+    9.775
+   ],
+   "min": [
+    82.9,
+    4.7,
+    45.45
+   ],
+   "max": [
+    84.8,
+    5.5,
+    65.0
+   ],
+   "source": "LIAISON_Cadres"
+  },
+  {
+   "id": "COL_LIAISON_Toit_00",
+   "shape": "box",
+   "center": [
+    9.65,
+    5.8,
+    52.25
+   ],
+   "halfExtents": [
+    74.9,
+    0.3,
+    6.8
+   ],
+   "min": [
+    -65.25,
+    5.5,
+    45.45
+   ],
+   "max": [
+    84.55,
+    6.1,
+    59.05
+   ],
+   "source": "LIAISON_Toit"
+  },
+  {
+   "id": "COL_LIAISON_Toit_01",
+   "shape": "box",
+   "center": [
+    -38.2,
+    5.8,
+    62.025
+   ],
+   "halfExtents": [
+    27.05,
+    0.3,
+    2.975
+   ],
+   "min": [
+    -65.25,
+    5.5,
+    59.05
+   ],
+   "max": [
+    -11.15,
+    6.1,
+    65.0
+   ],
+   "source": "LIAISON_Toit"
+  },
+  {
+   "id": "COL_LIAISON_Toit_02",
+   "shape": "box",
+   "center": [
+    46.475,
+    5.8,
+    62.025
+   ],
+   "halfExtents": [
+    38.075,
+    0.3,
+    2.975
+   ],
+   "min": [
+    8.4,
+    5.5,
+    59.05
+   ],
+   "max": [
+    84.55,
+    6.1,
+    65.0
+   ],
+   "source": "LIAISON_Toit"
+  },
+  {
+   "id": "COL_LIAISON_Toit_03",
+   "shape": "box",
+   "center": [
+    -1.375,
+    5.8,
+    42.45
+   ],
+   "halfExtents": [
+    29.325,
+    0.3,
+    3.0
+   ],
+   "min": [
+    -30.7,
+    5.5,
+    39.45
+   ],
+   "max": [
+    27.95,
+    6.1,
+    45.45
+   ],
+   "source": "LIAISON_Toit"
+  },
+  {
+   "id": "COL_LIAISON_Toit_04",
+   "shape": "box",
+   "center": [
+    -1.375,
+    5.8,
+    38.225
+   ],
+   "halfExtents": [
+    11.275,
+    0.3,
+    1.225
+   ],
+   "min": [
+    -12.65,
+    5.5,
+    37.0
+   ],
+   "max": [
+    9.9,
+    6.1,
+    39.45
+   ],
+   "source": "LIAISON_Toit"
+  },
+  {
    "id": "COL_MURET_CourOuest_00",
    "shape": "box",
    "center": [
@@ -2797,481 +2847,6 @@
     ]
    ],
    "source": "RAMPE_Sud"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Cadres_00",
-   "shape": "box",
-   "center": [
-    -102.6,
-    2.5,
-    61.5
-   ],
-   "halfExtents": [
-    0.4,
-    2.5,
-    0.85
-   ],
-   "min": [
-    -103.0,
-    0.0,
-    60.65
-   ],
-   "max": [
-    -102.2,
-    5.0,
-    62.35
-   ],
-   "source": "SALLE_Atelier_Cadres"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Cadres_01",
-   "shape": "box",
-   "center": [
-    -89.4,
-    2.5,
-    61.5
-   ],
-   "halfExtents": [
-    0.4,
-    2.5,
-    0.85
-   ],
-   "min": [
-    -89.8,
-    0.0,
-    60.65
-   ],
-   "max": [
-    -89.0,
-    5.0,
-    62.35
-   ],
-   "source": "SALLE_Atelier_Cadres"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Cadres_02",
-   "shape": "box",
-   "center": [
-    -96.0,
-    5.4,
-    61.5
-   ],
-   "halfExtents": [
-    7.0,
-    0.4,
-    0.85
-   ],
-   "min": [
-    -103.0,
-    5.0,
-    60.65
-   ],
-   "max": [
-    -89.0,
-    5.8,
-    62.35
-   ],
-   "source": "SALLE_Atelier_Cadres"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Cadres_03",
-   "shape": "box",
-   "center": [
-    -61.25,
-    2.5,
-    100.4
-   ],
-   "halfExtents": [
-    0.85,
-    2.5,
-    0.4
-   ],
-   "min": [
-    -62.1,
-    0.0,
-    100.0
-   ],
-   "max": [
-    -60.4,
-    5.0,
-    100.8
-   ],
-   "source": "SALLE_Atelier_Cadres"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Cadres_04",
-   "shape": "box",
-   "center": [
-    -61.25,
-    2.5,
-    87.2
-   ],
-   "halfExtents": [
-    0.85,
-    2.5,
-    0.4
-   ],
-   "min": [
-    -62.1,
-    0.0,
-    86.8
-   ],
-   "max": [
-    -60.4,
-    5.0,
-    87.6
-   ],
-   "source": "SALLE_Atelier_Cadres"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Cadres_05",
-   "shape": "box",
-   "center": [
-    -61.25,
-    5.4,
-    93.8
-   ],
-   "halfExtents": [
-    0.85,
-    0.4,
-    7.0
-   ],
-   "min": [
-    -62.1,
-    5.0,
-    86.8
-   ],
-   "max": [
-    -60.4,
-    5.8,
-    100.8
-   ],
-   "source": "SALLE_Atelier_Cadres"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Murs_00",
-   "shape": "box",
-   "center": [
-    -115.3,
-    4.0,
-    61.5
-   ],
-   "halfExtents": [
-    12.3,
-    4.0,
-    0.6
-   ],
-   "min": [
-    -127.6,
-    0.0,
-    60.9
-   ],
-   "max": [
-    -103.0,
-    8.0,
-    62.1
-   ],
-   "source": "SALLE_Atelier_Murs"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Murs_01",
-   "shape": "box",
-   "center": [
-    -96.0,
-    6.9,
-    61.5
-   ],
-   "halfExtents": [
-    7.0,
-    1.1,
-    0.6
-   ],
-   "min": [
-    -103.0,
-    5.8,
-    60.9
-   ],
-   "max": [
-    -89.0,
-    8.0,
-    62.1
-   ],
-   "source": "SALLE_Atelier_Murs"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Murs_02",
-   "shape": "box",
-   "center": [
-    -74.825,
-    4.0,
-    61.5
-   ],
-   "halfExtents": [
-    14.175,
-    4.0,
-    0.6
-   ],
-   "min": [
-    -89.0,
-    0.0,
-    60.9
-   ],
-   "max": [
-    -60.65,
-    8.0,
-    62.1
-   ],
-   "source": "SALLE_Atelier_Murs"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Murs_03",
-   "shape": "box",
-   "center": [
-    -94.125,
-    4.0,
-    125.0
-   ],
-   "halfExtents": [
-    33.475,
-    4.0,
-    0.6
-   ],
-   "min": [
-    -127.6,
-    0.0,
-    124.4
-   ],
-   "max": [
-    -60.65,
-    8.0,
-    125.6
-   ],
-   "source": "SALLE_Atelier_Murs"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Murs_04",
-   "shape": "box",
-   "center": [
-    -127.0,
-    4.0,
-    93.25
-   ],
-   "halfExtents": [
-    0.6,
-    4.0,
-    31.15
-   ],
-   "min": [
-    -127.6,
-    0.0,
-    62.1
-   ],
-   "max": [
-    -126.4,
-    8.0,
-    124.4
-   ],
-   "source": "SALLE_Atelier_Murs"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Murs_05",
-   "shape": "box",
-   "center": [
-    -61.25,
-    4.0,
-    112.6
-   ],
-   "halfExtents": [
-    0.6,
-    4.0,
-    11.8
-   ],
-   "min": [
-    -61.85,
-    0.0,
-    100.8
-   ],
-   "max": [
-    -60.65,
-    8.0,
-    124.4
-   ],
-   "source": "SALLE_Atelier_Murs"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Murs_06",
-   "shape": "box",
-   "center": [
-    -61.25,
-    6.9,
-    93.8
-   ],
-   "halfExtents": [
-    0.6,
-    1.1,
-    7.0
-   ],
-   "min": [
-    -61.85,
-    5.8,
-    86.8
-   ],
-   "max": [
-    -60.65,
-    8.0,
-    100.8
-   ],
-   "source": "SALLE_Atelier_Murs"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Murs_07",
-   "shape": "box",
-   "center": [
-    -61.25,
-    4.0,
-    74.45
-   ],
-   "halfExtents": [
-    0.6,
-    4.0,
-    12.35
-   ],
-   "min": [
-    -61.85,
-    0.0,
-    62.1
-   ],
-   "max": [
-    -60.65,
-    8.0,
-    86.8
-   ],
-   "source": "SALLE_Atelier_Murs"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Murs_08",
-   "shape": "box",
-   "center": [
-    -105.0,
-    4.0,
-    87.0
-   ],
-   "halfExtents": [
-    0.55,
-    4.0,
-    0.55
-   ],
-   "min": [
-    -105.55,
-    0.0,
-    86.45
-   ],
-   "max": [
-    -104.45,
-    8.0,
-    87.55
-   ],
-   "source": "SALLE_Atelier_Murs"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Murs_09",
-   "shape": "box",
-   "center": [
-    -83.5,
-    4.0,
-    87.0
-   ],
-   "halfExtents": [
-    0.55,
-    4.0,
-    0.55
-   ],
-   "min": [
-    -84.05,
-    0.0,
-    86.45
-   ],
-   "max": [
-    -82.95,
-    8.0,
-    87.55
-   ],
-   "source": "SALLE_Atelier_Murs"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Murs_10",
-   "shape": "box",
-   "center": [
-    -105.0,
-    4.0,
-    105.0
-   ],
-   "halfExtents": [
-    0.55,
-    4.0,
-    0.55
-   ],
-   "min": [
-    -105.55,
-    0.0,
-    104.45
-   ],
-   "max": [
-    -104.45,
-    8.0,
-    105.55
-   ],
-   "source": "SALLE_Atelier_Murs"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Murs_11",
-   "shape": "box",
-   "center": [
-    -83.5,
-    4.0,
-    105.0
-   ],
-   "halfExtents": [
-    0.55,
-    4.0,
-    0.55
-   ],
-   "min": [
-    -84.05,
-    0.0,
-    104.45
-   ],
-   "max": [
-    -82.95,
-    8.0,
-    105.55
-   ],
-   "source": "SALLE_Atelier_Murs"
-  },
-  {
-   "id": "COL_SALLE_Atelier_Toit_00",
-   "shape": "box",
-   "center": [
-    -94.125,
-    8.4,
-    93.25
-   ],
-   "halfExtents": [
-    33.475,
-    0.4,
-    32.35
-   ],
-   "min": [
-    -127.6,
-    8.0,
-    60.9
-   ],
-   "max": [
-    -60.65,
-    8.8,
-    125.6
-   ],
-   "source": "SALLE_Atelier_Toit"
   },
   {
    "id": "COL_SALLE_Chaufferie_Cadres_00",
@@ -4224,617 +3799,17 @@
    "source": "SALLE_Stock_Toit"
   },
   {
-   "id": "COL_SALLE_Transit_Cadres_00",
-   "shape": "box",
-   "center": [
-    66.4,
-    2.5,
-    61.5
-   ],
-   "halfExtents": [
-    0.4,
-    2.5,
-    0.85
-   ],
-   "min": [
-    66.0,
-    0.0,
-    60.65
-   ],
-   "max": [
-    66.8,
-    5.0,
-    62.35
-   ],
-   "source": "SALLE_Transit_Cadres"
-  },
-  {
-   "id": "COL_SALLE_Transit_Cadres_01",
-   "shape": "box",
-   "center": [
-    79.6,
-    2.5,
-    61.5
-   ],
-   "halfExtents": [
-    0.4,
-    2.5,
-    0.85
-   ],
-   "min": [
-    79.2,
-    0.0,
-    60.65
-   ],
-   "max": [
-    80.0,
-    5.0,
-    62.35
-   ],
-   "source": "SALLE_Transit_Cadres"
-  },
-  {
-   "id": "COL_SALLE_Transit_Cadres_02",
-   "shape": "box",
-   "center": [
-    73.0,
-    5.4,
-    61.5
-   ],
-   "halfExtents": [
-    7.0,
-    0.4,
-    0.85
-   ],
-   "min": [
-    66.0,
-    5.0,
-    60.65
-   ],
-   "max": [
-    80.0,
-    5.8,
-    62.35
-   ],
-   "source": "SALLE_Transit_Cadres"
-  },
-  {
-   "id": "COL_SALLE_Transit_Cadres_03",
-   "shape": "box",
-   "center": [
-    89.2,
-    2.5,
-    61.5
-   ],
-   "halfExtents": [
-    0.4,
-    2.5,
-    0.85
-   ],
-   "min": [
-    88.8,
-    0.0,
-    60.65
-   ],
-   "max": [
-    89.6,
-    5.0,
-    62.35
-   ],
-   "source": "SALLE_Transit_Cadres"
-  },
-  {
-   "id": "COL_SALLE_Transit_Cadres_04",
-   "shape": "box",
-   "center": [
-    102.4,
-    2.5,
-    61.5
-   ],
-   "halfExtents": [
-    0.4,
-    2.5,
-    0.85
-   ],
-   "min": [
-    102.0,
-    0.0,
-    60.65
-   ],
-   "max": [
-    102.8,
-    5.0,
-    62.35
-   ],
-   "source": "SALLE_Transit_Cadres"
-  },
-  {
-   "id": "COL_SALLE_Transit_Cadres_05",
-   "shape": "box",
-   "center": [
-    95.8,
-    5.4,
-    61.5
-   ],
-   "halfExtents": [
-    7.0,
-    0.4,
-    0.85
-   ],
-   "min": [
-    88.8,
-    5.0,
-    60.65
-   ],
-   "max": [
-    102.8,
-    5.8,
-    62.35
-   ],
-   "source": "SALLE_Transit_Cadres"
-  },
-  {
-   "id": "COL_SALLE_Transit_Cadres_06",
-   "shape": "box",
-   "center": [
-    61.5,
-    2.5,
-    100.4
-   ],
-   "halfExtents": [
-    0.85,
-    2.5,
-    0.4
-   ],
-   "min": [
-    60.65,
-    0.0,
-    100.0
-   ],
-   "max": [
-    62.35,
-    5.0,
-    100.8
-   ],
-   "source": "SALLE_Transit_Cadres"
-  },
-  {
-   "id": "COL_SALLE_Transit_Cadres_07",
-   "shape": "box",
-   "center": [
-    61.5,
-    2.5,
-    87.2
-   ],
-   "halfExtents": [
-    0.85,
-    2.5,
-    0.4
-   ],
-   "min": [
-    60.65,
-    0.0,
-    86.8
-   ],
-   "max": [
-    62.35,
-    5.0,
-    87.6
-   ],
-   "source": "SALLE_Transit_Cadres"
-  },
-  {
-   "id": "COL_SALLE_Transit_Cadres_08",
-   "shape": "box",
-   "center": [
-    61.5,
-    5.4,
-    93.8
-   ],
-   "halfExtents": [
-    0.85,
-    0.4,
-    7.0
-   ],
-   "min": [
-    60.65,
-    5.0,
-    86.8
-   ],
-   "max": [
-    62.35,
-    5.8,
-    100.8
-   ],
-   "source": "SALLE_Transit_Cadres"
-  },
-  {
-   "id": "COL_SALLE_Transit_Murs_00",
-   "shape": "box",
-   "center": [
-    63.45,
-    4.0,
-    61.5
-   ],
-   "halfExtents": [
-    2.55,
-    4.0,
-    0.6
-   ],
-   "min": [
-    60.9,
-    0.0,
-    60.9
-   ],
-   "max": [
-    66.0,
-    8.0,
-    62.1
-   ],
-   "source": "SALLE_Transit_Murs"
-  },
-  {
-   "id": "COL_SALLE_Transit_Murs_01",
-   "shape": "box",
-   "center": [
-    73.0,
-    6.9,
-    61.5
-   ],
-   "halfExtents": [
-    7.0,
-    1.1,
-    0.6
-   ],
-   "min": [
-    66.0,
-    5.8,
-    60.9
-   ],
-   "max": [
-    80.0,
-    8.0,
-    62.1
-   ],
-   "source": "SALLE_Transit_Murs"
-  },
-  {
-   "id": "COL_SALLE_Transit_Murs_02",
-   "shape": "box",
-   "center": [
-    84.4,
-    4.0,
-    61.5
-   ],
-   "halfExtents": [
-    4.4,
-    4.0,
-    0.6
-   ],
-   "min": [
-    80.0,
-    0.0,
-    60.9
-   ],
-   "max": [
-    88.8,
-    8.0,
-    62.1
-   ],
-   "source": "SALLE_Transit_Murs"
-  },
-  {
-   "id": "COL_SALLE_Transit_Murs_03",
-   "shape": "box",
-   "center": [
-    95.8,
-    6.9,
-    61.5
-   ],
-   "halfExtents": [
-    7.0,
-    1.1,
-    0.6
-   ],
-   "min": [
-    88.8,
-    5.8,
-    60.9
-   ],
-   "max": [
-    102.8,
-    8.0,
-    62.1
-   ],
-   "source": "SALLE_Transit_Murs"
-  },
-  {
-   "id": "COL_SALLE_Transit_Murs_04",
-   "shape": "box",
-   "center": [
-    115.2,
-    4.0,
-    61.5
-   ],
-   "halfExtents": [
-    12.4,
-    4.0,
-    0.6
-   ],
-   "min": [
-    102.8,
-    0.0,
-    60.9
-   ],
-   "max": [
-    127.6,
-    8.0,
-    62.1
-   ],
-   "source": "SALLE_Transit_Murs"
-  },
-  {
-   "id": "COL_SALLE_Transit_Murs_05",
-   "shape": "box",
-   "center": [
-    94.25,
-    4.0,
-    125.0
-   ],
-   "halfExtents": [
-    33.35,
-    4.0,
-    0.6
-   ],
-   "min": [
-    60.9,
-    0.0,
-    124.4
-   ],
-   "max": [
-    127.6,
-    8.0,
-    125.6
-   ],
-   "source": "SALLE_Transit_Murs"
-  },
-  {
-   "id": "COL_SALLE_Transit_Murs_06",
-   "shape": "box",
-   "center": [
-    61.5,
-    4.0,
-    112.6
-   ],
-   "halfExtents": [
-    0.6,
-    4.0,
-    11.8
-   ],
-   "min": [
-    60.9,
-    0.0,
-    100.8
-   ],
-   "max": [
-    62.1,
-    8.0,
-    124.4
-   ],
-   "source": "SALLE_Transit_Murs"
-  },
-  {
-   "id": "COL_SALLE_Transit_Murs_07",
-   "shape": "box",
-   "center": [
-    61.5,
-    6.9,
-    93.8
-   ],
-   "halfExtents": [
-    0.6,
-    1.1,
-    7.0
-   ],
-   "min": [
-    60.9,
-    5.8,
-    86.8
-   ],
-   "max": [
-    62.1,
-    8.0,
-    100.8
-   ],
-   "source": "SALLE_Transit_Murs"
-  },
-  {
-   "id": "COL_SALLE_Transit_Murs_08",
-   "shape": "box",
-   "center": [
-    61.5,
-    4.0,
-    74.45
-   ],
-   "halfExtents": [
-    0.6,
-    4.0,
-    12.35
-   ],
-   "min": [
-    60.9,
-    0.0,
-    62.1
-   ],
-   "max": [
-    62.1,
-    8.0,
-    86.8
-   ],
-   "source": "SALLE_Transit_Murs"
-  },
-  {
-   "id": "COL_SALLE_Transit_Murs_09",
-   "shape": "box",
-   "center": [
-    127.0,
-    4.0,
-    93.25
-   ],
-   "halfExtents": [
-    0.6,
-    4.0,
-    31.15
-   ],
-   "min": [
-    126.4,
-    0.0,
-    62.1
-   ],
-   "max": [
-    127.6,
-    8.0,
-    124.4
-   ],
-   "source": "SALLE_Transit_Murs"
-  },
-  {
-   "id": "COL_SALLE_Transit_Murs_10",
-   "shape": "box",
-   "center": [
-    83.0,
-    4.0,
-    82.0
-   ],
-   "halfExtents": [
-    0.55,
-    4.0,
-    0.55
-   ],
-   "min": [
-    82.45,
-    0.0,
-    81.45
-   ],
-   "max": [
-    83.55,
-    8.0,
-    82.55
-   ],
-   "source": "SALLE_Transit_Murs"
-  },
-  {
-   "id": "COL_SALLE_Transit_Murs_11",
-   "shape": "box",
-   "center": [
-    104.0,
-    4.0,
-    82.0
-   ],
-   "halfExtents": [
-    0.55,
-    4.0,
-    0.55
-   ],
-   "min": [
-    103.45,
-    0.0,
-    81.45
-   ],
-   "max": [
-    104.55,
-    8.0,
-    82.55
-   ],
-   "source": "SALLE_Transit_Murs"
-  },
-  {
-   "id": "COL_SALLE_Transit_Murs_12",
-   "shape": "box",
-   "center": [
-    83.0,
-    4.0,
-    98.0
-   ],
-   "halfExtents": [
-    0.55,
-    4.0,
-    0.55
-   ],
-   "min": [
-    82.45,
-    0.0,
-    97.45
-   ],
-   "max": [
-    83.55,
-    8.0,
-    98.55
-   ],
-   "source": "SALLE_Transit_Murs"
-  },
-  {
-   "id": "COL_SALLE_Transit_Murs_13",
-   "shape": "box",
-   "center": [
-    104.0,
-    4.0,
-    98.0
-   ],
-   "halfExtents": [
-    0.55,
-    4.0,
-    0.55
-   ],
-   "min": [
-    103.45,
-    0.0,
-    97.45
-   ],
-   "max": [
-    104.55,
-    8.0,
-    98.55
-   ],
-   "source": "SALLE_Transit_Murs"
-  },
-  {
-   "id": "COL_SALLE_Transit_Toit_00",
-   "shape": "box",
-   "center": [
-    94.25,
-    8.4,
-    93.25
-   ],
-   "halfExtents": [
-    33.35,
-    0.4,
-    32.35
-   ],
-   "min": [
-    60.9,
-    8.0,
-    60.9
-   ],
-   "max": [
-    127.6,
-    8.8,
-    125.6
-   ],
-   "source": "SALLE_Transit_Toit"
-  },
-  {
    "id": "COL_SOL_Neige_00",
    "shape": "box",
    "center": [
     0.0,
     -0.5,
-    0.0
+    -30.0
    ],
    "halfExtents": [
     140.0,
     0.5,
-    140.0
+    110.0
    ],
    "min": [
     -140.0,
@@ -4844,401 +3819,9 @@
    "max": [
     140.0,
     0.0,
-    140.0
+    80.0
    ],
    "source": "SOL_Neige"
-  },
-  {
-   "id": "COL_TRAVERSE_Cadres_00",
-   "shape": "box",
-   "center": [
-    -12.25,
-    2.35,
-    39.25
-   ],
-   "halfExtents": [
-    0.4,
-    2.35,
-    2.5
-   ],
-   "min": [
-    -12.65,
-    0.0,
-    36.75
-   ],
-   "max": [
-    -11.85,
-    4.7,
-    41.75
-   ],
-   "source": "TRAVERSE_Cadres"
-  },
-  {
-   "id": "COL_TRAVERSE_Cadres_01",
-   "shape": "box",
-   "center": [
-    9.5,
-    2.35,
-    39.25
-   ],
-   "halfExtents": [
-    0.4,
-    2.35,
-    2.5
-   ],
-   "min": [
-    9.1,
-    0.0,
-    36.75
-   ],
-   "max": [
-    9.9,
-    4.7,
-    41.75
-   ],
-   "source": "TRAVERSE_Cadres"
-  },
-  {
-   "id": "COL_TRAVERSE_Cadres_02",
-   "shape": "box",
-   "center": [
-    -1.375,
-    5.1,
-    39.25
-   ],
-   "halfExtents": [
-    11.275,
-    0.4,
-    2.5
-   ],
-   "min": [
-    -12.65,
-    4.7,
-    36.75
-   ],
-   "max": [
-    9.9,
-    5.5,
-    41.75
-   ],
-   "source": "TRAVERSE_Cadres"
-  },
-  {
-   "id": "COL_TRAVERSE_Cadres_03",
-   "shape": "box",
-   "center": [
-    -12.25,
-    2.35,
-    62.3
-   ],
-   "halfExtents": [
-    0.4,
-    2.35,
-    0.95
-   ],
-   "min": [
-    -12.65,
-    0.0,
-    61.35
-   ],
-   "max": [
-    -11.85,
-    4.7,
-    63.25
-   ],
-   "source": "TRAVERSE_Cadres"
-  },
-  {
-   "id": "COL_TRAVERSE_Cadres_04",
-   "shape": "box",
-   "center": [
-    9.5,
-    2.35,
-    62.3
-   ],
-   "halfExtents": [
-    0.4,
-    2.35,
-    0.95
-   ],
-   "min": [
-    9.1,
-    0.0,
-    61.35
-   ],
-   "max": [
-    9.9,
-    4.7,
-    63.25
-   ],
-   "source": "TRAVERSE_Cadres"
-  },
-  {
-   "id": "COL_TRAVERSE_Cadres_05",
-   "shape": "box",
-   "center": [
-    -1.375,
-    5.1,
-    62.3
-   ],
-   "halfExtents": [
-    11.275,
-    0.4,
-    0.95
-   ],
-   "min": [
-    -12.65,
-    4.7,
-    61.35
-   ],
-   "max": [
-    9.9,
-    5.5,
-    63.25
-   ],
-   "source": "TRAVERSE_Cadres"
-  },
-  {
-   "id": "COL_TRAVERSE_Cadres_06",
-   "shape": "box",
-   "center": [
-    -49.4,
-    2.35,
-    62.6
-   ],
-   "halfExtents": [
-    0.95,
-    2.35,
-    0.4
-   ],
-   "min": [
-    -50.35,
-    0.0,
-    62.2
-   ],
-   "max": [
-    -48.45,
-    4.7,
-    63.0
-   ],
-   "source": "TRAVERSE_Cadres"
-  },
-  {
-   "id": "COL_TRAVERSE_Cadres_07",
-   "shape": "box",
-   "center": [
-    -49.4,
-    2.35,
-    41.9
-   ],
-   "halfExtents": [
-    0.95,
-    2.35,
-    0.4
-   ],
-   "min": [
-    -50.35,
-    0.0,
-    41.5
-   ],
-   "max": [
-    -48.45,
-    4.7,
-    42.3
-   ],
-   "source": "TRAVERSE_Cadres"
-  },
-  {
-   "id": "COL_TRAVERSE_Cadres_08",
-   "shape": "box",
-   "center": [
-    -49.4,
-    5.1,
-    52.25
-   ],
-   "halfExtents": [
-    0.95,
-    0.4,
-    10.75
-   ],
-   "min": [
-    -50.35,
-    4.7,
-    41.5
-   ],
-   "max": [
-    -48.45,
-    5.5,
-    63.0
-   ],
-   "source": "TRAVERSE_Cadres"
-  },
-  {
-   "id": "COL_TRAVERSE_Cadres_09",
-   "shape": "box",
-   "center": [
-    83.85,
-    2.35,
-    61.1
-   ],
-   "halfExtents": [
-    0.95,
-    2.35,
-    0.4
-   ],
-   "min": [
-    82.9,
-    0.0,
-    60.7
-   ],
-   "max": [
-    84.8,
-    4.7,
-    61.5
-   ],
-   "source": "TRAVERSE_Cadres"
-  },
-  {
-   "id": "COL_TRAVERSE_Cadres_10",
-   "shape": "box",
-   "center": [
-    83.85,
-    2.35,
-    41.9
-   ],
-   "halfExtents": [
-    0.95,
-    2.35,
-    0.4
-   ],
-   "min": [
-    82.9,
-    0.0,
-    41.5
-   ],
-   "max": [
-    84.8,
-    4.7,
-    42.3
-   ],
-   "source": "TRAVERSE_Cadres"
-  },
-  {
-   "id": "COL_TRAVERSE_Cadres_11",
-   "shape": "box",
-   "center": [
-    83.85,
-    5.1,
-    51.5
-   ],
-   "halfExtents": [
-    0.95,
-    0.4,
-    10.0
-   ],
-   "min": [
-    82.9,
-    4.7,
-    41.5
-   ],
-   "max": [
-    84.8,
-    5.5,
-    61.5
-   ],
-   "source": "TRAVERSE_Cadres"
-  },
-  {
-   "id": "COL_TRAVERSE_Toit_00",
-   "shape": "convexHull",
-   "points": [
-    [
-     -50.1,
-     5.5,
-     63.0
-    ],
-    [
-     61.5,
-     5.5,
-     63.0
-    ],
-    [
-     61.5,
-     5.5,
-     61.5
-    ],
-    [
-     84.55,
-     5.5,
-     61.5
-    ],
-    [
-     84.55,
-     5.5,
-     41.5
-    ],
-    [
-     -50.1,
-     5.5,
-     41.5
-    ],
-    [
-     -50.1,
-     6.1,
-     63.0
-    ],
-    [
-     61.5,
-     6.1,
-     63.0
-    ],
-    [
-     61.5,
-     6.1,
-     61.5
-    ],
-    [
-     84.55,
-     6.1,
-     61.5
-    ],
-    [
-     84.55,
-     6.1,
-     41.5
-    ],
-    [
-     -50.1,
-     6.1,
-     41.5
-    ]
-   ],
-   "source": "TRAVERSE_Toit"
-  },
-  {
-   "id": "COL_TRAVERSE_Toit_01",
-   "shape": "box",
-   "center": [
-    -1.375,
-    5.9,
-    39.25
-   ],
-   "halfExtents": [
-    11.275,
-    0.4,
-    2.25
-   ],
-   "min": [
-    -12.65,
-    5.5,
-    37.0
-   ],
-   "max": [
-    9.9,
-    6.3,
-    41.5
-   ],
-   "source": "TRAVERSE_Toit"
   }
  ],
  "playerClips": [
@@ -5426,7 +4009,7 @@
     0.0,
     -118.0
    ],
-   "yaw": -3.29122,
+   "yaw": 2.99197,
    "forward": [
     -0.1491,
     0.0,
@@ -5437,82 +4020,82 @@
   {
    "id": "SPAWN_05",
    "position": [
-    -120.0,
+    -100.0,
     0.93,
-    90.0
+    59.0
    ],
    "feet": [
-    -120.0,
+    -100.0,
     0.0,
-    90.0
+    59.0
    ],
-   "yaw": -1.69575,
+   "yaw": -1.45619,
    "forward": [
-    0.9922,
+    0.9934,
     0.0,
-    0.1246
+    -0.1144
    ],
-   "room": "ATELIER"
+   "room": "VESTIBULE_SUD_OUEST"
   },
   {
    "id": "SPAWN_06",
    "position": [
-    -115.0,
+    -98.0,
     0.93,
-    117.0
+    27.0
    ],
    "feet": [
-    -115.0,
+    -98.0,
     0.0,
-    117.0
+    27.0
    ],
-   "yaw": -0.72106,
+   "yaw": -1.5405,
    "forward": [
-    0.6602,
+    0.9995,
     0.0,
-    -0.7511
+    -0.0303
    ],
-   "room": "ATELIER"
+   "room": "VESTIBULE_SUD_OUEST"
   },
   {
    "id": "SPAWN_07",
    "position": [
-    116.0,
+    96.0,
     0.93,
-    117.0
+    59.0
    ],
    "feet": [
-    116.0,
+    96.0,
     0.0,
-    117.0
+    59.0
    ],
-   "yaw": 0.74147,
+   "yaw": 1.23471,
    "forward": [
-    -0.6754,
+    -0.9441,
     0.0,
-    -0.7375
+    -0.3298
    ],
-   "room": "TRANSIT"
+   "room": "COUDE_EST"
   },
   {
    "id": "SPAWN_08",
    "position": [
-    115.0,
+    101.0,
     0.93,
-    96.0
+    38.0
    ],
    "feet": [
-    115.0,
+    101.0,
     0.0,
-    96.0
+    38.0
    ],
-   "yaw": 1.43903,
+   "yaw": 0.36461,
    "forward": [
-    -0.9913,
+    -0.3566,
     0.0,
-    -0.1314
+    -0.9343
    ],
-   "room": "TRANSIT"
+   "room": "COUDE_EST"
   }
  ],
  "hazards": [],
@@ -5544,36 +4127,6 @@
    "max": [
     127.0,
     -61.25
-   ],
-   "axes": "xz"
-  },
-  {
-   "id": "atelier",
-   "name": "Atelier",
-   "kind": "interieur",
-   "floorY": 0.0,
-   "min": [
-    -127.0,
-    61.5
-   ],
-   "max": [
-    -61.25,
-    125.0
-   ],
-   "axes": "xz"
-  },
-  {
-   "id": "transit",
-   "name": "Transit",
-   "kind": "interieur",
-   "floorY": 0.0,
-   "min": [
-    61.5,
-    61.5
-   ],
-   "max": [
-    127.0,
-    125.0
    ],
    "axes": "xz"
   },
@@ -5707,8 +4260,23 @@
     19.4
    ],
    "max": [
+    -65.25,
+    65.0
+   ],
+   "axes": "xz"
+  },
+  {
+   "id": "recoin_muret",
+   "name": "Recoin du muret",
+   "kind": "exterieur",
+   "floorY": 0.0,
+   "min": [
+    -65.25,
+    11.4
+   ],
+   "max": [
     -45.7,
-    61.5
+    45.45
    ],
    "axes": "xz"
   },
@@ -5728,8 +4296,8 @@
    "axes": "xz"
   },
   {
-   "id": "couloir_sud_est",
-   "name": "Couloir sud-est",
+   "id": "coude_est",
+   "name": "Coude est",
    "kind": "exterieur",
    "floorY": 0.0,
    "min": [
@@ -5738,52 +4306,37 @@
    ],
    "max": [
     107.05,
-    61.5
+    65.0
    ],
    "axes": "xz"
   },
   {
-   "id": "traverse_couverte",
-   "name": "Traverse couverte",
+   "id": "jonction_sud",
+   "name": "Jonction sud",
    "kind": "couvert",
    "floorY": 0.0,
    "min": [
-    -50.1,
-    41.5
+    -30.7,
+    37.0
+   ],
+   "max": [
+    27.95,
+    45.45
+   ],
+   "axes": "xz"
+  },
+  {
+   "id": "liaison_sud",
+   "name": "Liaison sud",
+   "kind": "couvert",
+   "floorY": 0.0,
+   "min": [
+    -65.25,
+    45.45
    ],
    "max": [
     84.55,
-    63.0
-   ],
-   "axes": "xz"
-  },
-  {
-   "id": "couloir_central_sud",
-   "name": "Couloir central sud",
-   "kind": "exterieur",
-   "floorY": 0.0,
-   "min": [
-    -12.65,
-    63.0
-   ],
-   "max": [
-    9.9,
-    82.5
-   ],
-   "axes": "xz"
-  },
-  {
-   "id": "passage_sud",
-   "name": "Passage sud",
-   "kind": "exterieur",
-   "floorY": 0.0,
-   "min": [
-    -61.25,
-    82.5
-   ],
-   "max": [
-    61.5,
-    105.05
+    65.0
    ],
    "axes": "xz"
   }
@@ -5804,16 +4357,16 @@
    "horizontalFovDeg": 90.0
   },
   {
-   "id": "CAM_2_Atelier",
+   "id": "CAM_2_LiaisonSud",
    "position": [
-    -120.0,
+    -61.0,
     1.6,
-    117.0
+    55.2
    ],
    "lookAt": [
-    -105.1462,
+    -41.0122,
     2.298,
-    103.6255
+    55.2
    ],
    "horizontalFovDeg": 90.0
   },
@@ -5860,16 +4413,30 @@
    "horizontalFovDeg": 90.0
   },
   {
+   "id": "CAM_6_CoudeEst",
+   "position": [
+    98.0,
+    1.6,
+    32.0
+   ],
+   "lookAt": [
+    86.8178,
+    1.949,
+    48.5782
+   ],
+   "horizontalFovDeg": 90.0
+  },
+  {
    "id": "CAM_Vue_Aerienne",
    "position": [
     0.0,
-    260.0,
-    330.0
+    230.0,
+    260.0
    ],
    "lookAt": [
     0.0,
-    247.1442,
-    314.6791
+    217.1442,
+    244.6791
    ],
    "horizontalFovDeg": 65.5
   }
@@ -5922,15 +4489,15 @@
   "interiors": "Dans Blender : panneaux emissifs + lumieres de zone (non exportees). En jeu : l'ambiance hemisphere suffit, ajouter quelques PointLight si besoin."
  },
  "stats": {
-  "colliders": 185,
-  "boxes": 171,
-  "convexHulls": 14,
+  "colliders": 130,
+  "boxes": 117,
+  "convexHulls": 13,
   "playerClips": 2,
   "spawns": 8,
   "ramps": 3,
-  "zones": 18,
-  "visualTriangles": 43342,
-  "visualObjects": 89
+  "zones": 16,
+  "visualTriangles": 38152,
+  "visualObjects": 74
  },
  "materials": {
   "GIV_Neige": {
