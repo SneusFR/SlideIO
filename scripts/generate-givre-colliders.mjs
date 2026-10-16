@@ -8,9 +8,11 @@
  *     (fixed cuboids = position + halfExtents, identity rotation; convex
  *      hulls = absolute world vertices; `ramps` start/end/width/slope;
  *      `spawns` feet/position/yaw; `expansion.mapEnvelope`; empty hazards)
- *     + Givre extras: `playerClips` (character-only blockers — they never
- *       stop shots), `killPlaneY`, `zones`, `viewpoints`, `lighting`,
- *       `materials`.
+ *     + Givre extras: `playerClips` (character-only blockers — boxes or
+ *       convex hulls; they never stop shots), `killPlaneY`, `zones`,
+ *       `viewpoints`, `lighting`, `materials`, and the optional v3
+ *       client-only sections `halos`, `fx`, `snow`, `footprints`,
+ *       `animations`.
  *   shared/map/GivreColliders.ts — AABB list for the backend hitscan
  *     (cuboids as-is; the 3 movement-ramp hulls approximated by 6 stacked
  *      step slabs each from the `ramps` metadata; the remaining solid hulls
@@ -45,6 +47,10 @@ const IDENTITY = [0, 0, 0, 1];
 const rampColliderIds = new Set(src.ramps.map((r) => r.colliderId));
 
 function toYardCollider(c, purpose) {
+  // `source` = Blender object the collider was built from (lets the client
+  // keep the few ANIMATED décor nodes that have colliders — the boiler —
+  // in the shot raycast list, consistent with the server).
+  const source = c.source ? { source: c.source } : {};
   if (c.shape === "box") {
     return {
       id: c.id,
@@ -53,6 +59,7 @@ function toYardCollider(c, purpose) {
       halfExtents: c.halfExtents.map(r3),
       rotation: IDENTITY,
       purpose,
+      ...source,
     };
   }
   if (c.shape === "convexHull") {
@@ -64,6 +71,7 @@ function toYardCollider(c, purpose) {
       type: "convexHull",
       vertices: c.points.map((p) => p.map(r3)),
       purpose,
+      ...source,
     };
   }
   throw new Error(`unsupported collider shape "${c.shape}" (${c.id}) — trimesh is forbidden`);
@@ -72,10 +80,9 @@ function toYardCollider(c, purpose) {
 const colliders = src.colliders.map((c) =>
   toYardCollider(c, rampColliderIds.has(c.id) ? "movement_ramp" : "solid"),
 );
-const playerClips = src.playerClips.map((c) => {
-  if (c.shape !== "box") throw new Error(`playerClip ${c.id}: only boxes are supported`);
-  return toYardCollider(c, "player_clip");
-});
+// Player clips: boxes OR convex hulls (v3: CLIP_COULO_Citerne_02 is a hull).
+// They block characters only (CollisionGroups.PLAYER_CLIP), never shots.
+const playerClips = src.playerClips.map((c) => toYardCollider(c, "player_clip"));
 
 // Ramps: Yard's { start (low edge centre), end (high edge centre), width, slopeDegrees }.
 const ramps = src.ramps.map((r) => ({
@@ -99,6 +106,9 @@ const spawns = src.spawns.map((s) => ({
 
 const yardFormat = {
   formatVersion: 2,
+  // Content version of the Blender export (v3 = baked lighting, animations,
+  // halos, snow, footprints). Absent before v3.
+  contentVersion: src.version ?? 2,
   name: src.displayName,
   map: src.map,
   units: "metres",
@@ -128,6 +138,14 @@ const yardFormat = {
   viewpoints: src.viewpoints,
   lighting: src.lighting,
   materials: src.materials,
+  // v3 client-only sections (optional — omitted when the export lacks them):
+  // halos (bulb glow sprites), fx (boiler flicker + sound anchors), snow
+  // (falling snow), footprints (snow decals), animations (8 s loop).
+  ...(src.halos ? { halos: src.halos } : {}),
+  ...(src.fx ? { fx: src.fx } : {}),
+  ...(src.snow ? { snow: src.snow } : {}),
+  ...(src.footprints ? { footprints: src.footprints } : {}),
+  ...(src.animations ? { animations: src.animations } : {}),
 };
 writeFileSync(join(root, OUTPUT), JSON.stringify(yardFormat, null, 2) + "\n");
 

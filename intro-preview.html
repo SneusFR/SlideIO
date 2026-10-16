@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Intro de match — aperçu</title>
+    <link rel="icon" type="image/x-icon" href="/src/assets/fav.ico" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Luckiest+Guy&family=Baloo+2:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <!-- Dev-only page (not in the game bundle): previews src/cinematics/matchIntro
+         with mock players. Open it with `npm run dev` → /intro-preview.html -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: radial-gradient(120% 90% at 50% 35%, #5a3f22 0%, #3a2814 55%, #1f150a 100%);
+        color: #fff6e0;
+        font-family: "Baloo 2", "Segoe UI", sans-serif;
+      }
+      #intro-preview-panel {
+        position: absolute;
+        left: 50%;
+        bottom: 6vh;
+        transform: translateX(-50%) rotate(-1.5deg);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.2vh;
+        padding: 2.2vh 3.4vh 2vh;
+        background: linear-gradient(180deg, #fffaf0, #fbf3dd 60%, #efe2c0);
+        color: #3a2814;
+        border: 0.45vh solid #3a2814;
+        border-radius: 2.2vh;
+        box-shadow: 0 0.8vh 0 #3a2814;
+        transition: opacity 0.2s;
+      }
+      #intro-preview-panel.is-busy {
+        opacity: 0.55;
+      }
+      #intro-preview-panel h1 {
+        margin: 0;
+        font-family: "Luckiest Guy", "Baloo 2", cursive;
+        font-weight: 400;
+        font-size: 4.4vh;
+        letter-spacing: 0.03em;
+        color: #facc15;
+        -webkit-text-stroke: 0.14em #3a2814;
+        paint-order: stroke fill;
+        text-shadow: 0 0.09em 0 #3a2814;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 1.4vh;
+        font-weight: 700;
+        font-size: 2.2vh;
+      }
+      select,
+      button {
+        font: inherit;
+        color: #3a2814;
+        border: 0.3vh solid #3a2814;
+        border-radius: 1.1vh;
+        box-shadow: 0 0.45vh 0 #3a2814;
+        padding: 0.5vh 1.4vh 0.3vh;
+        background: linear-gradient(180deg, #ffffff, #fbf3dd 60%, #efe2c0);
+        cursor: pointer;
+      }
+      button {
+        font-family: "Luckiest Guy", "Baloo 2", cursive;
+        font-weight: 400;
+        font-size: 2.6vh;
+        padding: 0.7vh 2.2vh 0.3vh;
+        background: linear-gradient(180deg, #d8f59a, #a8d94a 60%, #78ac1e);
+      }
+      button:active {
+        transform: translateY(0.3vh);
+        box-shadow: 0 0.15vh 0 #3a2814;
+      }
+      #intro-preview-status {
+        margin: 0;
+        font-size: 1.9vh;
+        opacity: 0.8;
+      }
+      .hint {
+        margin: 0;
+        font-size: 1.6vh;
+        opacity: 0.65;
+      }
+      kbd {
+        font-family: "Luckiest Guy", "Baloo 2", cursive;
+        font-size: 0.9em;
+        padding: 0.1em 0.45em 0;
+        border: 0.2vh solid #3a2814;
+        border-radius: 0.5em;
+        background: #fff;
+      }
+      #intro-preview-cues {
+        position: absolute;
+        right: 2vh;
+        top: 2vh;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        font: 600 1.5vh/1.5 ui-monospace, Consolas, monospace;
+        color: rgba(255, 246, 224, 0.7);
+        text-align: right;
+      }
+    </style>
+  </head>
+  <body>
+    <ol id="intro-preview-cues" aria-label="Cues émis"></ol>
+    <main id="intro-preview-panel">
+      <h1>Intro de match</h1>
+      <div class="row">
+        <label for="intro-preview-count">Joueurs</label>
+        <select id="intro-preview-count">
+          <option>2</option>
+          <option>3</option>
+          <option>4</option>
+          <option>5</option>
+          <option>6</option>
+          <option>7</option>
+          <option>8</option>
+        </select>
+        <button id="intro-preview-replay" type="button">Rejouer</button>
+      </div>
+      <p id="intro-preview-status">Chargement…</p>
+      <p class="hint"><kbd>R</kbd> rejouer · <kbd>2</kbd>…<kbd>8</kbd> joueurs · <code>?t=6.4</code> fige une image · <code>?loop</code></p>
+    </main>
+    <script type="module" src="/src/cinematics/matchIntro/matchIntroPreview.ts"></script>
+  </body>
+</html>

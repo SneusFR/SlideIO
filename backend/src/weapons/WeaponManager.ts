@@ -347,8 +347,22 @@ export class WeaponManager {
    */
   constructor(
     private readonly host: WeaponManagerHost,
-    private readonly mapBoxes: ColliderBox[] = MAP_COLLIDER_BOXES,
+    private mapBoxes: ColliderBox[] = MAP_COLLIDER_BOXES,
   ) {}
+
+  /**
+   * The room switched map (end-of-match vote): new collision world, and
+   * nothing of the previous match may keep flying in it.
+   */
+  setMapBoxes(boxes: ColliderBox[]): void {
+    this.mapBoxes = boxes;
+    this.projectiles.length = 0;
+    this.bassProjectiles.length = 0;
+    this.basketProjectiles.length = 0;
+    this.frisbees.length = 0;
+    this.states.clear();
+    this.history.clear();
+  }
 
   private stateOf(id: string): PlayerWeaponState {
     let s = this.states.get(id);
@@ -2339,6 +2353,12 @@ export class WeaponManager {
     s.paintball.reset(); // respawn = full hopper (local parity: setAmmo(32))
     s.waterFamas.reset(); // respawn = full tank (local parity: setAmmo(9))
     s.frisbee.reset(); // respawn = loaded deck + full cage (local parity: setAmmo(true, 5))
+  }
+
+  /** True while the player's continuous beam (plasma / poison) is firing. */
+  isBeamFiring(playerId: string): boolean {
+    const s = this.states.get(playerId);
+    return s !== undefined && (s.plasmaActive || s.poisonActive);
   }
 
   removePlayer(playerId: string): void {

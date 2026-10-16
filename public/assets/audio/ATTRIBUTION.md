@@ -3,6 +3,7 @@
 Tous les sons ci-dessous proviennent de [Freesound.org](https://freesound.org) et ont été
 sélectionnés via des recherches filtrées **licence CC0 (Creative Commons Zero / Public Domain)**.
 La licence CC0 n'exige pas d'attribution, mais la provenance est conservée ici pour référence.
+**Exception :** les deux sons de la section Ambience marqués CC BY 4.0 exigent une attribution (voir cette section).
 
 Pour chaque son : la page source est `https://freesound.org/s/<ID>/` (nom d'auteur visible sur la page).
 
@@ -98,7 +99,18 @@ Pour chaque son : la page source est `https://freesound.org/s/<ID>/` (nom d'aute
 
 | Fichier local | Titre original | Freesound ID | Licence | Source |
 |---|---|---|---|---|
-| `ambience/ambience_wind_loop_01.mp3` | Muffled Eerie Wind | 269591 | CC0 | https://freesound.org/s/269591/ |
+| `ambience/ambience_wind_loop_01.mp3` | Muffled Eerie Wind (plus utilisé dans le jeu) | 269591 | CC0 | https://freesound.org/s/269591/ |
+| `ambience/ambience_village_loop_01.mp3` | garden in winter village SHORT 200113_0101.wav | 502448 | **CC BY 4.0** | https://freesound.org/s/502448/ |
+| `ambience/ambience_musicbox_01.mp3` | musical box | 128458 | **CC BY 4.0** | https://freesound.org/s/128458/ |
+
+**Attribution requise (CC BY 4.0)** pour les deux sons ci-dessus :
+
+- « garden in winter village SHORT 200113_0101.wav » par **klankbeeld** (https://freesound.org/people/klankbeeld/), Freesound.org, CC BY 4.0.
+  L'auteur interdit aussi de redistribuer le son brut comme « stock » libre de droits.
+- « musical box » par **saphe** (https://freesound.org/people/saphe/), Freesound.org, CC BY 4.0.
+
+Usage dans le jeu : le village tourne en boucle (bus `ambience`), la boîte à musique est rejouée de loin à intervalles
+aléatoires (voir `GameAudio.updateAmbience`).
 
 ## Medals
 

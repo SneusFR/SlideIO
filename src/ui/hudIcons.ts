@@ -97,12 +97,13 @@ export const BEAN_BUDDY_SVG = `
   </g>
 </svg>`;
 
-/** Small popcorn puff used as the popcorn shotgun's ammo pip. */
+/** Popcorn grain used as the popcorn shotgun's ammo pip (one per real load):
+ *  a lobed golden puff, near-black sticker outline, pale cream heart. */
 export const POPCORN_PIP_SVG = `
-<svg viewBox="0 0 24 22" aria-hidden="true">
-  <path d="M5 16a5 5 0 0 1 1-9 6 6 0 0 1 11-1 5 5 0 0 1 2 9 5 5 0 0 1-7 4 5 5 0 0 1-7-3z"
-    fill="currentColor" stroke="${INK}" stroke-width="2.4" stroke-linejoin="round"/>
-  <circle cx="9" cy="9" r="1.6" fill="#ffffff" opacity="0.8"/>
+<svg viewBox="0 0 24 21" aria-hidden="true">
+  <path d="M6.2 17.6C2.6 17.4 1.2 13.4 3.6 11.2 1.9 8 4.6 4.6 8 5.6 9 2.2 14 1.6 15.8 4.8 19.4 3.8 22.4 7.2 20.6 10.4 23.2 12.6 21.6 17 18 17.2 16.4 20.2 12 20.4 10.8 18 9.6 19.6 7 19.4 6.2 17.6Z"
+    fill="currentColor" stroke="${BUDDY_INK}" stroke-width="2.2" stroke-linejoin="round"/>
+  <path d="M8.5 9.6c1-2.2 4-2.6 5.4-.8 2-.8 4 1 3.2 3-.6 1.8-3 2.2-4.2 1-1.4 1.2-4 .6-4.4-1.2z" fill="#fff3c8"/>
 </svg>`;
 
 // ---------------------------------------------------------------------------
@@ -128,13 +129,36 @@ const WEAPON_ICONS: Record<WeaponIconKey, string> = {
       <path d="M20 29.5L23.5 31.5V35.5H29" fill="none" stroke-width="2.4"/>
       <rect x="22" y="12.5" width="6" height="3" rx="1.5" fill="#3a3744" stroke="none" transform="rotate(-11 25 14)"/>
     </g>`,
+  // The whole Popcorn Shotgun, side view, barrel to the LEFT: red popcorn-machine
+  // tank (cream window, grains) on top of the ivory receiver, dark barrel with a
+  // red muzzle and a cream band, dark pump with red ribs, dark grip, ivory stock
+  // with a red butt plate. Coloured + outlined (the popcorn badge keeps strokes).
   popcorn: `
-    <circle cx="15" cy="17" r="6.5" fill="#f4b73a" ${O}/>
-    <circle cx="33" cy="17" r="6.5" fill="#f4b73a" ${O}/>
-    <circle cx="24" cy="12" r="7.5" fill="#ffc94a" ${O}/>
-    <path d="M10 20h28l-4 23H14z" fill="#ff4d6d"/>
-    <path d="M19 21.5l1.4 20M29 21.5l-1.4 20" stroke="#fff6e0" stroke-width="4.5"/>
-    <path d="M10 20h28l-4 23H14z" fill="none" ${O}/>`,
+    <g transform="translate(0 4)" stroke="${BUDDY_INK}" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M29 25.5H35.5L38.2 35.8Q38.4 37.5 36.7 37.5H32.2Q30.9 37.5 30.7 36.3Z" fill="#2b2730"/>
+      <path d="M37 19.5L45 18Q46.5 17.8 46.5 19.3V28.5Q46.5 30 45 29.8L38 27.5Z" fill="#f6ecd6"/>
+      <path d="M43.4 18.4L45 18Q46.5 17.8 46.5 19.3V28.5Q46.5 30 45 29.8L43.4 29.4Z" fill="#d8322c"/>
+      <rect x="3" y="19.4" width="15" height="4.8" rx="1.6" fill="#3a3744"/>
+      <rect x="9.6" y="19.4" width="2.2" height="4.8" fill="#f6ecd6"/>
+      <rect x="1.8" y="18.8" width="3.6" height="6" rx="1.2" fill="#d8322c"/>
+      <rect x="5.4" y="24.2" width="11.4" height="4.6" rx="1.8" fill="#2b2730"/>
+      <path d="M8.6 25v3M11.4 25v3M14.2 25v3" fill="none" stroke="#d8322c" stroke-width="1.2"/>
+      <path d="M24.2 28q0 4.6 4 4.6h1.4v-4.6" fill="none"/>
+      <path d="M15 20Q15 18.5 16.5 18.5H38.5Q40 18.5 40 20V26Q40 28 38 28H17Q15 28 15 26Z" fill="#f6ecd6"/>
+      <path d="M15.9 25.4H39.1V26.4Q39.1 27.2 38 27.2H17Q15.9 27.2 15.9 26.4Z" fill="#d8322c" stroke="none"/>
+      <rect x="16" y="15.8" width="18" height="3.2" rx="1" fill="#d8322c"/>
+      <rect x="17.5" y="4.6" width="15" height="11.8" rx="1.4" fill="#d8322c"/>
+      <rect x="19.6" y="6.7" width="10.8" height="8.2" rx="0.8" fill="#fff6e0"/>
+      <g fill="#fffaf0" stroke="#e9b04a" stroke-width="0.6">
+        <circle cx="22.4" cy="12.7" r="1.9"/>
+        <circle cx="25.6" cy="12" r="2.1"/>
+        <circle cx="28.4" cy="12.9" r="1.8"/>
+        <circle cx="24" cy="9.6" r="1.7"/>
+        <circle cx="27.3" cy="9.3" r="1.6"/>
+      </g>
+      <path d="M20.5 7.6h2.4l-2.4 3z" fill="#ffffff" stroke="none" opacity="0.7"/>
+      <path d="M16 5.4L18.5 2H31.5L34 5.4Z" fill="#d8322c"/>
+    </g>`,
   water: `
     <rect x="13" y="8" width="15" height="11" rx="5" fill="#bdefff" ${O}/>
     <path d="M6 21h24l5-3h6v8h-6l-2 2h-6l-3 11h-8l3-11H6z" fill="#38c6ff" ${O}/>
@@ -175,51 +199,45 @@ export function weaponIconSvg(key: WeaponIconKey): string {
 }
 
 // ---------------------------------------------------------------------------
-// KILLSTREAK medallion icons (64×64) + accent colour per streak.
+// KILLSTREAK pictograms (56×56, drawn at 1:1 in the 1816px reference space of
+// the killstreak capsules). One flat family: near-black ink silhouettes with a
+// few useful cut-outs, same visual weight. NO colour in the markup — every
+// part carries a class and hud.css paints it (#killstreak-hud):
+//   .k1 main mass · .k2 secondary mass · .k3 trail / rim · .k4 small dots
+//   .kd white disc · .kk ink · .kl lip · .ks struts · .ka signal arcs
+//   .kg gloss
+// so the monochrome (not available) ↔ colour (available) swap is pure CSS.
 // ---------------------------------------------------------------------------
 const KS_ICONS: Record<string, string> = {
+  // A hole seen from above: white disc, ink rim, oval pit with a simple lip.
   MOLE_STRIKE: `
-    <path d="M17 46c0-15 7-25 15-25s15 10 15 25z" fill="#8a5c34" ${O}/>
-    <path d="M22 29c-3-3-3-7 1-8M42 29c3-3 3-7-1-8" fill="none" ${o(2.6)}/>
-    <circle cx="26.5" cy="33" r="2.4" fill="${INK}"/>
-    <circle cx="37.5" cy="33" r="2.4" fill="${INK}"/>
-    <circle cx="27.3" cy="32.2" r="0.8" fill="#ffffff"/>
-    <circle cx="38.3" cy="32.2" r="0.8" fill="#ffffff"/>
-    <ellipse cx="32" cy="39" rx="5.5" ry="4" fill="#ff9aa8" ${o(2.4)}/>
-    <path d="M30 43.5h4v3h-4z" fill="#ffffff" ${o(1.6)}/>
-    <path d="M4 58c3-10 12-14 28-14s25 4 28 14z" fill="#6b4a2b" ${O}/>
-    <circle cx="16" cy="53" r="2" fill="#a5774a"/>
-    <circle cx="47" cy="52" r="2.4" fill="#a5774a"/>
-    <circle cx="33" cy="55" r="1.6" fill="#a5774a"/>`,
+    <circle class="kd" cx="26.5" cy="29.5" r="24.5"/>
+    <ellipse class="kk" cx="26.5" cy="29.5" rx="18.5" ry="17.5"/>
+    <ellipse class="k1" cx="26.5" cy="32" rx="15.5" ry="7.5"/>
+    <ellipse class="k2" cx="27" cy="33.4" rx="11" ry="4.8"/>
+    <path class="kl" d="M11.6 31.2a15.5 7.5 0 0 1 29.8 0"/>`,
+  // A dish on its foot, beaming a few signal arcs.
   ORBITAL_SCAN: `
-    <path d="M32 46v9M22 58h20" fill="none" ${O}/>
-    <path d="M10 14a26 26 0 0 0 0 30M54 14a26 26 0 0 1 0 30" fill="none" stroke="#5cc8ff" stroke-width="3.4" stroke-linecap="round"/>
-    <circle cx="32" cy="29" r="17" fill="#fff6e0" ${O}/>
-    <circle cx="36" cy="27" r="8" fill="#5cc8ff" ${o(2.4)}/>
-    <circle cx="37" cy="27" r="3.4" fill="${INK}"/>
-    <circle cx="34.5" cy="24.5" r="1.6" fill="#ffffff"/>`,
+    <path class="k2" d="M21.5 31l11 3c.8 5.5 4.2 10 8.4 12.8 1.7 1.2 1 3.7-1.1 3.7H12.4c-2 0-2.8-2.2-1.4-3.5 4.4-4.2 8.6-9.4 10.5-16z"/>
+    <path class="k1" d="M18.5 11.5A18.3 20 40 0 0 46.5 35z"/>
+    <path class="k3" d="M18.5 11.5L46.5 35"/>
+    <path class="ks" d="M25 17.2L40.5 14M40 29.2L40.5 14"/>
+    <circle class="k4" cx="40.5" cy="14" r="2.4"/>
+    <path class="ka" d="M44.4 9.6a4.4 4.4 0 0 1 1.2 5M46.6 5.8a9 9 0 0 1 2.6 10.4M49.4 2a14 14 0 0 1 4 16.6"/>`,
+  // A round head and a jagged diagonal trail toward the upper right.
   NOVA_STRIKE: `
-    <path d="M32 5l6.5 15.5L55 22l-12.6 11L46.5 50 32 41l-14.5 9 4.1-17L9 22l16.5-1.5z" fill="#facc15" ${O}/>
-    <circle cx="32" cy="29" r="5" fill="#ff8a3d" ${o(2.2)}/>
-    <path d="M12 52l-4 4M52 52l4 4M32 50v8" fill="none" stroke="#ff8a3d" stroke-width="3" stroke-linecap="round"/>`,
+    <path class="k3" d="M12 31L17 24 21 24.5 24 18 28 18.5 33 12.5 37 13 43 8 46 8.5 54 4 50 11 52 12 47 18 49 19 44 25 46 26 40 32 42 33 34 40z"/>
+    <path class="k2" d="M19 30L25 23 29 22 35 16.5 39 15.5 48 9 44 15 45 16.5 41 21.5 42.5 23 37 28 38.5 29.5 31 35z"/>
+    <circle class="k4" cx="30" cy="27" r="1.6"/>
+    <circle class="k4" cx="35" cy="22" r="1.3"/>
+    <circle class="k4" cx="33" cy="30.5" r="1.1"/>
+    <circle class="k1" cx="22.5" cy="36.5" r="11.5"/>
+    <path class="kg" d="M15.5 39a7.5 7.5 0 0 1 5.5 -9"/>`,
 };
 
-const KS_FALLBACK = `
-  <path d="M32 8l7 15 16 2-12 11 3 16-14-8-14 8 3-16L9 25l16-2z" fill="#facc15" ${O}/>`;
-
-const KS_COLORS: Record<string, string> = {
-  MOLE_STRIKE: "#c98a4a",
-  ORBITAL_SCAN: "#5cc8ff",
-  NOVA_STRIKE: "#ff8a3d",
-};
-
+/** Flat pictogram of a killstreak (painted by the #killstreak-hud CSS). */
 export function killstreakIconSvg(id: string): string {
-  return `<svg class="ks-icon-art" viewBox="0 0 64 64" aria-hidden="true">${KS_ICONS[id] ?? KS_FALLBACK}</svg>`;
-}
-
-/** Accent colour of a killstreak (ring, glow, unlock burst). */
-export function killstreakColor(id: string): string {
-  return KS_COLORS[id] ?? "#facc15";
+  return `<svg class="ks-icon-art" viewBox="0 0 56 56" aria-hidden="true">${KS_ICONS[id] ?? ""}</svg>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -254,15 +272,6 @@ function inkLine(d: string, color: string, width: number): string {
   return `<path d="${d}" fill="none" stroke="${INK}" stroke-width="${width + 3.4}" stroke-linecap="round" stroke-linejoin="round"/>
     <path d="${d}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"/>`;
 }
-
-/** Padlock drawn on locked medallions (two halves → they fly apart on unlock). */
-export const PADLOCK_SVG = `
-<svg class="ks-lock-art" viewBox="0 0 24 26" aria-hidden="true">
-  <path class="ks-lock-shackle" d="M7 12V8a5 5 0 0 1 10 0v4" fill="none" stroke="${INK}" stroke-width="5" stroke-linecap="round"/>
-  <path class="ks-lock-shackle" d="M7 12V8a5 5 0 0 1 10 0v4" fill="none" stroke="#e8d3a8" stroke-width="2" stroke-linecap="round"/>
-  <rect class="ks-lock-body" x="3" y="11" width="18" height="13" rx="4" fill="#facc15" ${o(2.4)}/>
-  <circle cx="12" cy="17" r="2" fill="${INK}"/>
-</svg>`;
 
 // ---------------------------------------------------------------------------
 // MEDAL art (uses koBean / sparkle / inkLine above). Palette = the HUD's:

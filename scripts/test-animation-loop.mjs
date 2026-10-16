@@ -26,10 +26,12 @@ function restoreGlobal(name, descriptor) {
 }
 
 try {
+  const debugElement = { textContent: "" };
+  // Some HUD modules register document listeners at import time (PaintLayer
+  // visibilitychange): the stub must exist BEFORE Game.ts is evaluated.
+  globalThis.document = { getElementById: () => debugElement, addEventListener() {}, hidden: false };
   const { Game } = await server.ssrLoadModule("/src/game/Game.ts");
   const { DebugHUD } = await server.ssrLoadModule("/src/ui/DebugHUD.ts");
-  const debugElement = { textContent: "" };
-  globalThis.document = { getElementById: () => debugElement };
 
   function harness(hz, maxFps = Infinity) {
     let now = 0;

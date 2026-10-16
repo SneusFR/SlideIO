@@ -25,9 +25,30 @@ import {
   encodeCharacterCosmetics,
   validateCharacterCosmetics,
 } from "../../../shared/combat/CharacterCosmetics";
+import {
+  LOBBY_REJOIN_GRACE_SECONDS,
+  MAP_VOTE_INTRO_SECONDS,
+  MAP_VOTE_SECONDS,
+  MATCH_DURATION_SECONDS,
+} from "../../../shared/match/MatchRules";
+import { MatchResultsTracker } from "../../../shared/match/MatchResultsTracker";
+import { MapId } from "../../../shared/map/MapRegistry";
+import { MapVote } from "../match/MapVote";
 
 interface JoinOptions {
   name?: unknown;
+  /**
+   * Seat token handed out at the end of a match (MATCH_RETURN): lets a
+   * player of the previous match rejoin the room after the page reload
+   * onto the voted map, keeping their HOST role.
+   */
+  returnToken?: unknown;
+}
+
+/** A seat kept for a player of the previous match (post-vote reload). */
+interface ReturnSeat {
+  name: string;
+  wasHost: boolean;
 }
 
 /** Room creation options (the CREATOR picks the map — fixed afterwards). */
@@ -123,6 +144,20 @@ export class GameRoom extends Room<GameRoomState> {
   /** performance.now() when the combat counters were last drained. */
   private combatCountersSince = 0;
 
+  // ---- Match clock + end-of-match results / vote ----
+  /** End-screen statistics of the CURRENT match (feed, damage, accuracy). */
+  private readonly results = new MatchResultsTracker();
+  /** Date.now() at the match start (kill-feed timestamps). */
+  private matchStartedAt = 0;
+  /** Authoritative end-of-match timer (null outside PLAYING). */
+  private matchTimer: { clear(): void } | null = null;
+  /** Next-map vote (non-null during the ENDED phase). */
+  private vote: MapVote | null = null;
+  private voteTimer: { clear(): void } | null = null;
+  /** returnToken → seat kept for the post-vote page reload. */
+  private readonly returnSeats = new Map<string, ReturnSeat>();
+  private returnSeatsTimer: { clear(): void } | null = null;
+
   onCreate(options?: CreateOptions): void {
     this.setState(new GameRoomState());
     // Private lobby: never listed in public matchmaking. Join happens
@@ -165,11 +200,22 @@ export class GameRoom extends Room<GameRoomState> {
     this.weapons = new WeaponManager({
       getPlayer: (id) => this.state.players.get(id),
       players: () => this.state.players.values(),
-      applyDamage: (req) => this.combat.applyDamage(req),
+      applyDamage: (req) => {
+        const result = this.combat.applyDamage(req);
+        // End-screen stats: damage + accuracy hits (the same server ms
+        // merges the several victims of one shot into a single hit).
+        if (result.applied) {
+          this.results.recordDamage(req.attackerId, req.targetId, result.damageDealt);
+          this.results.recordHit(req.attackerId, req.targetId, req.damageType, Date.now());
+        }
+        return result;
+      },
       // The shooter's client DISCARDS its own confirmed actions (local
       // prediction already rendered them) — never echo the broadcast back
       // to the originating client: pure redundant traffic on its socket.
       broadcastAction: (event) => {
+        // End-screen accuracy: every confirmed fired shot (server truth).
+        if (MatchResultsTracker.isShotAction(event.action)) this.results.recordShot(event.playerId);
         // EXCEPTION — HEX SNIPER: the tongue's outcome (grab / miss / pull
         // end / bite) is decided HERE, so the shooter needs its own confirm
         // to drive its local weapon. Every other weapon stays shooter-excluded.
@@ -223,6 +269,10 @@ export class GameRoom extends Room<GameRoomState> {
     this.setSimulationInterval((deltaMs) => {
       if (this.state.phase === GameRoomPhase.PLAYING) {
         this.weapons.tick(deltaMs / 1000);
+        // Beam accuracy sampling (plasma / poison continuous fire).
+        this.state.players.forEach((p) =>
+          this.results.recordBeam(p.id, this.weapons.isBeamFiring(p.id), deltaMs / 1000),
+        );
         // Map hazards (YARD acid pool): authoritative, independent of any
         // client rendering or graphics settings — pure transform checks.
         if (this.map.hazards.length > 0) this.tickHazards();
@@ -230,6 +280,10 @@ export class GameRoom extends Room<GameRoomState> {
     }, 50);
 
     this.onMessage("START_GAME", (client) => this.handleStartGame(client));
+    // End-of-match next-map vote (ENDED phase only, one ballot per player).
+    this.onMessage("MAP_VOTE", (client, message: { mapId?: unknown }) =>
+      this.handleMapVote(client, message?.mapId),
+    );
     // RTT measurement: echo the nonce IMMEDIATELY (the client computes
     // RTT from its own local clock — never cross-client Date.now math).
     // The optional `r` field carries the client's SMOOTHED RTT which is
@@ -288,14 +342,33 @@ export class GameRoom extends Room<GameRoomState> {
       throw new ServerError(409, "game already started");
     }
 
-    const name = sanitizeName(options?.name) ?? `PLAYER ${this.clients.length}`;
+    // Post-vote return (page reloaded onto the voted map): the seat token
+    // restores the previous match's identity — notably the HOST role, so
+    // the same host can start the next match.
+    const token = typeof options?.returnToken === "string" ? options.returnToken : null;
+    const seat = token ? this.returnSeats.get(token) : undefined;
+    if (token && seat) this.returnSeats.delete(token);
+
+    const name = sanitizeName(options?.name) ?? seat?.name ?? `PLAYER ${this.clients.length}`;
 
     const player = new NetworkPlayer();
     player.id = client.sessionId;
     player.name = name;
-    player.isHost = this.state.players.size === 0;
+    // Host = the returning previous host, else the first player in.
+    let hasHost = false;
+    this.state.players.forEach((p) => {
+      if (p.isHost) hasHost = true;
+    });
+    if (seat?.wasHost && hasHost) {
+      // A newcomer took the host slot meanwhile: give it back.
+      this.state.players.forEach((p) => {
+        p.isHost = false;
+      });
+    }
+    player.isHost = seat?.wasHost === true || !hasHost;
 
     this.state.players.set(client.sessionId, player);
+    if (this.returnSeats.size === 0) this.releaseReturnSeats();
     console.log(`[GameRoom ${this.roomId}] ${name} joined (${client.sessionId})`);
   }
 
@@ -307,11 +380,28 @@ export class GameRoom extends Room<GameRoomState> {
     this.combat.removePlayer(client.sessionId);
     this.weapons.removePlayer(client.sessionId);
     this.hazardNextTickAt.delete(client.sessionId);
+    this.results.remove(client.sessionId);
+    if (this.vote?.remove(client.sessionId)) this.broadcastVotes();
     this.state.players.delete(client.sessionId);
     this.trace?.removePlayer(client.sessionId);
     console.log(
       `[GameRoom ${this.roomId}] ${player?.name ?? client.sessionId} left`,
     );
+
+    if (this.state.players.size === 0) {
+      // Everybody gone mid-match: the timers die with the room.
+      if (this.state.phase === GameRoomPhase.PLAYING) this.clearMatchTimer();
+      return;
+    }
+    // Host left: promote the next player (LOBBY start rights).
+    let hasHost = false;
+    this.state.players.forEach((p) => {
+      if (p.isHost) hasHost = true;
+    });
+    if (!hasHost && this.returnSeats.size === 0) {
+      const next = this.state.players.values().next().value;
+      if (next) next.isHost = true;
+    }
   }
 
   /**
@@ -357,6 +447,9 @@ export class GameRoom extends Room<GameRoomState> {
 
   onDispose(): void {
     this.respawns.cancelAll();
+    this.clearMatchTimer();
+    this.voteTimer?.clear();
+    this.returnSeatsTimer?.clear();
     console.log(`[GameRoom ${this.roomId}] disposed`);
   }
 
@@ -383,7 +476,21 @@ export class GameRoom extends Room<GameRoomState> {
 
     this.assignSpawnPoints();
     // Phase 4: everyone enters the match alive at full server-owned HP.
-    this.state.players.forEach((player) => this.combat.initializePlayerForMatch(player));
+    // A replay after an end-of-match vote starts from a clean 0/0/0.
+    this.state.players.forEach((player) => {
+      player.kills = 0;
+      player.deaths = 0;
+      player.assists = 0;
+      this.combat.initializePlayerForMatch(player);
+    });
+    this.releaseReturnSeats(); // late returners can no longer get in
+    // MATCH CLOCK (authoritative): 5 minutes, then MATCH_ENDED.
+    this.results.reset();
+    const duration = serverConfig.matchDurationOverride ?? MATCH_DURATION_SECONDS;
+    this.matchStartedAt = Date.now();
+    this.state.matchEndsAt = this.matchStartedAt + duration * 1000;
+    this.clearMatchTimer();
+    this.matchTimer = this.clock.setTimeout(() => this.endMatch(), duration * 1000);
     // Phase flip LAST so clients read their spawn in the same state patch.
     this.state.phase = GameRoomPhase.PLAYING;
     console.log(
@@ -538,12 +645,141 @@ export class GameRoom extends Room<GameRoomState> {
       `[GameRoom ${this.roomId}] PLAYER_DIED ${event.victimId} by ${event.killerId ?? "world"} (${event.damageType})`,
     );
     this.broadcast("PLAYER_DIED", event);
+    // End-screen kill feed (rival / prey / streaks / momentum).
+    this.results.recordKill(
+      (Date.now() - this.matchStartedAt) / 1000,
+      event.killerId,
+      event.victimId,
+      event.assistIds,
+    );
     // Phase 5: a corpse cannot keep firing — stop beams/rush immediately.
     this.weapons.onPlayerDeath(event.victimId);
 
     this.respawns.schedule(event.victimId, serverConfig.respawnDelay, () =>
       this.respawnPlayer(event.victimId),
     );
+  }
+
+  // ------------------------------------------------------------------
+  // MATCH END → END SCREEN → NEXT-MAP VOTE → BACK TO LOBBY
+  // ------------------------------------------------------------------
+
+  private clearMatchTimer(): void {
+    this.matchTimer?.clear();
+    this.matchTimer = null;
+  }
+
+  /**
+   * The match clock ran out: freeze combat, broadcast the FINAL results
+   * (K/D/A + damage + accuracy + kill feed) and open the next-map vote.
+   */
+  private endMatch(): void {
+    if (this.state.phase !== GameRoomPhase.PLAYING) return;
+    this.clearMatchTimer();
+    // Nothing may change the final numbers anymore: pending respawns and
+    // active beams / pulls are stopped (WEAPON_ACTION is refused in ENDED).
+    this.respawns.cancelAll();
+    this.state.players.forEach((p) => this.weapons.onPlayerDeath(p.id));
+
+    const players: { id: string; name: string; kills: number; deaths: number; assists: number }[] = [];
+    this.state.players.forEach((p) =>
+      players.push({ id: p.id, name: p.name, kills: p.kills, deaths: p.deaths, assists: p.assists }),
+    );
+    const results = this.results.build(players, (Date.now() - this.matchStartedAt) / 1000);
+
+    this.vote = new MapVote(Object.values(MapId));
+    this.state.matchEndsAt = 0;
+    this.state.phase = GameRoomPhase.ENDED;
+    this.broadcast("MATCH_ENDED", {
+      results,
+      mapId: this.map.id,
+      maps: this.vote.options,
+      voteSeconds: MAP_VOTE_SECONDS,
+    });
+    this.broadcastVotes();
+    // Clients start their countdown after the end-screen intro; the server
+    // closes the vote once that intro + the countdown have elapsed.
+    this.voteTimer = this.clock.setTimeout(
+      () => this.closeVote(),
+      (serverConfig.voteDurationOverride ?? MAP_VOTE_SECONDS + MAP_VOTE_INTRO_SECONDS) * 1000,
+    );
+    console.log(`[GameRoom ${this.roomId}] MATCH ENDED — vote open (${players.length} players)`);
+  }
+
+  private handleMapVote(client: Client, mapId: unknown): void {
+    if (this.state.phase !== GameRoomPhase.ENDED || !this.vote) return;
+    if (!this.state.players.has(client.sessionId)) return;
+    if (this.vote.cast(client.sessionId, mapId)) this.broadcastVotes();
+  }
+
+  private broadcastVotes(): void {
+    if (this.vote) this.broadcast("MAP_VOTES", { votes: this.vote.tally() });
+  }
+
+  /**
+   * Vote closed: switch the room to the winning map, reset it to LOBBY and
+   * hand every player a seat token. Each client then reloads onto that map
+   * (single boot loading phase) and rejoins this SAME room with its token —
+   * the host keeps its role and starts the next match from the lobby.
+   */
+  private closeVote(): void {
+    const vote = this.vote;
+    if (!vote || vote.isClosed) return;
+    this.voteTimer = null;
+    const winner = vote.close();
+    this.vote = null;
+
+    // Reset the room on the winning map (colliders / spawns / hazards).
+    this.map = getMapDefinition(winner);
+    this.state.mapId = this.map.id;
+    void this.setMetadata({ map: this.map.id });
+    this.weapons.setMapBoxes(this.map.colliderBoxes);
+    this.respawns.setSpawnPoints(
+      this.map.spawnPoints.map((s) => ({ x: s.x, y: s.y + 0.3, z: s.z, yaw: s.yaw })),
+    );
+    this.hazardNextTickAt.clear();
+    this.state.players.forEach((p) => {
+      p.kills = 0;
+      p.deaths = 0;
+      p.assists = 0;
+      p.isAlive = true;
+      p.respawnAt = 0;
+    });
+
+    // Seat tokens: survive the clients' page reload (they leave, then come
+    // back with the token). The room must NOT auto-dispose meanwhile.
+    this.releaseReturnSeats();
+    this.autoDispose = false;
+    this.returnSeatsTimer = this.clock.setTimeout(
+      () => this.releaseReturnSeats(),
+      LOBBY_REJOIN_GRACE_SECONDS * 1000,
+    );
+    for (const client of this.clients) {
+      const player = this.state.players.get(client.sessionId);
+      if (!player) continue;
+      const token = `${client.sessionId}-${Math.random().toString(36).slice(2, 12)}`;
+      this.returnSeats.set(token, { name: player.name, wasHost: player.isHost });
+      client.send("MATCH_RETURN", { mapId: winner, returnToken: token });
+    }
+    this.state.phase = GameRoomPhase.LOBBY;
+    console.log(`[GameRoom ${this.roomId}] VOTE CLOSED → ${winner} (back to LOBBY)`);
+  }
+
+  /** Forget the post-vote seats and let the room auto-dispose again. */
+  private releaseReturnSeats(): void {
+    this.returnSeatsTimer?.clear();
+    this.returnSeatsTimer = null;
+    this.returnSeats.clear();
+    if (!this.autoDispose) this.autoDispose = true;
+    // The previous host never came back: promote someone present.
+    let hasHost = false;
+    this.state.players.forEach((p) => {
+      if (p.isHost) hasHost = true;
+    });
+    if (!hasHost) {
+      const next = this.state.players.values().next().value;
+      if (next) next.isHost = true;
+    }
   }
 
   /** Server-driven respawn: new spawn, full HP, protection, RESPAWN event. */

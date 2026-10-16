@@ -71,15 +71,24 @@ export class Health {
    * the primary gameplay callbacks and can never replace or block them —
    * several systems can watch the same Health without clobbering each other.
    */
-  private readonly damageListeners: ((amount: number, attacker: Combatant | null) => void)[] = [];
+  private readonly damageListeners: ((
+    amount: number,
+    attacker: Combatant | null,
+    method: KillMethod,
+  ) => void)[] = [];
   private readonly deathListeners: ((
     attacker: Combatant | null,
     method: KillMethod,
     hitZone: HitZone,
   ) => void)[] = [];
 
-  /** Observe every applied damage tick (never called on blocked damage). */
-  addDamageListener(fn: (amount: number, attacker: Combatant | null) => void): void {
+  /**
+   * Observe every applied damage tick (never called on blocked damage).
+   * `method` = the damage source (end-of-match accuracy per weapon).
+   */
+  addDamageListener(
+    fn: (amount: number, attacker: Combatant | null, method: KillMethod) => void,
+  ): void {
     this.damageListeners.push(fn);
   }
 
@@ -116,7 +125,7 @@ export class Health {
     if (!this.alive || this.invulnerable || this.protectionTimer > 0 || amount <= 0) return false;
     this.current -= amount;
     this.onDamaged?.(amount, attacker);
-    for (const fn of this.damageListeners) fn(amount, attacker);
+    for (const fn of this.damageListeners) fn(amount, attacker, method);
     if (this.current <= 0) {
       this.current = 0;
       this.alive = false;

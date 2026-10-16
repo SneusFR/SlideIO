@@ -175,6 +175,11 @@ export class PickupManager {
     this.active.push(p);
   }
 
+  /** Remove every active pickup (fresh match) — back to the pools. */
+  clear(): void {
+    for (let i = this.active.length - 1; i >= 0; i--) this.recycle(i);
+  }
+
   /** Return the pickup at `index` to its pool (swap-remove). */
   private recycle(index: number): void {
     const p = this.active[index];

@@ -7,6 +7,7 @@ import { LobbyBrowser } from "./menu/LobbyBrowser";
 import { LobbyController } from "./network/LobbyController";
 import { MultiplayerClient } from "./network/MultiplayerClient";
 import { loadDisplayName, parseJoinRoomId } from "./network/MultiplayerConfig";
+import { MatchEndController } from "./match/MatchEndController";
 
 /**
  * Boot flow — "the menu is just an overlay on top of the game":
@@ -71,6 +72,11 @@ async function main(): Promise<void> {
     menu.onOutlineChange = (settings) => game.applyOutlineSettings(settings);
     menu.enableOutlineSettings();
   }
+  // SNOW (settings popover, Givre only): falling-snow density — live.
+  if (game.hasSnow) {
+    menu.onSnowChange = (level) => game.setSnowLevel(level);
+    menu.enableSnowSettings();
+  }
 
   browser.onCreate = () => lobby.open();
   browser.onJoinByCode = () => lobby.open();
@@ -82,7 +88,9 @@ async function main(): Promise<void> {
     // Clean the URL so a refresh doesn't re-trigger the join.
     window.history.replaceState(null, "", "/");
     lobby.openWithInvite(inviteRoomId);
-  } else {
+  } else if (!lobby.resumePendingReturn()) {
+    // (End-of-match return handled above: the page reloaded onto the voted
+    // map and rejoins the same room with its seat token.)
     // CREATE LOBBY on another map: the host's page reloaded with that map
     // (single boot loading phase) → finish the creation now.
     lobby.resumePendingCreate();
@@ -91,6 +99,17 @@ async function main(): Promise<void> {
   let inGame = false;
   let entering = false;
   let inMultiplayerGame = false;
+
+  // ---- END OF MATCH (5-minute FFA clock): end screen + next-map vote ----
+  // While it is up, the pause menu never reopens and the HUD is hidden
+  // (the end screen covers the frozen world).
+  const matchEnd = new MatchEndController(game, multiplayer);
+  matchEnd.onShown = () => {
+    menu.hide();
+    document.body.classList.remove("game-paused");
+    hud.classList.add("menu-active");
+  };
+  matchEnd.onSoloReplay = () => hud.classList.remove("menu-active");
 
   // Player card name tag: the persisted name (the lobby / menu rename save
   // it) — refreshed on every entry / resume, the HUD change-detects it.
@@ -145,7 +164,7 @@ async function main(): Promise<void> {
   // MAIN MENU as the pause menu (solo pauses internally; multiplayer
   // keeps running behind it — the server never pauses a match). ----
   document.addEventListener("pointerlockchange", () => {
-    if (!inGame) return;
+    if (!inGame || matchEnd.isShowing || game.isMatchOver) return;
     const locked = document.pointerLockElement === game.domElement;
     if (locked) {
       menu.hide();
@@ -165,6 +184,7 @@ async function main(): Promise<void> {
   // Clicking the world (any non-panel area — the menu root lets clicks
   // through) resumes the game instantly, Krunker-style.
   container.addEventListener("click", () => {
+    if (matchEnd.isShowing || game.isMatchOver) return;
     if (inGame && document.pointerLockElement !== game.domElement) {
       game.requestPointerLock();
     }
@@ -207,7 +227,8 @@ async function main(): Promise<void> {
   const lobbyOnLeft = multiplayer.onLeft; // LobbyController's handler (Phase 1)
   multiplayer.onLeft = (intentional) => {
     lobbyOnLeft?.(intentional);
-    if (inMultiplayerGame && !intentional) {
+    // After the match the end screen owns the flow (reload onto the map).
+    if (inMultiplayerGame && !intentional && !matchEnd.isShowing) {
       inMultiplayerGame = false;
       game.disableMultiplayer();
       document.exitPointerLock();

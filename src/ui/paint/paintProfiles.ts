@@ -128,7 +128,43 @@ const POISON: PaintProfile = {
   ],
 };
 
+/**
+ * POPCORN — one glossy butter-yellow mass on the right end of the face: a thin
+ * tail lying on the top edge (x ≈ 141), thickening into a fat head that pokes
+ * above the corner (top ≈ y 13), wraps it and hangs down the right side into a
+ * short drip (bottom ≈ y 40). Measured on the validated Popcorn reference.
+ */
+const POPCORN: PaintProfile = {
+  id: "popcorn",
+  seed: 13,
+  canvas: CANVAS,
+  frame: FRAME,
+  clusters: [
+    {
+      id: "butter",
+      color: [1.0, 0.76, 0.1],
+      material: { gloss: 0.95, spec: 1.0, sss: 0.35, opacity: 1 },
+      jelly: 0.9,
+      nodes: [
+        { x: 142, y: 23.5, z: 2.2, r: 2.2, w: 0.08 },
+        { x: 148, y: 22.6, z: 3.2, r: 3.2, w: 0.12 },
+        { x: 154, y: 21.6, z: 4.2, r: 4.2, w: 0.18 },
+        { x: 160, y: 21, z: 5.6, r: 5.4, w: 0.26 },
+        { x: 165, y: 22, z: 7, r: 6.6, w: 0.38 },
+        { x: 169, y: 26.5, z: 7.4, r: 6.4, w: 0.5 },
+        { x: 170, y: 32, z: 6.2, r: 4.8, w: 0.7 },
+      ],
+      drip: {
+        dx: 0.02, dy: 1, rest: 4, neck: 3.2, bulb: 4.6,
+        maxExtra: 10, accSeconds: 9, restSeconds: 3, startFill: 0.5,
+        dropRadius: 3.6, killY: 100,
+      },
+    },
+  ],
+};
+
 export const PAINT_PROFILES: Readonly<Record<string, PaintProfile>> = {
   paintball: PAINTBALL,
   poison: POISON,
+  popcorn: POPCORN,
 };

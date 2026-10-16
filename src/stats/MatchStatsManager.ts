@@ -64,6 +64,13 @@ interface DamageContribution {
 export class MatchStatsManager {
   /** Fired on every meaningful change: kill, death, assist, join, leave. */
   onStatsChanged: (() => void) | null = null;
+  /**
+   * Fired once per recorded death with the attributed killer and assists
+   * (end-of-match kill feed). Killer null = environment / suicide.
+   */
+  onKillRecorded:
+    | ((victimId: number, killerId: number | null, assistIds: number[]) => void)
+    | null = null;
 
   private readonly stats = new Map<number, PlayerMatchStats>();
   /** victimId → (attackerId → contribution), for the victim's CURRENT life. */
@@ -176,6 +183,7 @@ export class MatchStatsManager {
     }
 
     // Assists: significant recent contributors, excluding the killer.
+    const assistIds: number[] = [];
     const contributors = this.damageContributors.get(victim.id);
     if (contributors) {
       const minDamage = MatchStatsConfig.assistMinDamageFraction * victim.health.max;
@@ -184,12 +192,16 @@ export class MatchStatsManager {
         if (this.now - c.lastDamageTime > MatchStatsConfig.assistWindow) continue;
         if (c.damageAmount < minDamage) continue;
         const s = this.stats.get(c.attackerId);
-        if (s) s.assists += 1;
+        if (s) {
+          s.assists += 1;
+          assistIds.push(c.attackerId);
+        }
       }
       // Previous life must NEVER influence the next one.
       this.damageContributors.delete(victim.id);
     }
 
+    this.onKillRecorded?.(victim.id, killerId, assistIds);
     this.emit();
   }
 

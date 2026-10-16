@@ -5,6 +5,8 @@ import { NetworkPlayer } from "./NetworkPlayer";
 export enum GameRoomPhase {
   LOBBY = "LOBBY",
   PLAYING = "PLAYING",
+  /** Match clock ran out: end screen + next-map vote, then back to LOBBY. */
+  ENDED = "ENDED",
 }
 
 /**
@@ -14,9 +16,15 @@ export enum GameRoomPhase {
 export class GameRoomState extends Schema {
   @type({ map: NetworkPlayer }) players = new MapSchema<NetworkPlayer>();
 
-  /** LOBBY until the host starts the game, then PLAYING (never back). */
+  /**
+   * LOBBY → PLAYING (host start) → ENDED (match clock ran out, map vote)
+   * → LOBBY again on the voted map.
+   */
   @type("string") phase: string = GameRoomPhase.LOBBY;
 
-  /** MapId the room plays on (fixed at creation — see shared MapRegistry). */
+  /** MapId the room plays on (set at creation, then by the end-of-match vote). */
   @type("string") mapId: string = "JUNGLE";
+
+  /** SERVER time (ms) at which the running match ends (0 outside a match). */
+  @type("float64") matchEndsAt = 0;
 }

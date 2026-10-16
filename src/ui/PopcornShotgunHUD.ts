@@ -1,9 +1,10 @@
 import { POPCORN_PIP_SVG } from "./hudIcons";
 import { createPips, setPips, WeaponPlate, RING_SPIN } from "./hudKit";
-import { PopcornMechanism } from "./popcorn/PopcornMechanism";
 
-const ACCENT = "#ffd23f";
-const KERNEL = "#fff3c4";
+/** Coral of the "POPCORN" tab. */
+const ACCENT = "#ff5f6d";
+/** Golden popcorn grain of the rail. */
+const GRAIN = "#f7d27e";
 
 /** What the plate reads from the shotgun (PopcornShotgunWeapon satisfies it; the HUD preview fakes it). */
 export interface PopcornHudSource {
@@ -15,26 +16,26 @@ export interface PopcornHudSource {
 }
 
 /**
- * Popcorn Shotgun plate — same family as the Paintball and Frisbee plates
- * (charcoal face, thin cream edge, yellow "POPCORN" tab, cream digits first),
- * with the weapon badge replaced by a small REAL 3D popcorn machine
- * (PopcornMechanism) on the left edge: red satin frame, ivory base, window
- * with one heap of grains per real load, hinged red lid.
+ * Popcorn Shotgun plate — built exactly like the Paintball plate (same
+ * WeaponPlate anatomy, same 3D paint layer, same reactions):
  *
- *     ╭machine╮  ╭ POPCORN ╮
- *     │ ░░░░░ │   2
- *     ╰───────╯  ╭ ☁ ☁ ╮      ← rail: one puff per real load (no max, no "/n")
+ *     ╭─────╮ ╭ POPCORN ╮            ← coral tab, black bold name
+ *     │ gun │   2           ◖butter◗  ← dark face, cream edge, glossy yellow mass
+ *     ╰─────╯ ╭ ✿ ✿ ╮                ← rail: one golden grain per real load
  *
- * Data = the weapon's real ammo and charge indicators only. The 3D shot
- * reaction fires ONLY when the weapon reports a shot actually fired
- * (`shotSerial`); the count and the rail update the same frame. The lid
- * opens only while the weapon really reloads (tab reads "RECHARGE").
- * DOM / 3D are only touched when the state changes.
+ * The badge is a round cream disc (thick dark outline) holding the whole
+ * shotgun drawn side-on, barrel to the left; the tab and the panels overlap
+ * it slightly. No max ("/n") next to the count.
+ *
+ * Data = the weapon's real ammo / reload state only. The recoil kick (badge +
+ * paint jelly) fires ONLY when the weapon reports a shot actually fired
+ * (`shotSerial`): a refused dry-fire click changes nothing. While the weapon
+ * really reloads the tab reads "RECHARGE" and the badge ring spins.
+ * DOM only touched on state change.
  */
 export class PopcornShotgunHUD {
   private readonly plate: WeaponPlate;
-  private readonly puffs: HTMLSpanElement[];
-  private readonly mech: PopcornMechanism;
+  private readonly grains: HTMLSpanElement[];
 
   private lastAmmo = -1;
   private lastReloading: boolean | null = null;
@@ -42,24 +43,15 @@ export class PopcornShotgunHUD {
   private lastVisible: boolean | null = null;
 
   constructor(shots: number) {
-    this.plate = new WeaponPlate("popcorn-shotgun-hud", "POPCORN", "popcorn", ACCENT, null);
-    this.puffs = createPips(this.plate.ammo, shots, "puff", [KERNEL], 0, POPCORN_PIP_SVG);
-    this.mech = new PopcornMechanism(this.plate.root, shots);
-    // No WebGL / context lost: the plate shows its flat badge again (the HUD stays complete).
-    this.mech.onAvailability = (ok) => this.plate.root.classList.toggle("mech-3d", ok);
-  }
-
-  /** The 3D mechanism (preview / debug: slow motion via `timeScale`). */
-  get mechanism(): PopcornMechanism {
-    return this.mech;
+    this.plate = new WeaponPlate("popcorn-shotgun-hud", "POPCORN", "popcorn", ACCENT, null, "popcorn");
+    this.grains = createPips(this.plate.ammo, shots, "puff", [GRAIN], 0, POPCORN_PIP_SVG);
   }
 
   setVisible(visible: boolean): void {
     if (visible === this.lastVisible) return;
     this.lastVisible = visible;
     this.plate.setVisible(visible);
-    this.mech.setVisible(visible);
-    // Weapon switch: the next update is a clean first sync (no replayed reaction, no stale serial).
+    // Weapon switch: the next update is a clean first sync (no replayed kick, no stale serial).
     if (!visible) {
       this.lastAmmo = -1;
       this.lastReloading = null;
@@ -74,13 +66,8 @@ export class PopcornShotgunHUD {
     const serial = weapon.shotSerial;
     if (ammo === this.lastAmmo && reloading === this.lastReloading && serial === this.lastShot) return;
 
-    const first = this.lastShot < 0;
-    // A REAL shot (one reaction per frame, however many serials passed: spam stays capped).
-    if (!first && serial !== this.lastShot) {
-      this.mech.shot();
-      if (!this.mech.available) this.plate.kick(); // flat badge fallback keeps its recoil
-    }
-    this.mech.setState(ammo, reloading, first);
+    // A REAL shot (one kick per frame, however many serials passed: spam stays capped).
+    if (this.lastShot >= 0 && serial !== this.lastShot) this.plate.kick();
     this.lastShot = serial;
     this.lastAmmo = ammo;
     this.lastReloading = reloading;
@@ -89,6 +76,6 @@ export class PopcornShotgunHUD {
     this.plate.setCount(String(ammo));
     this.plate.setState(reloading ? "reload" : ammo === 0 ? "low" : "");
     this.plate.setRing(reloading ? RING_SPIN : -1);
-    setPips(this.puffs, ammo);
+    setPips(this.grains, ammo);
   }
 }

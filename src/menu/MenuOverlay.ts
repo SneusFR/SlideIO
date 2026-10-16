@@ -39,6 +39,13 @@ import {
   saveOutlineSettings,
   type OutlineSettings,
 } from "../game/OutlineSettings";
+import {
+  SNOW_LEVELS,
+  loadSnowLevel,
+  saveSnowLevel,
+  snowLevelLabel,
+} from "../game/GivreSnowSettings";
+import type { GivreSnowLevel } from "../world/GivreSnow";
 
 /**
  * MenuOverlay — the new Beanzo.io main menu: a pure DOM overlay rendered
@@ -74,6 +81,8 @@ export class MenuOverlay {
   onFpsCapChange: ((maxFps: number) => void) | null = null;
   /** OUTLINE settings changed (Givre cel-shading) — live. */
   onOutlineChange: ((settings: OutlineSettings) => void) | null = null;
+  /** SNOW density changed (Givre falling snow) — live. */
+  onSnowChange: ((level: GivreSnowLevel) => void) | null = null;
 
   /** Current display name (persisted guest identity). */
   playerName: string;
@@ -444,6 +453,33 @@ export class MenuOverlay {
       thickSlider.removeEventListener("input", onThickness);
       intSlider.removeEventListener("input", onIntensity);
     });
+  }
+
+  /**
+   * SNOW section (Givre falling snow): one button cycling OFF → LIGHT →
+   * NORMAL → DENSE. Applied LIVE through onSnowChange and persisted. Hidden
+   * until enableSnowSettings() is called (Givre map only).
+   */
+  enableSnowSettings(): void {
+    const section = document.getElementById("menu-snow-section");
+    const btn = document.getElementById("menu-snow-btn") as HTMLButtonElement | null;
+    if (!section || !btn) return;
+    section.classList.remove("hidden");
+
+    let level: GivreSnowLevel = loadSnowLevel();
+    const render = () => {
+      btn.textContent = `SNOW: ${snowLevelLabel(level)}`;
+    };
+    render();
+    const onClick = () => {
+      this.sounds.click();
+      level = SNOW_LEVELS[(SNOW_LEVELS.indexOf(level) + 1) % SNOW_LEVELS.length];
+      render();
+      saveSnowLevel(level);
+      this.onSnowChange?.(level);
+    };
+    btn.addEventListener("click", onClick);
+    this.cleanups.push(() => btn.removeEventListener("click", onClick));
   }
 
   private toggleSettings(force?: boolean): void {

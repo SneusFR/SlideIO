@@ -189,6 +189,12 @@
               <button id="menu-outline-debug-btn" type="button">EDGE DEBUG: OFF</button>
               <div class="settings-hint">Applies live · edge debug shows the detected edges only</div>
             </div>
+            <div id="menu-snow-section" class="hidden">
+              <div class="settings-sep"></div>
+              <div class="settings-title">SNOW (GIVRE)</div>
+              <button id="menu-snow-btn" type="button">SNOW: NORMAL</button>
+              <div class="settings-hint">Applies live · OFF / LIGHT / NORMAL / DENSE</div>
+            </div>
           </div>
 
           <!-- Web advertisement placement (AdSlot renders here) -->
@@ -331,10 +337,10 @@
           <span id="mode-name">FFA</span>
           <span class="mode-sep"></span>
           <svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" />
-            <path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            <circle cx="12" cy="12" r="9.8" fill="none" stroke="currentColor" stroke-width="2.6" />
+            <path d="M12 6.8V12l3.4 2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
-          <span id="mode-time">∞</span>
+          <span id="mode-time" class="mt-inf">∞</span>
         </div>
         <div id="combo-hud">
           <div id="combo-tag">
@@ -383,7 +389,7 @@
         </div>
       </div>
 
-      <!-- Bottom-right column: KILLSTREAK medallions (injected on top by
+      <!-- Bottom-right column: KILLSTREAK capsules (injected on top by
            KillstreakHUD), then the weapon plate + ability chips. Each *HUD
            class mounts its own plate / chip; only the equipped ones show. -->
       <div id="right-hud-col">

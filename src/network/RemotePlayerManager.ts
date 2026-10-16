@@ -163,6 +163,10 @@ class RemotePlayer {
   lastPitch = 0;
   /** Latest sampled movement state is grounded (idle / running) — TP dribble floor fit. */
   private lastGrounded = true;
+  /** Read-only view of the latest sampled ground state (Givre footprints). */
+  get grounded(): boolean {
+    return this.lastGrounded;
+  }
 
   // ---- Network instrumentation (per remote — fed on snapshot arrival) ----
   lastSeq = -1;
@@ -909,6 +913,17 @@ export class RemotePlayerManager {
     for (const remote of this.remotes.values()) {
       if (!remote.alive || !remote.group.visible) continue;
       cb(remote.sessionId, remote.group.position);
+    }
+  }
+
+  /**
+   * Same as forEachVisible + the latest sampled ground state (idle /
+   * running = grounded). Purely visual consumers only (Givre footprints).
+   */
+  forEachVisibleGrounded(cb: (sessionId: string, center: THREE.Vector3, grounded: boolean) => void): void {
+    for (const remote of this.remotes.values()) {
+      if (!remote.alive || !remote.group.visible) continue;
+      cb(remote.sessionId, remote.group.position, remote.grounded);
     }
   }
 

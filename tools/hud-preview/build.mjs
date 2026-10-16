@@ -44,13 +44,10 @@ const plate = `
   </div>
   <div class="wpn-stamp">RELOAD!</div>
 </div>`;
+// Killstreak capsule (same DOM as KillstreakHUD; the real one is previewed by killstreaks.mjs).
 const medal = `
-<div id="killstreak-hud"><div class="ks-medal locked">
-  <div class="ks-rays"></div><div class="ks-confetti"></div>
-  <svg class="ks-ring" viewBox="0 0 80 80"><circle class="ks-ring-track" cx="40" cy="40" r="35"/></svg>
-  <div class="ks-disc"><div class="ks-art"><svg class="ks-icon-art" viewBox="0 0 64 64"><circle cx="32" cy="36" r="16" fill="#c98a4a" ${O}/></svg></div>
-  <span class="ks-count">1/5</span><span class="ks-used">USED</span></div>
-  <span class="ks-key">W</span></div></div>`;
+<div id="killstreak-hud"><div class="ks-cap on" data-ks="MOLE_STRIKE">
+  <span class="ks-pic"></span><span class="ks-count">1/5</span><span class="ks-key">W</span></div></div>`;
 const rows = [["1", "BOT 1", 19], ["2", "BOT 3", 15], ["3", "BOT 4", 14], ["4", "BOT 2", 12]]
   .map(([r, n, k], i) => `<div class="lb-row" style="transform:translateY(${i * 28}px)"><span class="lb-rank">${r}</span><span class="lb-ping"></span><span class="lb-name">${n}</span><span class="lb-k">${k}</span><span class="lb-d">0</span><span class="lb-a">0</span><span class="lb-kd">0</span></div>`)
   .join("") +

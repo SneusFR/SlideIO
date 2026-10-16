@@ -137,10 +137,8 @@
   height: 33px;
   transform: rotate(-4deg);
 }
-.wpn-badge-face .wpn-icon-art path,
-.wpn-badge-face .wpn-icon-art circle,
-.wpn-badge-face .wpn-icon-art ellipse,
-.wpn-badge-face .wpn-icon-art rect { stroke: none; }
+/* Flat silhouettes — except the Popcorn badge, a coloured drawing that keeps its outlines. */
+.wpn-plate:not([data-icon="popcorn"]) .wpn-badge-face .wpn-icon-art :is(path, circle, ellipse, rect) { stroke: none; }
 
 /* Reload ring around the badge (determinate or spinning). */
 .wpn-ring {
@@ -284,37 +282,29 @@
   box-shadow: 0 1.5px 0 rgba(0, 0, 0, 0.55);
 }
 
-/* POPCORN — warm kernel-yellow tab with a scalloped bottom edge, puffs that
-   jump off the rail when the shell is fired. */
-.wpn-plate[data-icon="popcorn"] {
-  --pl-face: #231a14;
-  --pl-edge: #fff3c4;
-  --pl-tab-clip: polygon(0 0, 100% 0, 100% 78%, 92% 100%, 83% 80%, 75% 100%, 66% 80%, 58% 100%, 50% 80%, 42% 100%, 33% 80%, 25% 100%, 17% 80%, 8% 100%, 0 78%);
-  --pl-tab-radius: 6px;
-  --pl-rail: #1b1410;
+/* POPCORN — the Paintball plate (same tab / face / rail / paint layer) with a
+   coral tab, golden grains in the rail and a glossy butter mass on the right end
+   of the face (paint profile "popcorn"). The badge is a ROUND cream disc with a
+   thick dark outline holding the whole shotgun side-on; it sits UNDER the
+   panels (tab, face and rail overlap its right edge). Plate px, from the
+   validated reference: disc -4..47 × 10..61, grains 18 × 15 centred on x 55 / 78. */
+.wpn-plate[data-icon="popcorn"] .wpn-badge {
+  left: -4px;
+  top: 10px;
+  width: 51px;
+  height: 51px;
+  z-index: 0;
 }
-/* 3D available: the little popcorn machine (<canvas class="popcorn-mech">, see
-   src/ui/popcorn/PopcornMechanism.ts) takes the badge's place on the left edge
-   (the flat badge stays as the no-WebGL fallback). Z-order: 3D (1) under the
-   panel texts (tab 2, digits 2) — the canvas ends at x 39, left of the tab
-   (46) and of the face (49): it never covers the name or the counter. */
-.wpn-plate[data-icon="popcorn"] .wpn-ribbon { min-width: 84px; }
-.wpn-plate[data-icon="popcorn"].mech-3d .wpn-badge { visibility: hidden; }
-.popcorn-mech {
-  position: absolute;
-  pointer-events: none;
-  z-index: 1;
+.wpn-plate[data-icon="popcorn"] .wpn-badge-face { border-radius: 50%; }
+.wpn-plate[data-icon="popcorn"] .wpn-icon-art {
+  width: 43px;
+  height: 43px;
+  margin-left: -2px;
+  transform: rotate(-3deg);
 }
-.wpn-plate[data-icon="popcorn"] .wpn-count { z-index: 4; }
-.ammo-puff { gap: 0; }
-.ammo-puff .ammo-pip { width: 22px; height: 18px; color: var(--pip, #fff3c4); }
-.ammo-puff .ammo-pip svg { width: 100%; height: 100%; display: block; }
-/* A spent puff stays IN its rail slot (a tiny in-place pop, no travel): nothing
-   leaves the rail, so nothing ever crosses the digits or reads as a second grain. */
-.ammo-puff .ammo-pip:not(.on).pip-a { animation: puff-spent-a 0.18s ease-out; }
-.ammo-puff .ammo-pip:not(.on).pip-b { animation: puff-spent-b 0.18s ease-out; }
-@keyframes puff-spent-a { 0% { transform: scale(1.12); opacity: 1; filter: none; } 100% { transform: none; } }
-@keyframes puff-spent-b { 0% { transform: scale(1.12); opacity: 1; filter: none; } 100% { transform: none; } }
+.ammo-puff { gap: 5px; }
+.ammo-puff .ammo-pip { width: 18px; height: 15px; color: var(--pip, #f7d27e); }
+.ammo-puff .ammo-pip svg { width: 100%; height: 100%; display: block; overflow: visible; }
 
 /* WATER FAMAS — glass TANK: blue-black face, the rail is a glass tube with a
    sloshing level, one droplet per burst. */

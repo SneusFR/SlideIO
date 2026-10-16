@@ -37,8 +37,13 @@ export class RespawnManager {
 
   constructor(
     private readonly clock: RoomClock,
-    private readonly spawnPoints: SpawnPoint[] = MULTIPLAYER_SPAWN_POINTS,
+    private spawnPoints: SpawnPoint[] = MULTIPLAYER_SPAWN_POINTS,
   ) {}
+
+  /** The room switched map (end-of-match vote): use its spawn points. */
+  setSpawnPoints(points: SpawnPoint[]): void {
+    if (points.length > 0) this.spawnPoints = points;
+  }
 
   /** Schedule a respawn; any previous timer for this player is replaced. */
   schedule(playerId: string, delaySeconds: number, callback: () => void): void {

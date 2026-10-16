@@ -13,7 +13,7 @@
      "LOW AMMO / RELOAD" ticker live near the aim point.
    Layout: top-centre = mode badge + combo tag + event feed · top-right =
    scoreboard · bottom-left = Bean Buddy (HP / dash) · bottom-right =
-   killstreak medallions + weapon plate + ability chips.
+   killstreak capsules + weapon plate + ability chips.
    Performance: no backdrop-filter, animations on transform / opacity only,
    no per-frame JS writes (everything change-detected), one-shot
    animations restarted by swapping `x-a` / `x-b` classes (replayAnim).
@@ -95,7 +95,7 @@
    ========================================================================== */
 #top-center {
   position: absolute;
-  top: 10px;
+  top: 0; /* the clock's own (scaled) margin-top places the stack */
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -105,70 +105,104 @@
   z-index: 6;
 }
 
+/* Match clock: ONE flat cream capsule [ cyan "FFA" pill · green dot · clock
+   · 4:40 ], same family as the leaderboard (cream of the "CLASSEMENT" tab,
+   cyan of the local row, ink outline, sober drop shadow).
+   DESIGN SPACE = the 1816px-wide reference frame, in plain px: MatchClockHUD
+   sets --mc-s (= innerWidth / 1816, like the leaderboard's --lb-s, divided by
+   any zoom of #top-center). zoom (not transform) so the combo tag and the
+   feed hanging below follow; the top margin lives here so it scales too. */
 #mode-hud {
+  --mc-ink: #0b0b10;
+  --mc-cream: #f7f0e2;
+  --mc-cyan: #22e3f0;
   position: relative;
+  zoom: var(--mc-s, 1);
+  box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 18px 3px;
-  background: var(--plank);
-  border: var(--outline);
+  height: 44px;
+  margin-top: 10px;
+  /* Right: 18px of air after "4:40" in the reference, minus the slack the
+     reserved time box keeps after it (0:00 is 0.20em wider than 4:40). */
+  padding: 0 11px 0 3px;
+  background: var(--mc-cream);
+  border: 3px solid var(--mc-ink);
   border-radius: 999px;
-  box-shadow: var(--sticker-shadow), inset 0 2px 0 rgba(255, 226, 180, 0.25);
-  transform: rotate(-1.5deg);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.35);
+  color: var(--mc-ink);
+  white-space: nowrap;
   z-index: 2;
 }
 
-/* Two little nails holding the sign. */
-#mode-hud::before,
-#mode-hud::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  width: 5px;
-  height: 5px;
-  margin-top: -2.5px;
-  border-radius: 50%;
-  background: #d8c49a;
-  box-shadow: 0 0 0 1.5px var(--ink);
-}
-#mode-hud::before { left: 6px; }
-#mode-hud::after { right: 6px; }
-
 #mode-name {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 75px;
+  height: 34px;
+  background: var(--mc-cyan);
+  border: 3px solid var(--mc-ink);
+  border-radius: 999px;
+  /* Luckiest Guy at line-height 1: the caps' ink is optically centred. */
   font-family: var(--hud-font);
-  font-size: 16px;
-  letter-spacing: 2px;
-  color: var(--gold);
-  -webkit-text-stroke: 1.5px var(--ink);
-  paint-order: stroke fill;
-  transform: translateY(1px);
+  font-size: 27px;
+  line-height: 1;
+  color: var(--mc-ink);
 }
 
-/* Separator = a tiny bean. */
+/* The green status dot. */
 .mode-sep {
-  width: 10px;
-  height: 7px;
-  border-radius: 50% 50% 45% 45% / 60% 60% 40% 40%;
+  flex: none;
+  box-sizing: border-box;
+  width: 21px;
+  height: 17px;
+  margin-left: 6px;
+  border: 2.5px solid var(--mc-ink);
+  border-radius: 50%;
   background: var(--bean);
-  box-shadow: 0 0 0 1.5px var(--ink);
-  transform: rotate(-20deg);
 }
 
 .mode-icon {
-  width: 14px;
-  height: 14px;
-  color: var(--cream-dim);
+  flex: none;
+  width: 26px;
+  height: 26px;
+  margin-left: 14px;
+  color: var(--mc-ink);
 }
 
+/* The dominant info. Luckiest Guy has proportional digits (no tabular
+   figures), so the box reserves the width of the widest value "0:00"
+   (2.147em) and the text is left-aligned: the capsule never resizes and the
+   minutes never move from one second to the next. */
 #mode-time {
+  flex: none;
+  min-width: 2.15em;
+  margin-left: 18px;
   font-family: var(--hud-font);
-  font-size: 17px;
+  font-size: 35px;
   line-height: 1;
-  color: var(--cream);
-  -webkit-text-stroke: 1px var(--ink);
-  paint-order: stroke fill;
-  transform: translateY(1px);
+  color: var(--mc-ink);
+  transform-origin: 1em 50%;
+}
+/* "∞" (no clock) sits low in the font: lift it onto the digits' centre. */
+#mode-time.mt-inf {
+  position: relative;
+  top: -0.1em;
+}
+
+/* Last 30 seconds of the match: the clock turns tomato and beats. */
+#mode-hud.mode-hurry #mode-time {
+  color: var(--hp-low);
+  animation: mode-hurry-beat 1s ease-in-out infinite;
+}
+#mode-hud.mode-hurry .mode-icon { color: var(--hp-low); }
+@keyframes mode-hurry-beat {
+  0%, 100% { transform: scale(1); }
+  12% { transform: scale(1.18); }
+  30% { transform: scale(1); }
 }
 
 /* ==========================================================================
@@ -1061,7 +1095,7 @@
 }
 
 /* ==========================================================================
-   BOTTOM-RIGHT column: killstreak medallions on top, then the weapon row
+   BOTTOM-RIGHT column: killstreak capsules on top, then the weapon row
    (ability chips on the left of the plate).
    ========================================================================== */
 #right-hud-col {
@@ -1197,317 +1231,158 @@
 }
 
 /* ==========================================================================
-   KILLSTREAK MEDALLIONS (above the weapon plate) — one per equipped slot,
-   --ks = streak accent colour. States: locked / ready / active / spent.
-   The whole row disappears when nothing is equipped.
+   KILLSTREAK CAPSULES (right edge, above the weapon plate) — one compact
+   capsule per equipped killstreak, fixed order Mole → Scan → Nova:
+   [ pictogram · acquired/required · key cap (only when available) ].
+   Same family as the leaderboard: cream / HUD cyan, one ink outline, sober
+   drop shadow. DESIGN SPACE = the 1816px reference frame in plain px;
+   KillstreakHUD sets --ks-s (= innerWidth / 1816 ÷ the column's zoom).
+     not available  cream, monochrome pictogram, dark counter
+     .ready         HUD cyan, coloured pictogram, key cap shown
    ========================================================================== */
 #killstreak-hud {
+  --ks-ink: #0b0b10;
+  --ks-cream: #fbf6ec;
+  --ks-cyan: #22e3f0;
+  zoom: var(--ks-s, 1);
   display: flex;
+  flex-direction: column;
   align-items: flex-end;
-  gap: 14px;
-  padding-right: 6px;
+  gap: 12px;
+  /* Right edge on the leaderboard's (46px from the screen edge, the column
+     already sits 18px in); the gap above the weapon plate is the reference's. */
+  margin: 0 28px 72px 0;
 }
+#killstreak-hud.hidden { display: none; }
 
-#killstreak-hud:not(:has(.ks-medal:not(.empty))) {
-  display: none;
-}
-
-.ks-medal {
-  --ks: var(--gold);
+#killstreak-hud .ks-cap {
   position: relative;
-  width: 72px;
-  height: 72px;
+  display: none;
   flex: none;
+  box-sizing: border-box;
+  width: 139px;
+  height: 60px;
+  border: 3px solid var(--ks-ink);
+  border-radius: 999px;
+  background: var(--ks-cream);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.38);
+  transition: background-color 0.18s ease-out;
 }
-.ks-medal.empty { display: none; }
+#killstreak-hud .ks-cap.on { display: block; }
+#killstreak-hud .ks-cap.ready { background: var(--ks-cyan); }
 
-/* Notched progress ring (SVG built by KillstreakHUD). */
-.ks-ring {
+/* Pictogram: one 56px box for the whole family (art drawn at 1:1). */
+#killstreak-hud .ks-pic {
   position: absolute;
-  inset: -4px;
-  width: calc(100% + 8px);
-  height: calc(100% + 8px);
-  overflow: visible;
-  z-index: 2;
+  left: 4px;
+  top: -1.5px;
+  width: 56px;
+  height: 56px;
 }
-.ks-ring-track {
-  fill: none;
-  stroke: var(--ink);
-  stroke-width: 8;
-}
-.ks-seg {
-  fill: none;
-  stroke: rgba(255, 246, 224, 0.22);
-  stroke-width: 4.5;
-  stroke-linecap: round;
-  transition: stroke 0.2s ease;
-}
-.ks-seg.on { stroke: var(--gold); }
-.ks-seg.pop-a,
-.ks-seg.pop-b { animation: seg-pop 0.45s var(--pop); }
-.ks-seg.pop-b { animation-name: seg-pop-b; }
-@keyframes seg-pop {
-  0% { stroke: #ffffff; stroke-width: 9; }
-  100% { stroke-width: 4.5; }
-}
-@keyframes seg-pop-b {
-  0% { stroke: #ffffff; stroke-width: 9; }
-  100% { stroke-width: 4.5; }
-}
-.ks-ring.gulp-a { animation: ring-gulp-a 0.35s var(--spring); }
-.ks-ring.gulp-b { animation: ring-gulp-b 0.35s var(--spring); }
-@keyframes ring-gulp-a {
-  0% { transform: scale(1.12); }
-  100% { transform: none; }
-}
-@keyframes ring-gulp-b {
-  0% { transform: scale(1.12); }
-  100% { transform: none; }
-}
-
-/* The medallion disc. */
-.ks-disc {
-  position: absolute;
-  inset: 4px;
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 50% 30%, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 55%),
-    radial-gradient(circle, color-mix(in srgb, var(--ks) 55%, #fff6e0) 0%, var(--ks) 100%);
-  border: 3px solid var(--ink);
-  box-shadow: 0 4px 0 var(--ink), inset 0 -5px 0 rgba(0, 0, 0, 0.2);
-  overflow: hidden;
-  z-index: 1;
-}
-
-.ks-art {
-  position: absolute;
-  inset: 5px;
-}
-.ks-icon-art {
+#killstreak-hud .ks-icon-art {
+  display: block;
   width: 100%;
   height: 100%;
-  display: block;
+  overflow: visible;
 }
 
-/* Padlock badge (bottom-right of the disc, outside the clipping). */
-.ks-lock {
+/* acquired/required — left-aligned on a fixed column: the digits never push
+   the capsule, and 25/25 still fits inside. */
+#killstreak-hud .ks-count {
   position: absolute;
-  right: -2px;
-  bottom: -2px;
-  width: 24px;
-  height: 26px;
-  display: none;
-  z-index: 3;
-}
-.ks-lock-art { width: 100%; height: 100%; display: block; overflow: visible; }
-
-.ks-count {
-  position: absolute;
-  left: 50%;
-  bottom: 3px;
-  transform: translateX(-50%);
-  font-family: var(--hud-font);
-  font-size: 12px;
+  left: 67px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding-top: 4px;
+  /* Same face / weight as the leaderboard counters. */
+  font-family: var(--hud-font-alt);
+  font-weight: 800;
+  font-size: 30px;
   line-height: 1;
-  color: var(--cream);
-  -webkit-text-stroke: 3px var(--ink);
-  paint-order: stroke fill;
+  letter-spacing: 0;
+  color: var(--ks-ink);
   white-space: nowrap;
 }
 
-.ks-used {
+/* The real activation key, on the bottom-right corner — only when usable. */
+#killstreak-hud .ks-key {
   position: absolute;
-  left: 50%;
-  top: 50%;
+  right: -18px;
+  bottom: -9px;
   display: none;
-  padding: 1px 5px 0;
+  box-sizing: border-box;
+  width: 44px;
+  height: 43px;
+  padding-top: 4px;
+  border: 4px solid var(--ks-ink);
+  border-radius: 9px;
+  background: #ffffff;
+  box-shadow: inset 0 -4px 0 var(--ks-cyan), 0 5px 0 var(--ks-ink);
   font-family: var(--hud-font);
-  font-size: 11px;
-  letter-spacing: 1px;
-  color: #ff5a4e;
-  border: 2.5px solid #ff5a4e;
-  border-radius: 5px;
-  background: rgba(255, 246, 224, 0.9);
-  transform: translate(-50%, -50%) rotate(-16deg);
-}
-
-/* Key cap under the medallion. */
-.ks-key {
-  position: absolute;
-  left: 50%;
-  bottom: -12px;
-  transform: translateX(-50%);
-  min-width: 20px;
-  height: 20px;
-  padding: 0 4px;
-  font-family: var(--hud-font);
-  font-size: 12px;
-  line-height: 23px;
+  font-size: 24px;
+  line-height: 31px;
   text-align: center;
-  color: var(--ink);
-  background: var(--parchment);
-  border: 2px solid var(--ink);
-  border-radius: 6px;
-  box-shadow: 0 2px 0 var(--ink);
-  z-index: 4;
+  color: var(--ks-ink);
 }
+#killstreak-hud .ks-cap.ready .ks-key { display: block; }
 
-/* Rays + confetti live behind / around the disc, idle = invisible. */
-.ks-rays {
-  position: absolute;
-  inset: -22px;
-  border-radius: 50%;
-  background: repeating-conic-gradient(color-mix(in srgb, var(--ks) 60%, #fff6e0) 0 10deg, transparent 10deg 24deg);
-  -webkit-mask: radial-gradient(circle, #000 35%, transparent 70%);
-  mask: radial-gradient(circle, #000 35%, transparent 70%);
-  opacity: 0;
-  z-index: 0;
-}
+/* Five-character counters (10/25 … 25/25), like the leaderboard's .d5:
+   smaller digits so the capsule never grows; when ready the key slides
+   further out so it never covers the full count. */
+#killstreak-hud .ks-cap.w5 .ks-count { left: 65px; font-size: 24px; padding-top: 3px; }
+#killstreak-hud .ks-cap.w5 .ks-key { right: -34px; }
 
-.ks-confetti {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  pointer-events: none;
-}
-.ks-confetti i {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 7px;
-  height: 11px;
-  margin: -5px 0 0 -3px;
-  border-radius: 2px;
-  background: var(--gold);
-  box-shadow: 0 0 0 1.5px var(--ink);
-  opacity: 0;
-}
-.ks-confetti i:nth-child(1) { --cx: -52px; --cy: -40px; --cr: -200deg; background: #ff5fa2; }
-.ks-confetti i:nth-child(2) { --cx: 0px; --cy: -62px; --cr: 160deg; background: var(--gold); }
-.ks-confetti i:nth-child(3) { --cx: 50px; --cy: -44px; --cr: 240deg; background: #38c6ff; }
-.ks-confetti i:nth-child(4) { --cx: 62px; --cy: 4px; --cr: -120deg; background: var(--bean); }
-.ks-confetti i:nth-child(5) { --cx: 42px; --cy: 46px; --cr: 200deg; background: #ff8a3d; }
-.ks-confetti i:nth-child(6) { --cx: -8px; --cy: 58px; --cr: -260deg; background: #ff5fa2; }
-.ks-confetti i:nth-child(7) { --cx: -54px; --cy: 36px; --cr: 140deg; background: var(--gold); }
-.ks-confetti i:nth-child(8) { --cx: -64px; --cy: -4px; --cr: -180deg; background: #38c6ff; }
+/* Becoming available: ONE short pulse, back to the exact size at once. */
+#killstreak-hud .ks-cap.ready.pulse-a { animation: ks-pulse-a 0.32s ease-out; }
+#killstreak-hud .ks-cap.ready.pulse-b { animation: ks-pulse-b 0.32s ease-out; }
+@keyframes ks-pulse-a { 40% { transform: scale(1.07); } 100% { transform: none; } }
+@keyframes ks-pulse-b { 40% { transform: scale(1.07); } 100% { transform: none; } }
 
-/* ---- LOCKED: greyed silhouette + padlock, the ring charges ---- */
-.ks-medal.locked .ks-disc {
-  background: radial-gradient(circle at 50% 35%, #6d5638, #3d2a15);
+/* ---- Pictogram paint: monochrome by default ---- */
+#killstreak-hud .ks-icon-art * {
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  transition: fill 0.18s ease-out, stroke 0.18s ease-out;
 }
-.ks-medal.locked .ks-art {
-  filter: grayscale(1) brightness(0.35) contrast(1.2);
-  opacity: 0.85;
-}
-.ks-medal.locked .ks-lock { display: block; }
+#killstreak-hud .kk,
+#killstreak-hud .k1,
+#killstreak-hud .k3,
+#killstreak-hud .k4 { fill: var(--ks-ink); }
+#killstreak-hud .kd { fill: #ffffff; }
+#killstreak-hud .kg { fill: none; stroke: #3a3a40; stroke-width: 2.2; }
+#killstreak-hud .ks,
+#killstreak-hud .ka,
+#killstreak-hud .kl { fill: none; }
 
-/* ---- READY: colours, gold rim, float, shine sweep, hopping key ---- */
-.ks-medal.ready .ks-disc {
-  border-color: var(--ink);
-  box-shadow:
-    0 4px 0 var(--ink),
-    0 0 0 3px var(--gold),
-    0 0 18px 4px color-mix(in srgb, var(--gold) 55%, transparent);
-  animation: ks-float 1.6s ease-in-out infinite;
-}
-.ks-medal.ready .ks-disc::after {
-  content: "";
-  position: absolute;
-  top: -20%;
-  bottom: -20%;
-  left: -60%;
-  width: 40%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
-  transform: skewX(-20deg);
-  animation: ks-shine 2.5s ease-in-out infinite;
-}
-.ks-medal.ready .ks-ring { animation: ks-float 1.6s ease-in-out infinite; }
-.ks-medal.ready .ks-rays {
-  opacity: 0.55;
-  animation: rays-spin 7s linear infinite;
-}
-.ks-medal.ready .ks-key {
-  background: var(--gold);
-  animation: ks-key-bounce 0.8s ease-in-out infinite;
-}
-@keyframes ks-float {
-  0%, 100% { transform: translateY(0) rotate(-2deg); }
-  50% { transform: translateY(-4px) rotate(2deg); }
-}
-@keyframes ks-shine {
-  0%, 60% { left: -60%; }
-  100% { left: 130%; }
-}
-@keyframes ks-key-bounce {
-  0%, 100% { transform: translateX(-50%) translateY(0); }
-  50% { transform: translateX(-50%) translateY(-4px); }
-}
+/* MOLE — the hole: ink rim, dark pit, light lip. */
+#killstreak-hud [data-ks="MOLE_STRIKE"] .k1 { fill: #1d1d22; }
+#killstreak-hud [data-ks="MOLE_STRIKE"] .k2 { fill: #3c3c44; }
+#killstreak-hud [data-ks="MOLE_STRIKE"] .kl { stroke: #d9d9dc; stroke-width: 1.8; }
+#killstreak-hud .ready[data-ks="MOLE_STRIKE"] .k1 { fill: #1e044b; }
+#killstreak-hud .ready[data-ks="MOLE_STRIKE"] .k2 { fill: #4a1597; }
+#killstreak-hud .ready[data-ks="MOLE_STRIKE"] .kl { stroke: #c9b8ff; }
 
-/* ---- ACTIVE: warm pulse + spinning ring ---- */
-.ks-medal.active .ks-disc {
-  box-shadow: 0 4px 0 var(--ink), 0 0 0 3px #ff8a3d, 0 0 22px 6px rgba(255, 138, 61, 0.6);
-  animation: ks-active 0.5s ease-in-out infinite;
-}
-.ks-medal.active .ks-ring { animation: rays-spin 1.4s linear infinite; }
-.ks-medal.active .ks-seg.on { stroke: #ff8a3d; }
-@keyframes ks-active {
-  50% { transform: scale(1.07); filter: brightness(1.2); }
-}
+/* SCAN — dish + foot in ink, a lighter rim line, white struts and feed. */
+#killstreak-hud [data-ks="ORBITAL_SCAN"] .k2 { fill: var(--ks-ink); }
+#killstreak-hud [data-ks="ORBITAL_SCAN"] .k3 { fill: none; stroke: #3a3a42; stroke-width: 1.4; }
+#killstreak-hud [data-ks="ORBITAL_SCAN"] .ks { stroke: #ffffff; stroke-width: 1.8; }
+#killstreak-hud [data-ks="ORBITAL_SCAN"] .k4 { fill: var(--ks-ink); stroke: #ffffff; stroke-width: 1.2; }
+#killstreak-hud [data-ks="ORBITAL_SCAN"] .ka { stroke: var(--ks-ink); stroke-width: 2.6; }
+#killstreak-hud .ready[data-ks="ORBITAL_SCAN"] .k1 { fill: #6fd2ff; stroke: var(--ks-ink); stroke-width: 2; }
+#killstreak-hud .ready[data-ks="ORBITAL_SCAN"] .k2 { fill: #2f5fd0; stroke: var(--ks-ink); stroke-width: 2; }
+#killstreak-hud .ready[data-ks="ORBITAL_SCAN"] .k3 { stroke: #e9fbff; }
+#killstreak-hud .ready[data-ks="ORBITAL_SCAN"] .ks { stroke: var(--ks-ink); }
+#killstreak-hud .ready[data-ks="ORBITAL_SCAN"] .ka { stroke: #1b3a99; }
 
-/* ---- SPENT: washed out + USED stamp ---- */
-.ks-medal.spent { opacity: 0.6; }
-.ks-medal.spent .ks-art { filter: grayscale(0.9) brightness(0.7); }
-.ks-medal.spent .ks-used { display: block; }
-.ks-medal.spent .ks-key { opacity: 0.5; }
-
-/* ---- UNLOCK moment (replayAnim "unlock" on .ks-medal) ---- */
-.ks-medal.ready.unlock-a .ks-disc,
-.ks-medal.ready.unlock-b .ks-disc { animation: ks-unlock-pop 0.7s var(--pop), ks-float 1.6s ease-in-out 0.7s infinite; }
-.ks-medal.ready.unlock-a .ks-art,
-.ks-medal.ready.unlock-b .ks-art { animation: ks-color-flood 0.6s ease-out; }
-.ks-medal.ready.unlock-a .ks-rays,
-.ks-medal.ready.unlock-b .ks-rays { animation: ks-rays-burst 0.9s ease-out, rays-spin 7s linear infinite; }
-.ks-medal.ready.unlock-a .ks-confetti i { animation: ks-confetti-a 0.9s cubic-bezier(0.2, 0.8, 0.4, 1) forwards; }
-.ks-medal.ready.unlock-b .ks-confetti i { animation: ks-confetti-b 0.9s cubic-bezier(0.2, 0.8, 0.4, 1) forwards; }
-/* The padlock shows for the burst even though the state is already READY. */
-.ks-medal.ready.unlock-a .ks-lock,
-.ks-medal.ready.unlock-b .ks-lock { display: block; animation: ks-lock-burst 0.5s ease-in forwards; }
-.ks-medal.ready.unlock-a .ks-lock-shackle,
-.ks-medal.ready.unlock-b .ks-lock-shackle { animation: ks-shackle-fly 0.5s ease-out forwards; }
-
-@keyframes ks-unlock-pop {
-  0% { transform: scale(0.6) rotate(-20deg); filter: brightness(2.2); }
-  45% { transform: scale(1.3) rotate(8deg); filter: brightness(1.4); }
-  70% { transform: scale(0.94) rotate(-3deg); }
-  100% { transform: none; filter: none; }
-}
-@keyframes ks-color-flood {
-  0% { filter: grayscale(1) brightness(0.35); }
-  100% { filter: none; }
-}
-@keyframes ks-rays-burst {
-  0% { opacity: 0; transform: scale(0.3); }
-  30% { opacity: 1; transform: scale(1.25); }
-  100% { opacity: 0.55; transform: scale(1); }
-}
-@keyframes ks-confetti-a {
-  0% { transform: scale(0.4); opacity: 1; }
-  70% { opacity: 1; }
-  100% { transform: translate(var(--cx), var(--cy)) rotate(var(--cr)); opacity: 0; }
-}
-@keyframes ks-confetti-b {
-  0% { transform: scale(0.4); opacity: 1; }
-  70% { opacity: 1; }
-  100% { transform: translate(var(--cx), var(--cy)) rotate(var(--cr)); opacity: 0; }
-}
-@keyframes ks-lock-burst {
-  0% { transform: scale(1.3); opacity: 1; }
-  100% { transform: translate(14px, 22px) rotate(50deg) scale(0.6); opacity: 0; }
-}
-@keyframes ks-shackle-fly {
-  0% { transform: none; }
-  100% { transform: translate(-6px, -14px) rotate(-40deg); }
-}
+/* NOVA — ink head and flames, white heart of the trail, ink specks. */
+#killstreak-hud [data-ks="NOVA_STRIKE"] .k2 { fill: #ffffff; }
+#killstreak-hud .ready[data-ks="NOVA_STRIKE"] .k3 { fill: #ff5a1f; stroke: var(--ks-ink); stroke-width: 2; }
+#killstreak-hud .ready[data-ks="NOVA_STRIKE"] .k2 { fill: #ffd23f; }
+#killstreak-hud .ready[data-ks="NOVA_STRIKE"] .k4 { fill: #ff8a3d; }
+#killstreak-hud .ready[data-ks="NOVA_STRIKE"] .k1 { fill: #d9381a; stroke: var(--ks-ink); stroke-width: 2; }
+#killstreak-hud .ready[data-ks="NOVA_STRIKE"] .kg { stroke: #ffb27a; }
 
 /* ==========================================================================
    MEDALS (KILL / DOUBLE KILL / HEADSHOT…) — a sticker badge from the same

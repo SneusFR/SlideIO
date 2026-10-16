@@ -149,6 +149,11 @@ export class CorpseManager {
     }
   }
 
+  /** Remove every corpse now (fresh match) — pooled materials are kept. */
+  clear(): void {
+    for (let i = this.corpses.length - 1; i >= 0; i--) this.remove(i);
+  }
+
   dispose(): void {
     for (let i = this.corpses.length - 1; i >= 0; i--) this.remove(i);
     // Full teardown only (game exit): now the pooled clones can go.

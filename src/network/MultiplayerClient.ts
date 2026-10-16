@@ -12,6 +12,23 @@ import {
   sanitizeCharacterCosmetics,
   type CharacterCosmeticsSelection,
 } from "../../shared/combat/CharacterCosmetics";
+import { sanitizeMatchResults, type MatchResults } from "../../shared/match/MatchResultsTracker";
+
+/** Server → clients: the match clock ran out (final results + map vote). */
+export interface MatchEndedEvent {
+  results: MatchResults;
+  /** Map the match was played on. */
+  mapId: string;
+  /** Maps offered in the next-map vote. */
+  maps: string[];
+  voteSeconds: number;
+}
+
+/** Server → one client: vote closed — reload onto `mapId` and rejoin. */
+export interface MatchReturnEvent {
+  mapId: string;
+  returnToken: string;
+}
 
 /** Snapshot of a networked player (mirrors the backend NetworkPlayer). */
 export interface NetworkPlayerInfo {
@@ -150,6 +167,13 @@ export class MultiplayerClient {
   onApplyImpulse: ((event: ApplyImpulseEvent) => void) | null = null;
   /** HEX SNIPER: the LOCAL player is grabbed / released by another player. */
   onHexPull: ((event: HexPullEvent) => void) | null = null;
+  // ---- End of match ----
+  /** The match clock ran out: final results + next-map vote opened. */
+  onMatchEnded: ((event: MatchEndedEvent) => void) | null = null;
+  /** Live next-map vote tally ({ mapId: [sessionIds] }). */
+  onMapVotes: ((votes: Record<string, string[]>) => void) | null = null;
+  /** Vote closed: the room is back in LOBBY on the winning map. */
+  onMatchReturn: ((event: MatchReturnEvent) => void) | null = null;
   /**
    * Fired after EVERY applied state patch (not once per render frame).
    * Snapshot ingestion hooks here so a burst of patches arriving between
@@ -194,6 +218,12 @@ export class MultiplayerClient {
   /** MapId of the joined room ("JUNGLE" | "YARD") or null if not connected. */
   get roomMapId(): string | null {
     return (this.room?.state as RoomStateLike | undefined)?.mapId ?? null;
+  }
+
+  /** SERVER time (ms) at which the running match ends (0 = no match clock). */
+  get matchEndsAt(): number {
+    const v = (this.room?.state as RoomStateLike | undefined)?.matchEndsAt;
+    return typeof v === "number" && Number.isFinite(v) ? v : 0;
   }
 
   /** Smoothed local RTT (ms) or null before the first PONG. */
@@ -267,11 +297,18 @@ export class MultiplayerClient {
     }
   }
 
-  /** Join an existing lobby by room id (invite link or manual code). */
-  async joinLobby(roomId: string, displayName: string): Promise<void> {
+  /**
+   * Join an existing lobby by room id (invite link or manual code).
+   * `returnToken` = seat token of the previous match (MATCH_RETURN): the
+   * server restores the player's identity (host role included).
+   */
+  async joinLobby(roomId: string, displayName: string, returnToken?: string): Promise<void> {
     const client = this.ensureClient();
     try {
-      const room = await client.joinById(roomId, { name: displayName });
+      const room = await client.joinById(roomId, {
+        name: displayName,
+        ...(returnToken ? { returnToken } : {}),
+      });
       this.bindRoom(room);
       logDev(`Joined room ${room.roomId}`);
     } catch (err) {
@@ -295,6 +332,11 @@ export class MultiplayerClient {
   /** Ask the server to start the game (server validates the host). */
   requestStartGame(): void {
     this.room?.send("START_GAME");
+  }
+
+  /** End-of-match next-map ballot (server validates phase + map id). */
+  sendMapVote(mapId: string): void {
+    this.room?.send("MAP_VOTE", { mapId });
   }
 
   /**
@@ -603,6 +645,33 @@ export class MultiplayerClient {
       this.onHexPull?.({ attackerId: active ? attackerId : null, active: active && attackerId !== null });
     });
 
+    // ---- End of match: final results, live vote tally, return to lobby ----
+    room.onMessage("MATCH_ENDED", (message: Partial<MatchEndedEvent>) => {
+      const results = sanitizeMatchResults(message?.results);
+      if (!results) return;
+      this.onMatchEnded?.({
+        results,
+        mapId: typeof message.mapId === "string" ? message.mapId : "",
+        maps: Array.isArray(message.maps)
+          ? message.maps.filter((m): m is string => typeof m === "string")
+          : [],
+        voteSeconds: typeof message.voteSeconds === "number" ? message.voteSeconds : 20,
+      });
+    });
+    room.onMessage("MAP_VOTES", (message: { votes?: unknown }) => {
+      const raw = message?.votes;
+      if (!raw || typeof raw !== "object") return;
+      const votes: Record<string, string[]> = {};
+      for (const [mapId, ids] of Object.entries(raw as Record<string, unknown>)) {
+        votes[mapId] = Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+      }
+      this.onMapVotes?.(votes);
+    });
+    room.onMessage("MATCH_RETURN", (message: Partial<MatchReturnEvent>) => {
+      if (typeof message?.mapId !== "string" || typeof message.returnToken !== "string") return;
+      this.onMatchReturn?.({ mapId: message.mapId, returnToken: message.returnToken });
+    });
+
     // ---- RTT measurement: PONG echoes our nonce; the RTT is computed
     // exclusively on OUR performance.now() clock (never cross-client). ----
     room.onMessage("PONG", (message: { n?: unknown }) => {
@@ -683,6 +752,7 @@ export class MultiplayerClient {
 interface RoomStateLike {
   phase?: string;
   mapId?: string;
+  matchEndsAt?: number;
   players?: {
     forEach(cb: (p: NetworkPlayerLike, key: string) => void): void;
   };

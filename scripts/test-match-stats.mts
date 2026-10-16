@@ -95,8 +95,9 @@ bot2.health.reset(0);
 
 // --- Scenario 8: environmental death (kill plane) → death only, no killer ---
 const bot1KillsBefore = get(0).kills;
+const bot2DeathsBeforePlane = get(1).deaths;
 bot2.health.kill(null);
-check("Bot2 D+1 on kill plane", get(1).deaths, 5);
+check("Bot2 D+1 on kill plane", get(1).deaths, bot2DeathsBeforePlane + 1);
 check("No kill awarded on environmental death", get(0).kills, bot1KillsBefore);
 bot2.health.reset(0);
 
@@ -126,7 +127,8 @@ check("Player (3K) ranked #2", order[1], -1);
 const bot2DeathsBefore = get(1).deaths;
 stats.unregister(1);
 check("Bot2 row removed", stats.getSortedStats().some((s) => s.combatantId === 1), false);
-check("(removal caused no death mutation)", bot2DeathsBefore, 5);
+// Bot2 died 7 times above (scenarios 3, 4, 5, 6, 7 ×2, 8).
+check("(removal caused no death mutation)", bot2DeathsBefore, 7);
 
 // --- Scenario 12: resetAll → fresh match ---
 stats.resetAll();

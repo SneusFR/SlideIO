@@ -49,6 +49,21 @@ export const serverConfig = {
   maxSingleDamage: 1000,
 
   /**
+   * DEV-ONLY override of the FFA match length (seconds) — integration tests
+   * run a few-second match (MATCH_DURATION_OVERRIDE=5). Ignored in
+   * production: the shared MATCH_DURATION_SECONDS (5 min) is the rule.
+   */
+  matchDurationOverride:
+    process.env.NODE_ENV !== "production" && Number(process.env.MATCH_DURATION_OVERRIDE) > 0
+      ? Number(process.env.MATCH_DURATION_OVERRIDE)
+      : null,
+  /** DEV-ONLY override of the vote window (seconds, intro included). */
+  voteDurationOverride:
+    process.env.NODE_ENV !== "production" && Number(process.env.VOTE_DURATION_OVERRIDE) > 0
+      ? Number(process.env.VOTE_DURATION_OVERRIDE)
+      : null,
+
+  /**
    * DEV-ONLY debug damage tool (DEBUG_DAMAGE message). NEVER enabled in
    * production — a client must never be able to ask "kill player X" for
    * real. Delete this flag (and the GameRoom handler) once real weapons

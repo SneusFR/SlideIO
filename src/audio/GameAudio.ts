@@ -101,11 +101,30 @@ export const AUDIO_MANIFEST: Record<string, string> = {
   // Medals / combo
   medal_unlock: `${A}/medals/medal_unlock_01.mp3`,
   // Ambience
-  ambience_wind: `${A}/ambience/ambience_wind_loop_01.mp3`,
+  ambience_village: `${A}/ambience/ambience_village_loop_01.mp3`,
+  ambience_musicbox: `${A}/ambience/ambience_musicbox_01.mp3`,
 };
 
 /** Number of individual steps inside the footsteps sample sheet. */
 const FOOTSTEP_SLICES = 8;
+
+// ---- Winter village ambience (tweak here) ----
+/** Village bed loop volume (on the "ambience" bus). */
+const VILLAGE_LOOP_VOLUME = 0.5;
+/** Distant Christmas music box: base volume (very soft). */
+const MUSICBOX_VOLUME = 0.14;
+/** Low-pass cutoff (Hz) — lower = more muffled / farther away. */
+const MUSICBOX_LOWPASS_HZ = 1600;
+/** Soft fade-in / fade-out of each melody (seconds). */
+const MUSICBOX_FADE = 2.5;
+/** Delay before the first melody after the game starts (seconds). */
+const MUSICBOX_FIRST_DELAY: [number, number] = [15, 30];
+/** Random silence between two melodies, counted after one ends (seconds). */
+const MUSICBOX_GAP: [number, number] = [45, 100];
+
+function randRange([min, max]: [number, number]): number {
+  return min + Math.random() * (max - min);
+}
 
 export interface GameAudioFrame {
   camera: THREE.Camera;
@@ -132,6 +151,8 @@ export class GameAudio {
   private coolingLoop: LoopHandle | null = null;
   private heartbeatLoop: LoopHandle | null = null;
   private ambienceLoop: LoopHandle | null = null;
+  /** Seconds until the next distant music-box melody. */
+  private musicBoxTimer = randRange(MUSICBOX_FIRST_DELAY);
   /** Subtle energetic hum while a kill combo is active. */
   private comboLoop: LoopHandle | null = null;
   /** Muffled rumble layer while burrowed with MOLE STRIKE. */
@@ -1226,7 +1247,7 @@ export class GameAudio {
     if (!audio.unlocked) return;
 
     this.updateListener(f.camera);
-    this.updateAmbience();
+    this.updateAmbience(dt);
 
     if (f.running) {
       const alive = f.playerHealth.alive;
@@ -1264,15 +1285,36 @@ export class GameAudio {
     );
   }
 
-  private updateAmbience(): void {
+  private updateAmbience(dt: number): void {
+    // Calm winter-village bed (loop).
     if (!this.ambienceLoop || this.ambienceLoop.stopped) {
-      this.ambienceLoop = audio.loop("ambience_wind", {
+      this.ambienceLoop = audio.loop("ambience_village", {
         bus: "ambience",
-        volume: 0.35,
+        volume: VILLAGE_LOOP_VOLUME,
         rate: 1,
-        fadeIn: 2,
+        fadeIn: 3,
       });
     }
+
+    // Distant Christmas music box, at random intervals. The timer only runs
+    // once the buffer is decoded, so the first melody is never "lost".
+    if (!audio.has("ambience_musicbox")) return;
+    this.musicBoxTimer -= dt;
+    if (this.musicBoxTimer > 0) return;
+
+    audio.play("ambience_musicbox", {
+      bus: "ambience",
+      volume: MUSICBOX_VOLUME,
+      volumeVar: 0.03,
+      rate: 1,
+      rateVar: 0.02,
+      lowpassHz: MUSICBOX_LOWPASS_HZ,
+      fade: MUSICBOX_FADE,
+      maxInstances: 1,
+    });
+    // Next one: melody length + a random silence.
+    this.musicBoxTimer =
+      audio.duration("ambience_musicbox") + randRange(MUSICBOX_GAP);
   }
 
   private updateFootsteps(dt: number, movement: PlayerMovement, alive: boolean): void {

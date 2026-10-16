@@ -35,6 +35,13 @@ export const MultiplayerConfig = {
    */
   pendingCreateStorageKey: "slideio.pendingCreateLobby",
 
+  /**
+   * sessionStorage key of a PENDING lobby return: the end-of-match vote
+   * picked the next map → the page reloads onto it, then rejoins the same
+   * room with the server-issued seat token (host role preserved).
+   */
+  pendingReturnStorageKey: "slideio.pendingLobbyReturn",
+
   /** Max length for display names (mirrors backend sanitization). */
   maxNameLength: 20,
 

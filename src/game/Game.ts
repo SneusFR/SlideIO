@@ -14,6 +14,9 @@ import { SpaceConfig as spaceCfg } from "../world/SpaceConfig";
 import { GivreMap } from "../world/GivreMap";
 import { GivreSky } from "../world/GivreSky";
 import { GivreConfig as givreCfg } from "../world/GivreConfig";
+import { GivreEffects } from "../world/GivreEffects";
+import type { GivreSnowLevel } from "../world/GivreSnow";
+import { loadSnowLevel } from "./GivreSnowSettings";
 import { loadMapSelection } from "../world/MapSelection";
 import { MapId, MAP_REGISTRY, type MapEnvelope } from "../../shared/map/MapRegistry";
 import { YARD_SPAWN_POINTS } from "../../shared/map/YardSpawns";
@@ -113,6 +116,9 @@ import { MedalManager } from "../medals/MedalManager";
 import { MedalHUD } from "../ui/MedalHUD";
 import { ComboHUD } from "../ui/ComboHUD";
 import { MatchStatsManager } from "../stats/MatchStatsManager";
+import { MatchResultsTracker, type MatchResults } from "../../shared/match/MatchResultsTracker";
+import { MATCH_DURATION_SECONDS } from "../../shared/match/MatchRules";
+import { MatchClockHUD } from "../match/MatchClockHUD";
 import { LeaderboardHUD } from "../ui/LeaderboardHUD";
 import { NetworkDebugHUD } from "../ui/NetworkDebugHUD";
 import { MultiplayerGameController } from "../network/MultiplayerGameController";
@@ -186,6 +192,14 @@ export class Game {
   private outlineSettings: OutlineSettings = loadOutlineSettings();
   /** Collider (magenta) / playerClip (cyan) wireframes — toggled with KeyH. */
   private colliderDebug: THREE.Object3D | null = null;
+  /**
+   * GIVRE v3 client-only effects (ONE instance per loaded Givre map): the
+   * 8 s animation loop, bulb halos, fire flicker, falling snow, footprints.
+   */
+  private givreEffects: GivreEffects | null = null;
+  /** Footprint ids tracked this frame (stale ones are forgotten). */
+  private readonly footprintSeen = new Set<string>();
+  private readonly footprintFeet = new THREE.Vector3();
   /** Per-map out-of-world rules (MapRegistry): kill plane + optional XZ envelope. */
   private readonly killPlaneY: number;
   private readonly envelope: MapEnvelope | undefined;
@@ -341,6 +355,22 @@ export class Game {
   private matchStats: MatchStatsManager;
   private leaderboardHud: LeaderboardHUD;
 
+  // ---- Match clock (5 min FFA) + end-of-match results ----
+  /** SOLO end-screen stats (feed / damage / accuracy). MP: server-owned. */
+  private readonly soloResults = new MatchResultsTracker();
+  private readonly matchClockHud = new MatchClockHUD();
+  /** SOLO: played match seconds (advances only while the game runs). */
+  private soloMatchTime = 0;
+  /** Simulation frame counter (merges multi-victim hits of one shot). */
+  private simFrame = 0;
+  /** The match is over: simulation frozen, inputs ignored (end screen). */
+  private matchOver = false;
+  /**
+   * SOLO: the clock ran out. Fired once with the final results — the
+   * owner (main.ts) shows the end screen.
+   */
+  onSoloMatchEnded: ((results: MatchResults) => void) | null = null;
+
   // ---- Killstreaks: 3 equippable slots (keys W/X/C), reset on death ----
   private killstreaks: KillstreakManager;
   private moleStrike: MoleStrike;
@@ -447,9 +477,11 @@ export class Game {
     physics: PhysicsWorld,
     map: JungleMap | YardMap | GivreMap,
     mapId: MapId,
+    givreEffects: GivreEffects | null = null,
   ) {
     this.physics = physics;
     this.mapId = mapId;
+    this.givreEffects = givreEffects;
     const mapDef = MAP_REGISTRY[mapId];
     this.killPlaneY = mapDef.killPlaneY;
     this.envelope = mapDef.envelope;
@@ -532,6 +564,11 @@ export class Game {
       this.scene.add(map.backdrop);
       this.scene.add(map.colliderDebug);
       this.colliderDebug = map.colliderDebug;
+      // v3: falling snow + footprints live in the SCENE (never hittable);
+      // the halos are children of map.group / the garlands (raycast-off).
+      if (this.givreEffects) {
+        for (const obj of this.givreEffects.sceneObjects) this.scene.add(obj);
+      }
     }
 
     // Navigation must be built from STATIC geometry only — before any
@@ -656,6 +693,18 @@ export class Game {
     this.matchStats.onStatsChanged = () =>
       this.leaderboardHud.refresh(this.matchStats.getSortedStats());
     this.matchStats.register(this.playerCombatant, "VALENTIN", true);
+    this.observeForResults(this.playerCombatant);
+    // End-screen kill feed: the SAME attribution as the leaderboard (killer
+    // + assists computed by the MatchStatsManager).
+    this.matchStats.onKillRecorded = (victimId, killerId, assistIds) => {
+      if (this.multiplayer) return; // the server owns the MP feed
+      this.soloResults.recordKill(
+        this.soloMatchTime,
+        killerId === null ? null : String(killerId),
+        String(victimId),
+        assistIds.map(String),
+      );
+    };
 
     // Common FP viewmodel system: shared Potato arms + dedicated FP scene
     // rendered AFTER the world with ONE depth clear (see frame()). Owned by
@@ -893,8 +942,12 @@ export class Game {
     this.revolver.onShot = (fanFire) => {
       this.gameAudio.revolverShot(fanFire);
       this.crosshairHud.fire("heavy");
+      this.recordSoloShot();
     };
-    this.revolver.onThrow = () => this.gameAudio.revolverThrow();
+    this.revolver.onThrow = () => {
+      this.gameAudio.revolverThrow();
+      this.recordSoloShot();
+    };
     this.revolver.onExplosion = (pos) => this.gameAudio.revolverExplosion(pos);
     this.revolver.onMaterializeStart = () => this.gameAudio.revolverMaterialize();
     // Bass Blaster: per-note pitched blip layered under the music grain,
@@ -902,6 +955,7 @@ export class Game {
     this.bassBlaster.onShot = (note) => {
       this.gameAudio.bassBlasterShot(note.pitch);
       this.crosshairHud.fire("light");
+      this.recordSoloShot();
     };
     this.bassBlaster.onReloadStart = () => this.gameAudio.bassBlasterReloadStart();
     this.bassBlaster.onReloadEnd = () => this.gameAudio.bassBlasterReloadEnd();
@@ -917,6 +971,7 @@ export class Game {
     this.hexSniper.onTongueStart = () => {
       this.gameAudio.hexTongueShot();
       this.crosshairHud.fire("heavy");
+      this.recordSoloShot();
     };
     this.hexSniper.onTongueGrab = () => this.gameAudio.hexTongueGrab();
     this.hexSniper.onPlayerArrived = () => this.gameAudio.hexPlayerArrived();
@@ -927,6 +982,7 @@ export class Game {
     this.goofyBasket.onRelease = (level) => {
       this.gameAudio.basketThrow(level);
       this.crosshairHud.fire("medium");
+      this.recordSoloShot();
     };
     this.goofyBasket.projectiles.onBounce = (pos) => this.gameAudio.basketBounce(pos);
     // Popcorn Shotgun: pack §4 callbacks → SFX (pops voice-limited inside).
@@ -934,6 +990,7 @@ export class Game {
       onShot: () => {
         this.gameAudio.popcornShot();
         this.crosshairHud.fire("heavy");
+        this.recordSoloShot();
       },
       onDryFire: () => this.gameAudio.popcornDryFire(),
       onPumpBack: () => this.gameAudio.popcornPump(false),
@@ -948,6 +1005,7 @@ export class Game {
       onShot: () => {
         this.gameAudio.paintballShot();
         this.crosshairHud.fire("light");
+        this.recordSoloShot();
       },
       onDryFire: () => this.gameAudio.paintballDryFire(),
       onHopperRelease: () => this.gameAudio.paintballHopperClick(false),
@@ -963,6 +1021,7 @@ export class Game {
       onJet: (k) => {
         this.gameAudio.famasJet(k);
         this.crosshairHud.fire("light");
+        this.recordSoloShot();
       },
       onDryFire: () => this.gameAudio.famasDryFire(),
       onCapGrab: () => this.gameAudio.famasCap("grab"),
@@ -980,6 +1039,7 @@ export class Game {
       onShot: () => {
         this.gameAudio.frisbeeShot();
         this.crosshairHud.fire("medium");
+        this.recordSoloShot();
       },
       onDryFire: () => this.gameAudio.frisbeeDryFire(),
       onCocked: () => this.gameAudio.frisbeeCocked(),
@@ -1023,6 +1083,17 @@ export class Game {
       this.gameAudio,
     );
     this.killstreaks.setEquipped(loadLoadout().killstreaks);
+    // DEV builds only (`npm run dev`): HUD verification handle — feeds the
+    // REAL manager (same calls as a confirmed kill / a death), never the HUD.
+    //   ksDebug.kill(5)   ksDebug.death()
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).ksDebug = {
+        kill: (n = 1) => {
+          for (let i = 0; i < n; i++) this.killstreaks.onPlayerKill();
+        },
+        death: () => this.killstreaks.onPlayerDeath(),
+      };
+    }
 
     this.playerCombatant.health.onDeath = () => {
       this.playerDeathTimer = cc.playerRespawnDelay;
@@ -1102,7 +1173,6 @@ export class Game {
         this.medals.onPlayerKill(count, method, hitZone === HitZone.HEAD);
         // Killstreak progress: every LOCKED slot advances by one kill.
         this.killstreaks.onPlayerKill();
-        this.killstreakHud.notifyKill();
         // Kill-confirmed chime — the grisant payoff that begs for a chain.
         this.gameAudio.killConfirm();
       }
@@ -1114,9 +1184,13 @@ export class Game {
     };
     // Leaderboard roster: new bots join with 0/0/0; Escape-menu removal
     // deletes the row WITHOUT counting a death for anyone.
-    this.botManager.onBotAdded = (bot) => this.matchStats.register(bot, `BOT ${bot.id + 1}`);
+    this.botManager.onBotAdded = (bot) => {
+      this.matchStats.register(bot, `BOT ${bot.id + 1}`);
+      this.observeForResults(bot);
+    };
     this.botManager.onBotRemoved = (bot) => {
       this.matchStats.unregister(bot.id);
+      this.soloResults.remove(String(bot.id));
       // Paintball: stop tracking the removed bot's body (paint buffers freed).
       const botModel = bot.model.characterModel;
       if (botModel) this.paintballRifle.fx.detachUnder(botModel);
@@ -1150,10 +1224,17 @@ export class Game {
       this.rebuildHittables();
     });
 
-    // Raycast candidates: static map meshes + target groups.
-    map.group.traverse((obj) => {
-      if ((obj as THREE.Mesh).isMesh) this.staticHittables.push(obj);
-    });
+    // Raycast candidates: static map meshes + target groups. GIVRE v3:
+    // only the map's own list (merged static meshes + the collider-backed
+    // boiler) — the animated décor without server collider (steam, smoke,
+    // banners, garlands, fans…) and the halos never stop a shot.
+    if (map instanceof GivreMap) {
+      for (const obj of map.hittables) this.staticHittables.push(obj);
+    } else {
+      map.group.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh) this.staticHittables.push(obj);
+      });
+    }
     for (const t of this.targets.hittables) this.staticHittables.push(t);
 
     this.botManager.setBotCount(this.botsMenu.botCount);
@@ -1245,6 +1326,11 @@ export class Game {
           if (this.colliderDebug) this.colliderDebug.visible = on;
         },
         renderInfo: () => ({ ...this.renderer.info.render }),
+        // v3: GPU memory + effects state (verification / perf comparison).
+        memoryInfo: () => ({ ...this.renderer.info.memory }),
+        snow: (level: GivreSnowLevel) => this.setSnowLevel(level),
+        loopTime: () => this.givreEffects?.loopTime ?? null,
+        effects: () => this.givreEffects,
       };
     }
   }
@@ -1271,6 +1357,57 @@ export class Game {
     return this.worldOutline !== null;
   }
 
+  /** True when the active map has falling snow (Givre — menu visibility). */
+  get hasSnow(): boolean {
+    return this.givreEffects?.snow != null;
+  }
+
+  /** Live snow density (menu SETTINGS → SNOW, persisted by the menu). */
+  setSnowLevel(level: GivreSnowLevel): void {
+    this.givreEffects?.setSnowLevel(level);
+  }
+
+  /**
+   * GIVRE footprints: track every visible character with its FEET position
+   * (capsule centre − 0.9 m) — the local player, the bots (solo) and the
+   * interpolated remotes (multiplayer). Characters that disappeared (left,
+   * dead, removed bot) are forgotten. Client-only, no network message.
+   */
+  private trackGivreFootprints(dt: number, playerAlive: boolean): void {
+    const fp = this.givreEffects?.footprints;
+    if (!fp) return;
+    const now = this.givreEffects!.now;
+    const feetDrop = cfg.standHalfHeight + cfg.capsuleRadius;
+    const seen = this.footprintSeen;
+    seen.clear();
+    const feet = this.footprintFeet;
+
+    if (playerAlive && this.movement.state !== MoveState.UNDERGROUND) {
+      this.player.getPosition(feet);
+      feet.y -= feetDrop;
+      fp.track("local", feet, this.movement.grounded, now, dt);
+      seen.add("local");
+    }
+    for (const bot of this.botManager.bots) {
+      if (!bot.health.alive || bot.ragdolled) continue;
+      const id = `bot:${bot.id}`;
+      bot.getPosition(feet);
+      feet.y -= feetDrop;
+      fp.track(id, feet, bot.grounded, now, dt);
+      seen.add(id);
+    }
+    this.multiplayer?.remotes.forEachVisibleGrounded((sessionId, center, grounded) => {
+      const id = `net:${sessionId}`;
+      feet.copy(center);
+      feet.y -= feetDrop;
+      fp.track(id, feet, grounded, now, dt);
+      seen.add(id);
+    });
+    for (const id of [...fp.trackedIds()]) {
+      if (!seen.has(id)) fp.forget(id);
+    }
+  }
+
   static async create(container: HTMLElement): Promise<Game> {
     const physics = await PhysicsWorld.create();
     // Load the SELECTED map BEFORE the Game constructor: the NavGrid and
@@ -1280,13 +1417,19 @@ export class Game {
     // page life — switching maps reloads the page (same pattern as the
     // graphics-quality preset).
     const mapId = loadMapSelection();
+    const t0 = performance.now();
     const map =
       mapId === MapId.YARD
         ? await YardMap.create(physics)
         : mapId === MapId.GIVRE
           ? await GivreMap.create(physics)
           : await JungleMap.create(physics);
-    return new Game(container, physics, map, mapId);
+    // GIVRE v3: client-only effects (two small PNGs + snow grid) built
+    // before the constructor so the scene is complete from the first frame.
+    const givreEffects =
+      map instanceof GivreMap ? await GivreEffects.create(map, loadSnowLevel()) : null;
+    console.info(`[MAP] ${mapId} loaded in ${Math.round(performance.now() - t0)} ms`);
+    return new Game(container, physics, map, mapId, givreEffects);
   }
 
   get domElement(): HTMLElement {
@@ -2174,6 +2317,8 @@ export class Game {
     // feet → no hazard/interaction checks).
     this.spaceSky?.update(dt, p.elapsed, p.camera);
     this.yardEffects?.update(dt, null);
+    // GIVRE: animations, halos, flicker and snow keep living in the menu.
+    this.givreEffects?.update(dt, p.camera, this.renderer.domElement.height);
 
     this.renderWorld(p.camera);
   }
@@ -2208,6 +2353,12 @@ export class Game {
         const nowMs = performance.now();
         if (this.frameCapSkip(nowMs)) return;
         const t = Math.min((nowMs - t0) / durationMs, 1);
+        // GIVRE: the décor keeps animating (and snowing) during the flight.
+        if (this.givreEffects) {
+          const flightDt = Math.min((nowMs - this.lastTime) / 1000, 1 / 20);
+          this.lastTime = nowMs;
+          this.givreEffects.update(flightDt, p.camera, this.renderer.domElement.height);
+        }
         // Smooth ease-in-out (accelerate → glide in).
         const e = t * t * (3 - 2 * t);
         p.camera.position.lerpVectors(startPos, targetPos, e);
@@ -2232,6 +2383,133 @@ export class Game {
   /** Local player's display name on the bottom-left player card. */
   setPlayerName(name: string): void {
     this.combatHud.setPlayerName(name);
+    this.localDisplayName = name;
+  }
+
+  // ------------------------------------------------------------------
+  // MATCH CLOCK + END OF MATCH
+  // ------------------------------------------------------------------
+
+  /** Local player's name for the end screen (solo id "-1"). */
+  private localDisplayName = "VALENTIN";
+
+  /** True once the match clock ran out (frozen world behind the end screen). */
+  get isMatchOver(): boolean {
+    return this.matchOver;
+  }
+
+  /**
+   * Feed the end-screen stats from a combatant's Health (solo): damage
+   * dealt + discrete / beam hits per weapon. Pure observer.
+   */
+  private observeForResults(target: Combatant): void {
+    target.health.addDamageListener((amount, attacker, method) => {
+      if (this.multiplayer || this.matchOver || !attacker) return;
+      const a = String(attacker.id);
+      const v = String(target.id);
+      this.soloResults.recordDamage(a, v, amount);
+      this.soloResults.recordHit(a, v, method, this.simFrame);
+    });
+  }
+
+  /** One discrete shot fired by the LOCAL player (solo accuracy). */
+  private recordSoloShot(): void {
+    if (this.multiplayer || this.matchOver) return;
+    this.soloResults.recordShot(String(this.playerCombatant.id));
+  }
+
+  /** Seconds left on the match clock (null = no clock, e.g. MP lobby). */
+  private matchSecondsLeft(): number | null {
+    if (!this.multiplayer) return Math.max(0, MATCH_DURATION_SECONDS - this.soloMatchTime);
+    const endsAt = this.multiplayerClient?.matchEndsAt ?? 0;
+    const now = this.multiplayer.remotes.getServerNow();
+    if (endsAt <= 0 || now === null) return null;
+    return Math.max(0, (endsAt - now) / 1000);
+  }
+
+  /**
+   * Freeze the match (clock ran out): no more simulation, damage, inputs
+   * or network sends; transient loops / VFX are stopped. The world keeps
+   * rendering (the end screen reveals it around its modal).
+   */
+  endMatch(): void {
+    if (this.matchOver) return;
+    this.matchOver = true;
+    this.matchClockHud.set(0);
+    document.body.classList.add("match-over");
+    this.abortSlotTransition();
+    this.meleeHoldPending = false;
+    this.moleStrike.abort();
+    this.obliterreur.reset();
+    this.poison.reset();
+    this.hexSniper.reset();
+    this.goofyBasket.reset();
+    this.movement.stopHexPull();
+    this.rifle.isFiring = false;
+    this.combo.resetOnDeath();
+  }
+
+  /** SOLO: the clock reached 0 → freeze + final results to the owner. */
+  private finishSoloMatch(): void {
+    this.endMatch();
+    const players = this.matchStats.getSortedStats().map((s) => ({
+      id: String(s.combatantId),
+      name: s.isLocalPlayer ? this.localDisplayName : s.displayName,
+      kills: s.kills,
+      deaths: s.deaths,
+      assists: s.assists,
+    }));
+    this.onSoloMatchEnded?.(this.soloResults.build(players, this.soloMatchTime));
+  }
+
+  /** Solo end-screen id of the local player (MatchResults player id). */
+  get soloLocalPlayerId(): string {
+    return String(this.playerCombatant.id);
+  }
+
+  /**
+   * Last game frame for the end-screen glass shatter: a FRESH render of
+   * the current view copied at once (no preserveDrawingBuffer needed).
+   */
+  captureFrame(): HTMLCanvasElement | null {
+    const src = this.renderer.domElement;
+    if (!src.width || !src.height) return null;
+    this.renderWorld(this.fpsCamera.camera);
+    const c = document.createElement("canvas");
+    c.width = src.width;
+    c.height = src.height;
+    c.getContext("2d")?.drawImage(src, 0, 0);
+    return c;
+  }
+
+  /**
+   * SOLO replay on the voted map when it is ALREADY loaded: fresh match
+   * (0/0/0, full clock), every combatant respawned, no page reload.
+   */
+  restartSoloMatch(): void {
+    if (this.multiplayer) return;
+    this.matchOver = false;
+    document.body.classList.remove("match-over");
+    this.soloMatchTime = 0;
+    this.soloResults.reset();
+    this.matchStats.resetAll();
+    this.combo.resetOnDeath();
+    this.killstreaks.onPlayerDeath();
+    this.corpses.clear(); // no corpse of the previous match left on the map
+    this.pickups.clear(); // nor its loot
+    this.givreEffects?.footprints?.clear(); // nor its footprints (Givre)
+    // Player: fresh spawn, full HP, loadout re-applied.
+    const spawn = this.spawner.pickSpawn(this.combatants, this.playerCombatant);
+    this.movement.respawn(spawn.pos);
+    this.playerDeathTimer = 0;
+    this.applyLoadout();
+    this.playerCombatant.health.reset(cc.spawnProtectionDuration);
+    // Bots: same roster, rebuilt from scratch (fresh spawns / AI state).
+    const count = this.botManager.bots.length;
+    this.botManager.setBotCount(0);
+    this.botManager.setBotCount(count);
+    this.rebuildHittables();
+    this.lastTime = performance.now();
   }
 
   /**
@@ -2354,10 +2632,26 @@ export class Game {
     // physics, knockback, damage, weapon timers and network sends keep
     // running — otherwise the other players would see a frozen, hovering,
     // unhittable ghost until this client clicks back in.
-    const running = this.multiplayer !== null || this.input.pointerLocked;
+    // END OF MATCH: the world is FROZEN behind the end screen (no AI, no
+    // physics, no damage, no inputs, no network sends) — it only renders.
+    const running = !this.matchOver && (this.multiplayer !== null || this.input.pointerLocked);
     const playerAlive = this.playerCombatant.health.alive;
 
     if (running) {
+      this.simFrame++;
+      // SOLO match clock: game time (paused with the Escape menu).
+      if (!this.multiplayer) {
+        this.soloMatchTime += dt;
+        // Beam accuracy sampling: player rifle / poison spray + every bot rifle.
+        const me = String(this.playerCombatant.id);
+        this.soloResults.recordBeam(me, this.rifle.isFiring || this.poison.isSpraying, dt);
+        for (const bot of this.botManager.bots) this.soloResults.recordBeam(String(bot.id), bot.isFiring, dt);
+        if (this.soloMatchTime >= MATCH_DURATION_SECONDS) {
+          this.finishSoloMatch();
+          this.input.endFrame();
+          return;
+        }
+      }
       this.fpsCamera.handleMouse(this.input.mouseDX, this.input.mouseDY);
       // DEBUG (KeyH): toggle the DAMAGE-hitbox wireframe overlay — green
       // body box + red head box on every bot (the head follows the animated
@@ -2445,6 +2739,15 @@ export class Game {
     // Space backdrop: follows the camera, twinkles, spawns rare meteors.
     // Runs even in the Escape menu (purely decorative, gameplay untouched).
     this.spaceSky?.update(dt, this.elapsed, this.fpsCamera.camera);
+
+    // GIVRE v3: 8 s animation loop (server-aligned in MP), halos, fire
+    // flicker, snow — decorative, keeps living in the Escape menu. The
+    // footprints track every visible character while the world runs.
+    if (this.givreEffects) {
+      if (this.multiplayer) this.givreEffects.syncToServerTime(this.multiplayer.remotes.getServerNow());
+      this.givreEffects.update(dt, this.fpsCamera.camera, this.renderer.domElement.height);
+      if (running) this.trackGivreFootprints(dt, playerAlive);
+    }
 
     // YARD: single mixer (bubbles/fans/cameras/terminal) + acid shader
     // clock. Decorative motion keeps living in the Escape menu (like the
@@ -2860,13 +3163,16 @@ export class Game {
       this.movement.canGetUp,
     );
     this.comboHud.update(this.combo);
+    // Mode pill clock: SOLO game time / MULTIPLAYER server clock.
+    if (!this.matchOver) this.matchClockHud.set(this.matchSecondsLeft());
 
     // Multiplayer (Phase 2): remote avatars + fixed-rate transform send.
     // Runs its own network accumulator — never one send per render frame.
     // The local eye position feeds the remote cosmetic budgets (TP skin
     // aura cut at distance) — read-only, never a gameplay input.
+    // Match over: remote avatars freeze too (no update, no transform send).
     this.multiplayer?.remotes.setViewerPosition(this.fpsCamera.camera.position);
-    this.multiplayer?.update(dt);
+    if (!this.matchOver) this.multiplayer?.update(dt);
     this.netDebugHud?.update(dt); // F1 overlay (throttled; free when hidden)
     this.netAttackerAge += dt; // network damage-direction memory decays
 
@@ -3966,7 +4272,6 @@ export class Game {
     this.comboHud.notifyKill();
     this.medals.onPlayerKill(count, networkKillMethod(damageType), isHeadshot);
     this.killstreaks.onPlayerKill();
-    this.killstreakHud.notifyKill();
   }
 
   private updateCamera(dt: number): void {

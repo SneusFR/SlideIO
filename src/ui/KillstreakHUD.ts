@@ -1,193 +1,135 @@
 import { KillstreakManager, KILLSTREAK_SLOT_LABELS } from "../killstreaks/KillstreakManager";
 import { KillstreakState } from "../killstreaks/KillstreakState";
-import { hudFeed } from "./HudFeed";
-import { killstreakColor, killstreakIconSvg, PADLOCK_SVG } from "./hudIcons";
+import { killstreakIconSvg } from "./hudIcons";
 import { replayAnim } from "./hudKit";
 
-const SVG_NS = "http://www.w3.org/2000/svg";
-/** Gap between two ring notches, in degrees (ring = pathLength 360). */
-const NOTCH_GAP = 9;
-const CONFETTI = 8;
+/** Width of the reference frame the capsules were measured on (= leaderboard's). */
+const REF_WIDTH = 1816;
 
-interface Medal {
+/** Display order of the column, top → bottom (cheapest streak on top). */
+const ORDER = ["MOLE_STRIKE", "ORBITAL_SCAN", "NOVA_STRIKE"] as const;
+
+interface Capsule {
   root: HTMLDivElement;
-  ring: SVGSVGElement;
-  art: HTMLDivElement;
   count: HTMLSpanElement;
-  segs: SVGCircleElement[];
-  /** Id currently drawn (icon + notches are rebuilt only when it changes). */
-  drawnId: string;
-  lastState: string;
-  lastKills: number;
+  key: HTMLSpanElement;
+  /** Equipped slot index shown by this capsule (-1 = not equipped → hidden). */
+  slot: number;
+  shown: string;
+  ready: boolean | null;
 }
 
 /**
- * KILLSTREAK MEDALLIONS (bottom-right, above the weapon plate) — one big
- * round medallion per equipped slot (keys W / X / C), empty slots hidden:
+ * KILLSTREAK CAPSULES (right edge, above the weapon plate): one compact
+ * capsule per equipped killstreak, in a fixed order (Mole → Scan → Nova),
+ * each holding only [ pictogram · acquired/required · key cap ].
  *
- *   LOCKED  greyed silhouette + padlock; a notched gold ring (one notch
- *           per required kill) fills kill after kill, each notch pops in.
- *   UNLOCK  the padlock bursts in two halves, colours flood back with a
- *           bounce, sun rays spin behind + confetti, a "READY" sticker
- *           lands in the top-centre event feed.
- *   READY   gold rim, gentle float, a shine sweep, and the key cap hops.
- *   ACTIVE  warm pulsing glow + spinning ring.
- *   SPENT   washed-out with a "USED" stamp.
+ *   NOT AVAILABLE  cream capsule, ink outline, black & white pictogram,
+ *                  dark counter (charging, already used, or running).
+ *   AVAILABLE      the slot is READY: HUD cyan capsule, the pictogram takes
+ *                  its colours back, and the real activation key cap shows.
  *
- * Re-renders from manager callbacks wired in Game (manager.onChanged →
- * render, manager.onReady → notifyReady). DOM is built once; render only
- * swaps classes (and rebuilds a medallion when its equipped id changes).
+ * Display only: progress, availability, death resets, consumption and
+ * equipment all come from the KillstreakManager (Game wires onChanged →
+ * render and onReady → notifyReady). The DOM is built once; render only
+ * touches text / classes when something changed. Drawn in the 1816px
+ * reference space and scaled with the window like the leaderboard (--ks-s).
  */
 export class KillstreakHUD {
   private readonly root: HTMLElement;
-  private readonly medals: Medal[] = [];
+  private readonly caps: Capsule[] = [];
+  private readonly onResize = (): void => this.syncScale();
 
   constructor(private readonly manager: KillstreakManager) {
     this.root = document.createElement("div");
     this.root.id = "killstreak-hud";
 
-    for (let i = 0; i < 3; i++) {
+    for (const id of ORDER) {
       const root = document.createElement("div");
-      root.className = "ks-medal empty";
+      root.className = "ks-cap";
+      root.dataset.ks = id;
       root.innerHTML = `
-        <div class="ks-rays"></div>
-        <div class="ks-confetti">${"<i></i>".repeat(CONFETTI)}</div>
-        <div class="ks-disc">
-          <div class="ks-art"></div>
-          <div class="ks-lock">${PADLOCK_SVG}</div>
-          <span class="ks-count"></span>
-          <span class="ks-used">USED</span>
-        </div>
-        <span class="ks-key">${KILLSTREAK_SLOT_LABELS[i]}</span>`;
-      const ring = document.createElementNS(SVG_NS, "svg");
-      ring.setAttribute("class", "ks-ring");
-      ring.setAttribute("viewBox", "0 0 80 80");
-      ring.setAttribute("aria-hidden", "true");
-      root.insertBefore(ring, root.querySelector(".ks-disc"));
-      this.medals.push({
+        <span class="ks-pic">${killstreakIconSvg(id)}</span>
+        <span class="ks-count"></span>
+        <span class="ks-key"></span>`;
+      this.caps.push({
         root,
-        ring,
-        art: root.querySelector(".ks-art")!,
         count: root.querySelector(".ks-count")!,
-        segs: [],
-        drawnId: "",
-        lastState: "",
-        lastKills: -1,
+        key: root.querySelector(".ks-key")!,
+        slot: -1,
+        shown: "",
+        ready: null,
       });
       this.root.appendChild(root);
     }
 
     // Mounted at the TOP of the bottom-right column, above the weapon plate.
     const col = document.getElementById("right-hud-col");
-    if (col) {
-      col.insertBefore(this.root, col.firstChild);
-    } else {
-      (document.getElementById("hud") ?? document.body).appendChild(this.root);
-    }
+    if (col) col.insertBefore(this.root, col.firstChild);
+    else (document.getElementById("hud") ?? document.body).appendChild(this.root);
+
+    window.addEventListener("resize", this.onResize);
+    this.syncScale();
     this.render();
   }
 
-  /** (Re)build the icon + notched ring of a medallion for a new streak id. */
-  private draw(m: Medal, id: string, required: number): void {
-    m.drawnId = id;
-    m.root.style.setProperty("--ks", killstreakColor(id));
-    m.art.innerHTML = killstreakIconSvg(id);
-    while (m.ring.firstChild) m.ring.removeChild(m.ring.firstChild);
-    m.segs = [];
-
-    const track = document.createElementNS(SVG_NS, "circle");
-    track.setAttribute("class", "ks-ring-track");
-    track.setAttribute("cx", "40");
-    track.setAttribute("cy", "40");
-    track.setAttribute("r", "35");
-    m.ring.appendChild(track);
-
-    const n = Math.max(1, required);
-    const span = 360 / n;
-    const len = Math.max(4, span - NOTCH_GAP);
-    for (let s = 0; s < n; s++) {
-      const c = document.createElementNS(SVG_NS, "circle");
-      c.setAttribute("class", "ks-seg");
-      c.setAttribute("cx", "40");
-      c.setAttribute("cy", "40");
-      c.setAttribute("r", "35");
-      c.setAttribute("pathLength", "360");
-      c.setAttribute("stroke-dasharray", `${len} 360`);
-      // Start at 12 o'clock, clockwise; centre the gap between notches.
-      c.setAttribute("transform", `rotate(${-90 + s * span + NOTCH_GAP / 2} 40 40)`);
-      m.ring.appendChild(c);
-      m.segs.push(c);
-    }
-    m.lastKills = -1;
-  }
-
-  /** Full re-render from manager state (cheap: 3 medallions of classes). */
+  /** Re-render from the manager state (cheap: three capsules). */
   render(): void {
-    for (let i = 0; i < 3; i++) {
-      const slot = this.manager.slots[i];
-      const m = this.medals[i];
-
-      if (slot.isEmpty || !slot.def) {
-        if (m.lastState !== "empty") {
-          m.lastState = "empty";
-          m.root.className = "ks-medal empty";
-          m.drawnId = "";
-        }
-        continue;
+    const slots = this.manager.slots;
+    let any = false;
+    for (let c = 0; c < ORDER.length; c++) {
+      const cap = this.caps[c];
+      const slot = slots.findIndex((s) => s.def?.id === ORDER[c]);
+      if (slot !== cap.slot) {
+        cap.slot = slot;
+        cap.root.classList.toggle("on", slot >= 0);
+        cap.key.textContent = slot >= 0 ? KILLSTREAK_SLOT_LABELS[slot] : "";
+        cap.ready = null;
       }
+      if (slot < 0) continue;
+      any = true;
 
-      const def = slot.def;
-      if (m.drawnId !== def.id) this.draw(m, def.id, def.requiredKills);
-
-      const state =
-        slot.state === KillstreakState.LOCKED
-          ? "locked"
-          : slot.state === KillstreakState.READY
-            ? "ready"
-            : slot.state === KillstreakState.ACTIVE
-              ? "active"
-              : "spent";
-      if (state !== m.lastState) {
-        m.lastState = state;
-        m.root.classList.remove("empty", "locked", "ready", "active", "spent");
-        m.root.classList.add(state);
+      const s = slots[slot];
+      const req = s.def!.requiredKills;
+      // A charged slot (ready, running or used) reads full; charging = kills.
+      const got = s.state === KillstreakState.LOCKED ? Math.min(s.kills, req) : req;
+      const text = `${got}/${req}`;
+      if (text !== cap.shown) {
+        cap.shown = text;
+        cap.count.textContent = text;
+        // Five characters (10/25 … 25/25): tighter digits, same capsule size.
+        cap.root.classList.toggle("w5", text.length >= 5);
       }
-
-      // Notches: lit up to the kill count (all lit once armed / active).
-      const lit = state === "locked" ? slot.kills : state === "spent" ? 0 : m.segs.length;
-      if (lit !== m.lastKills) {
-        const animate = m.lastKills >= 0 && state === "locked";
-        for (let s = 0; s < m.segs.length; s++) {
-          const on = s < lit;
-          const seg = m.segs[s];
-          if (seg.classList.contains("on") === on) continue;
-          seg.classList.toggle("on", on);
-          // Pop only the notches gained by a kill (not a death reset).
-          if (on && animate) replayAnim(seg, "pop");
-        }
-        m.lastKills = lit;
+      const ready = s.state === KillstreakState.READY;
+      if (ready !== cap.ready) {
+        cap.ready = ready;
+        cap.root.classList.toggle("ready", ready);
       }
-
-      const countText = state === "locked" ? `${slot.kills}/${def.requiredKills}` : "";
-      if (m.count.textContent !== countText) m.count.textContent = countText;
     }
+    this.root.classList.toggle("hidden", !any);
   }
 
-  /** A kill landed: the charging medallions give a little "gulp". */
-  notifyKill(): void {
-    for (let i = 0; i < 3; i++) {
-      const slot = this.manager.slots[i];
-      if (slot.isEmpty || slot.state !== KillstreakState.LOCKED) continue;
-      replayAnim(this.medals[i].ring, "gulp");
-    }
-  }
-
-  /** Big unlock moment on the slot that just became READY. */
+  /** The slot just became READY: one short pulse of its capsule. */
   notifyReady(slotIndex: number): void {
-    const m = this.medals[slotIndex];
-    if (!m) return;
-    replayAnim(m.root, "unlock");
-    const def = this.manager.slots[slotIndex]?.def;
-    if (def) hudFeed().push("streak", def.name, `READY [${KILLSTREAK_SLOT_LABELS[slotIndex]}]`);
+    const id = this.manager.slots[slotIndex]?.def?.id;
+    const cap = this.caps.find((c) => c.root.dataset.ks === id);
+    if (cap) replayAnim(cap.root, "pulse");
+  }
+
+  dispose(): void {
+    window.removeEventListener("resize", this.onResize);
+    this.root.remove();
+  }
+
+  /**
+   * Same rule as the leaderboard (innerWidth / 1816, clamped), divided by
+   * the zoom the responsive rules put on #right-hud-col so the capsules keep
+   * exactly the reference proportion of the screen width.
+   */
+  private syncScale(): void {
+    const s = Math.min(2.6, Math.max(0.7, window.innerWidth / REF_WIDTH));
+    const col = this.root.parentElement;
+    const colZoom = col ? Number.parseFloat(getComputedStyle(col).zoom) || 1 : 1;
+    this.root.style.setProperty("--ks-s", (s / colZoom).toFixed(4));
   }
 }

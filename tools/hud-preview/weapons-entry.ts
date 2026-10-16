@@ -84,7 +84,6 @@ function show(id: Id): void {
   /** Frisbee 3D mechanism slow motion (1 = real time). */
   slow(f: number): void {
     huds.frisbee.mechanism.timeScale = f;
-    huds.popcorn.mechanism.timeScale = f;
   },
 };
 show("paintball");

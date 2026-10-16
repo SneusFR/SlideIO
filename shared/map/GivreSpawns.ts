@@ -13,8 +13,8 @@
 import type { MapSpawnPoint } from "./MapSpawns";
 
 export const GIVRE_SPAWN_POINTS: MapSpawnPoint[] = [
-  { x: -115, y: 0.93, z: -115, yaw: -2.37958 }, // SPAWN_01 (STOCK)
-  { x: -116, y: 0.93, z: -70, yaw: -0.75763 }, // SPAWN_02 (STOCK)
+  { x: -115, y: 0.93, z: -115, yaw: -1.53748 }, // SPAWN_01 (STOCK)
+  { x: -116, y: 0.93, z: -70, yaw: -0.51239 }, // SPAWN_02 (STOCK)
   { x: 115, y: 0.93, z: -70, yaw: 0.73132 }, // SPAWN_03 (CHAUFFERIE)
   { x: 98, y: 0.93, z: -118, yaw: 2.99197 }, // SPAWN_04 (CHAUFFERIE)
   { x: -100, y: 0.93, z: 59, yaw: -1.45619 }, // SPAWN_05 (VESTIBULE_SUD_OUEST)

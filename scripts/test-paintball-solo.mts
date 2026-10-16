@@ -142,13 +142,13 @@ try {
     const hud = new HitmarkerHUD();
     domLog.length = 0;
     for (let i = 0; i < 10; i++) hud.show(HitZone.BODY, HFC.paintballBodyHitmarkerDuration);
-    const restarts = domLog.join("|").split("remove hm-body,hm-head|reflow|add hm-body").length - 1;
+    const restarts = domLog.join("|").split("remove hm-body,hm-head,hm-kill|reflow|add hm-body").length - 1;
     assert.equal(restarts, 10, "10 clean restarts (remove, reflow, add)");
     assert.ok(domLog.includes(`var --hm-body-dur=${HFC.paintballBodyHitmarkerDuration}s`), "short tick lifetime applied");
     domLog.length = 0;
     hud.show(HitZone.BODY);
     assert.ok(domLog.includes(`var --hm-body-dur=${HFC.bodyHitmarkerDuration}s`), "default lifetime restored for the next weapon");
-    const css = fs.readFileSync(`${project}/src/hud.css`, "utf8");
+    const css = fs.readFileSync(`${project}/src/crosshair.css`, "utf8"); // hitmarker styles live with the crosshair
     assert.ok(/#hitmarker\.hm-body \.hm-arm\s*{[^}]*var\(--hm-body-dur/.test(css) && /#hitmarker\.hm-head \.hm-arm\s*{[^}]*var\(--hm-head-dur/.test(css), "CSS animations read the duration variables");
   });
 
@@ -334,8 +334,11 @@ try {
     input.fireHeld = false;
     for (let f = 0; f < 60; f++) { w.update(dt, input); vm.syncCamera(cam); w.postCameraUpdate(dt); fbk.fb.update(dt); } // jets land
     assert.equal(damages.length, 10, "10 damage events (one per ball)");
-    assert.ok(damages.every((d) => d === 12), "12 per body ball");
-    assert.equal(bot.health.current, 10000 - 120, "no extra damage from the jets / impacts");
+    // Body damage comes from the shared rule (23 since the 200 HP rebalance).
+    const { paintballDamage } = await server.ssrLoadModule("/shared/combat/PaintballRifleRules.ts");
+    const bodyDmg = paintballDamage(false) as number;
+    assert.ok(damages.every((d) => d === bodyDmg), `${bodyDmg} per body ball`);
+    assert.equal(bot.health.current, 10000 - 10 * bodyDmg, "no extra damage from the jets / impacts");
     assert.equal(fbk.shows.length, 10, "10 hitmarker pulses");
     assert.equal(fbk.sounds().paint, 10, "10 hit sounds");
     for (const s of spawns) {

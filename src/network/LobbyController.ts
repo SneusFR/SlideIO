@@ -68,6 +68,21 @@ export class LobbyController {
     this.showMenu();
   }
 
+  /**
+   * Resume an end-of-match return: the vote picked the next map, the page
+   * reloaded onto it, and we now rejoin the SAME room with the seat token
+   * (straight into the lobby screen — the host starts the next match).
+   * Returns true when a pending return was found.
+   */
+  resumePendingReturn(): boolean {
+    const pending = takePendingReturn();
+    if (!pending) return false;
+    if (pending.map !== loadMapSelection()) return false; // reload failed to switch
+    this.root.classList.remove("hidden");
+    void this.join(pending.roomId, pending.name || undefined, pending.token);
+    return true;
+  }
+
   /** Open the overlay on the NICKNAME prompt, then join (invite link). */
   openWithInvite(roomId: string): void {
     this.root.classList.remove("hidden");
@@ -268,7 +283,7 @@ export class LobbyController {
     }
   }
 
-  private async join(roomId: string, explicitName?: string): Promise<void> {
+  private async join(roomId: string, explicitName?: string, returnToken?: string): Promise<void> {
     // The nickname prompt / join screen passes the name explicitly;
     // fall back to the saved one, then to a generated guest name.
     const name =
@@ -279,9 +294,9 @@ export class LobbyController {
     this.defaultName = name;
     saveDisplayName(name);
 
-    this.showBusy("JOINING LOBBY");
+    this.showBusy(returnToken ? "BACK TO THE LOBBY" : "JOINING LOBBY");
     try {
-      await this.client.joinLobby(roomId, name);
+      await this.client.joinLobby(roomId, name, returnToken);
 
       // MAP CHECK: the room's map is fixed at creation. If it differs from
       // the map THIS page has loaded, persist the room's map and reload to
@@ -414,6 +429,42 @@ function savePendingCreate(pending: PendingCreate): void {
     sessionStorage.setItem(MultiplayerConfig.pendingCreateStorageKey, JSON.stringify(pending));
   } catch {
     /* private browsing — the host simply lands on the menu after the reload */
+  }
+}
+
+/** Lobby return persisted across the post-vote map reload. */
+interface PendingReturn {
+  roomId: string;
+  map: string;
+  token: string;
+  name: string;
+}
+
+/**
+ * Persist an end-of-match lobby return (called right before the reload
+ * onto the voted map). sessionStorage: tab-scoped, one-shot.
+ */
+export function savePendingReturn(pending: PendingReturn): void {
+  try {
+    sessionStorage.setItem(MultiplayerConfig.pendingReturnStorageKey, JSON.stringify(pending));
+  } catch {
+    /* private browsing — the player lands on the menu after the reload */
+  }
+}
+
+/** Read AND clear the pending return (never resumes twice). */
+function takePendingReturn(): PendingReturn | null {
+  try {
+    const raw = sessionStorage.getItem(MultiplayerConfig.pendingReturnStorageKey);
+    if (!raw) return null;
+    sessionStorage.removeItem(MultiplayerConfig.pendingReturnStorageKey);
+    const p = JSON.parse(raw) as Partial<PendingReturn>;
+    if (typeof p.roomId !== "string" || typeof p.map !== "string" || typeof p.token !== "string") {
+      return null;
+    }
+    return { roomId: p.roomId, map: p.map, token: p.token, name: typeof p.name === "string" ? p.name : "" };
+  } catch {
+    return null;
   }
 }
 

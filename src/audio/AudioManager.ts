@@ -41,6 +41,16 @@ export interface PlayOptions {
   maxInstances?: number;
   /** Schedule the sound slightly in the future (seconds). */
   delay?: number;
+  /**
+   * Low-pass cutoff (Hz) — muffles the sound so it feels far away.
+   * Omitted = no filter (every existing call site is unaffected).
+   */
+  lowpassHz?: number;
+  /**
+   * Fade-in / fade-out (seconds) applied over the WHOLE sound (not sliced
+   * plays). Omitted = no envelope.
+   */
+  fade?: number;
 }
 
 export interface SpatialOptions extends PlayOptions {
@@ -388,7 +398,15 @@ export class AudioManager {
     gain.gain.value = vol;
 
     let head: AudioNode = gain;
-    src.connect(gain);
+    if (opts.lowpassHz) {
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = opts.lowpassHz;
+      src.connect(lp);
+      lp.connect(gain);
+    } else {
+      src.connect(gain);
+    }
 
     if (pos) {
       const panner = this.createPanner(opts);
@@ -411,6 +429,16 @@ export class AudioManager {
         gain.gain.setValueAtTime(vol, Math.max(start + 0.012, end - 0.05));
         gain.gain.linearRampToValueAtTime(0.0001, end);
       }
+    }
+
+    // Whole-sound envelope (soft entrance / exit — e.g. distant melodies).
+    if (opts.fade && offset === 0 && dur === undefined) {
+      const total = buf.duration / Math.max(0.25, rate);
+      const f = Math.min(opts.fade, total / 2);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.linearRampToValueAtTime(vol, start + f);
+      gain.gain.setValueAtTime(vol, start + total - f);
+      gain.gain.linearRampToValueAtTime(0.0001, start + total);
     }
 
     if (dur !== undefined) src.start(start, offset, dur);
