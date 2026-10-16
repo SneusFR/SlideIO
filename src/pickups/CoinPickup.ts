@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { Pickup } from "./Pickup";
 import { PickupConfig as pc } from "./PickupConfig";
 
-const SPARKLE_COLOR = new THREE.Color(0xfcd34d);
+const SPARKLE_COLOR = new THREE.Color(pc.coinGlowColor); // credit cyan
 
 /**
  * Coin drop: pops out of the death point along a small arc toward its

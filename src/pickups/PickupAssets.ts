@@ -1,8 +1,21 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { PickupConfig as pc } from "./PickupConfig";
-import medkitUrl from "../assets/medkit_opt.glb?url";
-import coinUrl from "../assets/coin_opt.glb?url";
+
+/**
+ * Medkit model (public/assets/medkit.glb, served as-is by Vite from
+ * /public — same convention as the credit coin below).
+ * Low-poly (~4.6k tris), untextured: one flat-colored primitive per color
+ * (red case, cream cross, shine, ink outline, cyan details).
+ */
+const medkitUrl = "/assets/medkit.glb";
+
+/**
+ * Coin model = the "credit" coin (public/assets/credit.glb, served as-is
+ * by Vite from /public — same path convention as the audio assets).
+ * Low-poly (~5.5k tris), untextured: one flat-colored primitive per color.
+ */
+const coinUrl = "/assets/credit.glb";
 
 /**
  * GLB templates for the loot pickups.
@@ -34,6 +47,9 @@ export class PickupAssets {
             gltf.scene,
             pc.medkitSize,
             pc.medkitGlowColor,
+            // Already low-poly: grid clustering would wreck its flat
+            // color shapes (cross, shine, ink outline).
+            { decimate: false },
           );
           resolve();
         },
@@ -52,6 +68,9 @@ export class PickupAssets {
             gltf.scene,
             pc.coinSize,
             pc.coinGlowColor,
+            // Already low-poly: grid clustering would wreck its flat
+            // color shapes (bean, shine, rim stripes).
+            { decimate: false },
           );
           resolve();
         },
@@ -77,7 +96,9 @@ function normalizeTemplate(
   model: THREE.Group,
   targetSize: number,
   glowColor: number,
+  options: { decimate?: boolean } = {},
 ): THREE.Group {
+  const decimate = options.decimate ?? true;
   const box = new THREE.Box3().setFromObject(model);
   const size = box.getSize(new THREE.Vector3());
   const maxDim = Math.max(size.x, size.y, size.z, 1e-6);
@@ -95,7 +116,7 @@ function normalizeTemplate(
       // Collectables don't need high-poly meshes: decimate ONCE on the
       // template (every drop clones it) — dozens of coins on the ground
       // used to push millions of triangles and tank the framerate.
-      decimateMeshGeometry(mesh);
+      if (decimate) decimateMeshGeometry(mesh);
       // Shared materials: mark them so per-bot dispose logic elsewhere
       // never destroys them by accident.
       const mat = mesh.material as THREE.Material;
@@ -103,9 +124,15 @@ function normalizeTemplate(
         mat.userData.shared = true;
         // Self-illumination: reuse the albedo texture as an emissive map
         // so the pickup glows with its own colors even in shadow.
+        // Untextured materials (credit coin, medkit) glow with their base color
+        // instead — a plain white emissive would wash them out to white.
         if (mat instanceof THREE.MeshStandardMaterial) {
-          if (mat.map) mat.emissiveMap = mat.map;
-          mat.emissive.setHex(0xffffff);
+          if (mat.map) {
+            mat.emissiveMap = mat.map;
+            mat.emissive.setHex(0xffffff);
+          } else {
+            mat.emissive.copy(mat.color);
+          }
           mat.emissiveIntensity = pc.glowEmissiveIntensity;
           mat.needsUpdate = true;
         }
@@ -116,6 +143,9 @@ function normalizeTemplate(
   const wrapper = new THREE.Group();
   wrapper.add(model);
   wrapper.add(makeHaloSprite(targetSize, glowColor));
+  // Loot is never cel-outlined (Givre white rim) — children included.
+  // userData is copied by clone(), so every drop inherits the flag.
+  wrapper.userData.noOutline = true;
   return wrapper;
 }
 

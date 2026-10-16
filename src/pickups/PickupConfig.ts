@@ -8,8 +8,8 @@ export const PickupConfig = {
   medkitHealAmount: 35,
   medkitLifetime: 25,
   medkitPickupRadius: 1.15,
-  medkitSize: 1.0, // largest dimension of the model after normalization (2x — readability)
-  medkitHoverHeight: 0.68, // rest height of the model center above the ground
+  medkitSize: 1.5, // largest dimension of the model after normalization (x1.5 — readability)
+  medkitHoverHeight: 1.02, // rest height of the model center above the ground (scaled with size)
   medkitBobSpeed: 2.2,
   medkitBobHeight: 0.07,
   medkitSpinSpeed: 1.1, // rad/s slow idle rotation
@@ -25,8 +25,8 @@ export const PickupConfig = {
   coinDropRadius: 1.0, // scatter radius around the death point
   coinLifetime: 20,
   coinPickupRadius: 0.95,
-  coinSize: 0.6, // (2x — readability)
-  coinHoverHeight: 0.42,
+  coinSize: 0.9, // (x1.5 — readability)
+  coinHoverHeight: 0.63, // scaled with size: the upright coin never sinks into the floor
   coinBobSpeed: 3.2,
   coinBobHeight: 0.05,
   coinSpinSpeed: 2.8, // rad/s — coins visibly spin on themselves
@@ -46,11 +46,11 @@ export const PickupConfig = {
 
   // ---- Mesh decimation (collectables don't need high-poly models) ----
   /**
-   * Vertex-clustering grid resolution used to simplify the pickup GLBs at
-   * load time. The source models are absurdly dense for collectables
-   * (coin ≈ 44k tris, medkit ≈ 31k tris) — with dozens of drops on the
-   * ground this tanked the framerate. ~32 cells across the largest axis
+   * Vertex-clustering grid resolution used to simplify dense pickup GLBs
+   * at load time (the old coin ≈ 44k tris / medkit ≈ 31k tris tanked the
+   * framerate with dozens of drops). ~32 cells across the largest axis
    * keeps the silhouette while cutting the triangle count by ~95%.
+   * The current low-poly models (credit coin, medkit) opt out of it.
    */
   meshDecimateGrid: 32,
   /** Meshes under this vertex count are left untouched. */
@@ -61,7 +61,7 @@ export const PickupConfig = {
   glowHaloScale: 2.4, // halo sprite diameter relative to the pickup size
   glowHaloOpacity: 0.55, // base opacity of the additive halo
   medkitGlowColor: 0x4ade80, // green — matches the sparkle tint
-  coinGlowColor: 0xfcd34d, // warm gold — matches the sparkle tint
+  coinGlowColor: 0x0ae4fa, // credit cyan — matches the coin model + sparkle tint
 };
 
 export type PickupConfigType = typeof PickupConfig;

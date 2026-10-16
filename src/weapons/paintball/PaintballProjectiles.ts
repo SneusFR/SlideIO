@@ -93,6 +93,7 @@ export class PaintballProjectiles {
     this.mesh.raycast = () => {};
     this.mesh.count = 0;
     this.mesh.setColorAt(0, new THREE.Color(1, 1, 1));
+    this.mesh.userData.noOutline = true; // opaque VFX: never cel-outlined (Givre)
     parent.add(this.mesh);
     this.splats = splats;
   }

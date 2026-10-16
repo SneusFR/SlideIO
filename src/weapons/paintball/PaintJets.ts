@@ -1137,6 +1137,7 @@ function makeInstanced(geometry: THREE.BufferGeometry, material: THREE.Material,
   mesh.frustumCulled = false;
   mesh.castShadow = false;
   mesh.raycast = () => {};
+  mesh.userData.noOutline = true; // opaque VFX: never cel-outlined (Givre)
   mesh.count = 0;
   mesh.setColorAt(0, new THREE.Color(1, 1, 1)); // allocate instanceColor
   mesh.instanceColor!.setUsage(THREE.DynamicDrawUsage);

@@ -33,9 +33,8 @@ export const AUDIO_MANIFEST: Record<string, string> = {
   plasma_overheat: `${A}/plasma/plasma_overheat_01.mp3`,
   plasma_cooling_loop: `${A}/plasma/plasma_cooling_loop_01.mp3`,
   // Hit confirmation (local player damage feedback)
-  hit_body: `${A}/hits/hit_body_01.mp3`,
-  hit_body_punch: `${A}/hits/hit_body_02.mp3`,
-  hit_head: `${A}/hits/hit_head_01.mp3`,
+  hit_body: `${A}/hits/hit_body_03.mp3`,
+  hit_head: `${A}/hits/hit_head_02.mp3`,
   // Revolver (arcade ballistic revolver — CC0, see ATTRIBUTION.md)
   revolver_shot: `${A}/revolver/revolver_shot_01.mp3`,
   // Goofy Basket (real basketball bounces — CC0, see ATTRIBUTION.md)
@@ -107,6 +106,24 @@ export const AUDIO_MANIFEST: Record<string, string> = {
 
 /** Number of individual steps inside the footsteps sample sheet. */
 const FOOTSTEP_SLICES = 8;
+
+// ---- Hit confirmation mix (tweak here) ----
+/** Body hitmarker gain on the "impacts" bus — loud by default. */
+const HIT_BODY_VOLUME = 1.0;
+/**
+ * hit_body_03 (Freesound 322640) starts with ~0.1 s of silence — skip it so
+ * the tick lands ON the hit instead of a beat late. Kept slightly under 0.1 s
+ * so the decoder's own start padding never clips the transient.
+ */
+const HIT_BODY_START_OFFSET = 0.08;
+/** Headshot ding gain on the "impacts" bus. */
+const HIT_HEAD_VOLUME = 0.9;
+/**
+ * Simultaneous hitmarker voices per key. The Paintball confirms every ball
+ * (one per 0.1 s) and the headshot ding lasts ~0.63 s → up to ~7 overlap;
+ * the default cap (5) would silently drop the end of a burst.
+ */
+const HIT_SOUND_MAX_INSTANCES = 8;
 
 // ---- Winter village ambience (tweak here) ----
 /** Village bed loop volume (on the "ambience" bus). */
@@ -440,35 +457,32 @@ export class GameAudio {
   }
 
   /**
-   * Body-hit confirmation: crisp tick + a punchy "thock" layer in the same
-   * family as the headshot ping (satisfying, never louder than it). Small
-   * pitch wobble so a plasma stream stays lively instead of metronomic.
+   * Body-hit confirmation: classic punchy hitmarker tick, played LOUD by
+   * default so every landed shot is unmistakable. The sample's leading
+   * silence is skipped (HIT_BODY_START_OFFSET) so it fires exactly on the
+   * hit. Small pitch wobble so a plasma stream stays lively.
    */
   hitBody(): void {
     audio.play("hit_body", {
       bus: "impacts",
-      volume: 0.6,
+      volume: HIT_BODY_VOLUME,
       rate: 1,
       rateVar: 0.05,
+      offset: HIT_BODY_START_OFFSET,
       throttleMs: 70,
-    });
-    audio.play("hit_body_punch", {
-      bus: "impacts",
-      volume: 0.75,
-      rate: 1.04,
-      rateVar: 0.07,
-      throttleMs: 70,
+      maxInstances: HIT_SOUND_MAX_INSTANCES,
     });
   }
 
-  /** Bright, clearly DISTINCT headshot ping — never just a louder body hit. */
+  /** Bright, clearly DISTINCT headshot ding — never just a louder body hit. */
   hitHead(): void {
     audio.play("hit_head", {
       bus: "impacts",
-      volume: 0.5,
+      volume: HIT_HEAD_VOLUME,
       rate: 1,
       rateVar: 0.03,
       throttleMs: 70,
+      maxInstances: HIT_SOUND_MAX_INSTANCES,
     });
   }
 
@@ -787,23 +801,28 @@ export class GameAudio {
   }
 
   /**
-   * Paint ball connects with a player (local shooter feedback): wet "splat" on
-   * the body (two variants), a fatter gooey squish on a headshot — still
-   * clearly distinct from a body hit. Never throttled harder than 40 ms so
-   * every ball of a 600 rpm burst is heard.
+   * Paint ball connects with a player (local shooter feedback): the SHARED
+   * hitmarker (hitBody / hitHead) leads, so a paintball hit is confirmed by
+   * the same unmistakable tick / ding as every other weapon — the wet splat
+   * alone blended into the gooey shot layers and read as no feedback at all.
+   * Under it, a quieter paint texture: wet "splat" on the body (two
+   * variants), a fatter gooey squish on a headshot. Never throttled harder
+   * than 40 ms so every ball of a 600 rpm burst is heard.
    *
    * Voice caps: the samples last 0.5-1 s (the head squish ≈ 0.8 s at this rate) and a burst starts one every
    * 0.1 s, so the caps must cover duration × 10 /s or the per-key instance limit silently drops the later hits of
-   * the burst (the "gooey" key is also used by paintballShot, whose own cap is 3). Same sounds, same volumes.
+   * the burst (the "gooey" key is also used by paintballShot, whose own cap is 3).
    */
   paintballHit(head: boolean): void {
     if (head) {
-      audio.play("paintball_gooey", { bus: "impacts", volume: 0.8, volumeVar: 0.05, rate: 1.2, rateVar: 0.05, throttleMs: 40, maxInstances: 14 });
-      audio.play("paintball_splat_01", { bus: "impacts", volume: 0.55, rate: 1.5, rateVar: 0.05, throttleMs: 40, maxInstances: 10 });
+      this.hitHead();
+      audio.play("paintball_gooey", { bus: "impacts", volume: 0.5, volumeVar: 0.05, rate: 1.2, rateVar: 0.05, throttleMs: 40, maxInstances: 14 });
+      audio.play("paintball_splat_01", { bus: "impacts", volume: 0.35, rate: 1.5, rateVar: 0.05, throttleMs: 40, maxInstances: 10 });
       return;
     }
+    this.hitBody();
     const key = Math.random() < 0.5 ? "paintball_splat_01" : "paintball_splat_02";
-    audio.play(key, { bus: "impacts", volume: 0.7, volumeVar: 0.06, rate: 1.05, rateVar: 0.12, throttleMs: 40, maxInstances: 10 });
+    audio.play(key, { bus: "impacts", volume: 0.4, volumeVar: 0.06, rate: 1.05, rateVar: 0.12, throttleMs: 40, maxInstances: 10 });
   }
 
   /** Empty hopper: dry trigger click. */

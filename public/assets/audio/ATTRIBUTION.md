@@ -176,8 +176,9 @@ Le clic du couvercle réutilise `ui/ui_click_plop_01.mp3` (déjà listé plus ha
 | `paintball/paintball_splat_01.mp3` | Splat/Squish 4 (touche : « splat » de peinture) | 515621 | CC0 | https://freesound.org/s/515621/ |
 | `paintball/paintball_splat_02.mp3` | Splat/Squish 3 (touche : « splat » de peinture) | 515620 | CC0 | https://freesound.org/s/515620/ |
 
-Le tir du Paintball empile `paintball_blorp` + `paintball_gush` + `paintball_gooey` (squish liquide) ; la touche utilise
-`paintball_splat_01/02` (corps) et `paintball_gooey` + `paintball_splat_01` (tête). `paintball_shot_01.mp3`
+Le tir du Paintball empile `paintball_blorp` + `paintball_gush` + `paintball_gooey` (squish liquide) ; la touche joue
+le hitmarker commun (`hits/hit_body_03` corps / `hits/hit_head_02` tête, voir section Hits) au premier plan, avec en
+dessous une texture plus discrète : `paintball_splat_01/02` (corps) et `paintball_gooey` + `paintball_splat_01` (tête). `paintball_shot_01.mp3`
 (air comprimé) n'est plus utilisé que par le Water Famas.
 
 Le clic à vide réutilise `popcorn/popcorn_dry_fire_01.mp3`, les clics du réservoir `ui/ui_click_plop_01.mp3` (déjà listés plus haut).
@@ -189,6 +190,11 @@ Le clic à vide réutilise `popcorn/popcorn_dry_fire_01.mp3`, les clics du rése
 | `hits/hit_body_01.mp3` | Hitmarker Sound Effect | 570335 | CC0 | https://freesound.org/s/570335/ |
 | `hits/hit_body_02.mp3` | HitSound1 | 760562 | CC0 | https://freesound.org/s/760562/ |
 | `hits/hit_head_01.mp3` | Headshot sound | 660769 | CC0 | https://freesound.org/s/660769/ |
+| `hits/hit_body_03.mp3` | Hitmarker Sound Effect.mp3 | 322640 | CC0 | https://freesound.org/s/322640/ |
+| `hits/hit_head_02.mp3` | SingleDing | 759839 | CC0 | https://freesound.org/s/759839/ |
+
+En jeu, `hit_body` = `hit_body_03.mp3` et `hit_head` = `hit_head_02.mp3`. `hit_body_02.mp3` reste utilisé par la
+cinématique d'intro ; `hit_body_01.mp3` et `hit_head_01.mp3` sont conservés mais ne sont plus joués.
 
 ## Kills (confirmation de kill)
 
