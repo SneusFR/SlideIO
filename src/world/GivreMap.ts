@@ -7,6 +7,12 @@ import { PhysicsWorld, CollisionGroups } from "../physics/PhysicsWorld";
 import { GivreConfig as givre } from "./GivreConfig";
 import { getQualitySettings } from "../game/GraphicsQuality";
 import { givreData, type GivreColliderEntry, type GivreZone } from "./GivreData";
+import {
+  buildLimitedMipmaps,
+  buildStaticBatches,
+  toStandardMaterial,
+  type StaticEntry,
+} from "./GivreRenderOptim";
 import mapModelUrl from "../assets/MAP/Givre/givre_01.glb?url";
 import backdropModelUrl from "../assets/MAP/Givre/givre_01_fond.glb?url";
 
@@ -21,8 +27,10 @@ export type { GivreZone } from "./GivreData";
  * ceiling lamps, garlands, lanterns, boiler fire) and `aoMap` (image
  * givre_ao — sky visibility, switches the hemisphere ambient off inside
  * rooms). The glb materials are KEPT as-is (never replaced).
- *  - STATIC meshes are merged by material (position + normal + uv kept)
- *    → 22 draw calls, each with a BVH for the shot raycasts.
+ *  - STATIC meshes are merged by material (position + normal + uv kept),
+ *    then split on a coarse XZ grid (frustum culling + front-to-back draw)
+ *    and thin closed solids drawn single-sided — ~70 batches, each with a
+ *    BVH for the shot raycasts (see GivreRenderOptim / GivreConfig).
  *  - ANIMATED nodes (targets of the single 8 s glTF clip + their children:
  *    steam, smoke, garlands, banners, boiler, gauges, fans, beacon) stay
  *    separate and are driven by GivreEffects' AnimationMixer. The 95
@@ -176,7 +184,10 @@ export class GivreMap {
     scene.updateMatrixWorld(true);
     const { nodes, all: animated } = findAnimatedNodes(scene, gltf.animations);
 
-    // Materials are KEPT from the glb (they carry the baked light).
+    // Materials are KEPT from the glb (they carry the baked light) — only
+    // their shader class may change (MeshPhysical → MeshStandard, see
+    // GivreConfig.standardMaterials: same colours / textures / baked light).
+    if (givre.standardMaterials) convertToStandardMaterials(scene);
     const lightmaps = new Set<THREE.Texture>();
     scene.traverse((o) => {
       const mesh = o as THREE.Mesh;
@@ -188,16 +199,14 @@ export class GivreMap {
         if (std.aoMap) lightmaps.add(std.aoMap);
       }
     });
-    for (const t of lightmaps) {
-      t.generateMipmaps = false;
-      t.minFilter = THREE.LinearFilter;
-      t.needsUpdate = true;
-    }
+    setupLightmapFiltering(lightmaps, givre.lightmapMipLevels);
 
-    // Static meshes → 22 merged meshes (shot targets, snow surfaces).
+    // Static meshes → merged by material, split on the XZ grid (frustum
+    // culling + front-to-back), thin closed solids single-sided — see
+    // GivreRenderOptim. Shot targets + snow surfaces.
     const merged = new THREE.Group();
     merged.name = "givre_01_merged";
-    for (const mesh of mergeStaticByMaterial(scene, animated)) {
+    for (const mesh of mergeStaticBatches(scene, animated)) {
       merged.add(mesh);
       this.hittables.push(mesh);
       const name = (mesh.material as THREE.Material).name;
@@ -327,19 +336,73 @@ function findAnimatedNodes(
 }
 
 /**
- * Merges every STATIC mesh of the glb scene by material (one glTF primitive
- * = one three.js Mesh with one material, shared between primitives) and
- * REMOVES them from the scene. Geometry is baked into world space; position
- * + normal + uv survive (v3: `uv` carries the baked light). A removed mesh
- * with children (an animated node) is replaced by an empty Object3D holding
- * the SAME local transform, so the parent-relative animation tracks stay
- * valid (attach() would distort them). v3: 22 merged meshes.
+ * Replaces every MeshPhysicalMaterial of the glb scene (GLTFLoader creates
+ * them for KHR_materials_specular only) by an equivalent
+ * MeshStandardMaterial — same name, colours, baked emissive / ao maps,
+ * roughness, side, transparency. One replacement per material (shared
+ * materials stay shared); the Physical originals are disposed.
  */
-function mergeStaticByMaterial(
+function convertToStandardMaterials(scene: THREE.Object3D): void {
+  const replaced = new Map<THREE.Material, THREE.Material>();
+  const swap = (m: THREE.Material): THREE.Material => {
+    let out = replaced.get(m);
+    if (!out) {
+      out = toStandardMaterial(m);
+      replaced.set(m, out);
+    }
+    return out;
+  };
+  scene.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(swap) : swap(mesh.material);
+  });
+  for (const [from, to] of replaced) if (from !== to) from.dispose();
+}
+
+/**
+ * Baked lightmaps: a SHORT mip chain (GivreConfig.lightmapMipLevels) when
+ * the image can be downscaled, else the previous no-mipmap setup (a full
+ * chain makes the atlas UV islands bleed into each other in the distance).
+ * The 36 glTF Texture objects share 2 image sources: the chain is built ONCE
+ * per source and given to every texture of that source (three uploads one
+ * GL texture per source + sampling parameters).
+ */
+function setupLightmapFiltering(lightmaps: ReadonlySet<THREE.Texture>, mipLevels: number): void {
+  const chains = new Map<string, unknown[] | null>();
+  for (const t of lightmaps) {
+    let chain = chains.get(t.source.uuid);
+    if (chain === undefined) {
+      chain = buildLimitedMipmaps(t.image, mipLevels);
+      chains.set(t.source.uuid, chain);
+    }
+    t.generateMipmaps = false;
+    if (chain) {
+      t.mipmaps = chain as THREE.Texture["mipmaps"];
+      t.minFilter = THREE.LinearMipmapLinearFilter;
+    } else {
+      t.minFilter = THREE.LinearFilter;
+    }
+    t.needsUpdate = true;
+  }
+}
+
+/**
+ * Merges every STATIC mesh of the glb scene (one glTF primitive = one
+ * three.js Mesh with one material, shared between primitives) and REMOVES
+ * them from the scene. Geometry is baked into world space; position +
+ * normal + uv survive (v3: `uv` carries the baked light). The merge is done
+ * per material (and per side variant), then split on the XZ grid of
+ * GivreConfig.staticBatching (GivreRenderOptim.buildStaticBatches). A
+ * removed mesh with children (an animated node) is replaced by an empty
+ * Object3D holding the SAME local transform, so the parent-relative
+ * animation tracks stay valid (attach() would distort them).
+ */
+function mergeStaticBatches(
   scene: THREE.Object3D,
   animated: ReadonlySet<THREE.Object3D>,
 ): THREE.Mesh[] {
-  const byMaterial = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  const entries: StaticEntry[] = [];
   const staticMeshes: THREE.Mesh[] = [];
   scene.traverse((o) => {
     const mesh = o as THREE.Mesh;
@@ -360,9 +423,7 @@ function mergeStaticByMaterial(
         idx[i + 2] = tmp;
       }
     }
-    const list = byMaterial.get(material) ?? [];
-    list.push(geom);
-    byMaterial.set(material, list);
+    entries.push({ geometry: geom, material });
   });
   for (const mesh of staticMeshes) {
     const parent = mesh.parent;
@@ -379,17 +440,33 @@ function mergeStaticByMaterial(
     parent.remove(mesh);
   }
 
+  const b = givre.staticBatching;
+  const box = givre.shadowBounds; // playable envelope (X / Z)
+  const batches = buildStaticBatches(entries, (g) => mergeGeometries(g, false), {
+    grid: {
+      minX: box.min[0],
+      minZ: box.min[2],
+      maxX: box.max[0],
+      maxZ: box.max[2],
+      cellsX: b.cellsX,
+      cellsZ: b.cellsZ,
+    },
+    chunkMinTriangles: b.chunkMinTriangles,
+    singleSidedMaxThickness: b.singleSidedMaxThickness,
+    // GIV_Feu's emissive is animated through the shared material instance
+    // (GivreEffects fire flicker) — never cloned.
+    keepMaterials: new Set(["GIV_Feu"]),
+  });
+  entries.forEach((e) => e.geometry.dispose());
+
   const out: THREE.Mesh[] = [];
-  for (const [material, geoms] of byMaterial) {
-    const merged = mergeGeometries(geoms, false);
-    geoms.forEach((g) => g.dispose());
-    if (!merged) throw new Error(`GivreMap: merge failed for material ${material.name}`);
-    merged.computeBoundingBox();
-    merged.computeBoundingSphere();
-    // BVH per merged mesh: O(log n) beam/hitscan raycasts (built once).
-    merged.computeBoundsTree();
-    const mesh = new THREE.Mesh(merged, material);
-    mesh.name = `givre_${material.name}`;
+  for (const { geometry, material, cell, singleSided } of batches) {
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    // BVH per batch: O(log n) beam/hitscan raycasts (built once).
+    geometry.computeBoundsTree();
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = `givre_${material.name}${singleSided ? "_1s" : ""}${cell >= 0 ? `_c${cell}` : ""}`;
     // Emissive lamp panels and transparent materials never cast.
     mesh.castShadow = material.name !== "GIV_Lampe" && !material.transparent;
     mesh.receiveShadow = true;

@@ -71,13 +71,56 @@ export const GivreConfig = {
   },
   /**
    * Longest side of the shadow map per quality preset (the other side is
-   * reduced to the map's aspect seen from the sun → 4096 × 2048 on HIGH,
-   * 2048 × 1024 on LOW, where the map is baked once at load).
+   * reduced to the map's aspect seen from the sun → 2048 × 1024 on both).
+   * HIGH used 4096 × 2048 REFRESHED EVERY FRAME: the whole map (both faces
+   * of every double-sided mesh) re-rasterised into 8 M depth texels, plus
+   * 4× bigger PCF lookups — a large fixed cost for ~8 cm/texel vs ~17 cm
+   * now, invisible at gameplay distance with PCF filtering. LOW keeps
+   * baking it once at load (staticShadows).
    */
-  shadowMapSize: { HIGH: 4096, LOW: 2048 } as const,
+  shadowMapSize: { HIGH: 2048, LOW: 2048 } as const,
   /** Low sun, long shadows: slightly stronger biases than v2 (acne-free). */
   shadowBias: -0.0006,
   shadowNormalBias: 0.08,
+
+  // ------------------------------------------------------------------
+  // Static-map draw batching (GivreRenderOptim — GPU cost, no visual change)
+  // ------------------------------------------------------------------
+  staticBatching: {
+    /**
+     * XZ grid the merged materials are split on (cells of ~93 × 110 m over
+     * the playable envelope, same box as shadowBounds) → frustum culling +
+     * front-to-back drawing. 71 batches (22 before the split). A finer 5 × 4
+     * grid (226 batches) culled more triangles but cost ~215 draw calls in
+     * the worst views — on integrated GPUs (Chrome → ANGLE → D3D11) every
+     * draw costs main-thread CPU, which hurt more than it saved.
+     */
+    cellsX: 3,
+    cellsZ: 2,
+    /** Materials below this triangle count stay ONE mesh (not worth a split). */
+    chunkMinTriangles: 6000,
+    /**
+     * Closed outward solids whose smallest side is ≤ this (m) — crates,
+     * slabs, posts, bulbs — are drawn FrontSide (exact same image from
+     * outside, half the rasterised triangles). 0 disables it.
+     */
+    singleSidedMaxThickness: 2,
+  },
+  /**
+   * Draw the map with MeshStandardMaterial instead of the
+   * MeshPhysicalMaterial GLTFLoader creates for KHR_materials_specular:
+   * cheaper fragment shader on every map pixel. Colours, baked light,
+   * shadows and roughness are unchanged — only the specular level of the
+   * (very matte) surfaces moves to the standard 4 %: the ice / black-ice
+   * highlights are a touch dimmer. `false` restores the Physical materials.
+   */
+  standardMaterials: true as boolean,
+  /**
+   * Mip levels of the 2048² baked lightmaps (1 = none, the old setup):
+   * 3 = 2048 → 1024 → 512. Distant surfaces read a smaller level (no more
+   * texture-cache thrashing) while the UV-island bleed stays a few texels.
+   */
+  lightmapMipLevels: 3,
 
   // ------------------------------------------------------------------
   // v3 client-only effects (see GivreEffects)

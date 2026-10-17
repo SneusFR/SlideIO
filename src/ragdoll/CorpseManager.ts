@@ -187,6 +187,15 @@ export class CorpseManager {
     // (sourceInUse) no longer counts this corpse.
     this.corpses.splice(index, 1);
     for (const entry of corpse.materials) this.releaseMaterial(entry);
+    // The corpse visual is an independent SkeletonUtils clone: its
+    // skeletons (and their bone DataTextures) belong to it alone — without
+    // this every kill leaked one GPU bone texture per skinned piece.
+    const skeletons = new Set<THREE.Skeleton>();
+    corpse.visual.traverse((o) => {
+      const skinned = o as THREE.SkinnedMesh;
+      if (skinned.isSkinnedMesh && skinned.skeleton) skeletons.add(skinned.skeleton);
+    });
+    for (const s of skeletons) s.dispose();
   }
 
   /**

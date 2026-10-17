@@ -5,7 +5,8 @@
  *   - 25 materials carry emissiveMap + aoMap; merge by material keeps uv → 22 meshes;
  *   - 1 clip of 8 s (linear), loop seamless at 8 s; 95 puffs → 6 InstancedMesh;
  *   - the 14 garland halo nodes are animated; snow triangles for footprints;
- *   - shadow camera fitted to the map seen from the sun → 4096 × 2048.
+ *   - shadow camera fitted to the map seen from the sun → 2048 × 1024
+ *     (GivreConfig.shadowMapSize, both presets).
  * Run: node scripts/inspect-givre-v3.mjs
  */
 import { readFileSync } from "node:fs";
@@ -190,8 +191,8 @@ for (let i = 0; i < 8; i++) {
 const w = box.max.x - box.min.x + 4;
 const h = box.max.y - box.min.y + 4;
 const side = (size, r) => Math.min(size, 2 ** Math.ceil(Math.log2(size * Math.min(1, r))));
-console.log(`INFO shadow frustum ${w.toFixed(0)} × ${h.toFixed(0)} m → HIGH ${side(4096, w / h)} × ${side(4096, h / w)} (${((w / 4096) * 100).toFixed(1)} cm/texel), LOW ${side(2048, w / h)} × ${side(2048, h / w)}`);
-check(side(4096, w / h) === 4096 && side(4096, h / w) === 2048, "shadow map 4096 × 2048 on HIGH");
+console.log(`INFO shadow frustum ${w.toFixed(0)} × ${h.toFixed(0)} m → ${side(2048, w / h)} × ${side(2048, h / w)} (${((w / 2048) * 100).toFixed(1)} cm/texel)`);
+check(side(2048, w / h) === 2048 && side(2048, h / w) === 1024, "shadow map 2048 × 1024 (HIGH and LOW)");
 
 if (failures > 0) {
   console.error(`\n${failures} GIVRE v3 visual check(s) failed`);

@@ -26,6 +26,31 @@ export class DebugHUD {
   private triangles = 0;
   private lightsTotal = 0;
   private lightsActive = 0;
+  /**
+   * Rendered resolution (DRAWING-BUFFER pixels — CSS size × pixel ratio),
+   * the real fill-rate driver: a 1440p screen at 125 % Windows scaling
+   * renders 3200 × 1800 on HIGH (pixel-ratio cap 2), not 2560 × 1440.
+   */
+  private bufferW = 0;
+  private bufferH = 0;
+  private pixelRatio = 1;
+  private devicePixelRatio = 1;
+  /** Static render setup line (preset, MSAA path…) — set once by the Game. */
+  private renderSetup = "";
+  /**
+   * Main-thread CPU per frame (ms), averaged + worst over the stats window:
+   * `sim` = everything before the render call (AI, physics, weapons, HUD),
+   * `render` = three.js render submission (scene traversal, uniforms,
+   * draw calls — NOT the GPU execution, which is asynchronous).
+   * Frame time ≫ sim + render ⇒ the GPU (or the compositor) is the limit.
+   */
+  private cpuSimSum = 0;
+  private cpuRenderSum = 0;
+  private cpuSamples = 0;
+  private cpuWorst = 0;
+  private cpuSimMs = 0;
+  private cpuRenderMs = 0;
+  private cpuWorstMs = 0;
   /** Distinct rAF timestamps, including ticks skipped by the FPS cap. */
   private rafRate = 0;
   private callbackRate = 0;
@@ -47,6 +72,24 @@ export class DebugHUD {
   sampleRenderInfo(renderer: THREE.WebGLRenderer): void {
     this.drawCalls = renderer.info.render.calls;
     this.triangles = renderer.info.render.triangles;
+    const canvas = renderer.domElement;
+    this.bufferW = canvas.width;
+    this.bufferH = canvas.height;
+    this.pixelRatio = renderer.getPixelRatio();
+    this.devicePixelRatio = window.devicePixelRatio || 1;
+  }
+
+  /** Per-frame CPU split (ms) — see the cpu* fields. */
+  sampleCpu(simMs: number, renderMs: number): void {
+    this.cpuSimSum += simMs;
+    this.cpuRenderSum += renderMs;
+    this.cpuSamples++;
+    this.cpuWorst = Math.max(this.cpuWorst, simMs + renderMs);
+  }
+
+  /** One-line static render setup (preset, AA path…), shown under the resolution. */
+  setRenderSetup(text: string): void {
+    this.renderSetup = text;
   }
 
   /** Reset timing windows when gameplay starts (not on Escape/resume). */
@@ -101,6 +144,13 @@ export class DebugHUD {
       this.maxMs = max * 1000;
       this.samples.length = 0;
       this.statsTimer = 0;
+      if (this.cpuSamples > 0) {
+        this.cpuSimMs = this.cpuSimSum / this.cpuSamples;
+        this.cpuRenderMs = this.cpuRenderSum / this.cpuSamples;
+        this.cpuWorstMs = this.cpuWorst;
+      }
+      this.cpuSimSum = this.cpuRenderSum = this.cpuWorst = 0;
+      this.cpuSamples = 0;
 
       // Light census: three.js forward lighting shades EVERY scene light
       // per pixel — lit or not — so the TOTAL is what costs GPU time.
@@ -133,7 +183,10 @@ export class DebugHUD {
       `FPS:      ${this.fps}\n` +
       `rAF:      ${Math.round(this.rafRate)} unique/s / ${Math.round(this.callbackRate)} calls/s (dup ${this.duplicateCallbacks})\n` +
       `Frame:    ${this.avgMs.toFixed(1)} ms (p95 ${this.p95Ms.toFixed(1)} / max ${this.maxMs.toFixed(1)})\n` +
+      `CPU:      ${(this.cpuSimMs + this.cpuRenderMs).toFixed(1)} ms (sim ${this.cpuSimMs.toFixed(1)} / render ${this.cpuRenderMs.toFixed(1)} / max ${this.cpuWorstMs.toFixed(1)})\n` +
       `World:    ${this.drawCalls} draws / ${(this.triangles / 1000).toFixed(0)}k tris\n` +
+      `Render:   ${this.bufferW}x${this.bufferH} (ratio ${this.pixelRatio.toFixed(2)} / DPR ${this.devicePixelRatio.toFixed(2)})\n` +
+      (this.renderSetup ? `Setup:    ${this.renderSetup}\n` : "") +
       `Lights:   ${this.lightsTotal} (${this.lightsActive} lit)\n` +
       `\n` +
       `Dash:     ${movement.dashReady ? "READY" : "COOLDOWN"}\n` +

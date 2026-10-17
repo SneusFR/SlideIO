@@ -15,6 +15,7 @@ import { GivreMap } from "../world/GivreMap";
 import { GivreSky } from "../world/GivreSky";
 import { GivreConfig as givreCfg } from "../world/GivreConfig";
 import { GivreEffects } from "../world/GivreEffects";
+import { frontToBackOpaqueSort } from "../world/GivreRenderOptim";
 import type { GivreSnowLevel } from "../world/GivreSnow";
 import { loadSnowLevel } from "./GivreSnowSettings";
 import { loadMapSelection } from "../world/MapSelection";
@@ -51,7 +52,7 @@ import { SpearWeapon } from "../weapons/SpearWeapon";
 import { SpearViewmodel } from "../weapons/SpearViewmodel";
 import { SpearConfig as spearCfg } from "../weapons/SpearConfig";
 import { SpearHUD } from "../ui/SpearHUD";
-import { loadLoadout, MeleeWeaponId, PrimaryWeaponId } from "../loadout/Loadout";
+import { loadLoadout, MeleeWeaponId, PrimaryWeaponId, PRIMARY_WEAPON_IDS } from "../loadout/Loadout";
 import { loadWeaponSkin, loadCharacterCosmetics } from "../loadout/Cosmetics";
 import {
   CharacterOutfitSlot,
@@ -107,6 +108,12 @@ import { BotManager } from "../bots/BotManager";
 import { SharedBotWeaponWorld } from "../bots/BotWeaponWorld";
 import type { Bot } from "../bots/Bot";
 import { CorpseManager } from "../ragdoll/CorpseManager";
+import { RagdollController } from "../ragdoll/RagdollController";
+import { buildSkeletonRagdollParts } from "../ragdoll/SkeletonRagdollFactory";
+import {
+  RemoteWeaponController,
+  preloadRemoteWeaponTemplates,
+} from "../network/remote/RemoteWeaponController";
 import { GameAudio } from "../audio/GameAudio";
 import { PickupManager } from "../pickups/PickupManager";
 
@@ -427,6 +434,8 @@ export class Game {
   private frameIntervalMs: number;
   /** Next render deadline (performance.now() ms). 0 = not started. */
   private nextFrameAt = 0;
+  /** performance.now() at the start of the current processed frame (debug HUD CPU split). */
+  private frameCpuStart = 0;
   /**
    * LOW preset: STATIC shadows — the map's shadow map is baked once (map
    * and lights never move; characters don't cast on LOW) instead of being
@@ -467,7 +476,10 @@ export class Game {
     // menu): resolution cap, MSAA, shadow budget — see GraphicsQuality.
     const quality = getQualitySettings();
     this.renderer = new THREE.WebGLRenderer({
-      antialias: quality.antialias,
+      // GIVRE renders through the composer (its own 4× MSAA buffers on
+      // HIGH, FXAA on LOW): a multisampled DEFAULT framebuffer would only
+      // receive one fullscreen quad — pure cost (memory + per-frame resolve).
+      antialias: quality.antialias && !isGivre,
       powerPreference: "high-performance",
       // Enemy outline: the crisp red contour is a stencil-masked inverted
       // hull (see PotatoCharacter.getEnemyOutlineMaterial) — the default
@@ -585,6 +597,15 @@ export class Game {
     }
     this.movement = new PlayerMovement(this.player, this.input, this.fpsCamera);
     this.hud = new DebugHUD();
+    const shadow = quality.staticShadows ? "baked" : "live";
+    const aa = isGivre
+      ? quality.antialias
+        ? "composer MSAA 4x (color resolve)"
+        : "composer FXAA"
+      : quality.antialias
+        ? "MSAA 4x"
+        : "none";
+    this.hud.setRenderSetup(`${quality.level} · AA ${aa} · shadows ${shadow}`);
 
     this.dashHud = new DashHUD();
     this.combatHud = new CombatHUD();
@@ -960,6 +981,126 @@ export class Game {
         },
         death: () => this.killstreaks.onPlayerDeath(),
       };
+      // Perf diagnostics: `perfDebug.killBot()` kills the first live bot
+      // through the REAL death path (Health → onBotKilled → corpse, loot,
+      // medals, audio) credited to the local player; `programs()` /
+      // `textures()` expose three's GPU caches to spot lazy compiles.
+      (window as unknown as Record<string, unknown>).perfDebug = {
+        killBot: () => {
+          const bot = this.botManager.bots.find((b) => b.health.alive);
+          if (!bot) return false;
+          bot.health.protectionTimer = 0;
+          bot.health.applyDamage(1e6, this.playerCombatant, KillMethod.HAMMER_SWING, HitZone.BODY);
+          return true;
+        },
+        /**
+         * CPU cost of ONE world render from a given eye (ms, main thread) +
+         * the draw / triangle counts — sweeps the map without moving the
+         * player. Uses the real render path (composer on Givre).
+         */
+        renderCost: (x: number, y: number, z: number, yaw: number, frames = 20) => {
+          const cam = this.fpsCamera.camera;
+          const saved = { p: cam.position.clone(), q: cam.quaternion.clone() };
+          cam.position.set(x, y, z);
+          cam.quaternion.setFromEuler(new THREE.Euler(-0.05, yaw, 0, "YXZ"));
+          cam.updateMatrixWorld(true);
+          let total = 0;
+          for (let i = 0; i < frames; i++) {
+            const t0 = performance.now();
+            this.renderWorld(cam);
+            total += performance.now() - t0;
+          }
+          const calls = this.renderer.info.render.calls;
+          const tris = this.renderer.info.render.triangles;
+          cam.position.copy(saved.p);
+          cam.quaternion.copy(saved.q);
+          cam.updateMatrixWorld(true);
+          return { ms: total / frames, calls, tris };
+        },
+        /** Visible (in-frustum) drawables from an eye, grouped by top-level scene branch. */
+        drawBreakdown: (x: number, y: number, z: number, yaw: number) => {
+          const cam = this.fpsCamera.camera.clone();
+          cam.position.set(x, y, z);
+          cam.quaternion.setFromEuler(new THREE.Euler(-0.05, yaw, 0, "YXZ"));
+          cam.updateMatrixWorld(true);
+          const frustum = new THREE.Frustum().setFromProjectionMatrix(
+            new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse),
+          );
+          const out: Record<string, number> = {};
+          const visit = (o: THREE.Object3D, branch: string) => {
+            if (!o.visible) return;
+            const m = o as THREE.Mesh;
+            if ((m.isMesh || (o as THREE.Points).isPoints) && m.material) {
+              const inView = !o.frustumCulled || frustum.intersectsObject(o);
+              if (inView) out[branch] = (out[branch] ?? 0) + (Array.isArray(m.material) ? m.material.length : 1);
+            }
+            for (const c of o.children) visit(c, branch);
+          };
+          for (const top of this.scene.children) {
+            if (top.name === "givre_01") {
+              for (const c of top.children) visit(c, `map/${c.name || c.type}`);
+            } else visit(top, top.name || top.type);
+          }
+          return out;
+        },
+        programs: () => this.renderer.info.programs?.length ?? 0,
+        /** Compiled program names (diff two calls to see what compiled lazily). */
+        programNames: () =>
+          (this.renderer.info.programs ?? []).map(
+            (p) => `${p.name} #${(p as unknown as { id: number }).id} ${(p as unknown as { cacheKey: string }).cacheKey.slice(0, 120)}`,
+          ),
+        /** Full cache keys of every program sharing `name` (diff why a twin compiled). */
+        programKeys: (name: string) =>
+          (this.renderer.info.programs ?? [])
+            .filter((p) => p.name === name)
+            .map((p) => `#${(p as unknown as { id: number }).id} ${(p as unknown as { cacheKey: string }).cacheKey}`),
+        textures: () => this.renderer.info.memory.textures,
+        geometries: () => this.renderer.info.memory.geometries,
+        /** Scene meshes whose material uses one of the given program ids. */
+        whoUses: (ids: number[]) => {
+          const out: string[] = [];
+          const props = this.renderer.properties;
+          this.scene.traverse((o) => {
+            const mesh = o as THREE.Mesh;
+            if (!mesh.material) return;
+            const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            for (const m of mats) {
+              const prog = (props.get(m) as { currentProgram?: { id: number } }).currentProgram;
+              if (!prog || !ids.includes(prog.id)) continue;
+              const path: string[] = [];
+              for (let p: THREE.Object3D | null = mesh; p && path.length < 6; p = p.parent) path.push(p.name || p.type);
+              out.push(
+                `#${prog.id} ${m.name || m.type} transparent=${m.transparent} skinned=${(mesh as THREE.SkinnedMesh).isSkinnedMesh === true} ← ${path.join(" < ")}`,
+              );
+            }
+          });
+          return out;
+        },
+        /** Textures referenced by scene materials, with their GPU upload state. */
+        sceneTextures: () => {
+          const out: Record<string, { name: string; size: string; uploaded: boolean; owner: string }> = {};
+          const props = this.renderer.properties;
+          this.scene.traverse((o) => {
+            const mesh = o as THREE.Mesh;
+            if (!mesh.material) return;
+            const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            for (const m of mats) {
+              for (const v of Object.values(m)) {
+                const t = v as THREE.Texture | null;
+                if (!t || !(t as THREE.Texture).isTexture || out[t.uuid]) continue;
+                const img = t.image as { width?: number; height?: number } | undefined;
+                out[t.uuid] = {
+                  name: t.name || "(unnamed)",
+                  size: `${img?.width ?? "?"}x${img?.height ?? "?"}`,
+                  uploaded: !!(props.get(t) as { __webglTexture?: unknown }).__webglTexture,
+                  owner: `${mesh.name || mesh.type}/${m.name || m.type}`,
+                };
+              }
+            }
+          });
+          return out;
+        },
+      };
     }
 
     this.playerCombatant.health.onDeath = () => {
@@ -1144,6 +1285,16 @@ export class Game {
    *                                     uses 4× MSAA buffers instead.
    * renderer.info.autoReset is turned off so the debug HUD counts every pass
    * of the frame (reset manually once per frame in frame()).
+   *
+   * PERF (HIGH): after EVERY render() into a multisampled target three
+   * resolves colour AND, by default, depth + stencil (blitFramebuffer). The
+   * depth / stencil resolve is extremely slow on the D3D11 backend of
+   * Chrome / Edge on Windows (three's own comment, see three #27799) and it
+   * happened TWICE per frame (world + FP overlay) at full resolution — the
+   * 30 FPS on HIGH at 1440p. Nothing ever samples the resolved depth /
+   * stencil: the enemy-outline stencil test runs INSIDE the world render
+   * (multisampled renderbuffer, kept between renders), the outline passes
+   * own their depth texture. Only the colour is resolved now.
    */
   private buildGivreComposer(): void {
     const quality = getQualitySettings();
@@ -1154,6 +1305,10 @@ export class Game {
       depthBuffer: true,
       stencilBuffer: true, // enemy outline = stencil-masked inverted hull
       samples: quality.antialias ? 4 : 0,
+      // Colour-only MSAA resolve (see PERF above). Copied to the composer's
+      // second buffer by EffectComposer (RenderTarget.clone → copy).
+      resolveDepthBuffer: false,
+      resolveStencilBuffer: false,
     });
     target.texture.name = "GivreComposer.rt";
     const composer = new EffectComposer(this.renderer, target);
@@ -1195,12 +1350,22 @@ export class Game {
     this.fpOutline = fpOutline;
     this.renderer.info.autoReset = false;
     this.applyOutlineSettings(this.outlineSettings);
+    // Opaques strictly near → far (renderOrder kept first): the map is now
+    // split in spatial chunks, so early-Z can reject the rooms hidden behind
+    // the walls instead of shading them. Depth-tested opaque output does not
+    // depend on draw order — only the overdraw does.
+    this.renderer.setOpaqueSort(frontToBackOpaqueSort);
 
     // DEV builds only (`npm run dev`): live tuning / verification handle —
     //   givreDebug.world.normalThreshold = 0.3   (any GivreOutlinePass knob)
     //   givreDebug.apply({ enabled: false })     (same path as the menu)
     //   givreDebug.colliders(true)               (same overlay as KeyH)
     //   givreDebug.renderInfo()                  (whole composer frame)
+    //   givreDebug.perf.shadows(false)           (A/B: freeze the shadow map)
+    //   givreDebug.perf.halos(false) / footprints(false) / snow("off")
+    //   givreDebug.perf.msaaDepthResolve(true)   (A/B: the old slow resolve)
+    //   givreDebug.perf.sort(false)              (A/B: three's default sort)
+    //   givreDebug.perf.pixelRatio(0.75)         (A/B: render resolution)
     if (import.meta.env.DEV) {
       (window as unknown as Record<string, unknown>).givreDebug = {
         world: worldOutline,
@@ -1216,8 +1381,66 @@ export class Game {
         snow: (level: GivreSnowLevel) => this.setSnowLevel(level),
         loopTime: () => this.givreEffects?.loopTime ?? null,
         effects: () => this.givreEffects,
+        perf: this.createGivrePerfToggles(target.samples),
       };
     }
+  }
+
+  /**
+   * DEV-only A/B switches for the Givre GPU budget (givreDebug.perf.*): each
+   * toggles ONE suspected cost live so its FPS impact can be read on the
+   * debug HUD. Never used by gameplay code.
+   */
+  private createGivrePerfToggles(samples: number): {
+    shadows(on: boolean): string;
+    halos(on: boolean): string;
+    footprints(on: boolean): string;
+    snow(level: GivreSnowLevel): void;
+    msaaDepthResolve(on: boolean): string;
+    sort(frontToBack: boolean): string;
+    pixelRatio(ratio: number): number[];
+  } {
+    const composer = this.composer!;
+    const setVisible = (pred: (o: THREE.Object3D) => boolean, on: boolean): number => {
+      let n = 0;
+      this.scene.traverse((o) => {
+        if (pred(o)) {
+          o.visible = on;
+          n++;
+        }
+      });
+      return n;
+    };
+    return {
+      shadows: (on: boolean) => {
+        // OFF = keep the last shadow map (no caster re-render per frame).
+        this.renderer.shadowMap.autoUpdate = on && !this.staticShadows;
+        if (on) this.renderer.shadowMap.needsUpdate = true;
+        return `shadow map ${on ? "updated every frame" : "frozen"}`;
+      },
+      halos: (on: boolean) => `${setVisible((o) => o.name.startsWith("givre_halos"), on)} halo objects`,
+      footprints: (on: boolean) => `${setVisible((o) => o.name === "givre_empreintes", on)} footprint mesh`,
+      snow: (level: GivreSnowLevel) => this.setSnowLevel(level),
+      msaaDepthResolve: (on: boolean) => {
+        for (const rt of [composer.renderTarget1, composer.renderTarget2]) {
+          rt.resolveDepthBuffer = on;
+          rt.resolveStencilBuffer = on;
+        }
+        return `MSAA depth/stencil resolve ${on ? "ON (old, slow)" : "OFF"} (samples ${samples})`;
+      },
+      sort: (frontToBack: boolean) => {
+        this.renderer.setOpaqueSort(frontToBack ? frontToBackOpaqueSort : null);
+        return frontToBack ? "front-to-back" : "three default (material first)";
+      },
+      pixelRatio: (ratio: number) => {
+        this.renderer.setPixelRatio(ratio);
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        composer.setPixelRatio(ratio);
+        composer.setSize(window.innerWidth, window.innerHeight);
+        this.applyOutlineSettings(this.outlineSettings);
+        return this.renderer.getDrawingBufferSize(new THREE.Vector2()).toArray();
+      },
+    };
   }
 
   /**
@@ -1434,6 +1657,14 @@ export class Game {
       }
       releaseCorpseMats = this.corpses.warmUp(corpse);
       temp.push(corpse);
+      // FIRST-KILL PATH (CPU): the very first death ragdoll used to cost
+      // ~0.5 s of main-thread time on kill #1 — Rapier's WASM lazily
+      // initializes its dynamic-body / impulse-joint / CCD solver paths the
+      // first time a jointed dynamic body exists and is stepped. Build ONE
+      // real ragdoll far below the map from this corpse clone, step the
+      // world once, then remove it — the first real kill is then as cheap
+      // as every later one.
+      this.warmRagdollPhysics(corpse);
       // PAINTBALL: the painted skin (patched body material) is a program
       // the base character never compiles — one living clone wears it.
       const painted = skeletonClone(asset.template);
@@ -1474,6 +1705,15 @@ export class Game {
     } catch (err) {
       console.warn("GoofyBasket skins: warm-up skipped", err);
     }
+    // BOT WEAPONS (third person): a bot draws a RANDOM primary at every
+    // respawn and RemoteWeaponController builds its TP presentation then —
+    // controller + mount + materials (stencil occluder flags, TP-only
+    // pieces) never seen by the FP warm-up. The first time each weapon was
+    // drawn (typically right after the first kills, when bots respawn with
+    // a new primary) a shader compile + texture upload froze the frame.
+    // Mount EVERY primary once on a hidden character clone for the warm
+    // frames below.
+    const tpWeaponCleanup = await this.warmThirdPersonWeapons(temp, far);
     for (const obj of temp) this.scene.add(obj);
     this.shockwave.spawn(far, 1, 0.5, this.phaseColor);
     this.particles.burst(far, 4, 1, 0.3, this.phaseColor, 0);
@@ -1570,6 +1810,7 @@ export class Game {
     // Outfit slots: restore the clones' base geometry + free the suit's
     // private materials (the shared library geometries stay alive).
     for (const slot of outfitSlots) slot.dispose();
+    tpWeaponCleanup();
     for (const obj of temp) this.scene.remove(obj);
     releaseCorpseMats?.();
     this.shockwave.update(10);
@@ -1582,6 +1823,107 @@ export class Game {
 
     // 5. Audio buffers decode in the background (no gesture required).
     void this.gameAudio.preload();
+  }
+
+  /**
+   * Warm-up helper: one REAL death ragdoll (same factory + controller as
+   * CorpseManager) built on `visual`, stepped once, then removed. Forces
+   * Rapier's lazy WASM paths (dynamic bodies, spherical impulse joints,
+   * CCD) to initialize during the loading screen instead of on kill #1.
+   * `visual` is left posed exactly as before (restorePose).
+   */
+  private warmRagdollPhysics(visual: THREE.Object3D): void {
+    try {
+      visual.updateMatrixWorld(true);
+      const parts = buildSkeletonRagdollParts(visual);
+      if (!parts) return;
+      const ragdoll = new RagdollController(this.physics);
+      ragdoll.activate(visual, parts, {
+        mode: "DEATH",
+        velocity: new THREE.Vector3(1, 0, 0),
+        impact: { impulse: new THREE.Vector3(2, 1, 0), point: null },
+      });
+      this.physics.step(1 / 60);
+      ragdoll.update(1 / 60);
+      ragdoll.restorePose();
+      ragdoll.dispose();
+      this.physics.refreshQueries(); // query structures without the warm bodies
+    } catch (err) {
+      console.warn("Ragdoll physics warm-up skipped", err);
+    }
+  }
+
+  /**
+   * Warm-up helper: every primary weapon mounted ONCE through the real
+   * third-person path (RemoteWeaponController — the one bots and remote
+   * players use) on hidden character clones, so their programs compile and
+   * their textures upload during the loading screen. Clones are pushed to
+   * `temp` (added to the scene for the warm renders by the caller); the
+   * returned function detaches every controller afterwards.
+   */
+  private async warmThirdPersonWeapons(
+    temp: THREE.Object3D[],
+    far: THREE.Vector3,
+  ): Promise<() => void> {
+    const controllers: RemoteWeaponController[] = [];
+    const releases: (() => void)[] = [];
+    try {
+      const asset = await loadCharacterAsset();
+      // All GLBs parsed first (cached): attaching below is then synchronous
+      // on the next microtask of each setWeapon.
+      await preloadRemoteWeaponTemplates();
+      const holders: THREE.Object3D[] = [];
+      for (const id of PRIMARY_WEAPON_IDS) {
+        // Two holders per weapon: one LIVING (opaque weapon materials) and
+        // one CORPSE (the death clone keeps the weapon in hand → the
+        // CorpseManager's TRANSPARENT fade clones of the weapon materials
+        // are different programs, compiled on the first kill otherwise).
+        for (const corpse of [false, true]) {
+          const holder = skeletonClone(asset.template);
+          holder.position.copy(far);
+          if (corpse) stripEnemyOutline(holder);
+          const ctrl = new RemoteWeaponController(holder, this.scene);
+          ctrl.setWeapon(id);
+          controllers.push(ctrl);
+          temp.push(holder);
+          if (corpse) holders.push(holder);
+        }
+      }
+      // setWeapon resolves its (cached) GLB promise asynchronously: let the
+      // attach callbacks run before the warm renders.
+      await new Promise((r) => setTimeout(r, 0));
+      // One presentation tick: the runtime state of each weapon exists
+      // before the warm renders (e.g. the paintball hopper allocates its
+      // per-instance COLOURS on its first update — a different program
+      // variant than the colourless just-attached InstancedMesh).
+      for (const holder of temp) holder.updateMatrixWorld(true);
+      for (const ctrl of controllers) ctrl.update(1 / 60);
+      // Weapons are mounted now: the corpse holders get their pooled fade
+      // clones (body + weapon), returned to the pool after the warm renders.
+      // Their ORIGINAL materials are restored before the controllers are
+      // disposed: some controllers dispose their own materials (WaterTank
+      // surface / body) — disposing the pooled fade clone instead would
+      // destroy the program warmed here and the first real FAMAS corpse
+      // would recompile it.
+      for (const holder of holders) {
+        const original = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
+        holder.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          if (mesh.isMesh) original.set(mesh, mesh.material);
+        });
+        const release = this.corpses.warmUp(holder);
+        releases.push(() => {
+          release();
+          for (const [mesh, mat] of original) mesh.material = mat;
+        });
+      }
+    } catch (err) {
+      console.warn("Third-person weapon warm-up skipped", err);
+    }
+    return () => {
+      for (const release of releases) release();
+      for (const ctrl of controllers) ctrl.dispose();
+    };
   }
 
   /**
@@ -2508,6 +2850,10 @@ export class Game {
     // which only runs on processed frames.
     if (this.frameCapSkip(now)) return;
 
+    // CPU budget of this frame (simulation + render submission) — read by
+    // the debug HUD: CPU ≪ frame time ⇒ GPU-bound, CPU ≈ frame ⇒ CPU-bound.
+    this.frameCpuStart = now;
+
     // RAW frame delta (for the FPS/frame-time stats ONLY — feeding the
     // clamped dt to the counter capped it at 30 FPS and hid every drop).
     const rawDt = (now - this.lastTime) / 1000;
@@ -2989,9 +3335,12 @@ export class Game {
         // ONE composer render (see buildGivreComposer). info.autoReset is
         // off on this path, so the HUD numbers cover EVERY pass of the frame.
         this.viewmodelSystem.syncCamera(cam);
+        const renderStart = performance.now();
         this.renderComposer();
+        this.hud.sampleCpu(renderStart - this.frameCpuStart, performance.now() - renderStart);
         this.hud.sampleRenderInfo(this.renderer);
       } else {
+        const renderStart = performance.now();
         this.renderer.render(this.scene, cam);
         // Debug HUD GPU stats: renderer.info is reset by every render() call,
         // so the WORLD pass numbers must be captured right here.
@@ -3003,6 +3352,7 @@ export class Game {
         // above (no double draw — each weapon renders on exactly one path).
         this.viewmodelSystem.syncCamera(cam);
         this.viewmodelSystem.render(this.renderer);
+        this.hud.sampleCpu(renderStart - this.frameCpuStart, performance.now() - renderStart);
       }
     } finally {
       if (spinning) {
