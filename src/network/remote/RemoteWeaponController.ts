@@ -29,14 +29,7 @@ import { FrisbeeLauncherProfile, FRISBEE_LAUNCHER_TIMELINE } from "../../weapons
 import { FrisbeeLauncherController, type FrisbeeCageDrop } from "../../weapons/frisbee/FrisbeeLauncherController";
 import { loadFrisbeeLauncherGltf } from "../../weapons/frisbee/FrisbeeLauncherModel";
 // Real weapon GLBs (same optimized assets as the local viewmodels/menu).
-import rifleUrl from "../../assets/voidrifle_opt.glb?url";
 import spearUrl from "../../assets/lance_opt.glb?url";
-import obliterreurUrl from "../../assets/obliterreur_opt.glb?url";
-import revolverUrl from "../../assets/revolver_opt.glb?url";
-// Bass Blaster = PulseCarbine LOD1 (light version for weapons seen at
-// a distance — see src/assets/PulseCarbine/README_FR.md).
-import bassBlasterUrl from "../../assets/PulseCarbine/PulseCarbine_LOD1.glb?url";
-import poisonUrl from "../../assets/Lance_poison_jeu.glb?url";
 
 /**
  * How a legacy weapon GLB sits in a remote POTATO character's hand.
@@ -64,66 +57,19 @@ interface RemoteWeaponAttachment {
 }
 
 /**
- * Single tuning table for every remote in-hand weapon. Hammer + plasma
- * offsets are the exact values proven in the Main Menu character
- * (MenuConfig); the other three reuse the matching hand's grip.
+ * Tuning table for the remaining STATIC remote in-hand weapons (the Astral
+ * Lance). Every primary uses its authored TP profile mount instead.
  */
 export const REMOTE_WEAPON_CONFIG: Partial<Record<NetworkWeaponId, RemoteWeaponAttachment>> = {
   // HAMMER (Brick Maul) is NOT in this table anymore: it uses the authored
   // TP mount of WeaponProfile_BrickMaul.json + the profile's TP clips (see
   // attachBrickMaul) — no normalization, no procedural swing.
-  [NetworkWeaponId.PLASMA_RIFLE]: {
-    url: rifleUrl,
-    bone: "Weapon_L",
-    position: new THREE.Vector3(0, 0.02, -0.08),
-    rotation: new THREE.Euler(0.05, 0, 0),
-    size: 0.95,
-    // The rifle barrel runs along the model X axis — without this flip the
-    // muzzle points BACKWARDS in the remote hand (reported in playtests).
-    modelRotation: new THREE.Euler(0, Math.PI, 0),
-  },
   [NetworkWeaponId.SPEAR]: {
     url: spearUrl,
     bone: "Weapon_R",
     position: new THREE.Vector3(0, 0.1, 0),
     rotation: new THREE.Euler(0.15, 0, -0.2),
     size: 1.7,
-  },
-  [NetworkWeaponId.REVOLVER]: {
-    url: revolverUrl,
-    bone: "Weapon_R",
-    position: new THREE.Vector3(0, 0.02, -0.04),
-    rotation: new THREE.Euler(0.05, 0, 0),
-    size: 0.35,
-  },
-  [NetworkWeaponId.OBLITERREUR]: {
-    url: obliterreurUrl,
-    bone: "Weapon_L",
-    position: new THREE.Vector3(0, 0.02, -0.06),
-    rotation: new THREE.Euler(0.05, 0, 0),
-    size: 1.0,
-    // Same hand + same forward convention as the plasma rifle.
-    modelRotation: new THREE.Euler(0, Math.PI, 0),
-  },
-  [NetworkWeaponId.BASS_BLASTER]: {
-    url: bassBlasterUrl,
-    bone: "Weapon_L",
-    position: new THREE.Vector3(0, 0.02, -0.06),
-    rotation: new THREE.Euler(0.05, 0, 0),
-    size: 0.75,
-    // The PulseCarbine muzzle faces -X in the asset → rotate it to face
-    // -Z like the rifle convention (barrel forward in the remote hand).
-    modelRotation: new THREE.Euler(0, -Math.PI / 2, 0),
-  },
-  [NetworkWeaponId.POISON_SPRAYER]: {
-    url: poisonUrl,
-    bone: "Weapon_L",
-    position: new THREE.Vector3(0, 0.02, -0.06),
-    rotation: new THREE.Euler(0.05, 0, 0),
-    size: 0.9,
-    // The sprayer muzzle faces -X in the asset → rotate it to face -Z
-    // like the rifle convention (barrel forward in the remote hand).
-    modelRotation: new THREE.Euler(0, -Math.PI / 2, 0),
   },
 };
 
@@ -242,7 +188,7 @@ type MaulPhase = "whirlwind" | "slamStart" | "slamDive" | "slamLand" | "inspect"
  */
 export class RemoteWeaponController {
   /** SERVER-equipped weapon (from the synced schema). */
-  private equipped: NetworkWeaponId = NetworkWeaponId.PLASMA_RIFLE;
+  private equipped: NetworkWeaponId = NetworkWeaponId.GOOFY_BASKET;
   /** Temporary melee display override (sweep/slam visuals). */
   private overrideId: NetworkWeaponId | null = null;
   private overrideTimer = 0;

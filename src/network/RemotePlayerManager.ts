@@ -19,7 +19,14 @@ import { buildSkeletonRagdollParts } from "../ragdoll/SkeletonRagdollFactory";
 // Shared POTATO character asset (model + clips + red rim glow) — loaded
 // ONCE and cloned per avatar. The SAME asset drives the solo bots
 // (BotModel), so every humanoid enemy shares the exact model + animations.
-import { loadCharacterAsset, stripEnemyOutline, CharacterAsset, FEET_OFFSET, MODEL_TOP } from "../characters/PotatoCharacter";
+import {
+  loadCharacterAsset,
+  stripEnemyOutline,
+  shareOutlineSkeletons,
+  CharacterAsset,
+  FEET_OFFSET,
+  MODEL_TOP,
+} from "../characters/PotatoCharacter";
 // Character OUTFIT (Potato Astronaut pack): applied on each avatar CLONE
 // from the server-replicated selection — never on the shared template.
 import { CharacterOutfitSlot, getAstronautLibrary } from "../cosmetics/astronaut/AstronautRuntime";
@@ -236,6 +243,7 @@ class RemotePlayer {
     const model = skeletonClone(asset.template);
     // The group's origin is the CAPSULE CENTER; the model root is the feet.
     model.position.y = -FEET_OFFSET;
+    shareOutlineSkeletons(model); // one bone update per body part (not two)
     this.model = model;
     this.group.add(model);
     this.group.visible = false; // hidden until the first snapshot arrives

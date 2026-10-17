@@ -76,7 +76,7 @@ export class NetworkPlayer extends Schema {
   /** NetworkWeaponId string — written ONLY by the server (WeaponManager)
    *  after validating a WEAPON_EQUIP message. Remote clients read this to
    *  attach the right weapon model to the character's hand. */
-  @type("string") weapon = "PLASMA_RIFLE";
+  @type("string") weapon = "GOOFY_BASKET";
 
   /** COSMETIC skin id of the equipped weapon — written ONLY by the server
    *  after validating it against the shared per-weapon whitelist

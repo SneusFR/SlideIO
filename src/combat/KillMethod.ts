@@ -5,11 +5,11 @@
  *
  * HAMMER_SWING → HOMERUN medal
  * GROUND_SLAM  → SMASHED medal
- * PLASMA       → no special medal
+
  * ENVIRONMENT  → kill plane / suicide (no killer, no medal)
  */
 export enum KillMethod {
-  PLASMA = "PLASMA",
+
   HAMMER_SWING = "HAMMER_SWING",
   GROUND_SLAM = "GROUND_SLAM",
   /** Astral Lance quick horizontal sweep (no special medal yet). */
@@ -18,16 +18,7 @@ export enum KillMethod {
   SPEAR_RUSH = "SPEAR_RUSH",
   /** MOLE STRIKE killstreak emergence blast → MOLED medal. */
   MOLE_STRIKE = "MOLE_STRIKE",
-  /** OBLITERREUR black-vortex beam → OBLITERATED medal. */
-  OBLITERREUR = "OBLITERREUR",
-  /** Revolver ballistic bullet (LMB single shot or RMB fan fire). */
-  REVOLVER = "REVOLVER",
-  /** Thrown revolver AoE explosion (never a headshot by definition). */
-  REVOLVER_EXPLOSION = "REVOLVER_EXPLOSION",
-  /** Bass Blaster musical note projectile (SMG — no special medal). */
-  BASS_BLASTER = "BASS_BLASTER",
-  /** Lance-Poison continuous toxic spray (no special medal). */
-  POISON = "POISON",
+
   /** HEX SNIPER tongue grab (LMB — flat hit damage on the grabbed player). */
   HEX_SNIPER_TONGUE = "HEX_SNIPER_TONGUE",
   /** HEX SNIPER monster-head bite (automatic after every tongue shot). */

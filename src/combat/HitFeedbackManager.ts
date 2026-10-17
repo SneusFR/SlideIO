@@ -30,7 +30,7 @@ export interface HitEvent {
  *    transition fires immediately (the headshot must never feel late),
  *    and a killing hit always pulses;
  *  - a PER-TARGET throttled victim reaction (flash + impact particles),
- *    so a multi-target Obliterreur still lights up every victim while the
+ *    so a multi-target hit still lights up every victim while the
  *    crosshair pulse stays aggregated.
  *
  * Bots never produce feedback: events whose attacker is not the local
@@ -84,11 +84,9 @@ export class HitFeedbackManager {
     const paintball = hit.weapon === KillMethod.PAINTBALL_RIFLE;
     const interval = paintball
       ? hfc.paintballFeedbackInterval // 0: every ball that connects is confirmed (never throttled)
-      : hit.weapon === KillMethod.OBLITERREUR
-        ? hfc.obliterreurFeedbackInterval
-        : hit.hitZone === HitZone.HEAD
-          ? hfc.headshotHitFeedbackInterval
-          : hfc.bodyHitFeedbackInterval;
+      : hit.hitZone === HitZone.HEAD
+        ? hfc.headshotHitFeedbackInterval
+        : hfc.bodyHitFeedbackInterval;
 
     const elapsed = this.clock - this.lastPulseAt;
     const headTransition = hit.hitZone === HitZone.HEAD && this.lastPulseZone !== HitZone.HEAD;

@@ -214,11 +214,6 @@ export class MultiplayerGameController {
     this.vfx.warmUp();
   }
 
-  /** Static world meshes remote plasma beams visually stop on. */
-  setRaycastTargets(targets: THREE.Object3D[]): void {
-    this.vfx.setRaycastTargets(targets);
-  }
-
   /** Shared ParticleSystem: remote VFX emit the same particles as local. */
   setParticles(particles: ParticleSystem): void {
     this.vfx.setParticles(particles);
@@ -284,12 +279,10 @@ export class MultiplayerGameController {
     this.remotes.sync(players, this.client.sessionId);
     this.remotes.update(dt);
 
-    // Phase 5: remote weapon VFX (beams follow the interpolated aim) +
-    // cleanup of VFX owned by players who left the room. Obliterreur
-    // anchors are also dropped when their owner switches weapons.
+    // Phase 5: remote weapon VFX (tongues, bursts, dirt trails) + cleanup
+    // of VFX owned by players who left the room.
     this.vfx.update(dt);
     this.vfx.prune(new Set(players.map((p) => p.id)));
-    this.vfx.syncEquippedWeapons(players);
 
     // ---- Phase 4: server-owned local combat state ----
     const me = this.client.getLocalPlayer();

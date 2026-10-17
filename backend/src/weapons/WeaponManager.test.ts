@@ -91,6 +91,12 @@ function fire(wm: WeaponManager, p: NetworkPlayer, action: string, origin: any, 
   });
 }
 
+/** One seeded PAINTBALL ball (0° spread: the ball flies exactly along `dir`). */
+let ballSeed = 1;
+function shoot(wm: WeaponManager, p: NetworkPlayer, origin: any, dir: any, extra?: any) {
+  fire(wm, p, WeaponActionType.PAINTBALL_FIRE, origin, dir, { sd: ballSeed++, sp: 0, ...(extra ?? {}) });
+}
+
 const eyeOf = (p: NetworkPlayer) => ({ x: p.x, y: p.y + PLAYER_EYE_OFFSET, z: p.z });
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -125,42 +131,42 @@ test("hitscan: wall blocks the shot (east terrace ruins)", () => {
   assert.ok(!hasLineOfSight({ x: 19, y: 1.45, z: 33 }, { x: 19, y: 0.9, z: 39 }));
 });
 
-test("revolver: body damage + HIT_CONFIRMED + ammo + cadence", () => {
+test("paintball: body damage + HIT_CONFIRMED + cadence (immediate spam refused)", () => {
   const { wm, rec, addPlayer } = makeWorld();
   const a = addPlayer("A", 3, 0.9, 16);
   const b = addPlayer("B", 3, 0.9, 10);
-  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
-  assert.strictEqual(a.weapon, NetworkWeaponId.REVOLVER);
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
+  assert.strictEqual(a.weapon, NetworkWeaponId.PAINTBALL_RIFLE);
 
   const torso = dirTo(eyeOf(a), { x: 3, y: 0.9, z: 10 });
-  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eyeOf(a), torso);
-  assert.strictEqual(b.health, 200 - W.revolver.bodyDamage);
+  shoot(wm, a, eyeOf(a), torso);
+  assert.strictEqual(b.health, 200 - paintballDamage(false));
   assert.strictEqual(rec.hits.length, 1);
   assert.strictEqual(rec.hits[0].ev.hitZone, "BODY");
   assert.strictEqual(rec.damages.length, 1);
 
-  // Immediate second shot → refused by cadence (no time advanced).
-  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eyeOf(a), torso);
+  // Immediate second ball (no time advanced) → refused by the cadence.
+  shoot(wm, a, eyeOf(a), torso);
   assert.strictEqual(rec.hits.length, 1, "cadence must refuse the spam shot");
 });
 
-test("revolver: headshot uses the weapon-specific 50 dmg rule", () => {
+test("paintball: headshot = ×1.5 (34.5)", () => {
   const { wm, rec, addPlayer } = makeWorld();
   const a = addPlayer("A", 3, 0.9, 16);
   const b = addPlayer("B", 3, 0.9, 10);
-  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
-  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 1.56, z: 10 }));
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
+  shoot(wm, a, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 1.56, z: 10 }));
   assert.strictEqual(rec.hits[0].ev.hitZone, "HEAD");
-  assert.strictEqual(b.health, 200 - W.revolver.headDamage);
+  assert.strictEqual(b.health, 200 - paintballDamage(true));
 });
 
 test("dead shooter: every action refused", () => {
   const { wm, rec, addPlayer } = makeWorld();
   const a = addPlayer("A", 3, 0.9, 16);
   addPlayer("B", 3, 0.9, 10);
-  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
   a.isAlive = false;
-  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eyeOf(a), { x: 0, y: 0, z: -1 });
+  shoot(wm, a, eyeOf(a), { x: 0, y: 0, z: -1 });
   assert.strictEqual(rec.actions.length, 0);
   assert.strictEqual(rec.hits.length, 0);
 });
@@ -169,74 +175,23 @@ test("invalid weapon id: equip refused", () => {
   const { wm, addPlayer } = makeWorld();
   const a = addPlayer("A", 3, 0.9, 16);
   wm.handleEquip(a, "ROCKET_LAUNCHER_9000");
-  assert.strictEqual(a.weapon, "PLASMA_RIFLE");
+  assert.strictEqual(a.weapon, "GOOFY_BASKET", "default primary kept");
 });
 
-test("plasma: tick DPS uses real deltaTime + 2x headshot", () => {
-  const { wm, addPlayer } = makeWorld();
-  const a = addPlayer("A", 3, 0.9, 16);
-  const b = addPlayer("B", 3, 0.9, 10);
-  fire(wm, a, WeaponActionType.PLASMA_START, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 0.9, z: 10 }));
-  wm.tick(0.05);
-  const bodyTick = W.plasma.damagePerSecond * 0.05;
-  assert.ok(Math.abs(b.health - (200 - bodyTick)) < 0.01, "body DPS tick");
-  // Aim at the head → 2x
-  fire(wm, a, "PLASMA_AIM", eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 1.56, z: 10 }));
-  const before = b.health;
-  wm.tick(0.05);
-  assert.ok(Math.abs(before - b.health - bodyTick * 2) < 0.01, "headshot = 2x DPS");
-  fire(wm, a, WeaponActionType.PLASMA_STOP, eyeOf(a), { x: 0, y: 0, z: -1 });
-  const after = b.health;
-  wm.tick(0.05);
-  assert.strictEqual(b.health, after, "no damage after PLASMA_STOP");
-});
-
-test("plasma: kill produces PLAYER_DIED with real headshot flag", () => {
+test("paintball: kill produces PLAYER_DIED with real headshot flag", () => {
   const { wm, combat, addPlayer } = makeWorld();
   const a = addPlayer("A", 3, 0.9, 16);
   const b = addPlayer("B", 3, 0.9, 10);
   b.health = 1;
   let died: any = null;
   combat.onPlayerDied = (ev) => (died = ev);
-  fire(wm, a, WeaponActionType.PLASMA_START, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 1.56, z: 10 }));
-  wm.tick(0.05);
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
+  shoot(wm, a, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 1.56, z: 10 }));
   assert.ok(died, "victim must die");
   assert.strictEqual(died.killerId, "A");
   assert.strictEqual(died.isHeadshot, true, "HEAD kill → isHeadshot true");
   assert.strictEqual(a.kills, 1);
   assert.strictEqual(b.deaths, 1);
-});
-
-test("poison: short-range DPS tick, NO headshot bonus, out-of-range refused", () => {
-  const { wm, addPlayer } = makeWorld();
-  const a = addPlayer("A", 3, 0.9, 16);
-  const b = addPlayer("B", 3, 0.9, 10); // 6 m — inside the 9 m range
-  const c = addPlayer("C", 3, 0.9, -20); // 36 m — far outside
-  wm.handleEquip(a, NetworkWeaponId.POISON_SPRAYER);
-  assert.strictEqual(a.weapon, NetworkWeaponId.POISON_SPRAYER);
-
-  // Spray at B's torso → flat DPS tick.
-  fire(wm, a, WeaponActionType.POISON_START, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 0.9, z: 10 }));
-  wm.tick(0.05);
-  const tick = W.poison.damagePerSecond * 0.05;
-  assert.ok(Math.abs(b.health - (200 - tick)) < 0.01, "body DPS tick");
-
-  // Aim at the HEAD → SAME flat damage (poison never headshots).
-  fire(wm, a, "POISON_AIM", eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 1.56, z: 10 }));
-  const before = b.health;
-  wm.tick(0.05);
-  assert.ok(Math.abs(before - b.health - tick) < 0.01, "head aim = flat damage");
-
-  // STOP → no more damage.
-  fire(wm, a, WeaponActionType.POISON_STOP, eyeOf(a), { x: 0, y: 0, z: -1 });
-  const after = b.health;
-  wm.tick(0.05);
-  assert.strictEqual(b.health, after, "no damage after POISON_STOP");
-
-  // Far target: even a perfect aim is beyond the 9 m poison range.
-  fire(wm, a, WeaponActionType.POISON_START, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 0.9, z: -20 }));
-  wm.tick(0.05);
-  assert.strictEqual(c.health, 200, "target beyond poison range untouched");
 });
 
 // NOTE: melee tests live on the open CENTER LANE of Ancient Jungle City
@@ -376,29 +331,13 @@ test("spear rush: cooldown enforced + single hit per target", () => {
   assert.strictEqual(rec.actions.length, actionsBefore + 1, "rush allowed after cooldown");
 });
 
-test("obliterreur: anchors validated against map, beam damages inside volume", () => {
-  const { wm, rec, addPlayer } = makeWorld();
-  const a = addPlayer("A", 0, 0.9, 16);
-  const victim = addPlayer("B", 0, 0.9, 10);
-  wm.handleEquip(a, NetworkWeaponId.OBLITERREUR);
-  // Place both anchors on the ground near the victim.
-  fire(wm, a, WeaponActionType.OBLITERREUR_PLACE, eyeOf(a), dirTo(eyeOf(a), { x: 0, y: 0, z: 8 }));
-  fire(wm, a, WeaponActionType.OBLITERREUR_PLACE, eyeOf(a), dirTo(eyeOf(a), { x: 0, y: 0, z: 12 }));
-  const places = rec.actions.filter((e) => e.action === WeaponActionType.OBLITERREUR_PLACE);
-  assert.strictEqual(places.length, 2, "two validated placements");
-  wm.handleAction(a, { action: WeaponActionType.OBLITERREUR_FIRE, seq: ++seq });
-  wm.tick(0.05);
-  const expected = 200 * W.obliterreur.damagePerSecondFraction * 0.05;
-  assert.ok(victim.health < 200 && Math.abs(200 - victim.health - expected) < 0.5, "beam ticks damage");
-});
-
 test("spawn protection: real weapons are refused by applyDamage", () => {
   const { wm, combat, addPlayer } = makeWorld();
   const a = addPlayer("A", 3, 0.9, 16);
   const b = addPlayer("B", 3, 0.9, 10);
   combat.grantSpawnProtection("B", 5);
-  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
-  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eyeOf(a), { x: 0, y: 0, z: -1 });
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
+  shoot(wm, a, eyeOf(a), dirTo(eyeOf(a), { x: 3, y: 0.9, z: 10 }));
   assert.strictEqual(b.health, 200, "spawn-protected target takes 0");
 });
 
@@ -406,8 +345,8 @@ test("origin spoofing: fire origin far from the transform is refused", () => {
   const { wm, rec, addPlayer } = makeWorld();
   const a = addPlayer("A", 3, 0.9, 16);
   addPlayer("B", 3, 0.9, 10);
-  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
-  fire(wm, a, WeaponActionType.REVOLVER_FIRE, { x: 3, y: 1.45, z: 10.5 }, { x: 0, y: 0, z: -1 });
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
+  shoot(wm, a, { x: 3, y: 1.45, z: 10.5 }, { x: 0, y: 0, z: -1 }); // eye 5.5 m away from the transform
   assert.strictEqual(rec.hits.length, 0, "spoofed origin refused");
 });
 
@@ -418,16 +357,19 @@ test("assists: contributor gets the assist on a real weapon kill", () => {
   const b = addPlayer("B", 3, 0.9, 10);
   let died: any = null;
   combat.onPlayerDied = (ev) => (died = ev);
-  // C chips in 100 (plasma), A finishes with a revolver body shot ×2.
-  fire(wm, c, WeaponActionType.PLASMA_START, eyeOf(c), dirTo(eyeOf(c), { x: 3, y: 0.9, z: 10 }));
-  for (let i = 0; i < 37; i++) wm.tick(0.05); // ~101 dmg
-  fire(wm, c, WeaponActionType.PLASMA_STOP, eyeOf(c), { x: 0, y: 0, z: -1 });
-  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  // C chips in 5 paintball balls (115), A finishes with the same rifle.
+  wm.handleEquip(c, NetworkWeaponId.PAINTBALL_RIFLE);
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
+  const fromC = dirTo(eyeOf(c), { x: 3, y: 0.9, z: 10 });
+  for (let i = 0; i < 5; i++) {
+    shoot(wm, c, eyeOf(c), fromC);
+    advance(100);
+  }
+  assert.strictEqual(b.health, 200 - 5 * paintballDamage(false));
   const finish = dirTo(eyeOf(a), { x: 3, y: 0.9, z: 10 });
-  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eyeOf(a), finish);
-  if (!died) {
-    advance(W.revolver.primaryFireInterval * 1000);
-    fire(wm, a, WeaponActionType.REVOLVER_FIRE, eyeOf(a), finish);
+  for (let i = 0; i < 8 && !died; i++) {
+    shoot(wm, a, eyeOf(a), finish);
+    advance(100);
   }
   assert.ok(died, "victim died");
   assert.strictEqual(died.killerId, "A");
@@ -445,7 +387,7 @@ function makeMovingTargetWorld() {
   const w = makeWorld();
   const a = w.addPlayer("A", 0, 0.9, 16);
   const b = w.addPlayer("B", 0, 0.9, 10);
-  w.wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  w.wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
   // History: x=0 at t0, x=2 at t0+100, x=4 at t0+200 (current = 4).
   b.x = 0;
   w.wm.recordTransform(b);
@@ -462,7 +404,7 @@ test("lag comp: vt rewinds to the INTERPOLATED historical position", () => {
   const { wm, rec, a, nowMs } = makeMovingTargetWorld();
   // vt = now-150 → halfway between (x=0 @ now-200) and (x=2 @ now-100) → x=1.
   const eye = eyeOf(a);
-  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eye, dirTo(eye, { x: 1, y: 0.9, z: 10 }), {
+  shoot(wm, a, eye, dirTo(eye, { x: 1, y: 0.9, z: 10 }), {
     vt: nowMs() - 150,
   });
   assert.strictEqual(rec.hits.length, 1, "shot at the rewound position must hit");
@@ -474,7 +416,7 @@ test("lag comp: with vt in the past, the CURRENT position is NOT hit", () => {
   // Aim at the CURRENT position (x=4) while rewinding 150 ms (target at x=1):
   // the rewound hitbox is ~3 m away from the aim ray → clean miss.
   const eye = eyeOf(a);
-  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eye, dirTo(eye, { x: 4, y: 0.9, z: 10 }), {
+  shoot(wm, a, eye, dirTo(eye, { x: 4, y: 0.9, z: 10 }), {
     vt: nowMs() - 150,
   });
   assert.strictEqual(rec.hits.length, 0, "current position must miss under rewind");
@@ -485,7 +427,7 @@ test("lag comp: missing vt falls back to the fixed conservative rewind", () => {
   // Fallback = 120 ms → between (x=0 @ now-200) and (x=2 @ now-100):
   // k = 80/100 → x = 1.6.
   const eye = eyeOf(a);
-  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eye, dirTo(eye, { x: 1.6, y: 0.9, z: 10 }));
+  shoot(wm, a, eye, dirTo(eye, { x: 1.6, y: 0.9, z: 10 }));
   assert.strictEqual(rec.hits.length, 1, "fallback rewind position must hit");
 });
 
@@ -493,7 +435,7 @@ test("lag comp: aberrant vt is refused → fallback rewind", () => {
   const { wm, rec, a, nowMs } = makeMovingTargetWorld();
   // vt 10 s in the past is implausible → treated as absent (120 ms → x=1.6).
   const eye = eyeOf(a);
-  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eye, dirTo(eye, { x: 1.6, y: 0.9, z: 10 }), {
+  shoot(wm, a, eye, dirTo(eye, { x: 1.6, y: 0.9, z: 10 }), {
     vt: nowMs() - 10_000,
   });
   assert.strictEqual(rec.hits.length, 1, "aberrant vt must use the fallback");
@@ -505,7 +447,7 @@ test("lag comp: vt is HARD-CLAMPED to the max rewind window", () => {
   // clamped to now-350, which is before the oldest entry → holds x=0.
   // (A cheater cannot resurrect very old positions.)
   const eye = eyeOf(a);
-  fire(wm, a, WeaponActionType.REVOLVER_FIRE, eye, dirTo(eye, { x: 0, y: 0.9, z: 10 }), {
+  shoot(wm, a, eye, dirTo(eye, { x: 0, y: 0.9, z: 10 }), {
     vt: nowMs() - 3000,
   });
   assert.strictEqual(rec.hits.length, 1, "clamped rewind = oldest plausible position");
@@ -515,7 +457,7 @@ test("lag comp: idle-suppression gaps HOLD the older position (no lerp)", () => 
   const w = makeWorld();
   const a = w.addPlayer("A", 0, 0.9, 16);
   const b = w.addPlayer("B", 0, 0.9, 10);
-  w.wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  w.wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
   // B stood at x=0, silent for 400 ms (idle suppression), then moved to x=4.
   b.x = 0;
   w.wm.recordTransform(b);
@@ -524,7 +466,7 @@ test("lag comp: idle-suppression gaps HOLD the older position (no lerp)", () => 
   w.wm.recordTransform(b);
   // vt inside the silent window → B truly WAS at x=0 the whole time.
   const eye = eyeOf(a);
-  fire(w.wm, a, WeaponActionType.REVOLVER_FIRE, eye, dirTo(eye, { x: 0, y: 0.9, z: 10 }), {
+  shoot(w.wm, a, eye, dirTo(eye, { x: 0, y: 0.9, z: 10 }), {
     vt: w.nowMs() - 200,
   });
   assert.strictEqual(w.rec.hits.length, 1, "idle gap must hold the older position");
@@ -750,7 +692,7 @@ test("basket: flat 75 damage on the first player contact, projectile consumed, h
   for (const maxHealth of [100, 200]) {
     const { wm, rec, addPlayer, advance } = makeWorld();
     // Open lane at x = −3 (the x = 3 lane has a low cover wall whose top the
-    // 0.3 m ball would clip, unlike a thin revolver ray).
+    // 0.3 m ball would clip, unlike a thin hitscan ray).
     const a = addPlayer("A", -3, 0.9, 16);
     const b = addPlayer("B", -3, 0.9, 10);
     b.maxHealth = maxHealth;
@@ -904,7 +846,7 @@ test("basket: weapon swap cancels the charge; death drops a planned launch", () 
   wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
   fire(wm, a, WeaponActionType.BASKET_CHARGE_START, eyeOf(a), { x: 0, y: 0, z: -1 });
   advance(1200);
-  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
   wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
   fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 });
   assert.strictEqual(basketActions(rec, "BASKET_THROW")[0].lv, 1, "swap dropped the charge → tap");
@@ -919,7 +861,7 @@ test("basket: weapon swap cancels the charge; death drops a planned launch", () 
 test("basket: wrong weapon / dead player requests are ignored", () => {
   const { wm, rec, addPlayer } = makeWorld();
   const a = addPlayer("A", 3, 0.9, 16);
-  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
   fire(wm, a, WeaponActionType.BASKET_THROW_REQUEST, eyeOf(a), { x: 0, y: 0, z: -1 });
   assert.strictEqual(basketActions(rec, "BASKET_THROW").length, 0);
   wm.handleEquip(a, NetworkWeaponId.GOOFY_BASKET);
@@ -1054,7 +996,7 @@ test("popcorn: 2 loads, cadence 0.58 s, dry fire refused, reload gates 1.75 / 2.
 test("popcorn: wrong weapon / missing seed / invalid seed refused", () => {
   const { wm, rec, addPlayer } = makeWorld();
   const a = addPlayer("A", 3, 0.9, 16);
-  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
   fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), { x: 0, y: 1, z: 0 }, { sd: 1 });
   wm.handleEquip(a, NetworkWeaponId.POPCORN_SHOTGUN);
   fire(wm, a, WeaponActionType.POPCORN_FIRE, eyeOf(a), { x: 0, y: 1, z: 0 });
@@ -1221,7 +1163,7 @@ test("paintball: hopper swap gates 1.52 / 2.10 s, cancel before the click keeps 
   }
   act(WeaponActionType.PAINTBALL_RELOAD);
   advance(500);
-  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  wm.handleEquip(a, NetworkWeaponId.POPCORN_SHOTGUN);
   wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
   advance(3000);
   shoot();

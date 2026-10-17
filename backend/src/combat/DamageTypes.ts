@@ -11,14 +11,8 @@
  */
 export enum DamageType {
   DEBUG = "DEBUG",
-  PLASMA = "PLASMA",
-  REVOLVER = "REVOLVER",
-  REVOLVER_EXPLOSION = "REVOLVER_EXPLOSION",
   HAMMER = "HAMMER",
   SPEAR = "SPEAR",
-  OBLITERREUR = "OBLITERREUR",
-  BASS_BLASTER = "BASS_BLASTER",
-  POISON = "POISON",
   /** HEX SNIPER tongue grab (flat hit damage on the grabbed player). */
   HEX_SNIPER_TONGUE = "HEX_SNIPER_TONGUE",
   /** HEX SNIPER arrival bite (mirrors the frontend KillMethod mapping). */

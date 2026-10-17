@@ -89,6 +89,13 @@ export const GivreConfig = {
   // Cel-shading outline defaults (GivreOutlinePass — see OutlineSettings)
   // ------------------------------------------------------------------
   outline: {
+    /**
+     * Feature switch for the white cel-shading rim. Currently DISABLED:
+     * both GivreOutlinePass instances are still built (flip back to `true`
+     * to restore them) but stay `enabled = false` (the composer skips them
+     * at zero cost) and the menu OUTLINE section is hidden.
+     */
+    enabled: false as boolean,
     color: "#f6f9ff",
     intensity: 0.85,
     /** CSS pixels (scaled by the renderer pixel ratio) — 1 ≈ 2 px line. */

@@ -68,8 +68,8 @@ export class MedalManager {
     if (comboMedal !== undefined) this.queue.push(comboMedal);
 
     // 2) HEADSHOT right after the combo medal of the SAME kill. Only the
-    //    Plasma Rifle can headshot and it has no special method medal, so
-    //    this never competes with SMASHED/OBLITERATED/etc.
+    //    hitscan / projectile weapons headshot and they carry no special
+    //    method medal, so this never competes with SMASHED/IMPALED/etc.
     if (isHeadshot) this.queue.push(MedalType.HEADSHOT);
 
     // 3) Special medal, deferred + merged (one SMASHED per slam impact).

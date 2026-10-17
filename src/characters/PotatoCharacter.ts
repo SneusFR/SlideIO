@@ -161,6 +161,31 @@ export function markEnemyOutlineOccluder(root: THREE.Object3D): void {
  * is no longer a threat — the red contour must die with it). Also spares
  * the CorpseManager from claiming/fading the shared outline material.
  */
+/**
+ * PERF: SkeletonUtils.clone() gives EVERY skinned mesh of a clone its own
+ * Skeleton — so each red outline hull carried a duplicate of its body
+ * part's skeleton, and the renderer recomputed (and re-uploaded) the bone
+ * matrices twice per part per frame. Rebind every hull onto the SAME
+ * skeleton as the body mesh it outlines (same geometry, same parent): one
+ * skeleton update per body part. Call once on each fresh character clone.
+ */
+export function shareOutlineSkeletons(root: THREE.Object3D): void {
+  const bodies = new Map<THREE.BufferGeometry, THREE.SkinnedMesh>();
+  const hulls: THREE.SkinnedMesh[] = [];
+  root.traverse((obj) => {
+    const sm = obj as THREE.SkinnedMesh;
+    if (!sm.isSkinnedMesh) return;
+    if (sm.userData.enemyOutline) hulls.push(sm);
+    else if (!bodies.has(sm.geometry)) bodies.set(sm.geometry, sm);
+  });
+  for (const hull of hulls) {
+    const body = bodies.get(hull.geometry);
+    if (body && body.parent === hull.parent && hull.skeleton !== body.skeleton) {
+      hull.bind(body.skeleton, body.bindMatrix);
+    }
+  }
+}
+
 export function stripEnemyOutline(root: THREE.Object3D): void {
   const doomed: THREE.Object3D[] = [];
   root.traverse((obj) => {
@@ -248,6 +273,7 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
         // in-place pose (the pack clips carry no root motion). An
         // off-screen character then skips BOTH its skinning and its draw.
         inflateCullingBounds(mesh.geometry);
+        adoptCullingBounds(mesh);
       }
     });
 
@@ -278,6 +304,7 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       outline.userData.enemyOutline = true;
       // Purely visual: never a raycast target.
       outline.raycast = () => {};
+      adoptCullingBounds(outline);
       src.parent!.add(outline);
     }
 
@@ -729,6 +756,21 @@ function inflateCullingBounds(geometry: THREE.BufferGeometry): void {
   geometry.userData.cullBoundsInflated = true;
   if (!geometry.boundingSphere) geometry.computeBoundingSphere();
   if (geometry.boundingSphere) geometry.boundingSphere.radius *= SKINNED_CULL_MARGIN;
+}
+
+/**
+ * three.js frustum-tests a SkinnedMesh with its OWN `boundingSphere`, not
+ * the geometry's: left null, the renderer computes it once per clone with a
+ * full CPU skinning pass over every vertex (a hitch at each bot / avatar
+ * spawn) and the result is NOT inflated (popping on animated poses). Give
+ * the template mesh the inflated geometry sphere — SkinnedMesh.copy() clones
+ * it into every SkeletonUtils clone for free.
+ */
+function adoptCullingBounds(mesh: THREE.Mesh): void {
+  const sm = mesh as THREE.SkinnedMesh;
+  if (!sm.isSkinnedMesh) return;
+  inflateCullingBounds(sm.geometry);
+  if (sm.geometry.boundingSphere) sm.boundingSphere = sm.geometry.boundingSphere.clone();
 }
 
 /**

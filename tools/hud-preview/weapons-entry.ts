@@ -3,10 +3,7 @@ import { PaintballRifleHUD } from "../../src/ui/PaintballRifleHUD";
 import { PopcornShotgunHUD } from "../../src/ui/PopcornShotgunHUD";
 import { WaterFamasHUD } from "../../src/ui/WaterFamasHUD";
 import { FrisbeeLauncherHUD } from "../../src/ui/FrisbeeLauncherHUD";
-import { RevolverHUD } from "../../src/ui/RevolverHUD";
-import { BassBlasterHUD } from "../../src/ui/BassBlasterHUD";
-import { PoisonHUD } from "../../src/ui/PoisonHUD";
-import { WeaponHUD } from "../../src/ui/WeaponHUD";
+
 import { PaintballRifleConfig } from "../../shared/combat/PaintballRifleRules";
 import { PopcornShotgunConfig } from "../../shared/combat/PopcornShotgunRules";
 import { WaterFamasConfig } from "../../shared/combat/WaterFamasRules";
@@ -23,10 +20,7 @@ const state: Record<string, Fake> = {
   popcorn: { ammo: PopcornShotgunConfig.shots, isReloading: false, shotSerial: 0 },
   water: { ammo: WaterFamasConfig.capacity, isReloading: false },
   frisbee: { deckLoaded: true, cageCount: FrisbeeLauncherConfig.cageCapacity, discInHand: false, isReloading: false, shotSerial: 0 },
-  revolver: { currentAmmo: 6, isMaterializing: false },
-  bass: { currentAmmo: 30, maxAmmo: 30, isReloading: false, reloadProgress: 0 },
-  poison: { fillFraction: 1, isReloading: false },
-  heat: { ratio: 0.2, overheated: false, cooldownRemaining: 0 },
+
 };
 
 const huds = {
@@ -34,10 +28,7 @@ const huds = {
   popcorn: new PopcornShotgunHUD(PopcornShotgunConfig.shots),
   water: new WaterFamasHUD(WaterFamasConfig.capacity),
   frisbee: new FrisbeeLauncherHUD(FrisbeeLauncherConfig.cageCapacity),
-  revolver: new RevolverHUD(),
-  bass: new BassBlasterHUD(),
-  poison: new PoisonHUD(),
-  heat: new WeaponHUD(),
+
 };
 type Id = keyof typeof huds;
 
@@ -46,8 +37,8 @@ let current: Id = "paintball";
 function push(dt = 1 / 60): void {
   const s = state[current];
   const h = huds[current] as unknown as { update: (...a: unknown[]) => void };
-  if (current === "heat") h.update(dt, { ratio: s.ratio, overheated: s.overheated, cooldownRemaining: s.cooldownRemaining }, false);
-  else h.update(s);
+  void dt;
+  h.update(s);
 }
 
 function show(id: Id): void {

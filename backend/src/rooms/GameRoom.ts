@@ -264,15 +264,11 @@ export class GameRoom extends Room<GameRoomState> {
       },
       now: () => Date.now(),
     }, this.map.colliderBoxes);
-    // Fixed 20 Hz combat tick (plasma DPS, oblit beam, rush, projectiles) —
+    // Fixed 20 Hz combat tick (rush, hammer, hex pull, projectiles) —
     // damage uses the REAL deltaTime, never a per-frame loop.
     this.setSimulationInterval((deltaMs) => {
       if (this.state.phase === GameRoomPhase.PLAYING) {
         this.weapons.tick(deltaMs / 1000);
-        // Beam accuracy sampling (plasma / poison continuous fire).
-        this.state.players.forEach((p) =>
-          this.results.recordBeam(p.id, this.weapons.isBeamFiring(p.id), deltaMs / 1000),
-        );
         // Map hazards (YARD acid pool): authoritative, independent of any
         // client rendering or graphics settings — pure transform checks.
         if (this.map.hazards.length > 0) this.tickHazards();

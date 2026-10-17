@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 export const ASTRONAUT_SLOTS = ['shoes', 'pants', 'tops', 'bags', 'hats'] as const;
+/** Extra bounding-sphere margin of skinned cosmetic pieces (animated poses). */
+const COSMETIC_CULL_MARGIN = 1.2;
 export type AstronautSlot = typeof ASTRONAUT_SLOTS[number];
 export type AstronautContext = 'tp' | 'fp';
 export interface AstronautHandle {
@@ -285,7 +287,22 @@ export async function loadAstronautCosmetics(options: AstronautLoadOptions = {})
         mesh.userData.astronautCosmetic = true; mesh.userData.astronautSlot = slot;
         mesh.material = Array.isArray(mesh.material) ? mesh.material.map(cloneMaterial) : cloneMaterial(mesh.material);
         mesh.castShadow = body.castShadow; mesh.receiveShadow = body.receiveShadow;
-        mesh.frustumCulled = false; // Animated bounds belong to the shared character pose.
+        // PERF: culling stays ON. Rigid pieces ride their socket (native
+        // bounds are exact). Skinned pieces share the body's mesh frame, so
+        // they reuse the body's bounds inflated for every animated pose —
+        // an off-screen avatar skips its cosmetic draws too.
+        if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) {
+          const skinned = mesh as THREE.SkinnedMesh;
+          if (!body.geometry.boundingSphere) body.geometry.computeBoundingSphere();
+          const sphere = (body.boundingSphere ?? body.geometry.boundingSphere)?.clone() ?? null;
+          if (sphere) {
+            sphere.radius *= COSMETIC_CULL_MARGIN;
+            skinned.boundingSphere = sphere;
+          }
+          mesh.frustumCulled = sphere !== null;
+        } else {
+          mesh.frustumCulled = true;
+        }
         mesh.raycast = () => {}; // Cosmetic pieces do not change hitboxes.
         preparedMeshes.push({mesh,slot});
       };

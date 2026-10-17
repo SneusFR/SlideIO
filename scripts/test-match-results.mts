@@ -2,7 +2,7 @@
  * Unit test — end-of-match statistics + next-map vote (pure logic).
  * Run: npx --prefix backend tsx scripts/test-match-results.mts
  */
-import { MatchResultsTracker, sanitizeMatchResults, BEAM_SAMPLE_SECONDS } from "../shared/match/MatchResultsTracker";
+import { MatchResultsTracker, sanitizeMatchResults } from "../shared/match/MatchResultsTracker";
 import { formatMatchClock, MATCH_DURATION_SECONDS } from "../shared/match/MatchRules";
 import { MapVote } from "../backend/src/match/MapVote";
 import { MapId } from "../shared/map/MapRegistry";
@@ -27,25 +27,18 @@ t.recordShot("a");
 t.recordShot("a");
 t.recordShot("a");
 t.recordShot("a");
-t.recordHit("a", "b", "REVOLVER", 1);
-t.recordHit("a", "b", "REVOLVER", 2);
+t.recordHit("a", "b", "PAINTBALL_RIFLE", 1);
+t.recordHit("a", "b", "PAINTBALL_RIFLE", 2);
 // one shotgun blast hitting 2 players at the same instant = ONE hit
 t.recordHit("a", "b", "POPCORN_SHOTGUN", 3);
 t.recordHit("a", "c", "POPCORN_SHOTGUN", 3);
-// melee / obliterreur are never aimed shots
+// melee / the hex bite are never aimed shots
 t.recordHit("a", "c", "HAMMER_SWING", 4);
-t.recordHit("a", "c", "OBLITERREUR", 5);
+t.recordHit("a", "c", "HEX_SNIPER_BITE", 5);
 // self / environment ignored
-t.recordHit("a", "a", "REVOLVER", 6);
+t.recordHit("a", "a", "PAINTBALL_RIFLE", 6);
 t.recordHit(null, "a", "ENVIRONMENT", 7);
 
-console.log("\nACCURACY — beams (0.1 s samples)");
-// 1 s of fire = 10 samples; the beam touches during 4 of them
-for (let i = 0; i < 10; i++) {
-  if (i < 4) t.recordHit("b", "a", "PLASMA", 100 + i);
-  t.recordBeam("b", true, BEAM_SAMPLE_SECONDS);
-}
-t.recordBeam("b", false, 0.016);
 
 console.log("\nDAMAGE");
 t.recordDamage("a", "b", 40);
@@ -67,9 +60,7 @@ const res = t.build(
 const a = res.players.find((p) => p.id === "a")!;
 const b = res.players.find((p) => p.id === "b")!;
 check("A shots fired", a.shotsFired, 4);
-check("A shots hit (2 revolver + 1 merged shotgun)", a.shotsHit, 3);
-check("B beam samples fired", b.shotsFired, 10);
-check("B beam samples hit", b.shotsHit, 4);
+check("A shots hit (2 paintball + 1 merged shotgun)", a.shotsHit, 3);
 check("A damage (self / world ignored)", a.damage, 65);
 check("duration rounded", res.duration, 300);
 check("feed entry 1", res.killFeed[0], { t: 12.3, killer: "a", victim: "b", assisters: ["c"] });

@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import { WeaponConfig as cfg } from "../weapons/WeaponConfig";
+/** Training target tuning (raw HP, respawn delay in seconds). */
+const cfg = { targetMaxHP: 100, targetRespawnTime: 3.0 } as const;
 import { getQualitySettings } from "../game/GraphicsQuality";
 
 export type TargetBehaviorType =

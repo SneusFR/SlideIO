@@ -486,16 +486,18 @@ export class FrisbeeLauncherWeapon {
    */
   private onDiscHit(e: FrisbeeHit): void {
     if (this.networkAuthority) return;
-    if (e.owner !== FRISBEE_LOCAL_OWNER) return;
+    // SOLO shooters: the local player ("local") or a bot that registered its key.
+    const attacker = e.owner === FRISBEE_LOCAL_OWNER ? this.owner : e.owner ? (this.soloShooters.get(e.owner) ?? null) : null;
+    if (!attacker) return;
     const target = this.hitCombatants.get(e.target) ?? null;
     if (!target || !target.health.alive) return;
     const zone = e.headshot ? HitZone.HEAD : HitZone.BODY;
     target.registerImpact?.(this.tmp2.copy(e.impulse), e.point);
-    const applied = target.health.applyDamage(e.damage, this.owner, KillMethod.FRISBEE_LAUNCHER, zone);
+    const applied = target.health.applyDamage(e.damage, attacker, KillMethod.FRISBEE_LAUNCHER, zone);
     if (!applied) return;
     if (target.health.alive) target.applyImpulse(this.tmp2.copy(e.impulse));
     this.feedback?.registerHit({
-      attacker: this.owner,
+      attacker,
       target,
       hitZone: zone,
       damage: e.damage,
@@ -518,6 +520,20 @@ export class FrisbeeLauncherWeapon {
     if (i < 0) return;
     this.serverToLocal.set(serverId, this.pendingLocal[i].id);
     this.pendingLocal.splice(0, i + 1);
+  }
+
+  /** SOLO combatants (bots) that throw real discs, by owner key ("bot:N"). */
+  private readonly soloShooters = new Map<string, Combatant>();
+
+  /**
+   * SOLO bot shot: a REAL disc (same simulation, same damage) owned by
+   * `shooter` — a touch credits the bot, its own sweep ignores its key.
+   */
+  fireSolo(shooter: Combatant, ownerKey: string, origin: THREE.Vector3, direction: THREE.Vector3, visualFrom: THREE.Vector3 | null): void {
+    const projectiles = this.projectiles;
+    if (!projectiles) return;
+    this.soloShooters.set(ownerKey, shooter);
+    projectiles.fire({ origin, direction, owner: ownerKey, roll: -0.1, visualFrom: visualFrom ?? undefined });
   }
 
   /**

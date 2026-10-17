@@ -269,14 +269,17 @@ function buildOutlineHull(source: THREE.Mesh): THREE.Mesh {
     h.matrix.copy(skinned.matrix);
     h.bindMode = skinned.bindMode;
     h.bind(skinned.skeleton, skinned.bindMatrix);
+    // Same (inflated) bounds as the piece it outlines → culled with it.
+    h.boundingSphere = skinned.boundingSphere?.clone() ?? null;
+    h.frustumCulled = skinned.frustumCulled && h.boundingSphere !== null;
     hull = h;
   } else {
     hull = new THREE.Mesh(source.geometry, getEnemyOutlineMaterial());
+    hull.frustumCulled = true; // rigid: native bounds follow the socket
   }
   hull.name = `${source.name}_Outline`;
   hull.castShadow = false;
   hull.receiveShadow = false;
-  hull.frustumCulled = false;
   hull.renderOrder = 1;
   hull.userData.enemyOutline = true;
   hull.userData.astronautCosmetic = true;

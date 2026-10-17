@@ -87,14 +87,6 @@ import {
   distance,
 } from "./HitDetection";
 
-/** Server → client extra action ids (never sent BY clients). */
-export const SERVER_ACTION_REVOLVER_EXPLODE = "REVOLVER_EXPLODE";
-export const SERVER_ACTION_OBLITERREUR_STOP = "OBLITERREUR_STOP";
-/** Client aim refresh for the continuous plasma beam (low rate). */
-export const ACTION_PLASMA_AIM = "PLASMA_AIM";
-/** Client aim refresh for the continuous poison spray (low rate). */
-export const ACTION_POISON_AIM = "POISON_AIM";
-
 /**
  * FALLBACK rewind when an action carries no (or an aberrant) viewTime —
  * old clients / malformed packets still get a conservative estimate of
@@ -130,24 +122,6 @@ interface HistoryEntry {
   x: number;
   y: number;
   z: number;
-}
-
-interface RevolverProjectile {
-  ownerId: string;
-  pos: Vec3;
-  vel: Vec3;
-  age: number;
-}
-
-/** One in-flight Bass Blaster musical note (server-simulated, no gravity). */
-interface BassNoteProjectile {
-  ownerId: string;
-  pos: Vec3;
-  vel: Vec3;
-  age: number;
-  /** Shooter view delay (now − viewTime) captured at fire time — every
-   *  flight tick rewinds the targets by this amount (already clamped). */
-  viewDelayMs: number;
 }
 
 /**
@@ -209,30 +183,10 @@ interface HammerAttackState {
 
 /** Per-player server-side weapon state (never trusted from the client). */
 class PlayerWeaponState {
-  weapon: NetworkWeaponId = NetworkWeaponId.PLASMA_RIFLE;
+  weapon: NetworkWeaponId = NetworkWeaponId.GOOFY_BASKET;
   /** COSMETIC skin of `weapon` (validated whitelist id) — never a gameplay input. */
   skin: string = DEFAULT_WEAPON_SKIN;
   lastSeq = -1;
-  // Plasma
-  plasmaActive = false;
-  plasmaSince = 0;
-  plasmaDir: Vec3 = { x: 0, y: 0, z: -1 };
-  plasmaOrigin: Vec3 | null = null;
-  /** Shooter view delay (now − viewTime) refreshed by START/AIM — the
-   *  continuous beam tick rewinds targets by this amount every tick. */
-  plasmaViewDelayMs = LAG_COMP_FALLBACK_MS;
-  // Poison sprayer (continuous short-range stream — plasma-style state)
-  poisonActive = false;
-  poisonSince = 0;
-  poisonDir: Vec3 = { x: 0, y: 0, z: -1 };
-  poisonViewDelayMs = LAG_COMP_FALLBACK_MS;
-  // Revolver
-  revolverAmmo = W.revolver.capacity;
-  lastRevolverShotAt = 0;
-  revolverUnavailableUntil = 0;
-  // Bass Blaster (cadence floor — the magazine/reload stay client-paced,
-  // the low per-note damage makes the fan-fire-style tolerance safe)
-  lastBassShotAt = 0;
   // Melee
   lastSpearSweepAt = 0;
   /**
@@ -250,13 +204,6 @@ class PlayerWeaponState {
   rushCooldownUntil = 0;
   rushDir: Vec3 = { x: 0, y: 0, z: -1 };
   rushHitIds = new Set<string>();
-  // Obliterreur
-  oblitA: Vec3 | null = null;
-  oblitB: Vec3 | null = null;
-  /** Fallback A/B alternation for clients that don't declare a slot. */
-  oblitNextIndex: 0 | 1 = 0;
-  beamSamples: Vec3[] | null = null;
-  beamEndsAt = 0;
   // Mole strike (burrowed = INVULNERABLE + untargetable, mirrors local)
   burrowed = false;
   burrowedUntil = 0;
@@ -331,8 +278,6 @@ export interface WeaponManagerHost {
 export class WeaponManager {
   private readonly states = new Map<string, PlayerWeaponState>();
   private readonly history = new Map<string, HistoryEntry[]>();
-  private readonly projectiles: RevolverProjectile[] = [];
-  private readonly bassProjectiles: BassNoteProjectile[] = [];
   private readonly basketProjectiles: BasketProjectile[] = [];
   /** Monotonic GoofyBasket projectile / throw id (room-wide). */
   private nextBasketId = 1;
@@ -356,8 +301,6 @@ export class WeaponManager {
    */
   setMapBoxes(boxes: ColliderBox[]): void {
     this.mapBoxes = boxes;
-    this.projectiles.length = 0;
-    this.bassProjectiles.length = 0;
     this.basketProjectiles.length = 0;
     this.frisbees.length = 0;
     this.states.clear();
@@ -474,17 +417,10 @@ export class WeaponManager {
       }
       return;
     }
-    // Switching away drops continuous actions cleanly. Anchors never
-    // survive a weapon swap (mirrors the local obliterreur.reset()).
-    this.stopPlasma(player, s);
-    this.stopPoison(player, s);
-    this.cancelObliterreurBeam(player, s);
+    // Switching away drops continuous actions cleanly.
     // Unequipping the HexSniper mid-pull releases the victim (local parity:
     // hexSniper.reset() cancels the tongue on every weapon swap).
     this.releaseHexPull(player, s, true);
-    s.oblitA = null;
-    s.oblitB = null;
-    s.oblitNextIndex = 0;
     s.inspecting = false; // a weapon swap always ends an inspection
     // A weapon swap cancels a basket charge / a throw whose ball has NOT
     // left the hand yet; an already launched projectile keeps flying.
@@ -521,48 +457,6 @@ export class WeaponManager {
     const action = msg.action;
 
     switch (action) {
-      case WeaponActionType.PLASMA_START:
-        if (s.weapon !== NetworkWeaponId.PLASMA_RIFLE || !origin || !dir) return;
-        s.plasmaActive = true;
-        s.plasmaSince = this.host.now();
-        s.plasmaOrigin = origin;
-        s.plasmaDir = dir;
-        s.plasmaViewDelayMs = this.host.now() - this.resolveRewindTime(msg);
-        this.confirm(player, s.weapon, action, seq, origin, dir);
-        return;
-      case ACTION_PLASMA_AIM:
-        if (!s.plasmaActive || !origin || !dir) return;
-        s.plasmaOrigin = origin;
-        s.plasmaDir = dir;
-        s.plasmaViewDelayMs = this.host.now() - this.resolveRewindTime(msg);
-        return; // aim refresh is silent (remotes follow the transform)
-      case WeaponActionType.PLASMA_STOP:
-        if (!s.plasmaActive) return;
-        this.stopPlasma(player, s, seq);
-        return;
-      case WeaponActionType.POISON_START:
-        if (s.weapon !== NetworkWeaponId.POISON_SPRAYER || !origin || !dir) return;
-        s.poisonActive = true;
-        s.poisonSince = this.host.now();
-        s.poisonDir = dir;
-        s.poisonViewDelayMs = this.host.now() - this.resolveRewindTime(msg);
-        this.confirm(player, s.weapon, action, seq, origin, dir);
-        return;
-      case ACTION_POISON_AIM:
-        if (!s.poisonActive || !dir) return;
-        s.poisonDir = dir;
-        s.poisonViewDelayMs = this.host.now() - this.resolveRewindTime(msg);
-        return; // aim refresh is silent (remotes follow the transform)
-      case WeaponActionType.POISON_STOP:
-        if (!s.poisonActive) return;
-        this.stopPoison(player, s, seq);
-        return;
-      case WeaponActionType.REVOLVER_FIRE:
-        this.handleRevolverFire(player, s, seq, origin, dir, this.resolveRewindTime(msg));
-        return;
-      case WeaponActionType.REVOLVER_THROW:
-        this.handleRevolverThrow(player, s, seq, origin, dir);
-        return;
       case WeaponActionType.HAMMER_SWEEP:
         this.handleHammerWhirlwind(player, s, seq, origin, dir, this.resolveRewindTime(msg));
         return;
@@ -600,15 +494,6 @@ export class WeaponManager {
         s.rushActive = false;
         s.rushCooldownUntil = this.host.now() + W.spear.rushCooldown * 1000;
         this.confirm(player, NetworkWeaponId.SPEAR, action, seq, this.playerPos(player), s.rushDir);
-        return;
-      case WeaponActionType.OBLITERREUR_PLACE:
-        this.handleObliterreurPlace(player, s, seq, origin, dir, msg);
-        return;
-      case WeaponActionType.OBLITERREUR_FIRE:
-        this.handleObliterreurFire(player, s, seq);
-        return;
-      case WeaponActionType.BASS_FIRE:
-        this.handleBassFire(player, s, seq, origin, dir, msg);
         return;
       case WeaponActionType.MOLE_BURROW:
         this.handleMoleBurrow(player, s, seq, msg);
@@ -705,19 +590,13 @@ export class WeaponManager {
     for (const player of this.host.players()) {
       const s = this.states.get(player.id);
       if (!s) continue;
-      if (s.plasmaActive) this.tickPlasma(player, s, dt, now);
-      if (s.poisonActive) this.tickPoison(player, s, dt, now);
       if (s.rushActive) this.tickSpearRush(player, s, now);
       if (s.hammerAttack) this.tickHammerAttack(player, s, now);
-      if (s.beamSamples && now < s.beamEndsAt) this.tickObliterreurBeam(player, s, dt);
-      else if (s.beamSamples && now >= s.beamEndsAt) s.beamSamples = null;
       // Burrow safety: never invulnerable forever if MOLE_EMERGE is lost.
       if (s.burrowed && now >= s.burrowedUntil) s.burrowed = false;
       if (s.hexVictimId !== null) this.tickHexPull(player, s, now);
       if (s.basketThrow) this.tickBasketThrow(player, s, now);
     }
-    this.tickProjectiles(dt);
-    this.tickBassProjectiles(dt);
     this.tickBasketProjectiles(dt);
     this.tickFrisbees(dt);
   }
@@ -937,81 +816,6 @@ export class WeaponManager {
   /** Live GoofyBasket projectiles (tests / diagnostics). */
   get basketProjectileCount(): number {
     return this.basketProjectiles.length;
-  }
-
-  private tickPlasma(player: NetworkPlayer, s: PlayerWeaponState, dt: number, now: number): void {
-    if (!player.isAlive || now - s.plasmaSince > W.plasma.maxContinuousSeconds * 1000) {
-      this.stopPlasma(player, s);
-      return;
-    }
-    const origin = s.plasmaOrigin ?? this.eyePos(player);
-    // Anchor the ray on the CURRENT transform (aim refreshed by PLASMA_AIM).
-    origin.x = player.x;
-    origin.z = player.z;
-    origin.y = player.y + PLAYER_EYE_OFFSET;
-    // Rewind by the shooter's DECLARED view delay (refreshed on START/AIM,
-    // already hard-clamped) so the beam hits what the shooter sees.
-    const rewindTime = now - Math.min(s.plasmaViewDelayMs, LAG_COMP_MAX_REWIND_MS);
-    const hit = hitscan(origin, s.plasmaDir, W.plasma.range, this.rewindTargets(player.id, rewindTime), player.id, this.mapBoxes);
-    if (!hit || hit.kind !== "player" || !hit.targetId) return;
-
-    const zone = hit.zone === NetworkHitZone.HEAD ? HitZone.HEAD : HitZone.BODY;
-    const base = W.plasma.damagePerSecond * dt;
-    const amount = zone === HitZone.HEAD ? base * W.plasma.headshotMultiplier : base;
-    this.dealDamage(player, hit.targetId, amount, DamageType.PLASMA, zone, NetworkWeaponId.PLASMA_RIFLE);
-  }
-
-  /** Poison stream: identical rewind/tick scheme as plasma, SHORT range. */
-  private tickPoison(player: NetworkPlayer, s: PlayerWeaponState, dt: number, now: number): void {
-    if (!player.isAlive || now - s.poisonSince > W.poison.maxContinuousSeconds * 1000) {
-      this.stopPoison(player, s);
-      return;
-    }
-    // Anchor the ray on the CURRENT transform (aim refreshed by POISON_AIM).
-    const origin = this.eyePos(player);
-    const rewindTime = now - Math.min(s.poisonViewDelayMs, LAG_COMP_MAX_REWIND_MS);
-    const hit = hitscan(origin, s.poisonDir, W.poison.range, this.rewindTargets(player.id, rewindTime), player.id, this.mapBoxes);
-    if (!hit || hit.kind !== "player" || !hit.targetId) return;
-
-    // No headshot bonus: a poison cone has no precise impact point.
-    const amount = W.poison.damagePerSecond * dt;
-    this.dealDamage(player, hit.targetId, amount, DamageType.POISON, HitZone.BODY, NetworkWeaponId.POISON_SPRAYER);
-  }
-
-  private stopPoison(player: NetworkPlayer, s: PlayerWeaponState, seq = 0): void {
-    if (!s.poisonActive) return;
-    s.poisonActive = false;
-    this.confirm(player, NetworkWeaponId.POISON_SPRAYER, WeaponActionType.POISON_STOP, seq, this.eyePos(player), s.poisonDir);
-  }
-
-  private handleRevolverFire(
-    player: NetworkPlayer,
-    s: PlayerWeaponState,
-    seq: number,
-    origin: Vec3 | null,
-    dir: Vec3 | null,
-    rewindTime?: number,
-  ): void {
-    if (s.weapon !== NetworkWeaponId.REVOLVER || !origin || !dir) return;
-    const now = this.host.now();
-    if (now < s.revolverUnavailableUntil) return; // materializing
-    if (s.revolverAmmo <= 0) return;
-    // Cadence: fan-fire interval is the fastest legal rate.
-    const minInterval = W.revolver.fanFireInterval * (1 - W.revolver.cadenceTolerance) * 1000;
-    if (now - s.lastRevolverShotAt < minInterval) return;
-    s.lastRevolverShotAt = now;
-    s.revolverAmmo--;
-
-    const hit = hitscan(origin, dir, W.revolver.range, this.rewindTargets(player.id, rewindTime), player.id, this.mapBoxes);
-    const hitPoint = hit ? hit.point : pointAt(origin, dir, W.revolver.range);
-    this.confirm(player, s.weapon, WeaponActionType.REVOLVER_FIRE, seq, origin, dir, hitPoint);
-
-    if (hit && hit.kind === "player" && hit.targetId) {
-      // Weapon-specific zone rule (NOT the global ×2): BODY 100, HEAD 50.
-      const zone = hit.zone === NetworkHitZone.HEAD ? HitZone.HEAD : HitZone.BODY;
-      const amount = zone === HitZone.HEAD ? W.revolver.headDamage : W.revolver.bodyDamage;
-      this.dealDamage(player, hit.targetId, amount, DamageType.REVOLVER, zone, NetworkWeaponId.REVOLVER);
-    }
   }
 
   // ------------------------------------------------------------------
@@ -1475,185 +1279,6 @@ export class WeaponManager {
     });
   }
 
-  private handleRevolverThrow(
-    player: NetworkPlayer,
-    s: PlayerWeaponState,
-    seq: number,
-    origin: Vec3 | null,
-    dir: Vec3 | null,
-  ): void {
-    if (s.weapon !== NetworkWeaponId.REVOLVER || !origin || !dir) return;
-    const now = this.host.now();
-    if (now < s.revolverUnavailableUntil) return;
-    s.revolverUnavailableUntil = now + W.revolver.materializeDuration * 1000;
-    s.revolverAmmo = W.revolver.capacity; // fresh cylinder after materialize
-    this.projectiles.push({
-      ownerId: player.id,
-      pos: { ...origin },
-      vel: {
-        x: dir.x * W.revolver.throwSpeed,
-        y: dir.y * W.revolver.throwSpeed,
-        z: dir.z * W.revolver.throwSpeed,
-      },
-      age: 0,
-    });
-    this.confirm(player, s.weapon, WeaponActionType.REVOLVER_THROW, seq, origin, dir);
-  }
-
-  private tickProjectiles(dt: number): void {
-    for (let i = this.projectiles.length - 1; i >= 0; i--) {
-      const p = this.projectiles[i];
-      p.age += dt;
-      p.vel.y -= W.revolver.throwGravity * dt;
-      const stepLen = Math.sqrt(p.vel.x ** 2 + p.vel.y ** 2 + p.vel.z ** 2) * dt;
-      const dir = normalize(p.vel);
-      let exploded = p.age >= W.revolver.projectileMaxLifetime;
-      let impact: Vec3 = p.pos;
-
-      if (!exploded && dir) {
-        const wallT = raycastMap(p.pos, dir, stepLen, this.mapBoxes);
-        // Player contact: capsule proximity along the step.
-        const hit = hitscan(p.pos, dir, stepLen, this.rewindTargets(p.ownerId), p.ownerId, this.mapBoxes);
-        const t =
-          hit && (wallT === null || hit.distance <= wallT)
-            ? hit.distance
-            : wallT;
-        if (t !== null && t <= stepLen) {
-          exploded = true;
-          impact = pointAt(p.pos, dir, t);
-        } else {
-          p.pos = pointAt(p.pos, dir, stepLen);
-        }
-      }
-
-      if (exploded) {
-        this.projectiles.splice(i, 1);
-        this.explodeRevolver(p.ownerId, impact);
-      }
-    }
-  }
-
-  private explodeRevolver(ownerId: string, at: Vec3): void {
-    const owner = this.host.getPlayer(ownerId);
-    this.host.broadcastAction({
-      playerId: ownerId,
-      weapon: NetworkWeaponId.REVOLVER,
-      action: SERVER_ACTION_REVOLVER_EXPLODE,
-      seq: 0,
-      ox: at.x,
-      oy: at.y,
-      oz: at.z,
-      dx: 0,
-      dy: 1,
-      dz: 0,
-      hx: at.x,
-      hy: at.y,
-      hz: at.z,
-    });
-    if (!owner) return;
-    for (const target of this.host.players()) {
-      if (!target.isAlive || target.id === ownerId) continue; // owner immune
-      const center = { x: target.x, y: target.y, z: target.z };
-      if (distance(center, at) > W.revolver.explosionRadius) continue;
-      if (!hasLineOfSight(at, center, this.mapBoxes)) continue;
-      const amount = target.maxHealth * W.revolver.explosionDamageFraction;
-      this.dealDamage(owner, target.id, amount, DamageType.REVOLVER_EXPLOSION, HitZone.BODY, NetworkWeaponId.REVOLVER);
-    }
-  }
-
-  /**
-   * BASS_FIRE: one musical note projectile. The server owns the flight
-   * (speed / lifetime / wall stop) and the per-hit damage; the client's
-   * px/py/pz carry the MUSIC GRAIN metadata (track index / playhead
-   * offset / note index) which is ECHOED verbatim in the confirm so every
-   * remote client replays the exact same spatialized fragment.
-   */
-  private handleBassFire(
-    player: NetworkPlayer,
-    s: PlayerWeaponState,
-    seq: number,
-    origin: Vec3 | null,
-    dir: Vec3 | null,
-    msg: WeaponActionMessage,
-  ): void {
-    if (s.weapon !== NetworkWeaponId.BASS_BLASTER || !origin || !dir) return;
-    const now = this.host.now();
-    // Cadence floor (same tolerance policy as the revolver fan-fire).
-    const minInterval = W.bassBlaster.fireInterval * (1 - W.bassBlaster.cadenceTolerance) * 1000;
-    if (now - s.lastBassShotAt < minInterval) return;
-    s.lastBassShotAt = now;
-
-    this.bassProjectiles.push({
-      ownerId: player.id,
-      pos: { ...origin },
-      vel: {
-        x: dir.x * W.bassBlaster.projectileSpeed,
-        y: dir.y * W.bassBlaster.projectileSpeed,
-        z: dir.z * W.bassBlaster.projectileSpeed,
-      },
-      age: 0,
-      viewDelayMs: Math.min(now - this.resolveRewindTime(msg), LAG_COMP_MAX_REWIND_MS),
-    });
-
-    // Grain metadata (track / offset / note) — echoed for remote replay.
-    const grain = this.readPoint(msg) ?? { x: 0, y: 0, z: 0 };
-    this.confirm(player, s.weapon, WeaponActionType.BASS_FIRE, seq, origin, dir, undefined, grain);
-  }
-
-  /** Straight CCD flight of every note: walls stop it, players take damage. */
-  private tickBassProjectiles(dt: number): void {
-    const now = this.host.now();
-    for (let i = this.bassProjectiles.length - 1; i >= 0; i--) {
-      const p = this.bassProjectiles[i];
-      p.age += dt;
-      if (p.age >= W.bassBlaster.projectileLifetime) {
-        this.bassProjectiles.splice(i, 1);
-        continue;
-      }
-      const dir = normalize(p.vel);
-      if (!dir) {
-        this.bassProjectiles.splice(i, 1);
-        continue;
-      }
-      const stepLen = W.bassBlaster.projectileSpeed * dt;
-      // Rewind targets by the shooter's captured view delay so the note
-      // hits what the shooter aimed at when it was fired.
-      const rewindTime = now - p.viewDelayMs;
-      const wallT = raycastMap(p.pos, dir, stepLen, this.mapBoxes);
-      const hit = hitscan(p.pos, dir, stepLen, this.rewindTargets(p.ownerId, rewindTime), p.ownerId, this.mapBoxes);
-
-      if (
-        hit &&
-        hit.kind === "player" &&
-        hit.targetId &&
-        (wallT === null || hit.distance <= wallT)
-      ) {
-        const owner = this.host.getPlayer(p.ownerId);
-        if (owner) {
-          const zone = hit.zone === NetworkHitZone.HEAD ? HitZone.HEAD : HitZone.BODY;
-          const amount = zone === HitZone.HEAD ? W.bassBlaster.headDamage : W.bassBlaster.bodyDamage;
-          this.dealDamage(owner, hit.targetId, amount, DamageType.BASS_BLASTER, zone, NetworkWeaponId.BASS_BLASTER);
-        }
-        this.bassProjectiles.splice(i, 1);
-        continue;
-      }
-
-      // Wall (from either raycast) stops the note silently server-side —
-      // clients render their own local impact "plink"/burst.
-      const blockT =
-        hit && hit.kind === "wall"
-          ? wallT !== null
-            ? Math.min(wallT, hit.distance)
-            : hit.distance
-          : wallT;
-      if (blockT !== null && blockT <= stepLen) {
-        this.bassProjectiles.splice(i, 1);
-        continue;
-      }
-      p.pos = pointAt(p.pos, dir, stepLen);
-    }
-  }
-
   /** SPEAR sweep — immediate arc resolve (unchanged legacy path). */
   private handleMeleeSweep(
     player: NetworkPlayer,
@@ -1932,108 +1557,6 @@ export class WeaponManager {
     }
   }
 
-  private handleObliterreurPlace(
-    player: NetworkPlayer,
-    s: PlayerWeaponState,
-    seq: number,
-    origin: Vec3 | null,
-    dir: Vec3 | null,
-    msg: WeaponActionMessage,
-  ): void {
-    if (s.weapon !== NetworkWeaponId.OBLITERREUR || !origin || !dir) return;
-
-    // Server raycast along the aim ray (authoritative surface check).
-    const t = raycastMap(origin, dir, W.obliterreur.placementRange, this.mapBoxes);
-    const serverHit = t !== null ? pointAt(origin, dir, t) : null;
-
-    // The CLIENT's exact anchor point (px/py/pz) is used whenever it is
-    // plausible — BOTH sides then show/damage the exact same point. A
-    // client/server collider mismatch falls back to the server hit so a
-    // placement the client saw succeed is almost never silently refused.
-    const reported = this.readPoint(msg);
-    let anchor: Vec3 | null = null;
-    if (reported && distance(reported, origin) <= W.obliterreur.placementRange) {
-      if (serverHit && distance(reported, serverHit) <= W.obliterreur.anchorTolerance) {
-        anchor = reported; // both raycasts agree → client point wins
-      } else {
-        // Aim ray missed / disagreed: re-check straight toward the point.
-        const toReported = normalize({
-          x: reported.x - origin.x,
-          y: reported.y - origin.y,
-          z: reported.z - origin.z,
-        });
-        if (toReported) {
-          const t2 = raycastMap(origin, toReported, W.obliterreur.placementRange, this.mapBoxes);
-          const d = distance(origin, reported);
-          if (t2 !== null && Math.abs(t2 - d) <= W.obliterreur.anchorTolerance) {
-            anchor = reported;
-          }
-        }
-      }
-    }
-    if (!anchor) anchor = serverHit;
-    if (!anchor) return; // nothing plausible was hit → refused
-
-    // Active beam is cancelled by a new placement (mirrors local gameplay).
-    this.cancelObliterreurBeam(player, s);
-
-    // SLOT: the client drives the SAME 0→1→0→1 alternation as its local
-    // weapon — replacing one slot NEVER clears the other (this was the
-    // desync: the server used to wipe B when A was re-placed). Clients
-    // that don't declare a slot fall back to the server alternation.
-    const index: 0 | 1 = msg.pi === 0 || msg.pi === 1 ? msg.pi : s.oblitNextIndex;
-    if (index === 0) s.oblitA = anchor;
-    else s.oblitB = anchor;
-    s.oblitNextIndex = index === 0 ? 1 : 0;
-
-    this.confirm(player, s.weapon, WeaponActionType.OBLITERREUR_PLACE, seq, origin, dir, anchor, {
-      x: index,
-      y: 0,
-      z: 0,
-    });
-  }
-
-  private handleObliterreurFire(player: NetworkPlayer, s: PlayerWeaponState, seq: number): void {
-    if (s.weapon !== NetworkWeaponId.OBLITERREUR) return;
-    if (!s.oblitA || !s.oblitB || s.beamSamples) return;
-    s.beamSamples = sampleObliterreurCurve(s.oblitA, s.oblitB);
-    s.beamEndsAt = this.host.now() + W.obliterreur.beamDuration * 1000;
-    this.host.broadcastAction({
-      playerId: player.id,
-      weapon: s.weapon,
-      action: WeaponActionType.OBLITERREUR_FIRE,
-      seq,
-      ox: s.oblitA.x,
-      oy: s.oblitA.y,
-      oz: s.oblitA.z,
-      dx: 0,
-      dy: 0,
-      dz: 0,
-      px: s.oblitB.x,
-      py: s.oblitB.y,
-      pz: s.oblitB.z,
-    });
-  }
-
-  private tickObliterreurBeam(player: NetworkPlayer, s: PlayerWeaponState, dt: number): void {
-    if (!s.beamSamples) return;
-    const reach = W.obliterreur.beamRadius + W.obliterreur.targetHitRadius;
-    for (const target of this.host.players()) {
-      if (!target.isAlive || target.id === player.id) continue;
-      const center = { x: target.x, y: target.y, z: target.z };
-      let inside = false;
-      for (const sample of s.beamSamples) {
-        if (distance(center, sample) <= reach) {
-          inside = true;
-          break;
-        }
-      }
-      if (!inside) continue; // NOTE: walls are intentionally ignored (design)
-      const amount = target.maxHealth * W.obliterreur.damagePerSecondFraction * dt;
-      this.dealDamage(player, target.id, amount, DamageType.OBLITERREUR, HitZone.BODY, NetworkWeaponId.OBLITERREUR);
-    }
-  }
-
   // ------------------------------------------------------------------
   // Mole strike (killstreak — burrow / eruption AoE)
   // ------------------------------------------------------------------
@@ -2287,7 +1810,7 @@ export class WeaponManager {
   // Lifecycle hooks (death / respawn / leave)
   // ------------------------------------------------------------------
 
-  /** Death: every continuous action stops — no ghost beams from corpses. */
+  /** Death: every engaged action stops (a corpse never keeps attacking). */
   onPlayerDeath(playerId: string): void {
     const s = this.states.get(playerId);
     const player = this.host.getPlayer(playerId);
@@ -2296,17 +1819,11 @@ export class WeaponManager {
     this.releaseHexVictim(playerId);
     if (!s) return;
     if (player) {
-      this.stopPlasma(player, s);
-      this.stopPoison(player, s);
-      this.cancelObliterreurBeam(player, s);
       this.releaseHexPull(player, s, true);
     }
     s.rushActive = false;
     s.hammerAttack = null; // a corpse never finishes its whirlwind / slam
     s.inspecting = false;
-    s.oblitA = null;
-    s.oblitB = null;
-    s.oblitNextIndex = 0;
     s.burrowed = false;
     s.hexVictimId = null;
     // A corpse never releases a ball: the planned launch is dropped. An
@@ -2329,36 +1846,22 @@ export class WeaponManager {
     }
   }
 
-  /** Respawn: clean combat state + fresh revolver cylinder. */
+  /** Respawn: clean combat state + full magazines. */
   onPlayerRespawn(playerId: string): void {
     const s = this.states.get(playerId);
     if (!s) return;
-    s.plasmaActive = false;
-    s.poisonActive = false;
     s.rushActive = false;
     s.rushHitIds.clear();
     s.hammerAttack = null;
     s.inspecting = false;
-    s.beamSamples = null;
-    s.oblitA = null;
-    s.oblitB = null;
-    s.oblitNextIndex = 0;
     s.burrowed = false;
     s.hexVictimId = null;
-    s.revolverAmmo = W.revolver.capacity;
-    s.revolverUnavailableUntil = 0;
     s.basketChargeStart = 0;
     s.basketThrow = null;
     s.popcorn.reset(); // respawn = full tank (local parity: setAmmo(2))
     s.paintball.reset(); // respawn = full hopper (local parity: setAmmo(32))
     s.waterFamas.reset(); // respawn = full tank (local parity: setAmmo(9))
     s.frisbee.reset(); // respawn = loaded deck + full cage (local parity: setAmmo(true, 5))
-  }
-
-  /** True while the player's continuous beam (plasma / poison) is firing. */
-  isBeamFiring(playerId: string): boolean {
-    const s = this.states.get(playerId);
-    return s !== undefined && (s.plasmaActive || s.poisonActive);
   }
 
   removePlayer(playerId: string): void {
@@ -2373,12 +1876,6 @@ export class WeaponManager {
     this.releaseHexVictim(playerId);
     this.states.delete(playerId);
     this.history.delete(playerId);
-    for (let i = this.projectiles.length - 1; i >= 0; i--) {
-      if (this.projectiles[i].ownerId === playerId) this.projectiles.splice(i, 1);
-    }
-    for (let i = this.bassProjectiles.length - 1; i >= 0; i--) {
-      if (this.bassProjectiles[i].ownerId === playerId) this.bassProjectiles.splice(i, 1);
-    }
     // The discs of a leaving player are dropped silently (clients expire theirs on their own clock).
     for (let i = this.frisbees.length - 1; i >= 0; i--) {
       if (this.frisbees[i].ownerId === playerId) this.frisbees.splice(i, 1);
@@ -2388,29 +1885,6 @@ export class WeaponManager {
   // ------------------------------------------------------------------
   // Internals
   // ------------------------------------------------------------------
-
-  private stopPlasma(player: NetworkPlayer, s: PlayerWeaponState, seq = 0): void {
-    if (!s.plasmaActive) return;
-    s.plasmaActive = false;
-    this.confirm(player, NetworkWeaponId.PLASMA_RIFLE, WeaponActionType.PLASMA_STOP, seq, this.eyePos(player), s.plasmaDir);
-  }
-
-  private cancelObliterreurBeam(player: NetworkPlayer, s: PlayerWeaponState): void {
-    if (!s.beamSamples) return;
-    s.beamSamples = null;
-    this.host.broadcastAction({
-      playerId: player.id,
-      weapon: NetworkWeaponId.OBLITERREUR,
-      action: SERVER_ACTION_OBLITERREUR_STOP,
-      seq: 0,
-      ox: player.x,
-      oy: player.y,
-      oz: player.z,
-      dx: 0,
-      dy: 0,
-      dz: 0,
-    });
-  }
 
   /** applyDamage + HIT_CONFIRMED (attacker) + DAMAGE_TAKEN (victim). */
   private dealDamage(
@@ -2519,26 +1993,4 @@ export class WeaponManager {
 
 function fin(raw: unknown): number | null {
   return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
-}
-
-/** Quadratic-bezier polyline between the two anchors (upward bulge). */
-export function sampleObliterreurCurve(a: Vec3, b: Vec3): Vec3[] {
-  const chord = distance(a, b);
-  const handle = Math.min(
-    Math.max(chord * W.obliterreur.curveStrength, W.obliterreur.curveHandleMin),
-    W.obliterreur.curveHandleMax,
-  );
-  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 + handle, z: (a.z + b.z) / 2 };
-  const samples: Vec3[] = [];
-  const n = W.obliterreur.curveSampleCount;
-  for (let i = 0; i <= n; i++) {
-    const t = i / n;
-    const u = 1 - t;
-    samples.push({
-      x: u * u * a.x + 2 * u * t * mid.x + t * t * b.x,
-      y: u * u * a.y + 2 * u * t * mid.y + t * t * b.y,
-      z: u * u * a.z + 2 * u * t * mid.z + t * t * b.z,
-    });
-  }
-  return samples;
 }

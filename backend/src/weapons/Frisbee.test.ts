@@ -277,7 +277,7 @@ test("frisbee: cancel a swap before cageIn keeps the old cage; after cageIn the 
   advance(2000);
   send(wm, a, FIRE, AHEAD, { sd: 2 });
   advance(300);
-  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
   wm.handleEquip(a, NetworkWeaponId.FRISBEE_LAUNCHER);
   advance(100);
   send(wm, a, FIRE, AHEAD, { sd: 3 });

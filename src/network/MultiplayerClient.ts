@@ -411,7 +411,7 @@ export class MultiplayerClient {
       px?: number;
       py?: number;
       pz?: number;
-      /** Obliterreur anchor slot (0 = A, 1 = B). */
+      /** Water FAMAS jet index inside the burst (0..2). */
       pi?: number;
       /** View time (server ms) at which the shooter SAW the targets —
        *  the server rewinds its lag-comp history to this exact time. */
@@ -441,8 +441,24 @@ export class MultiplayerClient {
     });
   }
 
-  /** Snapshot of every player currently in the room state. */
+  /**
+   * Player list cache: rebuilt ONCE per applied state patch (onStateChange
+   * marks it dirty) instead of on every call — the per-patch ingestion, the
+   * per-frame backstop sync and the lobby all read the same array. Callers
+   * must treat it as read-only.
+   */
+  private playersCache: NetworkPlayerInfo[] = [];
+  private playersDirty = true;
+
+  /** Snapshot of every player currently in the room state (read-only, cached per patch). */
   getPlayers(): NetworkPlayerInfo[] {
+    if (!this.playersDirty && this.room) return this.playersCache;
+    this.playersCache = this.buildPlayers();
+    this.playersDirty = this.room === null;
+    return this.playersCache;
+  }
+
+  private buildPlayers(): NetworkPlayerInfo[] {
     const state = this.room?.state as RoomStateLike | undefined;
     if (!state?.players) return [];
 
@@ -470,7 +486,7 @@ export class MultiplayerClient {
         deaths: p.deaths ?? 0,
         assists: p.assists ?? 0,
         respawnAt: p.respawnAt ?? 0,
-        weapon: p.weapon ?? "PLASMA_RIFLE",
+        weapon: p.weapon ?? "GOOFY_BASKET",
         skin: p.skin ?? "default",
         outfit: typeof p.outfit === "string" ? p.outfit : "",
         pingMs: p.pingMs ?? 0,
@@ -498,6 +514,7 @@ export class MultiplayerClient {
 
   private bindRoom(room: Room): void {
     this.room = room;
+    this.playersDirty = true;
     this.leavingIntentionally = false;
     this.lastPhase = "";
 
@@ -520,6 +537,7 @@ export class MultiplayerClient {
     // Rooms are small: rebuild the full list on every state patch. Simple,
     // robust, and version-agnostic w.r.t. schema callbacks.
     room.onStateChange(() => {
+      this.playersDirty = true; // one list rebuild per patch
       // DEV-ONLY pipeline trace: timestamp of EVERY applied state patch —
       // the exact receiving-client stage. Detects arrival gaps + bursts
       // (long silence then several patches within a few ms).
@@ -575,7 +593,7 @@ export class MultiplayerClient {
       if (typeof message?.playerId !== "string" || typeof message?.action !== "string") return;
       this.onWeaponActionConfirmed?.({
         playerId: message.playerId,
-        weapon: typeof message.weapon === "string" ? message.weapon : "PLASMA_RIFLE",
+        weapon: typeof message.weapon === "string" ? message.weapon : "GOOFY_BASKET",
         action: message.action,
         seq: typeof message.seq === "number" ? message.seq : 0,
         // Authoritative phase start (server clock) — also feeds the shared
@@ -620,7 +638,7 @@ export class MultiplayerClient {
         hitZone: typeof message.hitZone === "string" ? message.hitZone : "BODY",
         damageDealt: num(message.damageDealt),
         killed: message.killed === true,
-        weapon: typeof message.weapon === "string" ? message.weapon : "PLASMA_RIFLE",
+        weapon: typeof message.weapon === "string" ? message.weapon : "GOOFY_BASKET",
       });
     });
     room.onMessage("DAMAGE_TAKEN", (message: Partial<DamageTakenEvent>) => {
@@ -694,6 +712,8 @@ export class MultiplayerClient {
     room.onLeave(() => {
       const intentional = this.leavingIntentionally;
       this.room = null;
+    this.playersDirty = true;
+    this.playersCache = [];
       this.leavingIntentionally = false;
       this.stopPingLoop();
       logDev(intentional ? "Left room" : "Disconnected from room");

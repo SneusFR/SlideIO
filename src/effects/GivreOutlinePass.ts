@@ -22,8 +22,10 @@ import { FullScreenQuad, Pass } from "three/examples/jsm/postprocessing/Pass.js"
  *  - `thickness` is in CSS pixels and scaled by the renderer pixel ratio,
  *    so the line looks the same on DPR 1 and DPR 2 screens;
  *  - excluded objects are hidden for the normal pre-pass only (visibility
- *    toggle, restored right after; already-hidden branches are skipped by
- *    traverseVisible);
+ *    toggle, restored right after; already-hidden branches are skipped),
+ *    EXCEPT excluded opaque meshes (`occluder`, e.g. loot pickups): they are
+ *    drawn as an alpha-0 mask so they keep hiding the edges behind them —
+ *    no rim on them, and no rim of the décor bleeding through them;
  *  - the normal pre-pass never re-renders the shadow map;
  *  - `enabled = false` makes the composer skip it at zero cost (A/B).
  *
@@ -49,6 +51,31 @@ export interface GivreOutlineOptions {
   fadeEnd?: number;
   /** Also draw silhouettes against the sky. */
   outlineSky?: boolean;
+}
+
+/**
+ * Default OCCLUDER rule: an excluded object that is an opaque, depth-writing
+ * mesh (loot pickups, opaque VFX, HP bar fill…) must still HIDE the edges of
+ * what lies behind it. Hiding it from the pre-pass (the old behaviour) let
+ * the walls / horizon behind draw their rim straight over it — the pickup
+ * looked see-through. Occluders are drawn into the normal target with a
+ * mask (alpha 0) where no edge is ever produced. Sprites, Points, Lines,
+ * transparent / wireframe / non-depth-writing materials (sky dome, snow,
+ * halos, footprints, collider wireframes) are never occluders.
+ */
+export function defaultOutlineOccluder(o: THREE.Object3D): boolean {
+  const mesh = o as THREE.Mesh;
+  if (!mesh.isMesh || !mesh.material) return false;
+  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  return materials.some(
+    (m) =>
+      !!m &&
+      m.visible &&
+      !m.transparent &&
+      m.depthWrite &&
+      m.colorWrite &&
+      (m as THREE.Material & { wireframe?: boolean }).wireframe !== true,
+  );
 }
 
 /** Default exclusion rule (see the header). */
@@ -141,6 +168,16 @@ const OutlineShader = {
         return;
       }
 
+      // Excluded OPAQUE objects (pickups…) are written with alpha 0: they
+      // occlude the edges behind them and never get a rim themselves.
+      float occluder = min(texture2D(tNormal, vUv).a,
+                           min(min(texture2D(tNormal, uvL).a, texture2D(tNormal, uvR).a),
+                               min(texture2D(tNormal, uvD).a, texture2D(tNormal, uvU).a)));
+      if (occluder < 0.5) {
+        gl_FragColor = (debugEdges > 0.5 && debugEdges < 1.5) ? vec4(0.0, 0.0, 0.0, 1.0) : base;
+        return;
+      }
+
       // Depth: Laplacian of w = 1/z relative to w at the centre (0 on any plane).
       float wC = 1.0 / viewDist(dC);
       float lap = abs(1.0 / viewDist(dL) + 1.0 / viewDist(dR) - 2.0 * wC)
@@ -177,14 +214,35 @@ export class GivreOutlinePass extends Pass {
   camera: THREE.PerspectiveCamera;
   /** Objects never outlined; replaceable, e.g. (o) => defaultOutlineExclude(o) || o.name.startsWith("fx_"). */
   exclude: (o: THREE.Object3D) => boolean = defaultOutlineExclude;
+  /**
+   * Among the excluded objects, those that still OCCLUDE the edges behind
+   * them (opaque meshes — see defaultOutlineOccluder). The others are hidden
+   * from the pre-pass.
+   */
+  occluder: (o: THREE.Object3D) => boolean = defaultOutlineOccluder;
   /** debugEdges draw mode (the FP pass uses OVERLAY over the world mask). */
   debugMode: OutlineDebugMode = "REPLACE";
   readonly material: THREE.ShaderMaterial;
   private readonly fsQuad: FullScreenQuad;
   private readonly normalTarget: THREE.WebGLRenderTarget;
   private readonly normalMaterial = new THREE.MeshNormalMaterial();
+  /**
+   * Occluder mask: depth + alpha 0 in the normal target. NoBlending keeps
+   * three.js from forcing alpha to 1 (OPAQUE define); allowOverride=false
+   * makes the renderer use it instead of the scene override material.
+   */
+  private readonly occluderMaterial = new THREE.MeshBasicMaterial({
+    color: 0x8080ff,
+    opacity: 0,
+    blending: THREE.NoBlending,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+    fog: false,
+  });
   private readonly prevClearColor = new THREE.Color();
   private readonly hidden: THREE.Object3D[] = [];
+  private readonly swapped: THREE.Mesh[] = [];
+  private readonly swappedMaterials: (THREE.Material | THREE.Material[])[] = [];
   private cssThickness = 1;
   private pixelRatio = 1;
   private debug = false;
@@ -193,6 +251,7 @@ export class GivreOutlinePass extends Pass {
     super();
     this.scene = scene;
     this.camera = camera;
+    this.occluderMaterial.allowOverride = false;
     this.material = new THREE.ShaderMaterial({
       name: "GivreOutline",
       uniforms: THREE.UniformsUtils.clone(OutlineShader.uniforms),
@@ -271,13 +330,43 @@ export class GivreOutlinePass extends Pass {
   ): void {
     // 1) View normals + depth (excluded objects hidden for this pre-pass only;
     //    the BackSide sky is hidden by its noOutline flag).
+    //    Excluded OPAQUE meshes stay in, drawn with the occluder mask: they
+    //    keep their depth so the edges behind them never bleed through.
     const hidden = this.hidden;
-    this.scene.traverseVisible((o) => {
-      if (this.exclude(o)) {
+    const swapped = this.swapped;
+    const swappedMaterials = this.swappedMaterials;
+    const excludeBranch = (o: THREE.Object3D) => {
+      const r = o as THREE.Object3D & {
+        isMesh?: boolean;
+        isPoints?: boolean;
+        isLine?: boolean;
+        isSprite?: boolean;
+      };
+      if (this.occluder(o)) {
+        const mesh = o as THREE.Mesh;
+        swapped.push(mesh);
+        swappedMaterials.push(mesh.material);
+        mesh.material = this.occluderMaterial;
+      } else if (r.isMesh || r.isPoints || r.isLine || r.isSprite) {
+        // Drawable but not an occluder (halo sprite, transparent mesh…).
         o.visible = false;
         hidden.push(o);
+        return;
       }
-    });
+      // Groups / plain nodes / lights: keep them, inspect the children.
+      for (const child of o.children) {
+        if (child.visible) excludeBranch(child);
+      }
+    };
+    const visit = (o: THREE.Object3D) => {
+      if (!o.visible) return;
+      if (this.exclude(o)) {
+        excludeBranch(o);
+        return;
+      }
+      for (const child of o.children) visit(child);
+    };
+    visit(this.scene);
     const prevOverride = this.scene.overrideMaterial;
     const prevBackground = this.scene.background;
     const prevAutoClear = renderer.autoClear;
@@ -306,6 +395,9 @@ export class GivreOutlinePass extends Pass {
       renderer.shadowMap.needsUpdate = prevShadowNeedsUpdate;
       for (const o of hidden) o.visible = true;
       hidden.length = 0;
+      for (let i = 0; i < swapped.length; i++) swapped[i].material = swappedMaterials[i];
+      swapped.length = 0;
+      swappedMaterials.length = 0;
     }
 
     // 2) Composition: rim over the rendered image.
@@ -323,6 +415,7 @@ export class GivreOutlinePass extends Pass {
     this.normalTarget.depthTexture?.dispose();
     this.normalTarget.dispose();
     this.normalMaterial.dispose();
+    this.occluderMaterial.dispose();
     this.material.dispose();
     this.fsQuad.dispose();
   }

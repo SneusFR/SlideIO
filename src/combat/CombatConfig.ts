@@ -48,8 +48,7 @@ export const CombatConfig = {
   botAimFireConeDegrees: 6, // bot only pulls the trigger when aim is within this cone
 
   // ---- Bot combat movement ----
-  botPreferredRangeMin: 10,
-  botPreferredRangeMax: 18,
+
   botStrafeIntervalMin: 0.5,
   botStrafeIntervalMax: 1.4,
   botJumpChancePerSecond: 0.35,
@@ -58,11 +57,6 @@ export const CombatConfig = {
   botDashOnDamageChance: 0.3, // chance to dodge-dash when taking damage (rate limited)
   botDashDecisionCooldown: 3.0,
 
-  // ---- Bot heat management ----
-  botHeatHoldMin: 0.6, // release the trigger above this heat ratio…
-  botHeatHoldMax: 0.9, // …randomized per bot (sloppy bots can overheat)
-  botHeatResumeMin: 0.25,
-  botHeatResumeMax: 0.45,
 
   // ---- Bot navigation ----
   botPathUpdateInterval: 0.6, // minimum seconds between path recomputations
@@ -76,9 +70,6 @@ export const CombatConfig = {
   botSpeedScaleMin: 0.9, // bots run slightly slower than the player (fairness)
   botSpeedScaleMax: 1.0,
 
-  // ---- Bot weapon visuals (kept light: up to 8 beams at once) ----
-  botImpactParticleRate: 14,
-  botMuzzleParticleRate: 10,
 
   // ---- Player damage feedback ----
   damageVignetteDecay: 2.2, // opacity units per second

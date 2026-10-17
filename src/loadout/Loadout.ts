@@ -1,11 +1,6 @@
 import { HammerConfig as hc } from "../weapons/HammerConfig";
 import { SpearConfig as sc } from "../weapons/SpearConfig";
-import { WeaponConfig as wc } from "../weapons/WeaponConfig";
 import { MoleStrikeConfig as mole } from "../killstreaks/mole/MoleStrikeConfig";
-import { ObliterreurConfig as oc } from "../weapons/obliterreur/ObliterreurConfig";
-import { RevolverConfig as rc } from "../weapons/revolver/RevolverConfig";
-import { BassBlasterConfig as bb } from "../weapons/bassblaster/BassBlasterConfig";
-import { PoisonConfig as pz } from "../weapons/poison/PoisonConfig";
 import { HexSniperConfig as hx } from "../weapons/hexsniper/HexSniperConfig";
 import { NetworkWeaponConfig } from "../../shared/combat/NetworkWeapons";
 import { PopcornShotgunConfig as pc } from "../../shared/combat/PopcornShotgunRules";
@@ -24,17 +19,29 @@ const gb = NetworkWeaponConfig.goofyBasket;
 
 export type MeleeWeaponId = "HAMMER" | "SPEAR";
 export type PrimaryWeaponId =
-  | "PLASMA_RIFLE"
-  | "OBLITERREUR"
-  | "REVOLVER"
-  | "BASS_BLASTER"
-  | "POISON_SPRAYER"
   | "HEX_SNIPER"
   | "GOOFY_BASKET"
   | "POPCORN_SHOTGUN"
   | "PAINTBALL_RIFLE"
   | "WATER_FAMAS"
   | "FRISBEE_LAUNCHER";
+
+/** Every equippable primary (persisted ids, bot weapon pool, validation). */
+export const PRIMARY_WEAPON_IDS: readonly PrimaryWeaponId[] = [
+  "HEX_SNIPER",
+  "GOOFY_BASKET",
+  "POPCORN_SHOTGUN",
+  "PAINTBALL_RIFLE",
+  "WATER_FAMAS",
+  "FRISBEE_LAUNCHER",
+];
+
+/** Default primary (also the fallback for removed legacy ids in old saves). */
+export const DEFAULT_PRIMARY: PrimaryWeaponId = "GOOFY_BASKET";
+
+export function isPrimaryWeaponId(raw: unknown): raw is PrimaryWeaponId {
+  return typeof raw === "string" && (PRIMARY_WEAPON_IDS as readonly string[]).includes(raw);
+}
 export type KillstreakId = "NONE" | "MOLE_STRIKE" | "ORBITAL_SCAN" | "NOVA_STRIKE";
 
 /** Exactly three equippable killstreak slots (keys W / X / C in game). */
@@ -52,7 +59,7 @@ const DEFAULT_KILLSTREAKS: KillstreakLoadout = ["MOLE_STRIKE", "NONE", "NONE"];
 
 const DEFAULT_LOADOUT: LoadoutSelection = {
   melee: "HAMMER",
-  primary: "PLASMA_RIFLE",
+  primary: DEFAULT_PRIMARY,
   killstreaks: [...DEFAULT_KILLSTREAKS],
 };
 
@@ -91,19 +98,9 @@ export function loadLoadout(): LoadoutSelection {
         : [...DEFAULT_KILLSTREAKS] as KillstreakLoadout;
     return {
       melee: parsed.melee === "SPEAR" ? "SPEAR" : "HAMMER",
-      primary:
-        parsed.primary === "OBLITERREUR" ||
-        parsed.primary === "REVOLVER" ||
-        parsed.primary === "BASS_BLASTER" ||
-        parsed.primary === "POISON_SPRAYER" ||
-        parsed.primary === "HEX_SNIPER" ||
-        parsed.primary === "GOOFY_BASKET" ||
-        parsed.primary === "POPCORN_SHOTGUN" ||
-        parsed.primary === "PAINTBALL_RIFLE" ||
-        parsed.primary === "WATER_FAMAS" ||
-        parsed.primary === "FRISBEE_LAUNCHER"
-          ? parsed.primary
-          : "PLASMA_RIFLE",
+      // Removed legacy primaries (Voidpulse, Obliterreur, Revolver, Bass
+      // Blaster, Lance-Poison) found in an old save migrate to the default.
+      primary: isPrimaryWeaponId(parsed.primary) ? parsed.primary : DEFAULT_PRIMARY,
       killstreaks,
     };
   } catch {
@@ -222,183 +219,6 @@ export const MELEE_ITEMS: LoadoutItem[] = [
 ];
 
 export const PRIMARY_ITEMS: LoadoutItem[] = [
-  {
-    id: "PLASMA_RIFLE",
-    name: "FUSIL VOIDPULSE",
-    tagline: "Faisceau plasma continu",
-    summary:
-      "Rayon d'énergie continu à dégâts constants. Gérez la chaleur : une surchauffe verrouille l'arme pendant sa purge.",
-    ratings: { power: 58, precision: 82, difficulty: 30 },
-    abilities: [
-      {
-        trigger: "CLIC GAUCHE — MAINTENIR",
-        name: "FAISCEAU PLASMA",
-        description:
-          "Faisceau hitscan continu tant que le clic est maintenu. La chaleur monte en tirant et se dissipe au repos.",
-        stats: [
-          { label: "DÉGÂTS", value: `${wc.plasmaDamagePerSecond} PV/s` },
-          { label: "PORTÉE", value: `${wc.beamRange} m` },
-          {
-            label: "SURCHAUFFE",
-            value: `${Math.round((wc.maxHeat / wc.heatPerSecond) * 10) / 10}s de tir`,
-          },
-          { label: "PURGE MIN", value: `${wc.overheatMinLockTime}s` },
-        ],
-      },
-    ],
-  },
-  {
-    id: "OBLITERREUR",
-    name: "OBLITERREUR",
-    tagline: "Faille de vortex ancrée",
-    summary:
-      "Arme de zone tactique : ancrez deux mini trous noirs sur les surfaces de la carte, puis ouvrez entre eux un immense faisceau de vortex noir incurvé qui dévore tout combattant pris dans son volume — même à travers les murs.",
-    ratings: { power: 90, precision: 45, difficulty: 82 },
-    abilities: [
-      {
-        trigger: "CLIC DROIT",
-        name: "ANCRAGE",
-        description:
-          "Place un mini trou noir au centre du viseur, sur les surfaces statiques uniquement. Deux points maximum : le 3e clic redéfinit le point I puis II en boucle. Pendant un vortex actif, un clic droit l'annule instantanément avant de replacer.",
-        stats: [
-          { label: "POINTS", value: "2 (I / II)" },
-          { label: "PORTÉE", value: `${oc.obliterreurPlacementRange} m` },
-          { label: "SURFACES", value: "STATIQUES" },
-          { label: "COOLDOWN", value: "AUCUN" },
-        ],
-      },
-      {
-        trigger: "CLIC GAUCHE",
-        name: "VORTEX NOIR",
-        description:
-          "Ouvre le faisceau de vortex noir incurvé entre les deux ancres. Tout combattant dans le tube subit des dégâts continus — les murs ne le protègent pas. Les ancres survivent à l'extinction du vortex.",
-        stats: [
-          { label: "DÉGÂTS", value: `${pct(oc.obliterreurDamagePerSecondFraction)}/s` },
-          { label: "DURÉE", value: `${oc.obliterreurBeamDuration}s` },
-          { label: "RAYON", value: `${oc.obliterreurBeamRadius} m` },
-          { label: "COOLDOWN", value: "AUCUN" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "REVOLVER",
-    name: "REVOLVER",
-    tagline: "Barillet parfait & lancer explosif",
-    summary:
-      "Précision absolue : chaque balle part exactement au centre du viseur, quel que soit votre mouvement. Corps = kill instantané, tête = 2 balles. Videz le barillet d'un coup au clic droit, puis l'arme vide est lancée comme une grenade — et un nouveau revolver se matérialise dans votre main.",
-    ratings: { power: 95, precision: 100, difficulty: 68 },
-    abilities: [
-      {
-        trigger: "CLIC GAUCHE",
-        name: "TIR SIMPLE",
-        description:
-          "Une balle hitscan 100% précise vers le crosshair. Un tir au corps tue instantanément ; la tête demande deux balles (50% chacune) — un headshot reste compté comme HEADSHOT.",
-        stats: [
-          { label: "CORPS", value: `${rc.revolverBodyDamage} PV` },
-          { label: "TÊTE", value: `${rc.revolverHeadDamage} PV` },
-          { label: "CADENCE", value: `${rc.revolverPrimaryFireInterval}s` },
-          { label: "BARILLET", value: `${rc.revolverCapacity}` },
-        ],
-      },
-      {
-        trigger: "CLIC DROIT",
-        name: "FAN FIRE",
-        description:
-          "Vide automatiquement toutes les balles restantes en rafale ultra-rapide. Chaque balle raycast individuellement là où pointe le viseur à cet instant. Barillet vide → l'arme est lancée automatiquement.",
-        stats: [
-          { label: "CADENCE", value: `${rc.revolverFanFireInterval}s / balle` },
-          { label: "DISPERSION", value: "AUCUNE" },
-        ],
-      },
-      {
-        trigger: "TOUCHE R",
-        name: "LANCER EXPLOSIF",
-        description:
-          "Jette le revolver actuel (peu importe les munitions) : il vole vers l'avant, tourne sur lui-même et explose au premier obstacle. Un nouveau revolver se matérialise immédiatement dans votre main, barillet plein.",
-        stats: [
-          { label: "DÉGÂTS AOE", value: pct(rc.revolverExplosionDamageFraction) },
-          { label: "RAYON", value: `${rc.revolverExplosionRadius} m` },
-          { label: "VITESSE", value: `${rc.revolverThrowSpeed} m/s` },
-          { label: "MATÉRIALISATION", value: `${rc.revolverMaterializeDuration}s` },
-        ],
-      },
-    ],
-  },
-  {
-    id: "BASS_BLASTER",
-    name: "BASS BLASTER",
-    tagline: "SMG musicale à notes chromatiques",
-    summary:
-      "Mitraillette expérimentale qui tire de véritables notes de musique colorées (Do→Do') et diffuse, tir après tir, des micro-fragments du morceau sélectionné — la musique voyage AVEC les notes. Flèches ↑/↓ en jeu pour choisir le morceau. (Solo/local uniquement pour l'instant.)",
-    ratings: { power: 55, precision: 70, difficulty: 42 },
-    abilities: [
-      {
-        trigger: "CLIC GAUCHE — MAINTENIR",
-        name: "RAFALE DE NOTES",
-        description:
-          "Tir automatique rapide : chaque balle est une note lumineuse (couleur cyclique Do→Ré→Mi→Fa→Sol→La→Si→Do') qui joue un micro-fragment du morceau actif, spatialisé sur le projectile.",
-        stats: [
-          { label: "DÉGÂTS", value: `${bb.bodyDamage} PV (tête ${bb.headDamage})` },
-          { label: "CADENCE", value: `${Math.round(1 / bb.fireInterval)} notes/s` },
-          { label: "CHARGEUR", value: `${bb.magazineSize}` },
-          { label: "VITESSE", value: `${bb.projectileSpeed} m/s` },
-        ],
-      },
-      {
-        trigger: "TOUCHE R",
-        name: "RECHARGE HARMONIQUE",
-        description:
-          "Invoque un tourbillon de notes de musique qui convergent et entrent dans l'arme pour recharger le chargeur — pure énergie musicale.",
-        stats: [
-          { label: "DURÉE", value: `${bb.reloadDuration}s` },
-          { label: "AUTO", value: "CHARGEUR VIDE" },
-        ],
-      },
-      {
-        trigger: "FLÈCHES ↑ / ↓",
-        name: "SÉLECTION DU MORCEAU",
-        description:
-          "Fait défiler les morceaux disponibles dans le panneau sous le leaderboard. Reprendre le tir reprend le morceau là où il s'était arrêté ; re-sélectionner un morceau abandonné le fait repartir de zéro.",
-        stats: [
-          { label: "FRAGMENT", value: `${Math.round(bb.fragmentDuration * 1000)} ms / note` },
-          { label: "AUDIO", value: "SPATIALISÉ" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "POISON_SPRAYER",
-    name: "LANCE-POISON",
-    tagline: "Pulvérisateur toxique à courte portée",
-    summary:
-      "Un lance-flammes… au poison : maintenez le clic pour cracher un jet continu de poison vert lumineux qui fait fondre tout ce qui s'approche. Le réservoir voxel affiche votre charge en temps réel — le liquide bouge, penche et bouillonne avec vos déplacements.",
-    ratings: { power: 78, precision: 40, difficulty: 48 },
-    abilities: [
-      {
-        trigger: "CLIC GAUCHE — MAINTENIR",
-        name: "JET DE POISON",
-        description:
-          "Émission continue d'un cône de poison à très courte portée. Dégâts massifs au contact — l'arme de duel rapproché par excellence. Le jet vide progressivement le réservoir.",
-        stats: [
-          { label: "DÉGÂTS", value: `${pz.damagePerSecond} PV/s` },
-          { label: "PORTÉE", value: `${pz.range} m` },
-          { label: "AUTONOMIE", value: `${Math.round(pz.capacity / pz.drainPerSecond)}s` },
-          { label: "TÊTE", value: "PAS DE BONUS" },
-        ],
-      },
-      {
-        trigger: "TOUCHE R",
-        name: "REMPLISSAGE",
-        description:
-          "Remplit le réservoir : le niveau de poison remonte visiblement dans la cuve pendant toute la recharge. Automatique quand le réservoir est vide.",
-        stats: [
-          { label: "DURÉE", value: `${pz.reloadDuration}s` },
-          { label: "AUTO", value: "RÉSERVOIR VIDE" },
-        ],
-      },
-    ],
-  },
   {
     id: "HEX_SNIPER",
     name: "HEX SNIPER",

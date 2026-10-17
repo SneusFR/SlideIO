@@ -2,7 +2,6 @@ import * as THREE from "three";
 import { RAPIER, CollisionGroups } from "../physics/PhysicsWorld";
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import { Combatant } from "../combat/Combatant";
-import { HeatSystem } from "../weapons/HeatSystem";
 import type { Bot, BotContext } from "./Bot";
 
 export type BotState = "ROAMING" | "ENGAGING" | "SEARCHING";
@@ -15,14 +14,22 @@ export interface BotAIOutput {
   dashDir: THREE.Vector3;
   wantFire: boolean;
   aimDir: THREE.Vector3;
+  /** Horizontal distance to the engaged target (m); Infinity when none. */
+  targetDistance: number;
 }
+
+/** Delay before retrying after an A* that found no path (s). */
+const FAILED_PATH_RETRY = 2;
+/** Re-path toward a moving last-known position only past this drift (m). */
+const REPATH_DRIFT = 1.5;
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
 /**
  * Medium-difficulty FFA brain: perception (FOV + LOS), short memory,
  * stable target selection, human-like reaction time, imperfect tracking
- * aim, combat strafing/sliding/dashing, heat management and grid
+ * aim, combat strafing/sliding/dashing, per-weapon engagement range /
+ * fire cone / target leading (BotWeapons profiles) and budgeted grid
  * navigation with stuck recovery. All timings use real seconds.
  */
 export class BotAI {
@@ -38,15 +45,14 @@ export class BotAI {
     dashDir: new THREE.Vector3(),
     wantFire: false,
     aimDir: new THREE.Vector3(0, 0, -1),
+    targetDistance: Infinity,
   };
 
   // ---- Per-bot personality (medium difficulty band) ----
   private readonly aimSpeed = rand(cc.botAimSpeedMin, cc.botAimSpeedMax);
   private readonly aimError = rand(cc.botAimErrorMin, cc.botAimErrorMax);
-  private readonly preferredRange = rand(cc.botPreferredRangeMin, cc.botPreferredRangeMax);
-  private readonly aggression = Math.random();
-  private readonly heatHold = rand(cc.botHeatHoldMin, cc.botHeatHoldMax);
-  private readonly heatResume = rand(cc.botHeatResumeMin, cc.botHeatResumeMax);
+  /** 0..1 position inside the weapon's preferred range band. */
+  private readonly rangeBias = Math.random();
 
   // ---- Target / perception state ----
   private target: Combatant | null = null;
@@ -58,7 +64,6 @@ export class BotAI {
   private targetVisible = false;
   private lastAttacker: Combatant | null = null;
   private attackedTimer = 999;
-  private holdingFire = false;
 
   // ---- Movement state ----
   private readonly path: THREE.Vector3[] = [];
@@ -67,6 +72,9 @@ export class BotAI {
   private pathTimer = 0;
   private readonly pathGoal = new THREE.Vector3();
   private hasGoal = false;
+  /** Destination of the current path (re-path only when it drifts). */
+  private readonly pathDest = new THREE.Vector3();
+  private pathDestValid = false;
   private strafeSign = Math.random() < 0.5 ? -1 : 1;
   private strafeTimer = rand(cc.botStrafeIntervalMin, cc.botStrafeIntervalMax);
   private dashDecisionTimer = 0;
@@ -88,6 +96,7 @@ export class BotAI {
   private readonly desiredAim = new THREE.Vector3();
   private readonly perp = new THREE.Vector3();
   private readonly moveDir = new THREE.Vector3();
+  private readonly losRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 });
 
   constructor(private readonly bot: Bot, spawnYaw: number) {
     this.lookYaw = spawnYaw;
@@ -103,8 +112,11 @@ export class BotAI {
     this.lookYaw = yaw;
     this.lookPitch = 0;
     this.out.wantFire = false;
+    this.out.targetDistance = Infinity;
     this.stuckTimer = 0;
     this.attackedTimer = 999;
+    this.pathDestValid = false;
+    this.pathTimer = 0;
   }
 
   notifyDamaged(attacker: Combatant | null): void {
@@ -125,11 +137,6 @@ export class BotAI {
     }
   }
 
-  notifyHeat(heat: HeatSystem): void {
-    // Sloppy heat management for low-aggression bots is handled in fire logic.
-    if (heat.overheated) this.holdingFire = true;
-    else if (this.holdingFire && heat.ratio < this.heatResume) this.holdingFire = false;
-  }
 
   update(dt: number, ctx: BotContext): void {
     const out = this.out;
@@ -140,6 +147,7 @@ export class BotAI {
     this.bot.getPosition(this.selfPos);
     this.bot.getEyePosition(this.selfEye);
 
+    this.out.targetDistance = Infinity;
     this.perceptionTimer -= dt;
     this.switchCooldown = Math.max(0, this.switchCooldown - dt);
     this.dashDecisionTimer = Math.max(0, this.dashDecisionTimer - dt);
@@ -270,11 +278,16 @@ export class BotAI {
     // and must be excluded — otherwise the ray instantly hits the bot's own
     // capsule (the eye is inside it) and the bot is permanently blind.
     // SHOT_QUERY: player-only clips (Givre) never block vision.
+    // One reused ray per bot (no per-check WASM-side allocation).
+    const ray = this.losRay;
+    ray.origin.x = this.selfEye.x;
+    ray.origin.y = this.selfEye.y;
+    ray.origin.z = this.selfEye.z;
+    ray.dir.x = dx * inv;
+    ray.dir.y = dy * inv;
+    ray.dir.z = dz * inv;
     const hit = ctx.physics.world.castRay(
-      new RAPIER.Ray(
-        { x: this.selfEye.x, y: this.selfEye.y, z: this.selfEye.z },
-        { x: dx * inv, y: dy * inv, z: dz * inv },
-      ),
+      ray,
       Math.max(dist - 0.2, 0.05),
       true,
       RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC,
@@ -318,10 +331,17 @@ export class BotAI {
     }
 
     this.perp.set(-this.toTarget.z, 0, this.toTarget.x).multiplyScalar(this.strafeSign);
+    this.out.targetDistance = dist;
 
+    // Range band of the CURRENT weapon (shotgun closes in, sniper stays far).
+    const profile = this.bot.weapon.profile;
+    const preferred = profile.preferredRangeMin + (profile.preferredRangeMax - profile.preferredRangeMin) * this.rangeBias;
     let approach = 0;
-    if (dist > this.preferredRange * 1.25) approach = 1;
-    else if (dist < this.preferredRange * 0.6) approach = -0.9;
+    if (dist > profile.preferredRangeMax) approach = 1;
+    else if (dist > preferred * 1.15) approach = 0.6;
+    else if (dist < profile.preferredRangeMin) approach = -0.9;
+    // Reeling a victim in with the tongue: hold the line, no strafing.
+    if (this.bot.weapon.pulling) this.perp.set(0, 0, 0);
 
     this.moveDir
       .copy(this.perp)
@@ -346,31 +366,31 @@ export class BotAI {
     }
 
     // If target far away and not visible right now, path toward it.
-    if (!this.targetVisible && this.pathTimer <= 0) {
+    if (!this.targetVisible && this.pathTimer <= 0 && this.needsRepath(this.lastKnownPos)) {
       this.computePath(ctx, this.lastKnownPos);
     }
     if (!this.targetVisible && this.pathCount > 0) {
       this.followPath();
     }
 
-    // ---- Fire control ----
+    // ---- Fire control (cone of the CURRENT weapon) ----
+    target.getEyePosition(this.otherEye);
     const angle = this.out.aimDir.angleTo(
-      this.desiredAim.subVectors(this.otherPos, this.selfEye).normalize(),
+      this.desiredAim.subVectors(this.otherEye, this.selfEye).normalize(),
     );
-    const heatOk = !this.holdingFire && !this.shouldHoldForHeat();
+    const cone = Math.max(profile.fireConeDeg, cc.botAimFireConeDegrees * 0.5);
     this.out.wantFire =
       this.targetVisible &&
       this.reactionTimer <= 0 &&
-      angle < (cc.botAimFireConeDegrees * Math.PI) / 180 &&
-      heatOk;
+      angle < (cone * Math.PI) / 180;
   }
 
-  private shouldHoldForHeat(): boolean {
-    // Aggressive bots push their heat further (and sometimes overheat).
-    const hold = this.aggression > 0.75 ? Math.min(this.heatHold + 0.15, 1) : this.heatHold;
-    return this.bot.heat.ratio > hold && !this.bot.heat.overheated
-      ? ((this.holdingFire = true), true)
-      : this.holdingFire;
+  /** Re-path only when the destination moved enough (or no valid path). */
+  private needsRepath(dest: THREE.Vector3): boolean {
+    if (!this.pathDestValid || this.pathCount === 0) return true;
+    const dx = dest.x - this.pathDest.x;
+    const dz = dest.z - this.pathDest.z;
+    return dx * dx + dz * dz > REPATH_DRIFT * REPATH_DRIFT;
   }
 
   private updateSearching(dt: number, ctx: BotContext): void {
@@ -396,7 +416,7 @@ export class BotAI {
     );
 
     if (distToLastKnown > 1.6) {
-      if (this.pathCount === 0 && this.pathTimer <= 0) {
+      if (this.pathTimer <= 0 && this.needsRepath(this.lastKnownPos)) {
         this.computePath(ctx, this.lastKnownPos);
       }
       this.followPath();
@@ -421,17 +441,14 @@ export class BotAI {
     // A* every frame when the bot is boxed in.
     const needGoal =
       !this.hasGoal || this.pathCount === 0 || this.pathIndex >= this.pathCount;
-    if (needGoal && this.pathTimer <= 0) {
+    if (needGoal && this.pathTimer <= 0 && ctx.pathBudget > 0) {
       if (ctx.nav.pickRoamGoal(this.selfPos, cc.botRoamMinGoalDistance, this.pathGoal)) {
         this.hasGoal = true;
         this.computePath(ctx, this.pathGoal);
-        if (this.pathCount === 0) {
-          // Unreachable goal — drop it and retry with a new one shortly.
-          this.hasGoal = false;
-          this.pathTimer = 0.4;
-        }
+        // Unreachable goal: computePath already backed off — pick a new one then.
+        if (this.pathCount === 0) this.hasGoal = false;
       } else {
-        this.pathTimer = 0.4;
+        this.pathTimer = FAILED_PATH_RETRY;
       }
     }
 
@@ -467,10 +484,23 @@ export class BotAI {
   // Navigation helpers
   // ------------------------------------------------------------------
 
+  /**
+   * A* toward `dest`, budgeted per frame (BotManager): over budget, the bot
+   * simply retries next frame. A failed search backs off for ~2 s instead of
+   * hammering the grid; a success is re-planned only when the destination
+   * drifts (needsRepath).
+   */
   private computePath(ctx: BotContext, dest: THREE.Vector3): void {
+    if (ctx.pathBudget <= 0) return;
+    ctx.pathBudget--;
     this.pathCount = ctx.nav.findPath(this.selfPos, dest, this.path);
     this.pathIndex = 0;
-    this.pathTimer = cc.botPathUpdateInterval * (0.8 + Math.random() * 0.5);
+    this.pathDest.copy(dest);
+    this.pathDestValid = this.pathCount > 0;
+    this.pathTimer =
+      this.pathCount > 0
+        ? cc.botPathUpdateInterval * (0.8 + Math.random() * 0.5)
+        : FAILED_PATH_RETRY * (0.8 + Math.random() * 0.4);
   }
 
   private followPath(): void {
@@ -544,11 +574,11 @@ export class BotAI {
         );
       }
 
-      this.desiredAim
-        .copy(this.otherEye)
-        .add(this.aimErrorOffset)
-        .sub(this.selfEye)
-        .normalize();
+      // Projectile weapons lead a moving target (time of flight × velocity).
+      const lead = this.bot.weapon.profile.leadSpeed;
+      this.desiredAim.copy(this.otherEye);
+      if (lead > 0) this.desiredAim.addScaledVector(this.target.velocity, dist / lead);
+      this.desiredAim.add(this.aimErrorOffset).sub(this.selfEye).normalize();
 
       // Rate-limited rotation toward the desired direction (tracking inertia).
       const angle = this.out.aimDir.angleTo(this.desiredAim);

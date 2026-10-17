@@ -114,10 +114,6 @@ export type WeaponIconKey =
   | "popcorn"
   | "water"
   | "frisbee"
-  | "bass"
-  | "poison"
-  | "heat"
-  | "revolver"
   | "spear";
 
 const WEAPON_ICONS: Record<WeaponIconKey, string> = {
@@ -167,27 +163,6 @@ const WEAPON_ICONS: Record<WeaponIconKey, string> = {
     <path d="M4 17h8M2 23h7M5 29h6" fill="none" stroke="#ffd0a8" stroke-width="3" stroke-linecap="round"/>
     <ellipse cx="28" cy="26" rx="17" ry="9" fill="#ff8a3d" ${O}/>
     <ellipse cx="28" cy="24" rx="9" ry="4.2" fill="#ffd0a8" ${o(2.4)}/>`,
-  bass: `
-    <path d="M15 14v-5h18v5" fill="none" ${O}/>
-    <rect x="4" y="14" width="40" height="25" rx="7" fill="#ff7ac8" ${O}/>
-    <circle cx="15" cy="27" r="7" fill="#fff6e0" ${O}/>
-    <circle cx="33" cy="27" r="7" fill="#fff6e0" ${O}/>
-    <circle cx="15" cy="27" r="2.6" fill="${INK}"/>
-    <circle cx="33" cy="27" r="2.6" fill="${INK}"/>`,
-  poison: `
-    <path d="M18 5h12v11l10 17a6 6 0 0 1-5 9H13a6 6 0 0 1-5-9l10-17z" fill="#effde6"/>
-    <path d="M11.5 29h25l3.2 5.4a4 4 0 0 1-3.5 6.1H11.8a4 4 0 0 1-3.5-6.1z" fill="#7bff4d"/>
-    <path d="M18 5h12v11l10 17a6 6 0 0 1-5 9H13a6 6 0 0 1-5-9l10-17z" fill="none" ${O}/>
-    <circle cx="20" cy="35" r="2.2" fill="#e6ffd8"/>
-    <circle cx="27" cy="32" r="1.5" fill="#e6ffd8"/>
-    <path d="M16 5h16" fill="none" ${O}/>`,
-  heat: `
-    <path d="M24 4c2 8 13 12 13 25a13 13 0 0 1-26 0c0-7 4-10 6-14 1 4 3 6 5 6-1-6 0-12 2-17z" fill="#ff8a3d" ${O}/>
-    <path d="M24 26c1 4 6 6 6 11a6 6 0 0 1-12 0c0-3 2-5 3-7 1 2 2 3 3 3z" fill="#ffd23f"/>`,
-  revolver: `
-    <path d="M4 16h32v8H22l-2 4h-5l-3 13H5l3-13-4-4z" fill="#a9793a" ${O}/>
-    <circle cx="23" cy="21" r="5.5" fill="#5e3f19" ${o(2.4)}/>
-    <path d="M36 18h7" fill="none" ${O}/>`,
   spear: `
     <path d="M9 41L31 19" fill="none" stroke="${INK}" stroke-width="8" stroke-linecap="round"/>
     <path d="M9 41L31 19" fill="none" stroke="#b07a3f" stroke-width="4" stroke-linecap="round"/>
@@ -310,13 +285,6 @@ const MEDAL_ICONS: Record<MedalType, string> = {
     <path d="M34 12q5 10 0 20M50 12q-5 10 0 20" fill="none" stroke="#e2413a" stroke-width="2.2" stroke-linecap="round"/>
     <ellipse cx="38" cy="15" rx="3.2" ry="1.8" fill="#ffffff" transform="rotate(-30 38 15)"/>
     ${sparkle(58, 44, 4)}`,
-  [MedalType.OBLITERATED]: `
-    <circle cx="32" cy="32" r="23" fill="#1c1208" ${O}/>
-    ${inkLine("M32 28a4 4 0 0 1 4 4a8 8 0 0 1-8 8a12 12 0 0 1-12-12a16 16 0 0 1 16-16a20 20 0 0 1 20 20", "#ffb347", 3.4)}
-    <circle cx="32" cy="32" r="3" fill="#fff6e0"/>
-    <rect x="5" y="7" width="7" height="7" rx="2" fill="#ff8a3d" transform="rotate(20 8.5 10.5)" ${o(2)}/>
-    <ellipse cx="55" cy="54" rx="5" ry="3.4" fill="#e38a4a" transform="rotate(-35 55 54)" ${o(2)}/>
-    <rect x="50" y="6" width="5" height="5" rx="1.5" fill="#facc15" transform="rotate(-25 52.5 8.5)" ${o(1.8)}/>`,
   [MedalType.MOLED]: `
     ${KS_ICONS.MOLE_STRIKE}
     ${sparkle(10, 12, 4.5)}${sparkle(54, 13, 4)}`,

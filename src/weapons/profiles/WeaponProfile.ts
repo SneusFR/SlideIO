@@ -12,9 +12,8 @@ import * as THREE from "three";
  * existing weapon classes; a small per-weapon adapter bridges the two.
  *
  * The HexSniper is the first full integration (HexSniperProfile).
- * Future weapons (hammer, spear, revolver, plasma, BassBlaster, poison,
- * obliterreur) get their own profile once their pose libraries are
- * authored — until then they keep their legacy viewmodel adapters.
+ * Future weapons (spear) get their own profile once their pose libraries
+ * are authored — until then they keep their legacy viewmodel adapters.
  *
  * TUNING A FUTURE WEAPON'S POSE: add its authored pose GLBs, then fill
  * `fpMount`/`tpMount` with the exported column-major matrices (applied

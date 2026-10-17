@@ -7,14 +7,12 @@ import { HitFeedbackConfig as hfc } from "../combat/HitFeedbackConfig";
 import { NetworkMovementState } from "../network/NetworkMovementState";
 import { shortestAngleDelta } from "../network/interpolation/SnapshotBuffer";
 import { RemotePlayerAnimationController } from "../network/remote/RemotePlayerAnimationController";
-import {
-  loadRemoteWeaponTemplate,
-  REMOTE_WEAPON_CONFIG,
-} from "../network/remote/RemoteWeaponController";
-import { NetworkWeaponId } from "../../shared/combat/NetworkWeapons";
+import { RemoteWeaponController } from "../network/remote/RemoteWeaponController";
+import type { FrisbeeCageDrop } from "../weapons/frisbee/FrisbeeLauncherController";
 import {
   loadCharacterAsset,
   stripEnemyOutline,
+  shareOutlineSkeletons,
   FEET_OFFSET,
   MODEL_TOP,
   CHARACTER_HEIGHT,
@@ -23,6 +21,17 @@ import {
 import { CHARACTER_HITBOX_SCALE } from "../../shared/combat/NetworkWeapons";
 import { CharacterOutfitSlot } from "../cosmetics/astronaut/AstronautRuntime";
 import type { CharacterCosmeticsSelection } from "../../shared/combat/CharacterCosmetics";
+
+/**
+ * World hooks of the bot's third-person weapon (same wiring as a remote
+ * avatar): the world scene (Hex tether, dropped hoppers), the floor height
+ * for dropped hoppers and the thrown frisbee cages.
+ */
+export interface BotModelEnv {
+  scene: THREE.Object3D;
+  groundY?: ((x: number, z: number) => number) | null;
+  onFrisbeeCageDrop?: ((drop: FrisbeeCageDrop) => void) | null;
+}
 
 /** Per-frame pose data fed by the Bot (drives the animation state). */
 export interface BotPose {
@@ -101,8 +110,10 @@ function getLabelMaterial(): THREE.MeshBasicMaterial {
 /**
  * Bot avatar: the SAME Potato skinned character as the human
  * players (multiplayer remote avatars), driven by the SAME animation
- * controller (idle / run / jump / slide clips), holding a real Plasma
- * Rifle GLB and wearing the same red rim glow.
+ * controller (idle / run / jump / slide clips + the armed TP pose sets),
+ * holding its REAL primary through the SAME RemoteWeaponController as the
+ * remote players (weapon GLB, TP fire / reload clips), with the same red
+ * rim glow.
  *
  *   - The shared character asset loads asynchronously (cached — one fetch
  *     for the whole game). Until it resolves, the bot is fully playable:
@@ -128,8 +139,11 @@ export class BotModel {
   private readonly flashBase = new Map<THREE.Material, THREE.Color>();
   /** Material clones OWNED by this bot (disposed with it) — never outfit ones. */
   private readonly ownedMats: THREE.Material[] = [];
-  /** In-hand Plasma Rifle grip (muzzle anchor) — null until loaded. */
-  private grip: THREE.Group | null = null;
+  /** Third-person weapon presentation — null until the character loads. */
+  weapons: RemoteWeaponController | null = null;
+  /** Primary requested before the character resolved (applied on attach). */
+  private wantedWeapon: string | null = null;
+  private grounded = true;
   /**
    * OPTIONAL character outfit of this bot (nothing by default — bots never
    * inherit the local player's cosmetics; see setOutfit). Its pieces join
@@ -160,6 +174,7 @@ export class BotModel {
   private readonly bodyHitbox: THREE.Mesh;
   private readonly headHitbox: THREE.Mesh;
   private headBone: THREE.Object3D | null = null;
+  private hitboxList: THREE.Object3D[] = [];
 
   // ---- Enemy UI ----
   private readonly healthBar: THREE.Group;
@@ -176,7 +191,10 @@ export class BotModel {
   // scratch
   private readonly tmpA = new THREE.Vector3();
 
-  constructor(_index: number) {
+  constructor(
+    _index: number,
+    private readonly env: BotModelEnv | null = null,
+  ) {
     // ---- Hitboxes (synchronous — gameplay never waits for the GLB) ----
     // DAMAGE volumes calibrated on the SCALED (2.25 m) silhouette via the
     // central CHARACTER_HITBOX_SCALE — the MOVEMENT capsule is untouched.
@@ -207,6 +225,7 @@ export class BotModel {
     this.headHitbox.userData.hitZone = HitZone.HEAD;
 
     this.group.add(this.bodyHitbox, this.headHitbox);
+    this.hitboxList = [this.bodyHitbox, this.headHitbox];
 
     // ---- Enemy UI (billboarded, above the head): BOT + big red HP bar ----
     this.healthBar = new THREE.Group();
@@ -246,6 +265,7 @@ export class BotModel {
       const model = skeletonClone(asset.template);
       // Group origin = CAPSULE CENTER; the model root is the feet.
       model.position.y = -FEET_OFFSET;
+      shareOutlineSkeletons(model); // one bone update per body part (not two)
       this.model = model;
       this.group.add(model);
 
@@ -295,52 +315,49 @@ export class BotModel {
         slideRaise: 0,
       });
 
-      this.attachRifle(model);
+      this.attachWeapons(model);
     });
   }
 
-  /**
-   * Real Plasma Rifle GLB in the left hand. Bots KEEP their Plasma Rifle
-   * gameplay — the Potato swap never equips them with the sniper. The
-   * grip rides the Potato Weapon_L socket (child of Hand_L) with the
-   * ancestor-scale compensation this legacy path requires; the pack ships
-   * no Plasma poses, so the HexSniper TP matrices are never applied here.
-   */
-  private attachRifle(model: THREE.Object3D): void {
-    void loadRemoteWeaponTemplate(NetworkWeaponId.PLASMA_RIFLE).then((template) => {
-      if (this.disposed || this.model !== model) return;
-      const att = REMOTE_WEAPON_CONFIG[NetworkWeaponId.PLASMA_RIFLE];
-      if (!att) return;
-      const bone = model.getObjectByName(att.bone);
-      if (!bone) return;
+  /** Same wiring as RemotePlayer: armed pose set, TP action clips, basket clock. */
+  private attachWeapons(model: THREE.Object3D): void {
+    const weapons = new RemoteWeaponController(model, this.env?.scene ?? null);
+    weapons.onArmedChanged = (profileId) => this.anim?.setArmedProfile(profileId);
+    weapons.onProfileAction = (kind, options) => {
+      if (kind === null) this.anim?.clearOverride();
+      else this.anim?.playOverride(kind, options);
+    };
+    weapons.presentationClock = () => this.anim?.presentationClock() ?? { clip: null, time: 0 };
+    weapons.isGrounded = () => this.grounded;
+    weapons.viewerPosition = () => null;
+    weapons.paintballDropParent = this.env?.scene ?? null;
+    weapons.paintballGroundY = this.env?.groundY ?? null;
+    weapons.onFrisbeeCageDrop = (drop) => this.env?.onFrisbeeCageDrop?.(drop);
+    this.weapons = weapons;
+    if (this.wantedWeapon) weapons.setWeapon(this.wantedWeapon);
+  }
 
-      const weapon = template.clone(true);
-      weapon.traverse((obj) => {
-        const mesh = obj as THREE.Mesh;
-        if (mesh.isMesh) mesh.raycast = NO_RAYCAST; // visual only
-      });
+  /** Equip `id` in the hand (applied as soon as the character exists). */
+  setWeapon(id: string): void {
+    this.wantedWeapon = id;
+    this.weapons?.setWeapon(id);
+  }
 
-      const grip = new THREE.Group();
-      grip.add(weapon);
-      grip.position.copy(att.position);
-      grip.rotation.copy(att.rotation);
+  /** Death / respawn: drop every replayed weapon action, full ammo display. */
+  resetWeaponState(): void {
+    const w = this.weapons;
+    if (!w) return;
+    w.basketReset();
+    w.popcornReset();
+    w.paintballReset();
+    w.famasReset();
+    w.frisbeeReset();
+    w.hexReset();
+  }
 
-      // Compensate every ancestor scale (character normalization +
-      // armature) so the configured size stays a true world size.
-      let accumulated = 1;
-      let node: THREE.Object3D | null = bone;
-      while (node) {
-        accumulated *= node.scale.x;
-        if (node === model) break;
-        node = node.parent;
-      }
-      const inv = 1 / Math.max(Math.abs(accumulated), 1e-6);
-      grip.scale.setScalar(inv);
-      grip.position.multiplyScalar(inv);
-
-      bone.add(grip);
-      this.grip = grip;
-    });
+  /** Raycast targets of this bot: ONLY the two damage volumes (cheap). */
+  get hitboxes(): readonly THREE.Object3D[] {
+    return this.hitboxList;
   }
 
   /**
@@ -370,10 +387,10 @@ export class BotModel {
     this.healthBar.visible = seen && cc.enemyHealthBarVisible;
   }
 
-  /** World position of the in-hand rifle (beam start anchor). */
+  /** World position of the in-hand weapon muzzle. */
   getMuzzleWorld(out: THREE.Vector3): THREE.Vector3 {
-    if (this.grip) return this.grip.getWorldPosition(out);
-    // Fallback before the rifle GLB resolves: shoulder-ish offset.
+    if (this.weapons?.getMuzzleWorldPosition(out)) return out;
+    // Fallback before the weapon GLB resolves: shoulder-ish offset.
     this.group.getWorldPosition(out);
     out.y += 0.2;
     return out;
@@ -427,7 +444,12 @@ export class BotModel {
       const moveYaw = Math.atan2(-pose.vx, -pose.vz);
       moveLocalYaw = shortestAngleDelta(pose.yaw, moveYaw);
     }
+    this.grounded = pose.grounded;
+    // Weapon clips first (same order as RemotePlayer), then the character
+    // mixer, then the cosmetic pass that reads the animated arm clock.
+    this.weapons?.update(dt);
     this.anim?.update(dt, state, pose.speed, pose.velocityY, pose.pitch, moveLocalYaw);
+    this.weapons?.updateCosmetics(dt);
 
     // ---- HEAD hitbox follows the real Head bone (animated headshots).
     // Explicit LOCAL offset above the bone (the Potato head volume sits
@@ -576,8 +598,8 @@ export class BotModel {
     this.outfit.dispose();
     this.anim?.dispose();
     this.anim = null;
-    this.grip?.removeFromParent();
-    this.grip = null;
+    this.weapons?.dispose();
+    this.weapons = null;
     // Per-bot cloned materials only — the template/shared ones stay alive.
     for (const mat of this.ownedMats) mat.dispose();
     this.ownedMats.length = 0;

@@ -1,24 +1,12 @@
 import * as THREE from "three";
-import { audio, LoopHandle } from "../../audio/AudioManager";
-import { PlasmaBeam } from "../../weapons/PlasmaBeam";
-import { ObliterreurBeamVFX } from "../../weapons/obliterreur/ObliterreurBeamVFX";
-import { ObliterreurConfig as oc } from "../../weapons/obliterreur/ObliterreurConfig";
+import { audio } from "../../audio/AudioManager";
 import { MoleStrikeConfig as mole } from "../../killstreaks/mole/MoleStrikeConfig";
-import { BassBlasterConfig as bb } from "../../weapons/bassblaster/BassBlasterConfig";
-import {
-  NOTE_SEQUENCE,
-  NoteDef,
-  getNoteGlyphTexture,
-  getNoteHaloTexture,
-} from "../../weapons/bassblaster/BassBlasterNotes";
-import { MUSIC_TRACKS } from "../../weapons/bassblaster/MusicTrackPlayer";
 import type { ParticleSystem } from "../../effects/ParticleSystem";
 import {
   NetworkWeaponConfig as W,
   NetworkWeaponId,
   WeaponActionType,
   WeaponActionConfirmedEvent,
-  PLAYER_EYE_OFFSET,
   PLAYER_FEET_OFFSET,
   HEX_ACTION_TONGUE_HIT,
   HEX_ACTION_TONGUE_MISS,
@@ -34,74 +22,15 @@ import {
   FRISBEE_ACTION_END,
 } from "../../../shared/combat/NetworkWeapons";
 import { HexSniperConfig as hexCfg } from "../../weapons/hexsniper/HexSniperConfig";
-import { loadRemoteWeaponTemplate } from "./RemoteWeaponController";
 import type { RemotePlayerManager } from "../RemotePlayerManager";
 
-/** Server-only extra action ids (broadcast in confirms, never sent by us). */
-const ACTION_REVOLVER_EXPLODE = "REVOLVER_EXPLODE";
-const ACTION_OBLITERREUR_STOP = "OBLITERREUR_STOP";
 
-/** Tracer visual lifetime (seconds). */
-const TRACER_LIFE = 0.12;
-
-interface RemotePlasma {
-  beam: PlasmaBeam;
-  loop: LoopHandle | null;
-  active: boolean;
-}
-
-/** One remote poison spray (pure particle stream from the in-hand weapon). */
-interface RemotePoison {
-  active: boolean;
-  emitAccum: number;
-}
-
-interface RemoteProjectile {
-  group: THREE.Group;
-  vel: THREE.Vector3;
-  age: number;
-}
-
-/** One remote Bass Blaster note in flight (visual sim + music grain). */
-interface RemoteNote {
-  root: THREE.Group;
-  glyph: THREE.Sprite;
-  halo: THREE.Sprite;
-  vel: THREE.Vector3;
-  prev: THREE.Vector3;
-  life: number;
-  note: NoteDef;
-  /** Positional music grain riding on this note (position per frame). */
-  grain: LoopHandle | null;
-  grainTimer: number;
-  trailAccum: number;
-  pulsePhase: number;
-}
-
-interface RemoteOblit {
-  /** Anchor meshes by server index (0 = A, 1 = B). */
-  anchors: (THREE.Group | null)[];
-  /** The REAL vortex beam VFX — exact same shaders as the local weapon. */
-  beam: ObliterreurBeamVFX | null;
-  /** Remaining ACTIVE time; ≤ 0 while imploding / off. */
-  beamTimer: number;
-  /** Sampled centerline of the active beam (particle emission spine). */
-  samples: THREE.Vector3[];
-  particleAccum: number;
-  sparkAccum: number;
-}
 
 /** One remote MOLE STRIKE burrow in progress (dirt trail follower). */
 interface RemoteBurrow {
   trailAccum: number;
   /** Local-elapsed safety expiry (the emerge event normally ends it). */
   expiresAt: number;
-}
-
-interface Tracer {
-  line: THREE.Line;
-  mat: THREE.LineBasicMaterial;
-  age: number;
 }
 
 /**
@@ -140,37 +69,18 @@ interface Burst {
 
 /**
  * Replays SERVER-CONFIRMED weapon actions of REMOTE players as pure
- * visuals + spatial audio (Phase 5): plasma beams that follow the
- * interpolated aim, revolver tracers / thrown projectiles / explosions,
- * melee swings, obliterreur anchors + vortex tube.
+ * visuals + spatial audio (Phase 5): melee swings / slam rings, Hex
+ * Sniper tongues, mole strike dirt, and the per-weapon routing of the
+ * projectile weapons whose shared pools live in the Game.
  *
  * NEVER runs for the LOCAL player (local prediction already renders those)
  * and NEVER computes damage — the server owns every gameplay result.
  */
 export class RemoteCombatVFXController {
-  private readonly plasma = new Map<string, RemotePlasma>();
-  private readonly poisons = new Map<string, RemotePoison>();
-  private readonly projectiles = new Map<string, RemoteProjectile>();
-  private readonly oblits = new Map<string, RemoteOblit>();
   private readonly burrows = new Map<string, RemoteBurrow>();
   /** Remote HexSniper tongues by shooter id (one per player at a time). */
   private readonly tongues = new Map<string, RemoteTongue>();
-  private readonly tracers: Tracer[] = [];
   private readonly bursts: Burst[] = [];
-  /** In-flight remote Bass Blaster notes (short-lived, flat list). */
-  private readonly notes: RemoteNote[] = [];
-
-  /** Shared per-note sprite materials (created lazily on the first shot). */
-  private noteGlyphMats: THREE.SpriteMaterial[] | null = null;
-  private noteHaloMats: THREE.SpriteMaterial[] | null = null;
-  private readonly noteWhite = new THREE.Color(0xffffff);
-  /** Remote poison spray droplet color (mirrors PoisonConfig.poisonColor). */
-  private readonly poisonGreen = new THREE.Color(0x39ff14);
-
-  /** Static world meshes the remote plasma beam visually stops on. */
-  private raycastTargets: THREE.Object3D[] = [];
-  private readonly raycaster = new THREE.Raycaster();
-
   /** Shared particle system (suction/spark parity with the local beam). */
   private particles: ParticleSystem | null = null;
   /** LOCAL player capsule center (a remote tongue can be reeling US in). */
@@ -194,31 +104,12 @@ export class RemoteCombatVFXController {
   private elapsed = 0;
   private disposed = false;
 
-  /** One-frame shader/pipeline warm-up (removed shortly after start). */
-  private warmupBeam: PlasmaBeam | null = null;
-  private warmupOblit: ObliterreurBeamVFX | null = null;
-  private warmupTimer = 0;
-
   // Scratch
   private readonly poseScratch = { pos: new THREE.Vector3(), yaw: 0, pitch: 0 };
   private readonly originScratch = new THREE.Vector3();
-  private readonly dirScratch = new THREE.Vector3();
-  private readonly endScratch = new THREE.Vector3();
   private readonly vecScratch = new THREE.Vector3();
   private readonly particlePosScratch = new THREE.Vector3();
   private readonly particleVelScratch = new THREE.Vector3();
-
-  // Obliterreur suction/spark palettes (identical to the local weapon).
-  private readonly oblitParticleColors = [
-    new THREE.Color(0xa855f7),
-    new THREE.Color(0x7c3aed),
-    new THREE.Color(0x4c1d95),
-  ];
-  private readonly oblitSparkColors = [
-    new THREE.Color(0xe9d5ff),
-    new THREE.Color(0xc084fc),
-    new THREE.Color(0xa855f7),
-  ];
 
   // Mole strike palette (identical to the local MoleStrikeVFX).
   private readonly moleDirt = new THREE.Color(mole.moleStrikeDirtColor);
@@ -232,17 +123,6 @@ export class RemoteCombatVFXController {
     private readonly remotes: RemotePlayerManager,
     private readonly getLocalId: () => string | null,
   ) {
-    // Remote shooters may use any Bass Blaster track — decode the whole
-    // (tiny) music library up front so the FIRST remote note already sings.
-    for (const t of MUSIC_TRACKS) void audio.load(t.audioKey, t.url);
-    // Only hits[0] is ever read → let three-mesh-bvh BVH meshes (the map)
-    // return their nearest hit only instead of every triangle intersection.
-    this.raycaster.firstHitOnly = true;
-  }
-
-  /** World meshes remote plasma beams get visually blocked by (optional). */
-  setRaycastTargets(targets: THREE.Object3D[]): void {
-    this.raycastTargets = targets;
   }
 
   /** Shared ParticleSystem: remote beams emit the same suction/sparks. */
@@ -262,62 +142,11 @@ export class RemoteCombatVFXController {
    * (a visible one-time hitch).
    */
   warmUp(): void {
-    if (this.disposed || this.warmupBeam) return;
+    if (this.disposed) return;
     const far = { x: 0, y: -400, z: 0 };
-
-    // Plasma beam (core + halo additive cylinders).
-    this.warmupBeam = new PlasmaBeam(this.scene);
-    this.warmupBeam.setActive(true);
-    this.warmupBeam.update(
-      new THREE.Vector3(far.x, far.y, far.z),
-      new THREE.Vector3(far.x + 2, far.y, far.z),
-      0,
-    );
-    this.warmupTimer = 0.5;
-
-    // Obliterreur vortex shells (3 custom ShaderMaterials): compile them
-    // now so a remote OBLITERREUR_FIRE never hitches mid-fight.
-    this.warmupOblit = new ObliterreurBeamVFX(this.scene);
-    this.warmupOblit.activate(
-      new THREE.CubicBezierCurve3(
-        new THREE.Vector3(far.x, far.y, far.z),
-        new THREE.Vector3(far.x + 1, far.y + 1, far.z),
-        new THREE.Vector3(far.x + 2, far.y + 1, far.z),
-        new THREE.Vector3(far.x + 3, far.y, far.z),
-      ),
-      3,
-    );
-
-    // Additive transparent MeshBasicMaterial family (bursts / rings /
-    // anchors / tube glow all share this program).
+    // Additive transparent MeshBasicMaterial family (bursts / rings).
     this.spawnBurst(new THREE.SphereGeometry(0.5, 8, 6), 0xc084fc, far, 0.5, 1, 0.4);
     this.spawnGroundRing(far, 2, 0.4, 0xa855f7);
-
-    // Opaque MeshBasicMaterial (obliterreur tube core).
-    const coreMat = new THREE.MeshBasicMaterial({ color: 0x0a0312 });
-    const core = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6), coreMat);
-    core.userData.noOutline = true; // opaque VFX: never cel-outlined (Givre)
-    core.position.set(far.x, far.y, far.z);
-    core.frustumCulled = false;
-    this.scene.add(core);
-    this.bursts.push({ mesh: core, mat: coreMat, age: 0, life: 0.4, fromScale: 1, toScale: 1 });
-
-    // Additive LineBasicMaterial (revolver tracer).
-    const lineGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(far.x, far.y, far.z),
-      new THREE.Vector3(far.x + 2, far.y, far.z),
-    ]);
-    const lineMat = new THREE.LineBasicMaterial({
-      color: 0xffe2a8,
-      transparent: true,
-      opacity: 1,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    const line = new THREE.Line(lineGeo, lineMat);
-    line.frustumCulled = false;
-    this.scene.add(line);
-    this.tracers.push({ line, mat: lineMat, age: 0 });
   }
 
   /**
@@ -328,13 +157,7 @@ export class RemoteCombatVFXController {
    * light count never changes, warm-up or not.
    */
   finishWarmUp(): void {
-    if (!this.warmupBeam) return;
-    this.warmupTimer = 0;
-    this.warmupBeam.setActive(false);
-    this.scene.remove(this.warmupBeam.group);
-    this.warmupBeam = null;
-    this.warmupOblit?.dispose();
-    this.warmupOblit = null;
+    // Nothing transient to drop: the bursts expire on their own.
   }
 
   // ------------------------------------------------------------------
@@ -347,35 +170,6 @@ export class RemoteCombatVFXController {
     if (ev.playerId === this.getLocalId()) return;
 
     switch (ev.action) {
-      case WeaponActionType.PLASMA_START:
-        this.startPlasma(ev);
-        return;
-      case WeaponActionType.PLASMA_STOP:
-        this.stopPlasma(ev.playerId, { x: ev.ox, y: ev.oy, z: ev.oz });
-        return;
-      case WeaponActionType.POISON_START: {
-        let ps = this.poisons.get(ev.playerId);
-        if (!ps) {
-          ps = { active: false, emitAccum: 0 };
-          this.poisons.set(ev.playerId, ps);
-        }
-        ps.active = true;
-        return;
-      }
-      case WeaponActionType.POISON_STOP: {
-        const ps = this.poisons.get(ev.playerId);
-        if (ps) ps.active = false;
-        return;
-      }
-      case WeaponActionType.REVOLVER_FIRE:
-        this.revolverFire(ev);
-        return;
-      case WeaponActionType.REVOLVER_THROW:
-        this.revolverThrow(ev);
-        return;
-      case ACTION_REVOLVER_EXPLODE:
-        this.revolverExplode(ev);
-        return;
       case WeaponActionType.HAMMER_SWEEP:
         // Brick Maul WHIRLWIND: TP clip resumed at the server-start offset
         // (late / duplicated confirms land on the right turn).
@@ -444,19 +238,6 @@ export class RemoteCombatVFXController {
         return;
       case WeaponActionType.SPEAR_RUSH_STOP:
         return; // movement itself already reads as the feedback
-      case WeaponActionType.OBLITERREUR_PLACE:
-        this.obliterreurPlace(ev);
-        return;
-      case WeaponActionType.OBLITERREUR_FIRE:
-        this.obliterreurFire(ev);
-        return;
-      case WeaponActionType.BASS_FIRE:
-        this.bassFire(ev);
-        return;
-      case ACTION_OBLITERREUR_STOP:
-        // RMB cancel on the shooter's side → fast implode (local parity).
-        this.stopOblitBeam(ev.playerId, true);
-        return;
       case WeaponActionType.MOLE_BURROW:
         this.moleBurrow(ev);
         return;
@@ -511,9 +292,6 @@ export class RemoteCombatVFXController {
 
   /** A player died: no ghost beams / anchors / dirt trails from corpses. */
   onPlayerDied(playerId: string): void {
-    this.stopPlasma(playerId, null);
-    const ps = this.poisons.get(playerId);
-    if (ps) ps.active = false;
     // A dead shooter's tongue vanishes with the creature; a dead VICTIM
     // simply stops being followed (the server retracts the shooter's
     // tongue through HEX_PULL_END right after).
@@ -524,45 +302,13 @@ export class RemoteCombatVFXController {
     for (const t of this.tongues.values()) {
       if (t.victimId === playerId) t.victimId = null;
     }
-    // The server clears its anchors on death without a broadcast — mirror.
-    this.stopOblitBeam(playerId, true);
-    this.clearOblitAnchors(playerId);
     this.burrows.delete(playerId);
-    // NOTE: thrown revolver projectiles legitimately survive their owner.
-  }
-
-  /**
-   * SYNCED equipped weapon changed: obliterreur anchors never survive a
-   * weapon swap (mirrors the local obliterreur.reset() + the server).
-   */
-  syncEquippedWeapons(players: ReadonlyArray<{ id: string; weapon: string }>): void {
-    for (const p of players) {
-      if (p.weapon === NetworkWeaponId.OBLITERREUR) continue;
-      const o = this.oblits.get(p.id);
-      if (o && (o.anchors[0] || o.anchors[1])) this.clearOblitAnchors(p.id);
-    }
   }
 
   /** Drop every per-player VFX whose owner left the room. */
   prune(validIds: ReadonlySet<string>): void {
-    for (const id of [...this.plasma.keys()]) {
-      if (!validIds.has(id)) this.removePlasma(id);
-    }
-    for (const id of [...this.projectiles.keys()]) {
-      if (!validIds.has(id)) this.removeProjectile(id);
-    }
-    for (const id of [...this.oblits.keys()]) {
-      if (!validIds.has(id)) {
-        this.destroyOblitBeam(id);
-        this.clearOblitAnchors(id);
-        this.oblits.delete(id);
-      }
-    }
     for (const id of [...this.burrows.keys()]) {
       if (!validIds.has(id)) this.burrows.delete(id);
-    }
-    for (const id of [...this.poisons.keys()]) {
-      if (!validIds.has(id)) this.poisons.delete(id);
     }
     for (const id of [...this.tongues.keys()]) {
       if (!validIds.has(id)) this.tongues.delete(id); // avatar (and tether) already disposed
@@ -577,130 +323,8 @@ export class RemoteCombatVFXController {
     if (this.disposed) return;
     this.elapsed += dt;
 
-    // Warm-up VFX: rendered for a few frames, then removed for good.
-    if (this.warmupBeam) {
-      this.warmupTimer -= dt;
-      this.warmupOblit?.update(dt, this.elapsed);
-      if (this.warmupTimer <= 0) {
-        this.warmupBeam.setActive(false);
-        this.scene.remove(this.warmupBeam.group);
-        this.warmupBeam = null;
-        this.warmupOblit?.dispose();
-        this.warmupOblit = null;
-      }
-    }
-
-    // ---- Plasma beams follow the INTERPOLATED remote aim ----
-    for (const [id, p] of this.plasma) {
-      if (!p.active) continue;
-      const pose = this.poseScratch;
-      if (!this.remotes.getPose(id, pose)) {
-        p.beam.setActive(false);
-        continue;
-      }
-      p.beam.setActive(true);
-
-      // Beam start: real in-hand weapon if ready, else the eye position.
-      if (!this.remotes.getMuzzleWorldPosition(id, this.originScratch)) {
-        this.originScratch.copy(pose.pos);
-        this.originScratch.y += PLAYER_EYE_OFFSET;
-      }
-      aimDirection(pose.yaw, pose.pitch, this.dirScratch);
-
-      // Aim ray anchored at the EYE (matches the server); the visual beam
-      // then stretches from the muzzle to that end point.
-      this.vecScratch.copy(pose.pos);
-      this.vecScratch.y += PLAYER_EYE_OFFSET;
-      let dist: number = W.plasma.range;
-      if (this.raycastTargets.length > 0) {
-        this.raycaster.set(this.vecScratch, this.dirScratch);
-        this.raycaster.far = W.plasma.range;
-        const hit = this.raycaster.intersectObjects(this.raycastTargets, true)[0];
-        if (hit) dist = hit.distance;
-      }
-      this.endScratch.copy(this.vecScratch).addScaledVector(this.dirScratch, dist);
-      p.beam.update(this.originScratch, this.endScratch, this.elapsed);
-
-      // Spatial loop follows the muzzle; retry if the context was locked.
-      if (!p.loop || p.loop.stopped) {
-        p.loop = audio.loop("plasma_loop", {
-          bus: "weapons",
-          volume: 0.55,
-          spatial: true,
-          refDistance: 6,
-          maxDistance: 90,
-        });
-      }
-      p.loop?.setPosition(this.originScratch.x, this.originScratch.y, this.originScratch.z);
-    }
-
-    // ---- Poison sprays: green droplet cone from the in-hand weapon ----
-    for (const [id, ps] of this.poisons) {
-      if (!ps.active || !this.particles) continue;
-      const pose = this.poseScratch;
-      if (!this.remotes.getPose(id, pose)) continue;
-      if (!this.remotes.getMuzzleWorldPosition(id, this.originScratch)) {
-        this.originScratch.copy(pose.pos);
-        this.originScratch.y += PLAYER_EYE_OFFSET;
-      }
-      aimDirection(pose.yaw, pose.pitch, this.dirScratch);
-      ps.emitAccum += 45 * dt; // lighter than the local stream (perf)
-      while (ps.emitAccum >= 1) {
-        ps.emitAccum -= 1;
-        this.particleVelScratch
-          .set(
-            (Math.random() - 0.5) * 0.2,
-            (Math.random() - 0.5) * 0.2,
-            (Math.random() - 0.5) * 0.2,
-          )
-          .add(this.dirScratch)
-          .normalize()
-          .multiplyScalar(14 + Math.random() * 6);
-        this.particles.spawn(
-          this.originScratch,
-          this.particleVelScratch,
-          0.4,
-          this.poisonGreen,
-          4,
-          1.5,
-        );
-      }
-    }
-
     // ---- HEX SNIPER remote tongues (replay of the confirmed sequence) ----
     this.updateTongues(dt);
-
-    // ---- Thrown revolver projectiles (client-side visual sim) ----
-    for (const [id, proj] of this.projectiles) {
-      proj.age += dt;
-      // Safety cap: the server explosion event normally removes it first.
-      if (proj.age > W.revolver.projectileMaxLifetime + 1) {
-        this.removeProjectile(id);
-        continue;
-      }
-      proj.vel.y -= W.revolver.throwGravity * dt;
-      proj.group.position.addScaledVector(proj.vel, dt);
-      proj.group.rotation.x += dt * 9; // fast end-over-end spin
-      proj.group.rotation.z += dt * 4;
-    }
-
-    // ---- Bass Blaster notes: straight flight + music grain + trail ----
-    this.updateNotes(dt);
-
-    // ---- Tracers fade out ----
-    for (let i = this.tracers.length - 1; i >= 0; i--) {
-      const t = this.tracers[i];
-      t.age += dt;
-      const k = 1 - t.age / TRACER_LIFE;
-      if (k <= 0) {
-        this.scene.remove(t.line);
-        t.line.geometry.dispose();
-        t.mat.dispose();
-        this.tracers.splice(i, 1);
-      } else {
-        t.mat.opacity = k;
-      }
-    }
 
     // ---- Generic bursts (explosion flash / slam ring) ----
     for (let i = this.bursts.length - 1; i >= 0; i--) {
@@ -734,405 +358,18 @@ export class RemoteCombatVFXController {
         this.moleTrailPuff(this.vecScratch);
       }
     }
-
-    // ---- Obliterreur: anchor pulse + REAL vortex beam lifecycle ----
-    for (const o of this.oblits.values()) {
-      const pulse = 1 + 0.14 * Math.sin(this.elapsed * 6);
-      for (const anchor of o.anchors) anchor?.scale.setScalar(pulse);
-      if (o.beam) {
-        if (o.beamTimer > 0) {
-          o.beamTimer -= dt;
-          if (o.beamTimer <= 0) {
-            // Natural expiry → slow implode (same as the local weapon).
-            o.beam.deactivate(false);
-          } else {
-            this.emitOblitParticles(o, dt);
-          }
-        }
-        // Drives appear / active flicker / implode + endpoint lights.
-        o.beam.update(dt, this.elapsed);
-      }
-    }
   }
 
   dispose(): void {
     this.disposed = true;
-    if (this.warmupBeam) {
-      this.scene.remove(this.warmupBeam.group);
-      this.warmupBeam = null;
-    }
-    for (const id of [...this.plasma.keys()]) this.removePlasma(id);
-    for (const id of [...this.projectiles.keys()]) this.removeProjectile(id);
-    for (const id of [...this.oblits.keys()]) {
-      this.destroyOblitBeam(id);
-      this.clearOblitAnchors(id);
-    }
-    this.oblits.clear();
-    for (const t of this.tracers) {
-      this.scene.remove(t.line);
-      t.line.geometry.dispose();
-      t.mat.dispose();
-    }
-    this.tracers.length = 0;
     for (const b of this.bursts) {
       this.scene.remove(b.mesh);
       b.mesh.geometry.dispose();
       b.mat.dispose();
     }
     this.bursts.length = 0;
-    for (const n of this.notes) {
-      n.grain?.stop(0.05);
-      this.scene.remove(n.root);
-    }
-    this.notes.length = 0;
-    // Note sprite materials are shared — dispose once with the controller.
-    if (this.noteGlyphMats) for (const m of this.noteGlyphMats) m.dispose();
-    if (this.noteHaloMats) for (const m of this.noteHaloMats) m.dispose();
-    this.noteGlyphMats = null;
-    this.noteHaloMats = null;
-  }
-
-  // ------------------------------------------------------------------
-  // Plasma
-  // ------------------------------------------------------------------
-
-  private startPlasma(ev: WeaponActionConfirmedEvent): void {
-    let p = this.plasma.get(ev.playerId);
-    if (!p) {
-      p = { beam: new PlasmaBeam(this.scene), loop: null, active: false };
-      this.plasma.set(ev.playerId, p);
-    }
-    p.active = true;
-    p.beam.setActive(true);
-    audio.playAt("plasma_start", { x: ev.ox, y: ev.oy, z: ev.oz }, { bus: "weapons", volume: 0.7 });
-  }
-
-  private stopPlasma(playerId: string, at: { x: number; y: number; z: number } | null): void {
-    const p = this.plasma.get(playerId);
-    if (!p || !p.active) return;
-    p.active = false;
-    p.beam.setActive(false);
-    p.loop?.stop();
-    p.loop = null;
-    if (at) audio.playAt("plasma_stop", at, { bus: "weapons", volume: 0.6 });
-  }
-
-  private removePlasma(playerId: string): void {
-    const p = this.plasma.get(playerId);
-    if (!p) return;
-    p.loop?.stop(0.05);
-    p.beam.setActive(false);
-    this.scene.remove(p.beam.group);
-    this.plasma.delete(playerId);
-  }
-
-  // ------------------------------------------------------------------
-  // Revolver
-  // ------------------------------------------------------------------
-
-  private revolverFire(ev: WeaponActionConfirmedEvent): void {
-    // Tracer start: the real in-hand revolver if ready, else the eye.
-    if (!this.remotes.getMuzzleWorldPosition(ev.playerId, this.originScratch)) {
-      this.originScratch.set(ev.ox, ev.oy, ev.oz);
-    }
-    const end =
-      typeof ev.hx === "number"
-        ? this.endScratch.set(ev.hx, ev.hy ?? 0, ev.hz ?? 0)
-        : this.endScratch
-            .set(ev.dx, ev.dy, ev.dz)
-            .multiplyScalar(W.revolver.range)
-            .add(this.originScratch);
-
-    const geo = new THREE.BufferGeometry().setFromPoints([
-      this.originScratch.clone(),
-      end.clone(),
-    ]);
-    const mat = new THREE.LineBasicMaterial({
-      color: 0xffe2a8,
-      transparent: true,
-      opacity: 1,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    const line = new THREE.Line(geo, mat);
-    line.frustumCulled = false;
-    this.scene.add(line);
-    this.tracers.push({ line, mat, age: 0 });
-
-    audio.playAt("revolver_shot", { x: ev.ox, y: ev.oy, z: ev.oz }, {
-      bus: "weapons",
-      volume: 0.85,
-      rateVar: 0.04,
-    });
-  }
-
-  private revolverThrow(ev: WeaponActionConfirmedEvent): void {
-    this.removeProjectile(ev.playerId); // server allows one at a time
-    const group = new THREE.Group();
-    group.position.set(ev.ox, ev.oy, ev.oz);
-    this.scene.add(group);
-    const proj: RemoteProjectile = {
-      group,
-      vel: new THREE.Vector3(ev.dx, ev.dy, ev.dz).multiplyScalar(W.revolver.throwSpeed),
-      age: 0,
-    };
-    this.projectiles.set(ev.playerId, proj);
-
-    // Real revolver GLB (shared cached template — never a box).
-    void loadRemoteWeaponTemplate(NetworkWeaponId.REVOLVER).then((template) => {
-      if (this.disposed || this.projectiles.get(ev.playerId) !== proj) return;
-      group.add(template.clone(true));
-    });
-
-    audio.playAt("phase_warp", { x: ev.ox, y: ev.oy, z: ev.oz }, {
-      bus: "weapons",
-      volume: 0.4,
-      rate: 1.25,
-    });
-  }
-
-  private revolverExplode(ev: WeaponActionConfirmedEvent): void {
-    this.removeProjectile(ev.playerId);
-    const at = { x: ev.ox, y: ev.oy, z: ev.oz };
-    // Expanding additive flash sphere up to the real AoE radius.
-    this.spawnBurst(
-      new THREE.SphereGeometry(1, 18, 14),
-      0xc084fc,
-      at,
-      0.4,
-      W.revolver.explosionRadius,
-      0.38,
-    );
-    this.spawnGroundRing(at, W.revolver.explosionRadius * 1.15, 0.42, 0xa855f7);
-    audio.playAt("hammer_slam_impact", at, { bus: "weapons", volume: 0.95 });
-    audio.playAt("hammer_slam_sub", at, { bus: "weapons", volume: 0.8, rate: 1.1 });
-  }
-
-  private removeProjectile(playerId: string): void {
-    const proj = this.projectiles.get(playerId);
-    if (!proj) return;
-    this.scene.remove(proj.group);
-    this.projectiles.delete(playerId);
-  }
-
-  // ------------------------------------------------------------------
-  // Bass Blaster (musical SMG) — remote notes + spatialized music grains
-  // ------------------------------------------------------------------
-
-  /** Lazily build the 8 glyph + 8 halo sprite materials (shared). */
-  private ensureNoteMaterials(): void {
-    if (this.noteGlyphMats && this.noteHaloMats) return;
-    this.noteGlyphMats = [];
-    this.noteHaloMats = [];
-    for (const note of NOTE_SEQUENCE) {
-      this.noteGlyphMats.push(
-        new THREE.SpriteMaterial({
-          map: getNoteGlyphTexture(note.glyph),
-          color: note.bright,
-          transparent: true,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        }),
-      );
-      this.noteHaloMats.push(
-        new THREE.SpriteMaterial({
-          map: getNoteHaloTexture(),
-          color: note.color,
-          transparent: true,
-          opacity: 0.8,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        }),
-      );
-    }
-  }
-
-  /**
-   * One confirmed remote Bass Blaster shot: spawn the SAME glowing note
-   * sprite as the local weapon and play the SAME music fragment (track /
-   * offset echoed by the server in px/py) as a tracked spatial grain that
-   * RIDES the flying note — listeners hear it louder/softer by distance.
-   */
-  private bassFire(ev: WeaponActionConfirmedEvent): void {
-    this.ensureNoteMaterials();
-
-    // Note start: the real in-hand blaster if ready, else the eye origin.
-    if (!this.remotes.getMuzzleWorldPosition(ev.playerId, this.originScratch)) {
-      this.originScratch.set(ev.ox, ev.oy, ev.oz);
-    }
-    this.dirScratch.set(ev.dx, ev.dy, ev.dz);
-    if (this.dirScratch.lengthSq() < 1e-6) this.dirScratch.set(0, 0, -1);
-    this.dirScratch.normalize();
-
-    const noteIndex = Math.max(0, Math.round(ev.pz ?? 0)) % NOTE_SEQUENCE.length;
-    const note = NOTE_SEQUENCE[noteIndex];
-
-    const root = new THREE.Group();
-    root.position.copy(this.originScratch);
-    const halo = new THREE.Sprite(this.noteHaloMats![noteIndex]);
-    halo.scale.setScalar(bb.noteHaloScale);
-    halo.renderOrder = 7;
-    root.add(halo);
-    const glyph = new THREE.Sprite(this.noteGlyphMats![noteIndex]);
-    glyph.scale.setScalar(bb.noteGlyphScale);
-    glyph.renderOrder = 8;
-    root.add(glyph);
-    this.scene.add(root);
-
-    // The exact music fragment (track index + playhead offset) rides the
-    // note — same spatialization values as the shooter's local weapon.
-    let grain: LoopHandle | null = null;
-    const trackIndex = Math.max(0, Math.round(ev.px ?? 0));
-    const track = MUSIC_TRACKS[trackIndex % MUSIC_TRACKS.length];
-    const offset = Math.max(0, ev.py ?? 0);
-    if (track) {
-      grain = audio.playTracked(track.audioKey, this.originScratch, {
-        bus: "weapons",
-        volume: bb.fragmentVolume,
-        offset,
-        duration: bb.fragmentDuration,
-        refDistance: bb.fragmentRefDistance,
-        maxDistance: bb.fragmentMaxDistance,
-        rolloff: bb.fragmentRolloff,
-        maxInstances: 8,
-      });
-    }
-
-    this.notes.push({
-      root,
-      glyph,
-      halo,
-      vel: this.dirScratch.clone().multiplyScalar(bb.projectileSpeed),
-      prev: this.originScratch.clone(),
-      life: bb.projectileLifetime,
-      note,
-      grain,
-      grainTimer: grain ? bb.fragmentDuration + 0.05 : 0,
-      trailAccum: 0,
-      pulsePhase: Math.random() * Math.PI * 2,
-    });
-
-    // Muzzle "ding" layered under the grain (spatial mirror of the local
-    // GameAudio.bassBlasterShot pitched blip).
-    audio.playAt("coin_pickup", this.originScratch, {
-      bus: "weapons",
-      volume: 0.15,
-      volumeVar: 0.03,
-      rate: 1.1 * note.pitch,
-      throttleMs: 30,
-      maxInstances: 6,
-      refDistance: 7,
-      maxDistance: 60,
-    });
-  }
-
-  /** Per-frame remote note sim: pulse, grain follow, trail, CCD walls. */
-  private updateNotes(dt: number): void {
-    for (let i = this.notes.length - 1; i >= 0; i--) {
-      const n = this.notes[i];
-
-      // Integrate (straight energy flight — no gravity on music).
-      n.prev.copy(n.root.position);
-      n.root.position.addScaledVector(n.vel, dt);
-
-      // Musical pulse: the note "beats" while flying (local parity).
-      n.pulsePhase += dt * 14;
-      const pulse = 1 + 0.16 * Math.sin(n.pulsePhase);
-      n.glyph.scale.setScalar(bb.noteGlyphScale * pulse);
-      n.halo.scale.setScalar(bb.noteHaloScale * (2 - pulse) * 0.75);
-
-      // The music grain rides on the note.
-      if (n.grain) {
-        n.grain.setPosition(n.root.position.x, n.root.position.y, n.root.position.z);
-        n.grainTimer -= dt;
-        if (n.grainTimer <= 0) n.grain = null; // grain finished — release
-      }
-
-      // Colored trail (same budget as the local projectile system).
-      if (this.particles) {
-        n.trailAccum += bb.trailParticlesPerSecond * dt;
-        while (n.trailAccum >= 1) {
-          n.trailAccum -= 1;
-          this.vecScratch.set(
-            (Math.random() - 0.5) * 1.6,
-            (Math.random() - 0.5) * 1.6 + 0.4,
-            (Math.random() - 0.5) * 1.6,
-          );
-          this.particles.spawn(
-            n.root.position,
-            this.vecScratch,
-            bb.trailParticleLife * (0.7 + Math.random() * 0.6),
-            n.note.color,
-            0,
-            1.2,
-          );
-        }
-      }
-
-      // CCD against the static world: the note visually pops on walls
-      // (players are the SERVER's job — damage is never computed here).
-      this.endScratch.subVectors(n.root.position, n.prev);
-      const dist = this.endScratch.length();
-      if (dist > 1e-6 && this.raycastTargets.length > 0) {
-        this.endScratch.multiplyScalar(1 / dist);
-        this.raycaster.set(n.prev, this.endScratch);
-        this.raycaster.far = dist;
-        const hit = this.raycaster.intersectObjects(this.raycastTargets, true)[0];
-        if (hit) {
-          this.noteImpact(n, hit.point, hit.face?.normal ?? null, hit.object);
-          this.removeNote(i);
-          continue;
-        }
-      }
-
-      n.life -= dt;
-      if (n.life <= 0) {
-        // Fizzle at max range: tiny sparkle, no impact (local parity).
-        this.particles?.burst(n.root.position, 4, 1.5, 0.25, n.note.color, 0);
-        this.removeNote(i);
-      }
-    }
-  }
-
-  /** Wall impact: colored burst + ring + spatial musical "plink". */
-  private noteImpact(
-    n: RemoteNote,
-    point: THREE.Vector3,
-    localNormal: THREE.Vector3 | null,
-    object: THREE.Object3D,
-  ): void {
-    if (this.particles) {
-      this.particles.burst(point, bb.impactBurstCount, 4, 0.35, n.note.color, 2);
-      this.particles.burst(point, 5, 2.5, 0.22, n.note.bright, 0);
-      this.particles.burst(point, 3, 1.5, 0.15, this.noteWhite, 0);
-      // World-space surface normal for the impact ring.
-      this.vecScratch.set(0, 1, 0);
-      if (localNormal) {
-        this.vecScratch
-          .copy(localNormal)
-          .transformDirection(object.matrixWorld)
-          .normalize();
-      }
-      this.particles.ring(point, this.vecScratch, bb.impactRingCount, 0.16, 2.6, 0.3, n.note.color);
-    }
-    // Spatial mirror of GameAudio.bassBlasterNoteImpact.
-    audio.playAt("coin_pickup", point, {
-      bus: "impacts",
-      volume: 0.13,
-      rate: 0.85 * n.note.pitch,
-      throttleMs: 70,
-      maxInstances: 4,
-      refDistance: 7,
-      maxDistance: 60,
-    });
-  }
-
-  private removeNote(index: number): void {
-    const n = this.notes[index];
-    n.grain?.stop(0.04); // the grain dies with the note (short fade)
-    // Sprites use SHARED materials/textures — nothing per-note to dispose.
-    this.scene.remove(n.root);
-    this.notes.splice(index, 1);
+    this.tongues.clear();
+    this.burrows.clear();
   }
 
   // ------------------------------------------------------------------
@@ -1178,185 +415,6 @@ export class RemoteCombatVFXController {
     this.spawnGroundRing(at, W.hammer.slamRadius, 0.5, 0xd8b4fe);
     audio.playAt("hammer_slam_impact", at, { bus: "weapons", volume: 1 });
     audio.playAt("hammer_slam_sub", at, { bus: "weapons", volume: 0.85 });
-  }
-
-  // ------------------------------------------------------------------
-  // Obliterreur
-  // ------------------------------------------------------------------
-
-  private oblitOf(playerId: string): RemoteOblit {
-    let o = this.oblits.get(playerId);
-    if (!o) {
-      o = {
-        anchors: [null, null],
-        beam: null,
-        beamTimer: 0,
-        samples: [],
-        particleAccum: 0,
-        sparkAccum: 0,
-      };
-      this.oblits.set(playerId, o);
-    }
-    return o;
-  }
-
-  private obliterreurPlace(ev: WeaponActionConfirmedEvent): void {
-    if (typeof ev.hx !== "number") return;
-    const o = this.oblitOf(ev.playerId);
-    const index = ev.px === 1 ? 1 : 0;
-
-    // EXACT local-weapon semantics: placing into a slot replaces ONLY that
-    // slot — the other anchor always survives (any active beam was already
-    // cancelled by an OBLITERREUR_STOP broadcast).
-    const anchor = this.makeOblitAnchor();
-    anchor.position.set(ev.hx, ev.hy ?? 0, ev.hz ?? 0);
-    this.scene.add(anchor);
-    this.disposeOblitAnchor(o.anchors[index]);
-    o.anchors[index] = anchor;
-
-    audio.playAt("phase_warp", anchor.position, { bus: "weapons", volume: 0.5, rate: 1.45 });
-  }
-
-  private obliterreurFire(ev: WeaponActionConfirmedEvent): void {
-    if (typeof ev.px !== "number") return;
-    const o = this.oblitOf(ev.playerId);
-
-    const a = new THREE.Vector3(ev.ox, ev.oy, ev.oz);
-    const b = new THREE.Vector3(ev.px, ev.py ?? 0, ev.pz ?? 0);
-    // EXACT same curve as the server damage volume (shared constants):
-    // a quadratic bezier with an upward mid handle, expressed here as the
-    // EQUIVALENT cubic (C1 = A + ⅔(M−A), C2 = B + ⅔(M−B)) so the REAL
-    // ObliterreurBeamVFX — identical shaders to the local weapon — can
-    // build its tube shells along it.
-    const chord = a.distanceTo(b);
-    const handle = Math.min(
-      Math.max(chord * W.obliterreur.curveStrength, W.obliterreur.curveHandleMin),
-      W.obliterreur.curveHandleMax,
-    );
-    const mid = a.clone().add(b).multiplyScalar(0.5);
-    mid.y += handle;
-    const c1 = new THREE.Vector3().lerpVectors(a, mid, 2 / 3);
-    const c2 = new THREE.Vector3().lerpVectors(b, mid, 2 / 3);
-    const curve = new THREE.CubicBezierCurve3(a, c1, c2, b);
-
-    if (!o.beam) o.beam = new ObliterreurBeamVFX(this.scene);
-    o.beam.activate(curve, curve.getLength());
-    o.beamTimer = W.obliterreur.beamDuration;
-    o.particleAccum = 0;
-    o.sparkAccum = 0;
-
-    // Centerline samples: suction/spark particle spine (local parity).
-    o.samples.length = 0;
-    const n = W.obliterreur.curveSampleCount;
-    for (let i = 0; i <= n; i++) {
-      o.samples.push(curve.getPoint(i / n));
-    }
-
-    audio.playAt("hammer_slam_sub", mid, { bus: "weapons", volume: 0.95, rate: 0.7 });
-    audio.playAt("phase_warp", mid, { bus: "weapons", volume: 0.55, rate: 0.8 });
-  }
-
-  /** Stop an active remote vortex with the weapon's real implosion. */
-  private stopOblitBeam(playerId: string, fast: boolean): void {
-    const o = this.oblits.get(playerId);
-    if (!o?.beam) return;
-    o.beam.deactivate(fast);
-    o.beamTimer = 0;
-  }
-
-  /** Full teardown of a remote vortex (owner left / session ended). */
-  private destroyOblitBeam(playerId: string): void {
-    const o = this.oblits.get(playerId);
-    if (!o?.beam) return;
-    o.beam.dispose();
-    o.beam = null;
-    o.beamTimer = 0;
-    o.samples.length = 0;
-  }
-
-  /**
-   * Suction + spark particles along the active remote beam — same rates,
-   * colors and motion as ObliterreurWeapon.emitSuctionParticles().
-   */
-  private emitOblitParticles(o: RemoteOblit, dt: number): void {
-    if (!this.particles || o.samples.length === 0) return;
-    const pos = this.particlePosScratch;
-    const vel = this.particleVelScratch;
-
-    // Matter dragged INTO the vortex.
-    o.particleAccum += oc.obliterreurParticleRate * dt;
-    while (o.particleAccum >= 1) {
-      o.particleAccum -= 1;
-      const sample = o.samples[Math.floor(Math.random() * o.samples.length)];
-      vel
-        .set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5)
-        .normalize()
-        .multiplyScalar(1.5 + Math.random() * 1.5);
-      pos.copy(sample).add(vel);
-      vel.subVectors(sample, pos).normalize().multiplyScalar(6 + Math.random() * 4);
-      const color =
-        this.oblitParticleColors[Math.floor(Math.random() * this.oblitParticleColors.length)];
-      this.particles.spawn(pos, vel, 0.4, color, 0, 0);
-    }
-
-    // Bright electric sparks whipped OUTWARD from the tube surface.
-    o.sparkAccum += oc.obliterreurSparkRate * dt;
-    while (o.sparkAccum >= 1) {
-      o.sparkAccum -= 1;
-      const sample = o.samples[Math.floor(Math.random() * o.samples.length)];
-      vel.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
-      pos
-        .copy(sample)
-        .addScaledVector(vel, W.obliterreur.beamRadius * (0.9 + Math.random() * 0.6));
-      vel.multiplyScalar(3 + Math.random() * 5);
-      vel.x += (Math.random() - 0.5) * 3;
-      vel.y += (Math.random() - 0.5) * 3;
-      vel.z += (Math.random() - 0.5) * 3;
-      const color =
-        this.oblitSparkColors[Math.floor(Math.random() * this.oblitSparkColors.length)];
-      this.particles.spawn(pos, vel, 0.12 + Math.random() * 0.2, color, 0, 2);
-    }
-  }
-
-  private clearOblitAnchors(playerId: string): void {
-    const o = this.oblits.get(playerId);
-    if (!o) return;
-    this.disposeOblitAnchor(o.anchors[0]);
-    this.disposeOblitAnchor(o.anchors[1]);
-    o.anchors[0] = null;
-    o.anchors[1] = null;
-  }
-
-  private makeOblitAnchor(): THREE.Group {
-    const group = new THREE.Group();
-    const core = new THREE.Mesh(
-      new THREE.SphereGeometry(0.3, 16, 12),
-      new THREE.MeshBasicMaterial({ color: 0x05010a }),
-    );
-    const shell = new THREE.Mesh(
-      new THREE.SphereGeometry(0.44, 16, 12),
-      new THREE.MeshBasicMaterial({
-        color: 0x7c3aed,
-        transparent: true,
-        opacity: 0.4,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      }),
-    );
-    core.frustumCulled = false;
-    shell.frustumCulled = false;
-    group.add(core, shell);
-    return group;
-  }
-
-  private disposeOblitAnchor(anchor: THREE.Group | null): void {
-    if (!anchor) return;
-    this.scene.remove(anchor);
-    for (const child of anchor.children) {
-      const mesh = child as THREE.Mesh;
-      mesh.geometry?.dispose();
-      (mesh.material as THREE.Material)?.dispose();
-    }
   }
 
   // ------------------------------------------------------------------
@@ -1643,11 +701,4 @@ export class RemoteCombatVFXController {
     this.scene.add(mesh);
     this.bursts.push({ mesh, mat, age: 0, life, fromScale: 0.2, toScale: radius });
   }
-}
-
-/** yaw/pitch (game convention: yaw 0 → -Z, pitch + → up) → unit direction. */
-function aimDirection(yaw: number, pitch: number, out: THREE.Vector3): THREE.Vector3 {
-  const cp = Math.cos(pitch);
-  out.set(-Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp);
-  return out;
 }

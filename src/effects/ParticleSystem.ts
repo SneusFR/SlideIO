@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import { WeaponConfig as cfg } from "../weapons/WeaponConfig";
+/** Global particle pool size (shared by every effect). */
+const MAX_PARTICLES = 600;
 
 interface Particle {
   life: number;
@@ -21,7 +22,7 @@ interface Particle {
  * and parked far below the map.
  */
 export class ParticleSystem {
-  private readonly max = cfg.maxParticles;
+  private readonly max = MAX_PARTICLES;
   private readonly positions: Float32Array;
   private readonly colors: Float32Array;
   private readonly particles: Particle[] = [];

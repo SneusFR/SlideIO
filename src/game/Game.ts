@@ -26,11 +26,15 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { FXAAPass } from "three/examples/jsm/postprocessing/FXAAPass.js";
-import { GivreOutlinePass, defaultOutlineExclude } from "../effects/GivreOutlinePass";
+import {
+  GivreOutlinePass,
+  defaultOutlineExclude,
+  defaultOutlineOccluder,
+} from "../effects/GivreOutlinePass";
 import { loadOutlineSettings, type OutlineSettings } from "./OutlineSettings";
 import { InteractHUD } from "../ui/InteractHUD";
 import { DebugHUD } from "../ui/DebugHUD";
-import { WeaponHUD } from "../ui/WeaponHUD";
+
 import { DashHUD } from "../ui/DashHUD";
 import { CombatHUD } from "../ui/CombatHUD";
 import { BotsMenu } from "../ui/BotsMenu";
@@ -39,7 +43,7 @@ import { CombatConfig as cc } from "../combat/CombatConfig";
 import { ParticleSystem } from "../effects/ParticleSystem";
 import { Shockwave } from "../effects/Shockwave";
 import { fxLights } from "../effects/FXLightPool";
-import { PlasmaRifle } from "../weapons/PlasmaRifle";
+
 import { HammerWeapon, HammerState } from "../weapons/HammerWeapon";
 import { HammerViewmodel } from "../weapons/HammerViewmodel";
 import { sampleBrickMaulWhirlwindYaw } from "../weapons/brickmaul/BrickMaulWhirlwindCamera";
@@ -57,14 +61,7 @@ import {
 import { encodeCharacterCosmetics } from "../../shared/combat/CharacterCosmetics";
 import { getGoofyBasketSkinLibrary } from "../weapons/goofybasket/GoofyBasketSkinRuntime";
 import { GOOFY_BASKET_SKIN_IDS } from "../../shared/combat/WeaponSkins";
-import { ObliterreurWeapon } from "../weapons/obliterreur/ObliterreurWeapon";
-import { RevolverWeapon } from "../weapons/revolver/RevolverWeapon";
-import { loadRevolverTemplate } from "../weapons/revolver/RevolverModel";
-import { RevolverHUD } from "../ui/RevolverHUD";
-import { BassBlasterWeapon } from "../weapons/bassblaster/BassBlasterWeapon";
-import { BassBlasterHUD } from "../ui/BassBlasterHUD";
-import { PoisonWeapon } from "../weapons/poison/PoisonWeapon";
-import { PoisonHUD } from "../ui/PoisonHUD";
+
 import { HexSniperWeapon } from "../weapons/hexsniper/HexSniperWeapon";
 import { HexSniperWorldAdapter } from "../weapons/hexsniper/HexSniperWorldAdapter";
 import { HexSniperConfig as hexCfg } from "../weapons/hexsniper/HexSniperConfig";
@@ -90,7 +87,7 @@ import { FrisbeeLauncherWeapon } from "../weapons/frisbee/FrisbeeLauncherWeapon"
 import { FrisbeeLauncherHUD } from "../ui/FrisbeeLauncherHUD";
 import { FrisbeeLauncherConfig as frisbeeCfg } from "../../shared/combat/FrisbeeLauncherRules";
 import { ViewmodelSystem } from "../weapons/viewmodel/ViewmodelSystem";
-import { MusicSelectorHUD } from "../ui/MusicSelectorHUD";
+
 import { KillstreakManager, KILLSTREAK_SLOT_CODES } from "../killstreaks/KillstreakManager";
 import { MoleStrike } from "../killstreaks/mole/MoleStrike";
 import { MoleStrikeVFX } from "../killstreaks/mole/MoleStrikeVFX";
@@ -107,10 +104,12 @@ import { DamageNumbersHUD } from "../ui/DamageNumbersHUD";
 import { SpawnManager } from "../combat/SpawnManager";
 import { NavGrid } from "../navigation/NavGrid";
 import { BotManager } from "../bots/BotManager";
+import { SharedBotWeaponWorld } from "../bots/BotWeaponWorld";
+import type { Bot } from "../bots/Bot";
 import { CorpseManager } from "../ragdoll/CorpseManager";
 import { GameAudio } from "../audio/GameAudio";
 import { PickupManager } from "../pickups/PickupManager";
-import { PickupConfig } from "../pickups/PickupConfig";
+
 import { ComboManager } from "../combo/ComboManager";
 import { MedalManager } from "../medals/MedalManager";
 import { MedalHUD } from "../ui/MedalHUD";
@@ -165,13 +164,13 @@ export class Game {
   private player: PlayerController;
   private movement: PlayerMovement;
   private hud: DebugHUD;
-  private weaponHud: WeaponHUD;
+
   private dashHud: DashHUD;
   private combatHud: CombatHUD;
   private botsMenu: BotsMenu;
 
   private particles: ParticleSystem;
-  private rifle: PlasmaRifle;
+
   private targets: TargetManager;
   /** The active map's sky backdrop (SpaceSky on Jungle, YardSky on Yard, GivreSky on Givre). */
   private spaceSky: SpaceSky | YardSky | GivreSky | null = null;
@@ -261,24 +260,8 @@ export class Game {
   private meleeHoldPending = false;
   private spearRushWasReady = true;
 
-  // ---- OBLITERREUR (primary alternative — equipped via the Loadout menu) ----
-  private obliterreur: ObliterreurWeapon;
   /** Which primary weapon is equipped (read from the persisted loadout). */
   private primaryWeapon: PrimaryWeaponId;
-  private readonly obliAudioPos = new THREE.Vector3();
-
-  // ---- REVOLVER (primary alternative — equipped via the Loadout menu) ----
-  private revolver: RevolverWeapon;
-  private revolverHud: RevolverHUD;
-
-  // ---- BASS BLASTER (musical SMG — networked like the other primaries) ----
-  private bassBlaster: BassBlasterWeapon;
-  private bassBlasterHud: BassBlasterHUD;
-  private musicSelector: MusicSelectorHUD;
-
-  // ---- LANCE-POISON (short-range toxic sprayer with the living tank) ----
-  private poison: PoisonWeapon;
-  private poisonHud: PoisonHUD;
 
   // ---- HEX SNIPER (monster-head sniper: tongue grapple + bite) ----
   private hexSniper: HexSniperWeapon;
@@ -409,14 +392,7 @@ export class Game {
    * unique arms instance through ViewmodelSystem.setArmsReadyHook.
    */
   private readonly fpOutfit = new CharacterOutfitSlot({ context: "fp" });
-  /** Plasma edge detection: local isFiring → PLASMA_START / PLASMA_STOP. */
-  private netPlasmaWasFiring = false;
-  /** ~10 Hz PLASMA_AIM refresh accumulator while firing. */
-  private netPlasmaAimTimer = 0;
-  /** Poison edge detection: local isSpraying → POISON_START / POISON_STOP. */
-  private netPoisonWasSpraying = false;
-  /** ~10 Hz POISON_AIM refresh accumulator while spraying. */
-  private netPoisonAimTimer = 0;
+
   /** True once the local weapon callbacks have been network-wrapped. */
   private netCallbacksWrapped = false;
   /** Latest server-reported attacker position (directional damage HUD). */
@@ -426,8 +402,7 @@ export class Game {
   private lastNetHitFeedback = -1;
   private readonly netOrigin = new THREE.Vector3();
   private readonly netDir = new THREE.Vector3();
-  /** Bass Blaster grain metadata scratch (track / offset / note index). */
-  private readonly netGrain = new THREE.Vector3();
+
   private readonly netImpulse = new THREE.Vector3();
 
   /** Static map meshes + target groups (never changes after startup). */
@@ -610,7 +585,7 @@ export class Game {
     }
     this.movement = new PlayerMovement(this.player, this.input, this.fpsCamera);
     this.hud = new DebugHUD();
-    this.weaponHud = new WeaponHUD();
+
     this.dashHud = new DashHUD();
     this.combatHud = new CombatHUD();
     this.phaseOverlayEl = document.getElementById("phase-overlay")!;
@@ -644,12 +619,9 @@ export class Game {
         console.log(`[YARD] Terminal activé: ${item.id} (${item.label})`);
       };
     }
-    this.rifle = new PlasmaRifle(this.scene, this.fpsCamera.camera, this.particles);
-
     // ---- Player as an FFA combatant ----
     this.playerCombatant = new PlayerCombatant(this.player, this.movement, this.scene);
     this.combatants.push(this.playerCombatant);
-    this.rifle.owner = this.playerCombatant;
     // KNOCKDOWN feedback (§ ragdoll — bot parity for the local player):
     // the ground state + get-up input live in PlayerMovement — here a
     // readable camera punch (never a head-cam spin) and a clean drop of
@@ -682,7 +654,6 @@ export class Game {
       this.playerCombatant,
     );
     this.hitFeedback.damageNumbers = this.damageNumbersHud;
-    this.rifle.feedback = this.hitFeedback;
 
     // ---- FFA match stats (source of truth) + live leaderboard HUD ----
     // Event flow: combat event → MatchStatsManager → leaderboard refresh.
@@ -732,6 +703,7 @@ export class Game {
     // ---- Astral Lance (melee alternative — equipped from the Loadout menu):
     // quick press → horizontal sweep, held press → CHARGED SPEAR RUSH.
     this.meleeWeapon = loadLoadout().melee;
+    this.primaryWeapon = loadLoadout().primary;
     this.spearViewmodel = new SpearViewmodel(this.fpsCamera.camera);
     this.spear = new SpearWeapon(
       this.combatants,
@@ -749,61 +721,6 @@ export class Game {
       this.gameAudio.slamImpact(1); // heavy piercing energy impact
     };
     this.spearHud = new SpearHUD();
-
-    // ---- OBLITERREUR (primary alternative — equipped from the Loadout menu):
-    // RMB anchors two mini black holes on static surfaces, LMB opens a huge
-    // curved black-vortex beam between them (damage through walls).
-    this.primaryWeapon = loadLoadout().primary;
-    this.obliterreur = new ObliterreurWeapon(
-      this.scene,
-      this.fpsCamera.camera,
-      this.combatants,
-      this.particles,
-    );
-    this.obliterreur.owner = this.playerCombatant;
-    this.obliterreur.feedback = this.hitFeedback;
-    this.obliterreur.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
-
-    // ---- REVOLVER (primary alternative — equipped from the Loadout menu):
-    // LMB single shot, RMB fan fire (empties the cylinder), R explosive
-    // throw + immediate holographic rematerialization of a fresh revolver.
-    this.revolver = new RevolverWeapon(
-      this.scene,
-      this.fpsCamera.camera,
-      this.combatants,
-      this.particles,
-      this.shockwave,
-    );
-    this.revolver.owner = this.playerCombatant;
-    this.revolver.setFeedback(this.hitFeedback);
-    this.revolver.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
-    this.revolverHud = new RevolverHUD();
-
-    // ---- BASS BLASTER (musical SMG — equipped from the Loadout menu):
-    // LMB full-auto note projectiles cycling Do→Do' colors, each shot
-    // playing a positional micro-fragment of the selected music track;
-    // R = musical note-swirl reload; ↑/↓ = track selection. In multiplayer
-    // every shot is reported to the server (BASS_FIRE) with its grain.
-    this.bassBlaster = new BassBlasterWeapon(
-      this.scene,
-      this.fpsCamera.camera,
-      this.particles,
-    );
-    this.bassBlaster.owner = this.playerCombatant;
-    this.bassBlaster.setFeedback(this.hitFeedback);
-    this.bassBlaster.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
-    this.bassBlasterHud = new BassBlasterHUD();
-    this.musicSelector = new MusicSelectorHUD();
-
-    // ---- LANCE-POISON (primary alternative — equipped from the Loadout
-    // menu): hold LMB → continuous short-range toxic spray. The voxel tank
-    // displays the REAL charge and its liquid reacts to the player's
-    // acceleration (morph-target inertia — see PoisonLiquidController).
-    this.poison = new PoisonWeapon(this.fpsCamera.camera, this.particles);
-    this.poison.owner = this.playerCombatant;
-    this.poison.feedback = this.hitFeedback;
-    this.poison.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
-    this.poisonHud = new PoisonHUD();
 
     // ---- HEX SNIPER (primary alternative — equipped from the Loadout
     // menu): LMB projects the creature's tongue (no max range — first
@@ -842,21 +759,11 @@ export class Game {
     this.goofyBasket.setOwner(this.playerCombatant, "local");
     this.goofyBasket.setFeedback(this.hitFeedback);
     this.goofyBasket.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
-    // SOLO targets: every alive bot as the shared server capsule (the local
-    // player is the owner — never a target of its own ball).
-    this.goofyBasket.setTargets({
-      forEach: (cb) => {
-        for (const bot of this.botManager.bots) {
-          if (!bot.health.alive) continue;
-          cb(`bot:${bot.id}`, bot.getPosition(this.basketVec), bot);
-        }
-      },
-    });
+    // SOLO targets: every alive bot + the local player ("local") as the
+    // shared server capsule — each ball's sweep skips its own thrower's key.
+    this.goofyBasket.setTargets(this.soloProjectileTargets(this.basketVec));
     // Arrows → weapon track cycle → UI mirrors the new active index.
-    this.musicSelector.onCycle = (delta) => {
-      this.bassBlaster.cycleTrack(delta);
-      this.musicSelector.setActiveIndex(this.bassBlaster.music.currentTrackIndex);
-    };
+
 
     // ---- POPCORN SHOTGUN (primary alternative — equipped from the Loadout
     // menu): LMB = 12 seeded popcorn pellets (one-shot up close, head =
@@ -908,20 +815,13 @@ export class Game {
     this.frisbeeLauncher.feedback = this.hitFeedback;
     this.frisbeeLauncher.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
     this.frisbeeHud = new FrisbeeLauncherHUD(frisbeeCfg.cageCapacity);
-    // SOLO targets: every alive bot as the shared server capsule (the local player is the owner).
-    this.frisbeeLauncher.setTargets({
-      forEach: (cb) => {
-        for (const bot of this.botManager.bots) {
-          if (!bot.health.alive) continue;
-          cb("bot:" + bot.id, bot.getPosition(this.frisbeeCenter), bot);
-        }
-      },
-    });
+    // SOLO targets: every alive bot + the local player (bot discs can hit him).
+    this.frisbeeLauncher.setTargets(this.soloProjectileTargets(this.frisbeeCenter));
 
     // ---- Audio: pure observation of existing gameplay events ----
     this.gameAudio = new GameAudio();
     this.movement.sfx = this.gameAudio.movementSfx;
-    this.rifle.onOverheat = () => this.gameAudio.overheat();
+
     this.hitFeedback.onBodyHitSound = () => this.gameAudio.hitBody();
     this.hitFeedback.onHeadshotSound = () => this.gameAudio.hitHead();
     this.hitFeedback.onPaintballHitSound = (head) => this.gameAudio.paintballHit(head);
@@ -933,39 +833,6 @@ export class Game {
     this.spear.onSweepStart = () => this.gameAudio.hammerSwing(); // polearm whoosh
     this.spear.onHitConnect = (pos) => this.gameAudio.hammerHit(pos);
     this.spear.onRushStart = () => this.gameAudio.phaseTraversal(); // energy charge whoosh
-    // Obliterreur: layered dark-energy palette from existing SFX.
-    this.obliterreur.onPointPlaced = () => this.gameAudio.obliterreurPlace();
-    this.obliterreur.onBeamStart = () => this.gameAudio.obliterreurActivate();
-    this.obliterreur.onBeamEnd = (cancelled) => this.gameAudio.obliterreurBeamEnd(cancelled);
-    // Revolver: ballistic gunshot sample + layered throw / explosion /
-    // holographic-materialize cues (pure observers, gameplay untouched).
-    this.revolver.onShot = (fanFire) => {
-      this.gameAudio.revolverShot(fanFire);
-      this.crosshairHud.fire("heavy");
-      this.recordSoloShot();
-    };
-    this.revolver.onThrow = () => {
-      this.gameAudio.revolverThrow();
-      this.recordSoloShot();
-    };
-    this.revolver.onExplosion = (pos) => this.gameAudio.revolverExplosion(pos);
-    this.revolver.onMaterializeStart = () => this.gameAudio.revolverMaterialize();
-    // Bass Blaster: per-note pitched blip layered under the music grain,
-    // reload swirl cues and spatial wall "plinks" (pure observers).
-    this.bassBlaster.onShot = (note) => {
-      this.gameAudio.bassBlasterShot(note.pitch);
-      this.crosshairHud.fire("light");
-      this.recordSoloShot();
-    };
-    this.bassBlaster.onReloadStart = () => this.gameAudio.bassBlasterReloadStart();
-    this.bassBlaster.onReloadEnd = () => this.gameAudio.bassBlasterReloadEnd();
-    this.bassBlaster.onWorldImpact = (pos, note) =>
-      this.gameAudio.bassBlasterNoteImpact(pos, note.pitch);
-    // Lance-Poison: reuse the existing energy/steam palette (pure observers).
-    this.poison.onSprayStart = () => this.gameAudio.obliterreurActivate();
-    this.poison.onSprayStop = () => this.gameAudio.obliterreurBeamEnd(true);
-    this.poison.onReloadStart = () => this.gameAudio.bassBlasterReloadStart();
-    this.poison.onReloadEnd = () => this.gameAudio.bassBlasterReloadEnd();
     // Hex Sniper: dedicated creature samples (tongue whip, wet grab, chomp
     // when the victim arrives, jaws on every bite) — pure observers.
     this.hexSniper.onTongueStart = () => {
@@ -1101,10 +968,6 @@ export class Game {
       // ragdoll takes over; the FP owner is re-arbitrated next frame.
       this.abortSlotTransition();
       this.spear.reset();
-      this.obliterreur.reset(); // vortex off + anchors cleared on death
-      this.revolver.reset(); // fan fire dropped, fresh 6/6 for the respawn
-      this.bassBlaster.reset(); // reload cancelled, notes cleared, fresh 30/30
-      this.poison.reset(); // spray stopped, tank refilled for the respawn
       this.hexSniper.reset(); // tongue released mid-flight/pull, clean Idle
       this.goofyBasket.reset(); // charge / unreleased throw dropped, ball hidden (flying balls keep going)
       this.popcornShotgun.reset(); // reload dropped, full tank for the respawn (server does the same)
@@ -1128,14 +991,6 @@ export class Game {
     this.pickups.onMedkitCollected = (healed) => {
       this.combatHud.notifyHeal(healed);
       this.gameAudio.healthPickup();
-      // Medkits also top up the Bass Blaster's magazine: random 25–75%
-      // of its capacity (clamped — never above a full magazine).
-      const refillFraction =
-        PickupConfig.medkitAmmoRefillMinFraction +
-        Math.random() *
-          (PickupConfig.medkitAmmoRefillMaxFraction -
-            PickupConfig.medkitAmmoRefillMinFraction);
-      this.bassBlaster.refillAmmo(refillFraction);
     };
     this.pickups.onCoinCollected = () => {
       // No economy yet: sound + disappear. A wallet hooks in here later.
@@ -1155,6 +1010,31 @@ export class Game {
       this.spawner,
       this.combatants,
       this.corpses,
+    );
+    // Bots carry the SAME TP weapons as the remote avatars (world hooks)
+    // and fire through ONE shared weapon world (same pools / damage rules).
+    this.botManager.modelEnv = {
+      scene: this.scene,
+      groundY: (x, z) => this.paintballGroundY(x, z),
+      onFrisbeeCageDrop: (drop) => this.frisbeeLauncher.spawnRemoteCage(drop),
+    };
+    this.botManager.setWeaponWorld(
+      new SharedBotWeaponWorld({
+        staticHittables: this.staticHittables,
+        hittables: this.hittables,
+        characterRoot: (c) => this.botManager.bots.find((b) => b === c)?.model.characterModel ?? null,
+        localPlayerCenter: (out) => (this.playerCombatant.health.alive ? this.player.getPosition(out) : null),
+        popcorn: this.popcornShotgun,
+        paintball: this.paintballRifle,
+        famas: this.waterFamas,
+        basket: this.goofyBasket,
+        frisbee: this.frisbeeLauncher,
+        audio: this.gameAudio,
+        pullStart: (bot, victim) => this.startBotHexPull(bot as Bot, victim),
+        pullStop: (victim) => {
+          if (victim === this.playerCombatant) this.movement.stopHexPull();
+        },
+      }),
     );
     this.botManager.onBotKilled = (bot, killer, method, hitZone) => {
       // PAINTBALL: a dead player loses ALL his paint (the corpse clone shares
@@ -1286,6 +1166,11 @@ export class Game {
     // Opaque gameplay overlays (enemy red hull, HP bars…) are never outlined.
     worldOutline.exclude = (obj) =>
       defaultOutlineExclude(obj) || obj.userData.enemyOutline === true;
+    // The red enemy hull is only an overlay of the body (which keeps its own
+    // rim): never an occluder. Other opaque excluded meshes (loot pickups…)
+    // still hide the edges behind them — otherwise they look see-through.
+    worldOutline.occluder = (obj) =>
+      obj.userData.enemyOutline !== true && defaultOutlineOccluder(obj);
     composer.addPass(worldOutline);
 
     const fpScene = this.viewmodelSystem.scene;
@@ -1344,7 +1229,7 @@ export class Game {
     const ratio = this.renderer.getPixelRatio();
     for (const pass of [this.worldOutline, this.fpOutline]) {
       if (!pass) continue;
-      pass.enabled = settings.enabled || settings.debugEdges;
+      pass.enabled = this.isOutlineActive(settings);
       pass.thickness = settings.thickness;
       pass.intensity = settings.intensity;
       pass.debugEdges = settings.debugEdges;
@@ -1352,9 +1237,20 @@ export class Game {
     }
   }
 
-  /** True when the active map has the cel-shading outline (menu visibility). */
+  /**
+   * Cel-shading rim drawn this frame? Requires the GivreConfig feature
+   * switch (`outline.enabled`, currently OFF) AND the player setting.
+   */
+  private isOutlineActive(settings: OutlineSettings): boolean {
+    return givreCfg.outline.enabled && (settings.enabled || settings.debugEdges);
+  }
+
+  /**
+   * True when the active map has the cel-shading outline (menu visibility).
+   * False while the GivreConfig feature switch is off: no menu section.
+   */
   get hasOutline(): boolean {
-    return this.worldOutline !== null;
+    return this.worldOutline !== null && givreCfg.outline.enabled;
   }
 
   /** True when the active map has falling snow (Givre — menu visibility). */
@@ -1459,10 +1355,10 @@ export class Game {
    * One-time GPU warm-up: waits for every weapon GLB, then renders ONE
    * forced-visible frame so every shader is compiled and every texture is
    * uploaded while the menu / transition still covers the canvas.
-   * Transient combat visuals that only exist mid-fight (thrown revolver
-   * clone, shockwave rings, particles) are spawned far below the map for
-   * that frame. Without this, the FIRST melee swing / revolver throw /
-   * weapon reveal compiled shaders mid-fight — a visible freeze.
+   * Transient combat visuals that only exist mid-fight (shockwave rings,
+   * particles, corpses, loot, projectiles) are spawned far below the map
+   * for that frame. Without this, the FIRST melee swing / throw / weapon
+   * reveal compiled shaders mid-fight — a visible freeze.
    */
   async warmUpRendering(): Promise<void> {
     if (this.gpuWarmedUp) return;
@@ -1473,13 +1369,8 @@ export class Game {
     // resolves after its GLB is mounted on those arms). Errors are caught
     // per-weapon inside each loader — a failed asset never blocks warm-up.
     await Promise.all([
-      this.rifle.ready,
       this.hammerViewmodel.ready,
       this.spearViewmodel.ready,
-      this.obliterreur.ready,
-      this.revolver.ready,
-      this.bassBlaster.ready,
-      this.poison.ready,
       this.viewmodelSystem.ready.catch((err) =>
         console.error("ViewmodelSystem: FP arms failed to load", err),
       ),
@@ -1490,9 +1381,8 @@ export class Game {
       this.frisbeeLauncher.ready,
     ]);
 
-    // 2. Transient visuals that never exist at rest: a thrown-revolver
-    // clone (opaque SHARED template materials ≠ the viewmodel's cloned
-    // transparent ones) + a shockwave ring + particles, far below the map.
+    // 2. Transient visuals that never exist at rest: a shockwave ring +
+    // particles + projectile pools, far below the map.
     const far = new THREE.Vector3(0, -400, 0);
     // Popcorn Shotgun visual pool: one popcorn far below the map (its
     // instanced program compiles now, never on the first shot).
@@ -1504,14 +1394,6 @@ export class Game {
     // Frisbee Launcher: one visible disc (its program compiles now, never on the first shot).
     this.frisbeeLauncher.beginWarmUp(far);
     const temp: THREE.Object3D[] = [];
-    try {
-      const template = await loadRevolverTemplate();
-      const thrown = template.clone(true);
-      thrown.position.copy(far);
-      temp.push(thrown);
-    } catch {
-      /* revolver asset failed — nothing to warm */
-    }
     // FIRST-KILL PATH: a real kill spawns visuals that exist nowhere at
     // rest — a CORPSE (skinned clone re-skinned with the CorpseManager's
     // pooled TRANSPARENT fade materials: a different program cache key
@@ -1599,7 +1481,7 @@ export class Game {
     this.particles.update(0.01);
 
     // 3. Forced-visible renders: hidden viewmodels (hammer, spear,
-    // revolver, obliterreur, bass blaster), beams / impact meshes and
+    // FP weapon meshes), projectile / impact meshes and
     // pooled VFX meshes all get their programs compiled + textures
     // uploaded right now. LIGHTS ARE NEVER TOUCHED: forcing a hidden
     // light visible would change the scene light count, and light-count
@@ -1712,15 +1594,10 @@ export class Game {
     // The manager skips unchanged slots, so in-flight progress survives.
     this.killstreaks.setEquipped(selection.killstreaks);
     let weaponsChanged = false;
-    // Primary swap: a clean slate — active vortex cancelled, anchors gone,
-    // revolver back to a full ready cylinder.
+    // Primary swap: a clean slate — every primary back to a full, idle state.
     if (selection.primary !== this.primaryWeapon) {
       weaponsChanged = true;
       this.primaryWeapon = selection.primary;
-      this.obliterreur.reset();
-      this.revolver.reset();
-      this.bassBlaster.reset();
-      this.poison.reset(); // fresh full tank + liquid motion memory cleared
       this.hexSniper.reset(); // unequip cancels any tongue/bite in progress
       this.goofyBasket.reset(); // charge dropped; flying balls keep their lifecycle
       this.popcornShotgun.reset(); // fresh full tank
@@ -1916,9 +1793,7 @@ export class Game {
       this.movement,
     );
     await this.multiplayer.preload();
-    // Remote plasma beams are visually blocked by the static world.
-    this.multiplayer.setRaycastTargets(this.staticHittables);
-    // Remote obliterreur beams emit the same suction/spark particles.
+    // Remote combat VFX emit the same particles as the local ones.
     this.multiplayer.setParticles(this.particles);
     // Remote deaths snapshot a physical ragdoll corpse (visual only —
     // the server's combat state stays the single source of truth).
@@ -1941,7 +1816,7 @@ export class Game {
     // the warm-up render below instead of on the first gameplay frame.
     this.multiplayer.update(0);
 
-    // GPU warm-up: everything (viewmodels, melee weapons, thrown revolver,
+    // GPU warm-up: everything (viewmodels, melee weapons, projectiles,
     // shockwaves, particles) is loaded, compiled and uploaded BEFORE the
     // player enters the map — gameplay must be fluid from frame one.
     await this.warmUpRendering();
@@ -1988,8 +1863,6 @@ export class Game {
       this.gameAudio.playerRespawn();
       // Equip is refused while dead — re-assert it after every respawn.
       this.sendNetworkEquip(true);
-      this.netPlasmaWasFiring = false;
-      this.netPoisonWasSpraying = false;
     };
 
     // Server-confirmed kill by the local player → existing kill feedback
@@ -2206,28 +2079,12 @@ export class Game {
     this.frisbeeLauncher.networkAuthority = false; // back to local damage (solo / bots)
     this.frisbeeLauncher.reset();
     this.frisbeeLauncher.clear(); // no disc / cage of the old session left in the world
-    this.frisbeeLauncher.setTargets({
-      forEach: (cb) => {
-        for (const bot of this.botManager.bots) {
-          if (!bot.health.alive) continue;
-          cb("bot:" + bot.id, bot.getPosition(this.frisbeeCenter), bot);
-        }
-      },
-    });
+    this.frisbeeLauncher.setTargets(this.soloProjectileTargets(this.frisbeeCenter));
     this.goofyBasket.networkAuthority = false;
     this.goofyBasket.projectiles.networkAuthority = false;
     this.goofyBasket.reset();
     this.goofyBasket.clearProjectiles();
-    this.goofyBasket.setTargets({
-      forEach: (cb) => {
-        for (const bot of this.botManager.bots) {
-          if (!bot.health.alive) continue;
-          cb(`bot:${bot.id}`, bot.getPosition(this.basketVec), bot);
-        }
-      },
-    });
-    this.netPlasmaWasFiring = false;
-    this.netPoisonWasSpraying = false;
+    this.goofyBasket.setTargets(this.soloProjectileTargets(this.basketVec));
     const botsMenuEl = document.getElementById("bots-menu");
     if (botsMenuEl) botsMenuEl.style.display = "";
     // Back to LOCAL mode: the MatchStatsManager drives the leaderboard again.
@@ -2440,12 +2297,9 @@ export class Game {
     this.abortSlotTransition();
     this.meleeHoldPending = false;
     this.moleStrike.abort();
-    this.obliterreur.reset();
-    this.poison.reset();
     this.hexSniper.reset();
     this.goofyBasket.reset();
     this.movement.stopHexPull();
-    this.rifle.isFiring = false;
     this.combo.resetOnDeath();
   }
 
@@ -2557,8 +2411,7 @@ export class Game {
     const fpOn = camera === this.fpsCamera.camera && this.viewmodelSystem.visible;
     if (this.fpOverlayPass) this.fpOverlayPass.enabled = fpOn;
     if (this.fpOutline) {
-      const s = this.outlineSettings;
-      this.fpOutline.enabled = fpOn && (s.enabled || s.debugEdges);
+      this.fpOutline.enabled = fpOn && this.isOutlineActive(this.outlineSettings);
     }
     composer.render();
   }
@@ -2569,12 +2422,50 @@ export class Game {
     else this.renderer.render(this.scene, camera);
   }
 
-  /** Rebuild the beam raycast list after the bot roster changes. */
+  /**
+   * Rebuild the hitscan raycast list after the bot roster changes. Bots
+   * contribute ONLY their two damage volumes (body + head box) — never the
+   * whole group (skinned meshes, outline hulls, weapon, UI): a recursive
+   * raycast over full character hierarchies was a large per-shot cost.
+   */
   private rebuildHittables(): void {
     this.hittables.length = 0;
     for (const h of this.staticHittables) this.hittables.push(h);
     this.hittables.push(this.playerCombatant.hitProxy);
-    for (const bot of this.botManager.bots) this.hittables.push(bot.model.group);
+    for (const bot of this.botManager.bots) for (const box of bot.model.hitboxes) this.hittables.push(box);
+  }
+
+  /**
+   * SOLO projectile targets (Goofy Basket / Frisbee): every alive bot plus the
+   * local player (key "local" — his own balls / discs skip him, bot ones can
+   * hit him). Centers are written into `scratch` (used immediately).
+   */
+  private soloProjectileTargets(scratch: THREE.Vector3) {
+    return {
+      forEach: (cb: (key: string, center: THREE.Vector3, combatant: Combatant | null) => void) => {
+        for (const bot of this.botManager.bots) {
+          if (!bot.health.alive) continue;
+          cb(bot.targetKey, bot.getPosition(scratch), bot);
+        }
+        const me = this.playerCombatant;
+        if (me.health.alive && me.targetable !== false) cb("local", this.player.getPosition(scratch), me);
+      },
+    };
+  }
+
+  /**
+   * A BOT's Hex Sniper grabbed the local player: reel him through his own
+   * character controller toward the bot (same movement state as a server
+   * HEX_PULL). The bot weapon bites on arrival and stops the pull.
+   */
+  private startBotHexPull(bot: Bot, victim: Combatant): boolean {
+    if (victim !== this.playerCombatant || this.multiplayer) return false;
+    this.movement.startHexPull((out) => {
+      if (!bot.health.alive) return false;
+      bot.getPosition(out);
+      return true;
+    });
+    return true;
   }
 
   /**
@@ -2642,10 +2533,6 @@ export class Game {
       // SOLO match clock: game time (paused with the Escape menu).
       if (!this.multiplayer) {
         this.soloMatchTime += dt;
-        // Beam accuracy sampling: player rifle / poison spray + every bot rifle.
-        const me = String(this.playerCombatant.id);
-        this.soloResults.recordBeam(me, this.rifle.isFiring || this.poison.isSpraying, dt);
-        for (const bot of this.botManager.bots) this.soloResults.recordBeam(String(bot.id), bot.isFiring, dt);
         if (this.soloMatchTime >= MATCH_DURATION_SECONDS) {
           this.finishSoloMatch();
           this.input.endFrame();
@@ -2808,23 +2695,17 @@ export class Game {
       }
       this.spearRushWasReady = rushReady;
 
-      // Plasma Rifle is unavailable while a melee weapon is out (nothing is
-      // reset — heat keeps cooling / overheat keeps ticking normally) or
-      // when another primary (OBLITERREUR / REVOLVER) is equipped.
       // SLOT 2 (melee held): every primary is stowed — hidden AND unable to
       // act — until the player switches back (1 / wheel). The maul then
       // owns the FP arms (Hold / Run / Inspect), see fpOwner.
       const primaryHeld = this.activeSlot === "PRIMARY" && !this.slotSwitchPending;
-      const obliEquipped = primaryHeld && this.primaryWeapon === "OBLITERREUR";
-      const revolverEquipped = primaryHeld && this.primaryWeapon === "REVOLVER";
-      const bassEquipped = primaryHeld && this.primaryWeapon === "BASS_BLASTER";
-      const poisonEquipped = primaryHeld && this.primaryWeapon === "POISON_SPRAYER";
+
       const hexEquipped = primaryHeld && this.primaryWeapon === "HEX_SNIPER";
       const basketEquipped = primaryHeld && this.primaryWeapon === "GOOFY_BASKET";
       const popcornEquipped = primaryHeld && this.primaryWeapon === "POPCORN_SHOTGUN";
       const paintballEquipped = primaryHeld && this.primaryWeapon === "PAINTBALL_RIFLE";
       const famasEquipped = primaryHeld && this.primaryWeapon === "WATER_FAMAS";
-    const frisbeeEquipped = primaryHeld && this.primaryWeapon === "FRISBEE_LAUNCHER";
+      const frisbeeEquipped = primaryHeld && this.primaryWeapon === "FRISBEE_LAUNCHER";
       // KNOCKED DOWN (§ ragdoll) blocks EVERY weapon — exactly like a
       // ragdolled bot never fires. In-flight projectiles / explosions of
       // course keep ticking; only NEW actions are gated.
@@ -2833,120 +2714,6 @@ export class Game {
         this.spear.blocksFiring ||
         this.moleStrike.blocksWeapons ||
         this.movement.isKnockedDown;
-      const wantFire =
-        playerAlive &&
-        primaryHeld &&
-        this.input.pointerLocked &&
-        this.input.isMouseDown(0) &&
-        !meleeBlocked &&
-        !obliEquipped &&
-        !revolverEquipped &&
-        !bassEquipped &&
-        !poisonEquipped &&
-        !hexEquipped &&
-        !basketEquipped &&
-        !popcornEquipped &&
-        !paintballEquipped &&
-        !famasEquipped &&
-        !frisbeeEquipped;
-      this.rifle.setViewmodelHidden(
-        !primaryHeld ||
-          this.hammer.isBusy ||
-          this.spear.isBusy ||
-          this.moleStrike.active ||
-          obliEquipped ||
-          revolverEquipped ||
-          bassEquipped ||
-          poisonEquipped ||
-          hexEquipped ||
-          this.primaryWeapon !== "PLASMA_RIFLE",
-      );
-      this.rifle.update(dt, wantFire, this.hittables, this.elapsed);
-      // MULTIPLAYER: plasma has no callbacks — edge-detect isFiring here
-      // (START/STOP) + a silent ~10 Hz aim refresh while the beam is on.
-      if (this.multiplayer) this.updateNetworkPlasma(dt);
-
-      // OBLITERREUR: RMB places / redefines anchors (cancels an active
-      // vortex), LMB opens the beam. Placement raycasts STATIC geometry
-      // only; the active beam damages through walls (volume check).
-      this.obliterreur.setViewmodelHidden(
-        !obliEquipped || this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
-      );
-      this.obliterreur.update(dt, {
-        placePressed:
-          obliEquipped && playerAlive && !meleeBlocked && this.input.wasMousePressed(2),
-        firePressed:
-          obliEquipped && playerAlive && !meleeBlocked && this.input.wasMousePressed(0),
-        staticHittables: this.staticHittables,
-        time: this.elapsed,
-      });
-      this.gameAudio.updateObliterreurBeam(
-        this.obliterreur.beamActive,
-        this.obliterreur.getAudioEmitterPos(this.playerPos, this.obliAudioPos),
-      );
-
-      // REVOLVER: LMB single shot, RMB committed fan fire, R explosive
-      // throw. Perfect accuracy is inside the weapon (camera-center ray);
-      // thrown projectiles / explosions keep ticking even while blocked.
-      this.revolver.setViewmodelHidden(
-        !revolverEquipped || this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
-      );
-      this.revolver.update(dt, {
-        firePressed: revolverEquipped && this.input.wasMousePressed(0),
-        fanFirePressed: revolverEquipped && this.input.wasMousePressed(2),
-        throwPressed: revolverEquipped && this.input.wasPressed("KeyR"),
-        canAct: revolverEquipped && playerAlive && !meleeBlocked,
-        hittables: this.hittables,
-        time: this.elapsed,
-      });
-
-      // BASS BLASTER: LMB full-auto note projectiles + music grains,
-      // R musical reload, ↑/↓ track selection. In multiplayer each shot
-      // sends a BASS_FIRE action (see wrapNetworkWeaponCallbacks); the
-      // in-flight notes keep ticking even while blocked.
-      this.bassBlaster.setViewmodelHidden(
-        !bassEquipped || this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
-      );
-      this.bassBlaster.update(dt, {
-        fireHeld:
-          bassEquipped &&
-          this.input.pointerLocked &&
-          this.input.isMouseDown(0) &&
-          !meleeBlocked,
-        reloadPressed: bassEquipped && this.input.wasPressed("KeyR"),
-        canAct: bassEquipped && playerAlive && !meleeBlocked,
-        hittables: this.hittables,
-        time: this.elapsed,
-      });
-      // Track selection arrows (expand the selector panel on interaction).
-      if (bassEquipped && this.input.pointerLocked) {
-        if (this.input.wasPressed("ArrowUp")) this.musicSelector.interact(-1);
-        if (this.input.wasPressed("ArrowDown")) this.musicSelector.interact(1);
-      }
-
-      // LANCE-POISON: hold LMB → continuous short-range toxic spray,
-      // R → tank refill (progressive — the liquid visibly rises). The
-      // living tank (fill + inertial surface + bubbles) is fed the REAL
-      // physics velocity every frame, even while not firing.
-      this.poison.setViewmodelHidden(
-        !poisonEquipped || this.hammer.isBusy || this.spear.isBusy || this.moleStrike.active,
-      );
-      this.poison.update(dt, {
-        fireHeld:
-          poisonEquipped &&
-          this.input.pointerLocked &&
-          this.input.isMouseDown(0) &&
-          !meleeBlocked,
-        reloadPressed: poisonEquipped && this.input.wasPressed("KeyR"),
-        canAct: poisonEquipped && playerAlive && !meleeBlocked,
-        hittables: this.hittables,
-        velocity: this.movement.velocity,
-        time: this.elapsed,
-      });
-      // MULTIPLAYER: poison has no per-shot callback — edge-detect the
-      // continuous stream exactly like the plasma (START/STOP + ~10 Hz aim).
-      if (this.multiplayer) this.updateNetworkPoison(dt);
-
       // HEX SNIPER: LMB fires the tongue (near-instant sniper shot; a
       // reeled-in player is bitten INSTANTLY on arrival — a missed tongue
       // never bites and re-arms the shot the moment it returns),
@@ -3099,7 +2866,7 @@ export class Game {
       );
 
 
-      this.botManager.updateWeapons(dt, this.hittables, this.elapsed);
+      this.botManager.updateWeapons(dt);
       this.handlePhaseEffects();
       this.particles.update(dt);
       this.shockwave.update(dt);
@@ -3127,26 +2894,17 @@ export class Game {
     this.gameAudio.update(dt, {
       camera: this.fpsCamera.camera,
       movement: this.movement,
-      rifle: this.rifle,
       playerHealth: this.playerCombatant.health,
       botManager: this.botManager,
       running,
     });
 
     this.hud.update(rawDt, this.movement, this.scene);
-    this.weaponHud.setVisible(this.primaryWeapon === "PLASMA_RIFLE");
-    this.weaponHud.update(dt, this.rifle.heat, this.rifle.hittingTarget);
+
     this.dashHud.update(dt, this.movement);
     this.spearHud.setVisible(this.meleeWeapon === "SPEAR");
     this.spearHud.update(this.spear);
-    this.revolverHud.setVisible(this.primaryWeapon === "REVOLVER");
-    this.revolverHud.update(this.revolver);
-    this.bassBlasterHud.setVisible(this.primaryWeapon === "BASS_BLASTER");
-    this.bassBlasterHud.update(this.bassBlaster);
-    this.musicSelector.setVisible(this.primaryWeapon === "BASS_BLASTER");
-    this.musicSelector.update(dt);
-    this.poisonHud.setVisible(this.primaryWeapon === "POISON_SPRAYER");
-    this.poisonHud.update(this.poison);
+
     this.popcornHud.setVisible(this.primaryWeapon === "POPCORN_SHOTGUN");
     this.popcornHud.update(this.popcornShotgun);
     this.paintballHud.setVisible(this.primaryWeapon === "PAINTBALL_RIFLE");
@@ -3513,14 +3271,10 @@ export class Game {
       }
       return;
     }
-    // R = manual respawn — EXCEPT with the Revolver (explosive throw) or
-    // the Bass Blaster (musical reload) equipped, where R belongs to the
-    // weapon (the kill plane still works normally).
+    // R = manual respawn — EXCEPT with a primary whose R key is the reload
+    // (the kill plane still works normally).
     const manualRespawn =
       this.input.wasPressed("KeyR") &&
-      this.primaryWeapon !== "REVOLVER" &&
-      this.primaryWeapon !== "BASS_BLASTER" &&
-      this.primaryWeapon !== "POISON_SPRAYER" &&
       this.primaryWeapon !== "POPCORN_SHOTGUN" &&
       this.primaryWeapon !== "PAINTBALL_RIFLE" &&
       this.primaryWeapon !== "WATER_FAMAS" &&
@@ -3543,17 +3297,6 @@ export class Game {
   private wrapNetworkWeaponCallbacks(): void {
     if (this.netCallbacksWrapped) return;
     this.netCallbacksWrapped = true;
-
-    const prevShot = this.revolver.onShot;
-    this.revolver.onShot = (fanFire) => {
-      prevShot?.(fanFire);
-      this.netSendAimedAction(WeaponActionType.REVOLVER_FIRE);
-    };
-    const prevThrow = this.revolver.onThrow;
-    this.revolver.onThrow = () => {
-      prevThrow?.();
-      this.netSendAimedAction(WeaponActionType.REVOLVER_THROW);
-    };
 
     const prevSwing = this.hammer.onSwingStart;
     this.hammer.onSwingStart = () => {
@@ -3589,20 +3332,6 @@ export class Game {
       this.netSendAimedAction(WeaponActionType.SPEAR_RUSH_STOP);
     };
 
-    const prevPlaced = this.obliterreur.onPointPlaced;
-    this.obliterreur.onPointPlaced = (index, point) => {
-      prevPlaced?.(index, point);
-      // The EXACT local hit point + SLOT travel with the action so the
-      // server (and every remote client) anchor the very same point in
-      // the very same slot — the placement can never desynchronize.
-      this.netSendAimedAction(WeaponActionType.OBLITERREUR_PLACE, point, index);
-    };
-    const prevBeamStart = this.obliterreur.onBeamStart;
-    this.obliterreur.onBeamStart = () => {
-      prevBeamStart?.();
-      this.netSendAimedAction(WeaponActionType.OBLITERREUR_FIRE);
-    };
-
     // MOLE STRIKE: burrow/emerge are server-validated actions — the
     // server owns the invulnerability window AND the eruption AoE.
     const prevBurrow = this.moleStrike.onBurrowStart;
@@ -3614,17 +3343,6 @@ export class Game {
     this.moleStrike.onEmerge = (feet) => {
       prevEmerge?.(feet);
       this.netSendAimedAction(WeaponActionType.MOLE_EMERGE, feet);
-    };
-
-    // BASS BLASTER: every fired note reports its MUSIC GRAIN metadata
-    // (track index / playhead offset / note index) in px/py/pz so the
-    // server echoes it and every remote client replays the exact same
-    // spatialized fragment riding on the note.
-    this.bassBlaster.onNetShot = (noteIndex, trackIndex, grainOffset) => {
-      this.netSendAimedAction(
-        WeaponActionType.BASS_FIRE,
-        this.netGrain.set(trackIndex, grainOffset, noteIndex),
-      );
     };
 
     // HEX SNIPER: the tongue shot is reported the instant the kit accepts
@@ -4161,42 +3879,6 @@ export class Game {
     this.multiplayerClient.sendCharacterCosmetics(outfit);
   }
 
-  /** Plasma has no local callback: edge-detect + 10 Hz silent aim. */
-  private updateNetworkPlasma(dt: number): void {
-    const firing = this.rifle.isFiring;
-    if (firing !== this.netPlasmaWasFiring) {
-      this.netPlasmaWasFiring = firing;
-      this.netPlasmaAimTimer = 0;
-      this.netSendAimedAction(
-        firing ? WeaponActionType.PLASMA_START : WeaponActionType.PLASMA_STOP,
-      );
-    } else if (firing) {
-      this.netPlasmaAimTimer += dt;
-      if (this.netPlasmaAimTimer >= 0.1) {
-        this.netPlasmaAimTimer = 0;
-        this.netSendAimedAction("PLASMA_AIM"); // silent server aim refresh
-      }
-    }
-  }
-
-  /** Poison mirrors the plasma flow: edge-detect + 10 Hz silent aim. */
-  private updateNetworkPoison(dt: number): void {
-    const spraying = this.poison.isSpraying;
-    if (spraying !== this.netPoisonWasSpraying) {
-      this.netPoisonWasSpraying = spraying;
-      this.netPoisonAimTimer = 0;
-      this.netSendAimedAction(
-        spraying ? WeaponActionType.POISON_START : WeaponActionType.POISON_STOP,
-      );
-    } else if (spraying) {
-      this.netPoisonAimTimer += dt;
-      if (this.netPoisonAimTimer >= 0.1) {
-        this.netPoisonAimTimer = 0;
-        this.netSendAimedAction("POISON_AIM"); // silent server aim refresh
-      }
-    }
-  }
-
   /** Scratch pose for the damage-number anchor of a remote victim. */
   private readonly netHitPose = { pos: new THREE.Vector3(), yaw: 0, pitch: 0 };
 
@@ -4326,20 +4008,12 @@ function isDescendant(node: THREE.Object3D, root: THREE.Object3D): boolean {
 /** Server DamageType string → the local KillMethod driving kill medals. */
 function networkKillMethod(damageType: string): KillMethod {
   switch (damageType) {
-    case "REVOLVER":
-      return KillMethod.REVOLVER;
-    case "REVOLVER_EXPLOSION":
-      return KillMethod.REVOLVER_EXPLOSION;
     case "HAMMER":
       return KillMethod.HAMMER_SWING;
     case "SPEAR":
       return KillMethod.SPEAR_SWEEP;
-    case "OBLITERREUR":
-      return KillMethod.OBLITERREUR;
     case "MOLE_STRIKE":
       return KillMethod.MOLE_STRIKE;
-    case "BASS_BLASTER":
-      return KillMethod.BASS_BLASTER;
     case "HEX_SNIPER":
       return KillMethod.HEX_SNIPER_BITE;
     case "HEX_SNIPER_TONGUE":
@@ -4355,6 +4029,6 @@ function networkKillMethod(damageType: string): KillMethod {
     case "FRISBEE_LAUNCHER":
       return KillMethod.FRISBEE_LAUNCHER;
     default:
-      return KillMethod.PLASMA;
+      return KillMethod.ENVIRONMENT;
   }
 }

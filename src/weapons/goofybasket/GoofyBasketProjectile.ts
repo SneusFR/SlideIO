@@ -53,6 +53,8 @@ interface FlyingBall {
   skin: GoofyBasketSkinSlot | null;
   /** Cosmetic clock of the skin effects (seconds since the spawn). */
   skinClock: number;
+  /** Combatant credited for a hit (null = the system owner: the local player). */
+  shooter: Combatant | null;
 }
 
 /**
@@ -124,9 +126,11 @@ export class GoofyBasketProjectileSystem {
     ownerKey: string | null,
     serverId: number | null,
     skinId: string = DEFAULT_WEAPON_SKIN,
+    /** SOLO: the combatant credited for the hit (a bot); default = the local owner. */
+    shooter: Combatant | null = null,
   ): number | null {
     const id = serverId ?? this.nextLocalId--;
-    return this.spawn(origin, velocity, level, ownerKey, id, false, skinId) ? id : null;
+    return this.spawn(origin, velocity, level, ownerKey, id, false, skinId, shooter) ? id : null;
   }
 
   /**
@@ -172,6 +176,7 @@ export class GoofyBasketProjectileSystem {
     id: number,
     remote: boolean,
     skinId: string,
+    shooter: Combatant | null = null,
   ): boolean {
     if (!this.gltf) return false;
     const root = instantiateGoofyBasket(this.gltf, GOOFY_BALL.projectileRootScale);
@@ -196,6 +201,7 @@ export class GoofyBasketProjectileSystem {
       offset: new THREE.Vector3(),
       skin,
       skinClock: 0,
+      shooter,
     });
     return true;
   }
@@ -365,14 +371,15 @@ export class GoofyBasketProjectileSystem {
     const target = this.hitCombatants.get(targetKey) ?? null;
     if (!target || !target.health.alive) return;
     this.tmp.set(point.x, point.y, point.z);
-    const applied = target.health.applyDamage(B.damage, this.owner, KillMethod.GOOFY_BASKET, HitZone.BODY);
+    const attacker = ball.shooter ?? this.owner;
+    const applied = target.health.applyDamage(B.damage, attacker, KillMethod.GOOFY_BASKET, HitZone.BODY);
     if (!applied) return;
     target.registerImpact?.(
       this.tmp2.set(ball.state.vel.x, ball.state.vel.y, ball.state.vel.z).normalize().multiplyScalar(4),
       this.tmp,
     );
     this.feedback?.registerHit({
-      attacker: this.owner,
+      attacker,
       target,
       hitZone: HitZone.BODY,
       damage: B.damage,

@@ -114,12 +114,10 @@ class RemoteTrace {
 }
 
 /**
- * TEMPORARY: tracing is force-enabled in PRODUCTION too while the
- * "200–500 ms snapshot gap then burst" issue is being diagnosed on the
- * live site (the bug only reproduces over the real Internet). Revert to
- * `import.meta.env.DEV === true` once the pipeline stage is identified.
+ * Movement pipeline tracing (gap stats, burst detection, per-patch
+ * timestamps, NET_DIAG relay): DEV builds only — production pays nothing.
  */
-export const NET_TRACE_ENABLED = true;
+export const NET_TRACE_ENABLED: boolean = import.meta.env.DEV === true;
 
 class NetTrace {
   private readonly enabled: boolean = NET_TRACE_ENABLED;

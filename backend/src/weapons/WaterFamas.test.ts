@@ -247,7 +247,7 @@ test("famas: refill gates 1.98 / 2.95 s, cancel before the end of the pour keeps
   advance(600);
   act(WeaponActionType.WATER_FAMAS_RELOAD);
   advance(800);
-  wm.handleEquip(a, NetworkWeaponId.REVOLVER);
+  wm.handleEquip(a, NetworkWeaponId.PAINTBALL_RIFLE);
   wm.handleEquip(a, NetworkWeaponId.WATER_FAMAS);
   advance(3500);
   send(wm, a, WeaponActionType.WATER_FAMAS_FIRE, eyeOf(a), up, { sd: 23, pi: 0 });

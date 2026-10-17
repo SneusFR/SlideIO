@@ -10,13 +10,8 @@
 
 /** Stable network identity of every equippable weapon. */
 export enum NetworkWeaponId {
-  PLASMA_RIFLE = "PLASMA_RIFLE",
-  REVOLVER = "REVOLVER",
-  OBLITERREUR = "OBLITERREUR",
   HAMMER = "HAMMER",
   SPEAR = "SPEAR",
-  BASS_BLASTER = "BASS_BLASTER",
-  POISON_SPRAYER = "POISON_SPRAYER",
   HEX_SNIPER = "HEX_SNIPER",
   GOOFY_BASKET = "GOOFY_BASKET",
   POPCORN_SHOTGUN = "POPCORN_SHOTGUN",
@@ -38,13 +33,6 @@ export function isNetworkWeaponId(raw: unknown): raw is NetworkWeaponId {
  * result ("I hit player X for Y damage") — the server validates everything.
  */
 export enum WeaponActionType {
-  /** Plasma Rifle continuous fire started / stopped (aim = transform yaw/pitch). */
-  PLASMA_START = "PLASMA_START",
-  PLASMA_STOP = "PLASMA_STOP",
-  /** One revolver bullet (LMB single or RMB fan-fire — cadence validated server-side). */
-  REVOLVER_FIRE = "REVOLVER_FIRE",
-  /** Explosive revolver throw (server owns the projectile + AoE). */
-  REVOLVER_THROW = "REVOLVER_THROW",
   /** Grounded hammer sweep (server melee-arc validation). */
   HAMMER_SWEEP = "HAMMER_SWEEP",
   /** Airborne ground slam started (visual broadcast; damage on impact msg). */
@@ -56,22 +44,10 @@ export enum WeaponActionType {
   /** Charged spear rush started / ended (rush hits are server ticks). */
   SPEAR_RUSH_START = "SPEAR_RUSH_START",
   SPEAR_RUSH_STOP = "SPEAR_RUSH_STOP",
-  /** Obliterreur anchor placement (server re-raycasts + validates). */
-  OBLITERREUR_PLACE = "OBLITERREUR_PLACE",
-  /** Obliterreur vortex beam fired between the two anchors. */
-  OBLITERREUR_FIRE = "OBLITERREUR_FIRE",
   /** MOLE STRIKE: dive underground (untargetable while burrowed). */
   MOLE_BURROW = "MOLE_BURROW",
   /** MOLE STRIKE: eruption — server computes the AoE around the point. */
   MOLE_EMERGE = "MOLE_EMERGE",
-  /** One Bass Blaster musical note projectile (server simulates flight).
-   *  px/py/pz piggyback the MUSIC GRAIN metadata (track index / playhead
-   *  offset seconds / note index) so remote clients replay the exact same
-   *  spatialized music fragment riding on the note. */
-  BASS_FIRE = "BASS_FIRE",
-  /** Lance-Poison continuous spray started / stopped (plasma-style). */
-  POISON_START = "POISON_START",
-  POISON_STOP = "POISON_STOP",
   /** HEX SNIPER: the creature projects its tongue along the aim (one
    *  shot — the server hitscans it; a grabbed player is reeled in by the
    *  server pull loop and bitten on arrival). */
@@ -277,33 +253,6 @@ export const PLAYER_EYE_OFFSET = 0.55;
 // ---------------------------------------------------------------------
 
 export const NetworkWeaponConfig = {
-  plasma: {
-    damagePerSecond: 55,
-    range: 160,
-    supportsHeadshots: true,
-    headshotMultiplier: 2.0,
-    /** Server combat tick for the continuous beam (Hz — never per frame). */
-    damageTickRate: 20,
-    /** Safety: a beam older than this without a STOP is force-stopped (s). */
-    maxContinuousSeconds: 12,
-  },
-  revolver: {
-    capacity: 6,
-    bodyDamage: 50,
-    headDamage: 100, // intentional weapon-specific rule (NOT the global ×2)
-    range: 300,
-    primaryFireInterval: 0.28,
-    fanFireInterval: 0.1,
-    /** Cadence tolerance so honest clients never get refused by jitter. */
-    cadenceTolerance: 0.35,
-    throwSpeed: 24,
-    throwGravity: 16,
-    projectileMaxLifetime: 6,
-    explosionRadius: 5,
-    /** Fraction of the victim's MAX HP dealt by the explosion. */
-    explosionDamageFraction: 0.25,
-    materializeDuration: 0.45,
-  },
   /** BRICK MAUL r5 (mirrors frontend HammerConfig — same result solo/multi). */
   hammer: {
     /** WHIRLWIND: FLAT damage per victim for the WHOLE attack (max once). */
@@ -349,48 +298,6 @@ export const NetworkWeaponConfig = {
     rushTipReach: 2.4,
     rushKnockback: 24,
     rushVerticalKnockback: 6,
-  },
-  obliterreur: {
-    beamDuration: 5.0,
-    /** Fraction of MAX HP per second inside the vortex volume. */
-    damagePerSecondFraction: 1.0,
-    beamRadius: 1.65,
-    targetHitRadius: 0.85,
-    damageTickRate: 20,
-    placementRange: 200,
-    curveStrength: 0.45,
-    curveHandleMin: 2.0,
-    curveHandleMax: 14.0,
-    curveSampleCount: 48,
-    /** Client-reported anchor accepted when within this distance of the
-     *  server raycast hit (client/server collider mismatch tolerance, m). */
-    anchorTolerance: 3.0,
-  },
-  /** Bass Blaster — musical SMG (mirrors frontend BassBlasterConfig). */
-  bassBlaster: {
-    magazineSize: 30,
-    /** Seconds between shots while the trigger is held (~11.8 rounds/s). */
-    fireInterval: 0.085,
-    /** Cadence tolerance so honest clients never get refused by jitter. */
-    cadenceTolerance: 0.35,
-    reloadDuration: 1.2,
-    bodyDamage: 20,
-    headDamage: 40, // weapon-specific ×2 head bonus
-    /** Forward speed of a fired note (m/s) — straight flight, no gravity. */
-    projectileSpeed: 140,
-    /** Max flight time before a note fizzles out (s) → ~224 m range. */
-    projectileLifetime: 1.6,
-  },
-  /** Lance-Poison — short-range continuous sprayer (mirrors PoisonConfig). */
-  poison: {
-    damagePerSecond: 65,
-    /** Very short reach — the whole identity of the weapon. */
-    range: 9,
-    /** Poison never headshots (gas/liquid cone). */
-    supportsHeadshots: false,
-    /** Full tank spray time (capacity / drainPerSecond, s) — the server
-     *  force-stops a stream that outlives a full tank + margin. */
-    maxContinuousSeconds: 8.5,
   },
   /** HEX SNIPER — monster-head sniper (mirrors frontend HexSniperConfig). */
   hexSniper: {
@@ -514,7 +421,7 @@ export const NetworkWeaponConfig = {
      *  TP character normalization 2.693161874726703 (profile
      *  `ball.projectileWorldRadius`). Diameter ≈ 59.25 cm — intentional. */
     projectileRadius: 0.29624780621993735,
-    /** Downward acceleration (m/s²) — same readable arc as the thrown revolver. */
+    /** Downward acceleration (m/s²) — readable basketball arc. */
     gravity: 16,
     /** Max contacts resolved inside ONE simulation step (corners). */
     maxContactsPerStep: 4,
@@ -593,12 +500,12 @@ export interface WeaponActionMessage {
   dx?: number;
   dy?: number;
   dz?: number;
-  /** Extra point (slam impact, oblit anchor, mole feet…). */
+  /** Extra point (slam impact, mole feet, basket shooter velocity…). */
   px?: number;
   py?: number;
   pz?: number;
-  /** Obliterreur anchor SLOT (0 = A, 1 = B) — keeps both sides in
-   *  lockstep with the local placement alternation. */
+  /** Small integer tag: GOOFY BASKET gather flag (1 = dribble gather),
+   *  WATER FAMAS jet index (0..2). */
   pi?: number;
   /** POPCORN SHOTGUN: pellet seed (uint32) of a POPCORN_FIRE.
    *  PAINTBALL RIFLE: ball seed (uint32) of a PAINTBALL_FIRE. */
@@ -633,7 +540,7 @@ export interface WeaponActionConfirmedEvent {
   hx?: number;
   hy?: number;
   hz?: number;
-  /** Obliterreur: second anchor / extra data. */
+  /** Extra point (Goofy Basket shooter velocity, Hex Sniper…). */
   px?: number;
   py?: number;
   pz?: number;

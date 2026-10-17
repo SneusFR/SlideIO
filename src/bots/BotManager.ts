@@ -9,6 +9,14 @@ import { SpawnManager } from "../combat/SpawnManager";
 import { NavGrid } from "../navigation/NavGrid";
 import { CorpseManager } from "../ragdoll/CorpseManager";
 import { Bot, BotContext } from "./Bot";
+import type { BotModelEnv } from "./BotModel";
+import type { BotWeaponWorld } from "./BotWeapons";
+
+/**
+ * A* searches allowed per frame for the WHOLE roster: the bots that miss
+ * the budget simply retry next frame (cost spread instead of spikes).
+ */
+const PATHFINDS_PER_FRAME = 2;
 
 /**
  * Owns the bot roster: add/remove at runtime from the pause menu,
@@ -33,6 +41,7 @@ export class BotManager {
   onBotRemoved: ((bot: Bot) => void) | null = null;
 
   private nextId = 0;
+  private frameCounter = 0;
   private readonly ctx: BotContext;
 
   // Visibility scratch (frustum + LOS raycasts, zero per-frame allocation)
@@ -43,6 +52,10 @@ export class BotManager {
   private readonly botPos = new THREE.Vector3();
   /** Vertical sample offsets: head / chest / pelvis (capsule center-relative). */
   private static readonly LOS_OFFSETS = [0.6, 0.1, -0.5];
+  /** Reused visibility ray (no per-check allocation). */
+  private readonly visRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 });
+  /** TP weapon world hooks handed to every new bot model. */
+  modelEnv: BotModelEnv | null = null;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -54,7 +67,12 @@ export class BotManager {
     /** Death ragdoll sink — every bot death snapshots a physical corpse. */
     private readonly corpses: CorpseManager | null = null,
   ) {
-    this.ctx = { combatants, physics, nav, spawner, particles };
+    this.ctx = { combatants, physics, nav, spawner, particles, weaponWorld: null, pathBudget: PATHFINDS_PER_FRAME };
+  }
+
+  /** Shared weapon world (Game): bots hold fire until it is wired. */
+  setWeaponWorld(world: BotWeaponWorld | null): void {
+    this.ctx.weaponWorld = world;
   }
 
   get aliveCount(): number {
@@ -81,6 +99,7 @@ export class BotManager {
       this.ctx.spawner,
       this.combatants,
       this.corpses,
+      this.modelEnv,
     );
     bot.health.onDeath = (killer, method, hitZone) => {
       bot.onDeath();
@@ -102,12 +121,17 @@ export class BotManager {
 
   /** AI + movement (before the physics step). */
   update(dt: number): void {
-    for (const bot of this.bots) bot.update(dt, this.ctx);
+    this.ctx.pathBudget = PATHFINDS_PER_FRAME;
+    // Rotate the start index so the same bot never always wins the budget.
+    const n = this.bots.length;
+    if (n === 0) return;
+    const start = this.frameCounter++ % n;
+    for (let i = 0; i < n; i++) this.bots[(start + i) % n].update(dt, this.ctx);
   }
 
   /** Weapons (after world matrices are up to date). */
-  updateWeapons(dt: number, hittables: THREE.Object3D[], time: number): void {
-    for (const bot of this.bots) bot.updateWeapon(dt, hittables, time);
+  updateWeapons(dt: number): void {
+    for (const bot of this.bots) bot.updateWeapon(dt, this.ctx.weaponWorld);
   }
 
   /** Visual sync (after the physics step, before render). */
@@ -171,11 +195,15 @@ export class BotManager {
       const dist = Math.hypot(dx, dy, dz);
       if (dist < 0.001) return true;
       const inv = 1 / dist;
+      const ray = this.visRay;
+      ray.origin.x = this.camPos.x;
+      ray.origin.y = this.camPos.y;
+      ray.origin.z = this.camPos.z;
+      ray.dir.x = dx * inv;
+      ray.dir.y = dy * inv;
+      ray.dir.z = dz * inv;
       const hit = this.ctx.physics.world.castRay(
-        new RAPIER.Ray(
-          { x: this.camPos.x, y: this.camPos.y, z: this.camPos.z },
-          { x: dx * inv, y: dy * inv, z: dz * inv },
-        ),
+        ray,
         Math.max(dist - 0.35, 0.05),
         true,
         RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC, // walls only

@@ -2,12 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import hammerUrl from "../assets/voidhammer_opt.glb?url";
 import spearUrl from "../assets/lance_opt.glb?url";
-import rifleUrl from "../assets/voidrifle_opt.glb?url";
-import obliterreurUrl from "../assets/obliterreur_opt.glb?url";
-import revolverUrl from "../assets/revolver_opt.glb?url";
-// Bass Blaster = PulseCarbine LOD1 (light version — plenty for a 384px icon).
-import bassBlasterUrl from "../assets/PulseCarbine/PulseCarbine_LOD1.glb?url";
-import poisonUrl from "../assets/Lance_poison_jeu.glb?url";
+
 // Hex Sniper = the integration pack's canonical weapon GLB (no LOD exists
 // for the new pack yet — a 384px icon renders it once, then disposes).
 import hexSniperUrl from "../assets/potato/HexSniper_Weapon.glb?url";
@@ -37,11 +32,7 @@ import { DEFAULT_WEAPON_SKIN, isGoofyBasketSkinId, sanitizeWeaponSkin } from "..
 const MODEL_URLS: Record<string, string> = {
   HAMMER: hammerUrl,
   SPEAR: spearUrl,
-  PLASMA_RIFLE: rifleUrl,
-  OBLITERREUR: obliterreurUrl,
-  REVOLVER: revolverUrl,
-  BASS_BLASTER: bassBlasterUrl,
-  POISON_SPRAYER: poisonUrl,
+
   HEX_SNIPER: hexSniperUrl,
   GOOFY_BASKET: goofyBasketUrl,
   POPCORN_SHOTGUN: popcornShotgunUrl,

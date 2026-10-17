@@ -7,6 +7,15 @@ import { PhysicsWorld, RAPIER } from "../physics/PhysicsWorld";
  * Robust against any box layout (doors, lanes, interiors) with zero manual
  * waypoint authoring. A* + LOS smoothing produce clean paths.
  *
+ * PERFORMANCE (8 bots must never stall a frame):
+ *  - connected REGIONS are labelled once at build time with the exact A*
+ *    neighbour rules: a request whose start and goal live in different
+ *    regions (rooftops, closed pockets: 6-7 % of the walkable cells) is
+ *    answered INSTANTLY instead of flooding the whole map (was 80-180 ms);
+ *  - the open set is a binary heap (was a full linear scan per expansion);
+ *  - per-call buffers are reset with a generation stamp (no `fill`);
+ *  - LOS smoothing probes a bounded window ahead of the anchor.
+ *
  * IMPORTANT: build BEFORE creating character capsules (player/bots), so
  * only static geometry blocks cells.
  */
@@ -64,6 +73,12 @@ export class NavGrid {
    *  ≈ 0.38 m/cell at 14°, Yard ramps ≈ 0.56 m/cell at 20.6°; autostep
    *  0.25 m — anything bigger is a ledge). */
   private static readonly MAX_STEP_Y = 0.8;
+  /** Hard cap on A* expansions (a pathological request can never run away). */
+  private static readonly MAX_EXPANSIONS = 20000;
+  /** LOS smoothing looks at most this many chain cells ahead of the anchor. */
+  private static readonly SMOOTH_WINDOW = 24;
+  /** Max waypoints written per path (safety cap). */
+  private static readonly MAX_WAYPOINTS = 64;
 
   private readonly bounds: NavGridBounds;
   private readonly nx: number;
@@ -75,8 +90,21 @@ export class NavGrid {
   // A* scratch buffers (persistent — no per-call allocation of big arrays)
   private readonly gScore: Float32Array;
   private readonly cameFrom: Int32Array;
-  private readonly state: Uint8Array; // 0 untouched, 1 open, 2 closed
-  private readonly open: number[] = [];
+  /** Generation stamp per cell: a cell is "touched" only when it matches `gen`. */
+  private readonly stamp: Uint32Array;
+  /** Closed flag, valid only while `stamp[id] === gen`. */
+  private readonly closed: Uint8Array;
+  private gen = 0;
+  /** Binary min-heap of cell ids keyed by fScore (lazy deletion). */
+  private readonly heap: Int32Array;
+  private readonly heapF: Float32Array;
+  private heapSize = 0;
+  /** Reversed A* chain scratch (cell ids). */
+  private readonly chain: Int32Array;
+  /** Connected-region id per walkable cell (-1 = not walkable). */
+  private readonly region: Int32Array;
+  /** Reused query ray (castRay is synchronous). */
+  private readonly ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 });
 
   constructor(
     private physics: PhysicsWorld,
@@ -90,8 +118,15 @@ export class NavGrid {
     this.groundY = new Float32Array(n);
     this.gScore = new Float32Array(n);
     this.cameFrom = new Int32Array(n);
-    this.state = new Uint8Array(n);
+    this.stamp = new Uint32Array(n);
+    this.closed = new Uint8Array(n);
+    // Each cell enters the heap at most 8 times (once per improving neighbour).
+    this.heap = new Int32Array(n * 8 + 8);
+    this.heapF = new Float32Array(n * 8 + 8);
+    this.chain = new Int32Array(n);
+    this.region = new Int32Array(n).fill(-1);
     this.build();
+    this.labelRegions();
   }
 
   private build(): void {
@@ -134,6 +169,60 @@ export class NavGrid {
     }
   }
 
+  /**
+   * Flood-fill the walkable cells into connected regions using EXACTLY the
+   * A* neighbour rules (step height + no corner cutting), so "same region"
+   * means "A* can find a path" - never a false negative.
+   */
+  private labelRegions(): void {
+    const n = this.nx * this.nz;
+    const stack = new Int32Array(n);
+    let next = 0;
+    for (let s = 0; s < n; s++) {
+      if (!this.walkable[s] || this.region[s] >= 0) continue;
+      const id = next++;
+      let top = 0;
+      stack[top++] = s;
+      this.region[s] = id;
+      while (top > 0) {
+        const cur = stack[--top];
+        const ci = cur % this.nx;
+        const cj = (cur - ci) / this.nx;
+        for (let dj = -1; dj <= 1; dj++) {
+          for (let di = -1; di <= 1; di++) {
+            if (di === 0 && dj === 0) continue;
+            const nid = this.neighbour(cur, ci, cj, di, dj);
+            if (nid < 0 || this.region[nid] >= 0) continue;
+            this.region[nid] = id;
+            stack[top++] = nid;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Neighbour cell reachable from `cur` in direction (di, dj), or -1: in
+   * bounds, walkable, within the step height, and a diagonal never cuts a
+   * corner (both orthogonal neighbours walkable). Shared by A* and the
+   * region labelling so both always agree.
+   */
+  private neighbour(cur: number, ci: number, cj: number, di: number, dj: number): number {
+    const ni = ci + di;
+    const nj = cj + dj;
+    if (ni < 0 || nj < 0 || ni >= this.nx || nj >= this.nz) return -1;
+    const nid = nj * this.nx + ni;
+    if (!this.walkable[nid]) return -1;
+    // Ledges: adjacent floors further apart than a ramp step are NOT
+    // connected (e.g. East Ridge +3 m over Central Crossing 0 m).
+    if (Math.abs(this.groundY[nid] - this.groundY[cur]) > NavGrid.MAX_STEP_Y) return -1;
+    if (di !== 0 && dj !== 0) {
+      if (!this.walkable[cj * this.nx + ni]) return -1;
+      if (!this.walkable[nj * this.nx + ci]) return -1;
+    }
+    return nid;
+  }
+
   private idx(i: number, j: number): number {
     return j * this.nx + i;
   }
@@ -164,13 +253,20 @@ export class NavGrid {
     return -1;
   }
 
-  /** Random walkable point in the main arena, at least `minDist` from `from`. */
+  /**
+   * Random walkable point at least `minDist` from `from`, guaranteed to be
+   * REACHABLE (same connected region as `from`: never a closed pocket or a
+   * rooftop the A* would have to flood the whole map to reject).
+   */
   pickRoamGoal(from: THREE.Vector3, minDist: number, out: THREE.Vector3): boolean {
-    for (let attempt = 0; attempt < 12; attempt++) {
+    const start = this.nearestCell(from.x, from.z);
+    const startRegion = start >= 0 ? this.region[start] : -1;
+    for (let attempt = 0; attempt < 16; attempt++) {
       const i = Math.floor(Math.random() * this.nx);
       const j = Math.floor(Math.random() * this.nz);
       const id = this.idx(i, j);
       if (!this.walkable[id]) continue;
+      if (startRegion >= 0 && this.region[id] !== startRegion) continue;
       const x = this.cellX(i);
       const z = this.cellZ(j);
       if (Math.hypot(x - from.x, z - from.z) < minDist) continue;
@@ -188,114 +284,150 @@ export class NavGrid {
     const start = this.nearestCell(from.x, from.z);
     const goal = this.nearestCell(to.x, to.z);
     if (start < 0 || goal < 0) return 0;
+    // Different connected regions: A* would flood the whole region for
+    // nothing (80-180 ms measured) - answered in O(1) instead.
+    if (this.region[start] !== this.region[goal]) return 0;
     if (start === goal) {
       if (!outPath[0]) outPath[0] = new THREE.Vector3();
       outPath[0].set(to.x, this.groundY[goal] + 1, to.z);
       return 1;
     }
 
-    this.state.fill(0);
+    // New generation: every cell whose stamp differs is "untouched" - no
+    // full-array reset per call.
+    this.gen = (this.gen + 1) >>> 0;
+    if (this.gen === 0) {
+      this.stamp.fill(0); // wrap-around (once every 4 billion calls)
+      this.gen = 1;
+    }
+    const gen = this.gen;
+    const nx = this.nx;
+    const gi = goal % nx;
+    const gj = (goal - gi) / nx;
+    const si = start % nx;
+
+    this.stamp[start] = gen;
+    this.closed[start] = 0;
     this.gScore[start] = 0;
     this.cameFrom[start] = -1;
-    this.state[start] = 1;
-    this.open.length = 0;
-    this.open.push(start);
+    this.heapSize = 0;
+    this.heapPush(start, octile(si - gi, (start - si) / nx - gj));
 
-    const gi = goal % this.nx;
-    const gj = Math.floor(goal / this.nx);
     let found = false;
-    let iterations = 0;
-
-    while (this.open.length > 0 && iterations < 20000) {
-      iterations++;
-      // Extract cheapest (linear scan is fine at this scale).
-      let best = 0;
-      let bestF = Infinity;
-      for (let k = 0; k < this.open.length; k++) {
-        const id = this.open[k];
-        const ii = id % this.nx;
-        const jj = Math.floor(id / this.nx);
-        const f = this.gScore[id] + Math.hypot(ii - gi, jj - gj);
-        if (f < bestF) {
-          bestF = f;
-          best = k;
-        }
-      }
-      const current = this.open[best];
-      this.open[best] = this.open[this.open.length - 1];
-      this.open.pop();
+    let expansions = 0;
+    while (this.heapSize > 0 && expansions < NavGrid.MAX_EXPANSIONS) {
+      const current = this.heapPop();
+      if (this.closed[current]) continue; // stale heap entry (lazy deletion)
       if (current === goal) {
         found = true;
         break;
       }
-      this.state[current] = 2;
+      this.closed[current] = 1;
+      expansions++;
 
-      const ci = current % this.nx;
-      const cj = Math.floor(current / this.nx);
+      const ci = current % nx;
+      const cj = (current - ci) / nx;
+      const g = this.gScore[current];
       for (let dj = -1; dj <= 1; dj++) {
         for (let di = -1; di <= 1; di++) {
           if (di === 0 && dj === 0) continue;
-          const ni = ci + di;
-          const nj = cj + dj;
-          if (ni < 0 || nj < 0 || ni >= this.nx || nj >= this.nz) continue;
-          const nid = this.idx(ni, nj);
-          if (!this.walkable[nid] || this.state[nid] === 2) continue;
-          // Ledges: adjacent floors further apart than a ramp step are
-          // NOT connected (e.g. East Ridge +3 m over Central Crossing 0 m).
-          if (
-            Math.abs(this.groundY[nid] - this.groundY[current]) >
-            NavGrid.MAX_STEP_Y
-          ) {
-            continue;
+          const nid = this.neighbour(current, ci, cj, di, dj);
+          if (nid < 0) continue;
+          const fresh = this.stamp[nid] !== gen;
+          if (!fresh && this.closed[nid]) continue;
+          const cost = g + (di !== 0 && dj !== 0 ? 1.4142 : 1);
+          if (!fresh && cost >= this.gScore[nid]) continue;
+          if (fresh) {
+            this.stamp[nid] = gen;
+            this.closed[nid] = 0;
           }
-          // Diagonals need both orthogonal neighbors free (no corner cutting).
-          if (di !== 0 && dj !== 0) {
-            if (!this.walkable[this.idx(ci + di, cj)]) continue;
-            if (!this.walkable[this.idx(ci, cj + dj)]) continue;
-          }
-          const cost = this.gScore[current] + (di !== 0 && dj !== 0 ? 1.4142 : 1);
-          if (this.state[nid] === 1 && cost >= this.gScore[nid]) continue;
           this.gScore[nid] = cost;
           this.cameFrom[nid] = current;
-          if (this.state[nid] !== 1) {
-            this.state[nid] = 1;
-            this.open.push(nid);
-          }
+          this.heapPush(nid, cost + octile(ci + di - gi, cj + dj - gj));
         }
       }
     }
 
     if (!found) return 0;
 
-    // Reconstruct (reversed), then write forward into outPath.
-    const chain: number[] = [];
+    // Reconstruct into the scratch (goal first), then walk it forward.
+    let len = 0;
     let node = goal;
-    while (node !== -1 && chain.length < 4000) {
-      chain.push(node);
+    while (node !== -1 && len < this.chain.length) {
+      this.chain[len++] = node;
       node = this.cameFrom[node];
     }
-    chain.reverse();
+    const chain = this.chain;
+    const at = (k: number): number => chain[len - 1 - k];
 
-    // LOS smoothing: greedily jump to the furthest visible cell.
+    // LOS smoothing: greedily jump to the furthest visible cell inside a
+    // bounded window (constant raycast budget, even on the 280 m Givre map).
     let count = 0;
     let anchor = 0;
-    this.setPathPoint(outPath, count++, chain[0]);
-    while (anchor < chain.length - 1) {
+    this.setPathPoint(outPath, count++, at(0));
+    while (anchor < len - 1) {
       let next = anchor + 1;
-      // Try to jump ahead (test every 2nd cell, capped raycasts).
-      for (let probe = chain.length - 1; probe > anchor + 1; probe -= 2) {
-        if (this.segmentClear(chain[anchor], chain[probe])) {
+      const far = Math.min(len - 1, anchor + NavGrid.SMOOTH_WINDOW);
+      for (let probe = far; probe > anchor + 1; probe -= 2) {
+        if (this.segmentClear(at(anchor), at(probe))) {
           next = probe;
           break;
         }
       }
-      this.setPathPoint(outPath, count++, chain[next]);
+      this.setPathPoint(outPath, count++, at(next));
       anchor = next;
-      if (count >= 64) break; // safety cap
+      if (count >= NavGrid.MAX_WAYPOINTS) break; // safety cap
     }
     // Snap final waypoint to the exact requested destination.
     outPath[count - 1].set(to.x, this.groundY[goal] + 1, to.z);
     return count;
+  }
+
+  /** True when `to` can be reached from `from` (same connected region) - O(1). */
+  isReachable(from: THREE.Vector3, to: THREE.Vector3): boolean {
+    const a = this.nearestCell(from.x, from.z);
+    const b = this.nearestCell(to.x, to.z);
+    return a >= 0 && b >= 0 && this.region[a] === this.region[b];
+  }
+
+  private heapPush(id: number, f: number): void {
+    const heap = this.heap;
+    const hf = this.heapF;
+    let i = this.heapSize++;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (hf[p] <= f) break;
+      heap[i] = heap[p];
+      hf[i] = hf[p];
+      i = p;
+    }
+    heap[i] = id;
+    hf[i] = f;
+  }
+
+  private heapPop(): number {
+    const heap = this.heap;
+    const hf = this.heapF;
+    const top = heap[0];
+    const n = --this.heapSize;
+    if (n > 0) {
+      const id = heap[n];
+      const f = hf[n];
+      let i = 0;
+      for (;;) {
+        const l = 2 * i + 1;
+        if (l >= n) break;
+        const r = l + 1;
+        const c = r < n && hf[r] < hf[l] ? r : l;
+        if (hf[c] >= f) break;
+        heap[i] = heap[c];
+        hf[i] = hf[c];
+        i = c;
+      }
+      heap[i] = id;
+      hf[i] = f;
+    }
+    return top;
   }
 
   private chainX(id: number): number {
@@ -352,12 +484,26 @@ export class NavGrid {
   ): boolean {
     // Only static geometry blocks paths — character capsules (kinematic)
     // must not break LOS smoothing at runtime.
+    const ray = this.ray;
+    ray.origin.x = x;
+    ray.origin.y = y;
+    ray.origin.z = z;
+    ray.dir.x = dirx;
+    ray.dir.y = 0;
+    ray.dir.z = dirz;
     const hit = this.physics.world.castRay(
-      new RAPIER.Ray({ x, y, z }, { x: dirx, y: 0, z: dirz }),
+      ray,
       dist,
       true,
       RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC,
     );
     return hit === null;
   }
+}
+
+/** Octile distance: admissible + consistent for 8-connected 1 / 1.4142 costs. */
+function octile(dx: number, dy: number): number {
+  const ax = dx < 0 ? -dx : dx;
+  const ay = dy < 0 ? -dy : dy;
+  return ax > ay ? ax + 0.4142 * ay : ay + 0.4142 * ax;
 }

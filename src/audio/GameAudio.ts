@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { audio, LoopHandle } from "./AudioManager";
 import { PlayerMovement, MoveState, MovementSfxListener } from "../player/PlayerMovement";
-import { PlasmaRifle } from "../weapons/PlasmaRifle";
+
 import { Health, Combatant } from "../combat/Combatant";
 import { BotManager } from "../bots/BotManager";
 import { Bot } from "../bots/Bot";
@@ -24,19 +24,12 @@ export const AUDIO_MANIFEST: Record<string, string> = {
   dash_whoosh: `${A}/dash/dash_whoosh_01.mp3`,
   dash_energy: `${A}/dash/dash_energy_01.mp3`,
   phase_warp: `${A}/phase/phase_warp_01.mp3`,
-  // Plasma
-  plasma_start: `${A}/plasma/plasma_fire_start_01.mp3`,
-  plasma_loop: `${A}/plasma/plasma_fire_loop_01.mp3`,
-  plasma_stop: `${A}/plasma/plasma_fire_stop_01.mp3`,
-  plasma_impact_loop: `${A}/plasma/plasma_impact_loop_01.mp3`,
+  // Energy hum (kill-combo layer)
   plasma_heat_loop: `${A}/plasma/plasma_heat_loop_01.mp3`,
-  plasma_overheat: `${A}/plasma/plasma_overheat_01.mp3`,
-  plasma_cooling_loop: `${A}/plasma/plasma_cooling_loop_01.mp3`,
   // Hit confirmation (local player damage feedback)
   hit_body: `${A}/hits/hit_body_03.mp3`,
   hit_head: `${A}/hits/hit_head_02.mp3`,
-  // Revolver (arcade ballistic revolver — CC0, see ATTRIBUTION.md)
-  revolver_shot: `${A}/revolver/revolver_shot_01.mp3`,
+
   // Goofy Basket (real basketball bounces — CC0, see ATTRIBUTION.md)
   basket_bounce_01: `${A}/basket/basket_bounce_01.mp3`,
   basket_bounce_02: `${A}/basket/basket_bounce_02.mp3`,
@@ -146,7 +139,6 @@ function randRange([min, max]: [number, number]): number {
 export interface GameAudioFrame {
   camera: THREE.Camera;
   movement: PlayerMovement;
-  rifle: PlasmaRifle;
   playerHealth: Health;
   botManager: BotManager;
   /** False while the Escape menu is open (game paused). */
@@ -162,10 +154,6 @@ export class GameAudio {
   // ---- Player-local loop handles ----
   private slideLoop: LoopHandle | null = null;
   private wallSlideLoop: LoopHandle | null = null;
-  private plasmaLoop: LoopHandle | null = null;
-  private plasmaImpactLoop: LoopHandle | null = null;
-  private heatLoop: LoopHandle | null = null;
-  private coolingLoop: LoopHandle | null = null;
   private heartbeatLoop: LoopHandle | null = null;
   private ambienceLoop: LoopHandle | null = null;
   /** Seconds until the next distant music-box melody. */
@@ -174,19 +162,10 @@ export class GameAudio {
   private comboLoop: LoopHandle | null = null;
   /** Muffled rumble layer while burrowed with MOLE STRIKE. */
   private undergroundLoop: LoopHandle | null = null;
-  // ---- OBLITERREUR vortex-beam spatial loops (layered existing SFX) ----
-  private obliHumLoop: LoopHandle | null = null;
-  private obliRumbleLoop: LoopHandle | null = null;
-  private obliCrackleLoop: LoopHandle | null = null;
-
-  // ---- Spatial loops for bot rifles (max N simultaneous) ----
-  private readonly botFireLoops = new Map<Bot, LoopHandle>();
+  // ---- Bot respawn edge detection ----
   private readonly botWasAlive = new Map<Bot, boolean>();
-  private static readonly MAX_BOT_FIRE_LOOPS = 5;
 
   // ---- Edge-detection state ----
-  private prevFiring = false;
-  private prevOverheated = false;
   private prevDashReady = true;
   private stepTimer = 0;
 
@@ -430,7 +409,6 @@ export class GameAudio {
   }
 
   playerDeath(): void {
-    this.stopCombatLoops();
     this.stopMovementLoops();
     audio.play("player_death", { bus: "impacts", volume: 0.9, rate: 1 });
   }
@@ -449,11 +427,6 @@ export class GameAudio {
       throttleMs: 60,
       refDistance: 8,
     });
-    const loop = this.botFireLoops.get(bot);
-    if (loop) {
-      loop.stop(0.05);
-      this.botFireLoops.delete(bot);
-    }
   }
 
   /**
@@ -502,72 +475,6 @@ export class GameAudio {
     });
   }
 
-  /** Rifle overheat burst (wired to PlasmaRifle.onOverheat). */
-  overheat(): void {
-    audio.play("plasma_overheat", { bus: "weapons", volume: 0.85, rate: 1 });
-  }
-
-  // ------------------------------------------------------------------
-  // REVOLVER (ballistic gunshot sample + layered existing SFX)
-  // ------------------------------------------------------------------
-
-  /**
-   * Revolver gunshot: soft-stylized arcade "BANG" (real ballistic sample,
-   * never a laser). Fan-fire shots are slightly quieter with a small pitch
-   * variance and capped polyphony so the fast BANG-BANG-BANG-BANG never
-   * saturates the mix.
-   */
-  revolverShot(fanFire: boolean): void {
-    audio.play("revolver_shot", {
-      bus: "weapons",
-      volume: fanFire ? 0.5 : 0.62,
-      volumeVar: 0.04,
-      rate: fanFire ? 1.06 : 1,
-      rateVar: fanFire ? 0.06 : 0.03,
-      throttleMs: fanFire ? 45 : 0,
-      maxInstances: 4, // polyphony limiter for the fan fire
-    });
-  }
-
-  /** Weapon leaves the hand: short throw whoosh. */
-  revolverThrow(): void {
-    audio.play("jump", { bus: "weapons", volume: 0.55, rate: 1.35, rateVar: 0.06 });
-    audio.play("dash_whoosh", { bus: "weapons", volume: 0.3, rate: 1.5, delay: 0.02 });
-  }
-
-  /** Thrown revolver detonation: bass punch + short energy burst. */
-  revolverExplosion(pos: THREE.Vector3): void {
-    audio.playAt("hammer_slam_impact", pos, {
-      bus: "impacts",
-      volume: 0.95,
-      rate: 1.1,
-      rateVar: 0.04,
-      throttleMs: 60,
-      refDistance: 9,
-    });
-    audio.playAt("hammer_slam_sub", pos, {
-      bus: "impacts",
-      volume: 0.85,
-      rate: 1,
-      throttleMs: 60,
-      refDistance: 9,
-    });
-    audio.playAt("dash_energy", pos, {
-      bus: "impacts",
-      volume: 0.5,
-      rate: 0.75,
-      delay: 0.03,
-      throttleMs: 60,
-      refDistance: 9,
-    });
-  }
-
-  /** Fresh revolver holographically assembling in the hand. */
-  revolverMaterialize(): void {
-    audio.play("phase_warp", { bus: "weapons", volume: 0.4, rate: 1.7, throttleMs: 80 });
-    audio.play("dash_energy", { bus: "weapons", volume: 0.4, rate: 1.4, delay: 0.05 });
-    audio.play("ready_ping", { bus: "ui", volume: 0.3, rate: 1.5, delay: 0.3 });
-  }
 
   // ------------------------------------------------------------------
   // HEX SNIPER (dedicated samples: tongue whip / wet grab / jaws / gulp)
@@ -1011,53 +918,6 @@ export class GameAudio {
   }
 
   // ------------------------------------------------------------------
-  // BASS BLASTER (musical SMG — layered from existing SFX; the music
-  // fragments themselves are positional grains played by the weapon)
-  // ------------------------------------------------------------------
-
-  /**
-   * Percussive per-shot "note blip", tuned to the fired note's pitch
-   * (Do→Do' equal-tempered ratios). Sits UNDER the music fragment so
-   * every trigger pull keeps a crisp rhythmic identity.
-   */
-  bassBlasterShot(pitch: number): void {
-    audio.play("coin_pickup", {
-      bus: "weapons",
-      volume: 0.15,
-      volumeVar: 0.03,
-      rate: 1.1 * pitch,
-      throttleMs: 30,
-      maxInstances: 6,
-    });
-  }
-
-  /** Musical reload swirl begins: rising energy + warp shimmer. */
-  bassBlasterReloadStart(): void {
-    audio.play("phase_warp", { bus: "weapons", volume: 0.38, rate: 1.35, throttleMs: 120 });
-    audio.play("dash_energy", { bus: "weapons", volume: 0.35, rate: 1.15, delay: 0.06 });
-  }
-
-  /** Magazine refilled: bright "ready" arpeggio (three quick dings). */
-  bassBlasterReloadEnd(): void {
-    audio.play("ready_ping", { bus: "ui", volume: 0.32, rate: 1.25 });
-    audio.play("coin_pickup", { bus: "ui", volume: 0.18, rate: 1.4, delay: 0.05 });
-    audio.play("coin_pickup", { bus: "ui", volume: 0.16, rate: 1.75, delay: 0.12 });
-  }
-
-  /** A note hit a wall/floor: tiny spatial musical "plink". */
-  bassBlasterNoteImpact(pos: THREE.Vector3, pitch: number): void {
-    audio.playAt("coin_pickup", pos, {
-      bus: "impacts",
-      volume: 0.13,
-      rate: 0.85 * pitch,
-      throttleMs: 70,
-      maxInstances: 4,
-      refDistance: 7,
-      maxDistance: 60,
-    });
-  }
-
-  // ------------------------------------------------------------------
   // Killstreaks (layered from existing SFX — no new assets)
   // ------------------------------------------------------------------
 
@@ -1112,93 +972,6 @@ export class GameAudio {
       this.undergroundLoop.stop(0.2);
     }
     this.undergroundLoop = null;
-  }
-
-  // ------------------------------------------------------------------
-  // OBLITERREUR (layered from existing SFX — no new assets)
-  // ------------------------------------------------------------------
-
-  /** Anchor point placed: sharp "dark energy snap". */
-  obliterreurPlace(): void {
-    audio.play("phase_warp", { bus: "weapons", volume: 0.5, rate: 1.45, throttleMs: 80 });
-    audio.play("dash_energy", { bus: "weapons", volume: 0.5, rate: 0.55, delay: 0.04 });
-  }
-
-  /** Vortex beam fired: massive sub boom + warp + dark energy swell. */
-  obliterreurActivate(): void {
-    audio.play("hammer_slam_sub", { bus: "weapons", volume: 0.95, rate: 0.7 });
-    audio.play("phase_warp", { bus: "weapons", volume: 0.7, rate: 0.8 });
-    audio.play("dash_energy", { bus: "weapons", volume: 0.5, rate: 0.5, delay: 0.08 });
-  }
-
-  /** Vortex collapsed (natural expiry or RMB cancel — higher pitch). */
-  obliterreurBeamEnd(cancelled: boolean): void {
-    audio.play("phase_warp", {
-      bus: "weapons",
-      volume: 0.45,
-      rate: cancelled ? 1.6 : 1.25,
-    });
-    audio.play("plasma_stop", { bus: "weapons", volume: 0.4, rate: 0.7 });
-  }
-
-  /**
-   * Spatial black-hole drone while the vortex is open: deep hum + sub
-   * rumble + energy crackle, all anchored to the closest beam point.
-   * Idempotent per frame; stops with a short fade when the beam dies.
-   */
-  updateObliterreurBeam(active: boolean, pos: THREE.Vector3): void {
-    if (!audio.unlocked) return;
-    if (!active) {
-      this.stopObliterreurLoops();
-      return;
-    }
-
-    const spatial = {
-      spatial: true,
-      refDistance: 10,
-      maxDistance: 90,
-    } as const;
-
-    if (!this.obliHumLoop || this.obliHumLoop.stopped) {
-      this.obliHumLoop = audio.loop("plasma_heat_loop", {
-        bus: "weapons",
-        volume: 0.85,
-        rate: 0.5, // deep black-hole hum
-        fadeIn: 0.12,
-        ...spatial,
-      });
-    }
-    if (!this.obliRumbleLoop || this.obliRumbleLoop.stopped) {
-      this.obliRumbleLoop = audio.loop("slide_loop", {
-        bus: "weapons",
-        volume: 0.5,
-        rate: 0.35, // sub rumble
-        fadeIn: 0.15,
-        ...spatial,
-      });
-    }
-    if (!this.obliCrackleLoop || this.obliCrackleLoop.stopped) {
-      this.obliCrackleLoop = audio.loop("plasma_cooling_loop", {
-        bus: "weapons",
-        volume: 0.35,
-        rate: 0.6, // unstable energy crackle
-        fadeIn: 0.12,
-        ...spatial,
-      });
-    }
-
-    this.obliHumLoop?.setPosition(pos.x, pos.y, pos.z);
-    this.obliRumbleLoop?.setPosition(pos.x, pos.y, pos.z);
-    this.obliCrackleLoop?.setPosition(pos.x, pos.y, pos.z);
-  }
-
-  private stopObliterreurLoops(): void {
-    this.obliHumLoop?.stop(0.2);
-    this.obliHumLoop = null;
-    this.obliRumbleLoop?.stop(0.2);
-    this.obliRumbleLoop = null;
-    this.obliCrackleLoop?.stop(0.2);
-    this.obliCrackleLoop = null;
   }
 
   // ------------------------------------------------------------------
@@ -1272,18 +1045,14 @@ export class GameAudio {
       const alive = f.playerHealth.alive;
       this.updateFootsteps(dt, f.movement, alive);
       this.updateSlideLoops(f.movement, alive);
-      this.updatePlasma(f.rifle, alive);
       this.updateDashReady(f.movement, alive);
       this.updateHeartbeat(f.playerHealth);
       this.updateBots(f.botManager);
     } else {
       // Escape menu: fade every transient loop (ambience keeps playing).
-      this.stopCombatLoops();
       this.stopMovementLoops();
-      this.stopBotLoops();
       this.stopComboLayer();
       this.stopUndergroundLayer();
-      this.stopObliterreurLoops();
     }
   }
 
@@ -1409,86 +1178,6 @@ export class GameAudio {
     }
   }
 
-  private updatePlasma(rifle: PlasmaRifle, alive: boolean): void {
-    const firing = alive && rifle.isFiring;
-
-    // Fire start / loop / stop — short fades, no clicks.
-    if (firing && !this.prevFiring) {
-      audio.play("plasma_start", { bus: "weapons", volume: 0.5, rate: 1, rateVar: 0.04 });
-      this.plasmaLoop = audio.loop("plasma_loop", {
-        bus: "weapons",
-        volume: 0.5,
-        rate: 1,
-        fadeIn: 0.04,
-      });
-    } else if (!firing && this.prevFiring) {
-      this.plasmaLoop?.stop(0.07);
-      this.plasmaLoop = null;
-      audio.play("plasma_stop", { bus: "weapons", volume: 0.35, rate: 1, rateVar: 0.04 });
-    }
-    this.prevFiring = firing;
-
-    // Beam impact: a subtle continuous crackle while the beam burns
-    // something; slightly hotter when it's an actual combatant (§21).
-    const impacting = firing && rifle.beamHit;
-    if (impacting) {
-      if (!this.plasmaImpactLoop || this.plasmaImpactLoop.stopped) {
-        this.plasmaImpactLoop = audio.loop("plasma_impact_loop", {
-          bus: "weapons",
-          volume: 0.001,
-          rate: 1,
-          fadeIn: 0.05,
-        });
-      }
-      const onTarget = rifle.hittingTarget;
-      this.plasmaImpactLoop?.setVolume(onTarget ? 0.34 : 0.2);
-      this.plasmaImpactLoop?.setRate(onTarget ? 1.22 : 1.0);
-    } else if (this.plasmaImpactLoop && !this.plasmaImpactLoop.stopped) {
-      this.plasmaImpactLoop.stop(0.08);
-      this.plasmaImpactLoop = null;
-    }
-
-    // Rising tension as heat builds (audible from ~60%, obvious at 90%).
-    const ratio = rifle.heat.ratio;
-    const heatAudible = ratio > 0.55 && !rifle.heat.overheated;
-    if (heatAudible) {
-      if (!this.heatLoop || this.heatLoop.stopped) {
-        this.heatLoop = audio.loop("plasma_heat_loop", {
-          bus: "weapons",
-          volume: 0.001,
-          rate: 1,
-          fadeIn: 0.1,
-        });
-      }
-      const k = (ratio - 0.55) / 0.45;
-      this.heatLoop?.setVolume(k * k * 0.5);
-      this.heatLoop?.setRate(0.9 + ratio * 0.5);
-    } else if (this.heatLoop && !this.heatLoop.stopped) {
-      this.heatLoop.stop(0.2);
-      this.heatLoop = null;
-    }
-
-    // Forced cooldown vent hiss + "weapon ready" ping when it re-arms.
-    const overheated = rifle.heat.overheated;
-    if (overheated) {
-      if (!this.coolingLoop || this.coolingLoop.stopped) {
-        this.coolingLoop = audio.loop("plasma_cooling_loop", {
-          bus: "weapons",
-          volume: 0.3,
-          rate: 1,
-          fadeIn: 0.15,
-        });
-      }
-    } else if (this.coolingLoop && !this.coolingLoop.stopped) {
-      this.coolingLoop.stop(0.25);
-      this.coolingLoop = null;
-    }
-    if (this.prevOverheated && !overheated) {
-      audio.play("ready_ping", { bus: "ui", volume: 0.4, rate: 0.85 });
-    }
-    this.prevOverheated = overheated;
-  }
-
   private updateDashReady(movement: PlayerMovement, alive: boolean): void {
     const ready = movement.dashReady;
     if (alive && ready && !this.prevDashReady) {
@@ -1516,19 +1205,10 @@ export class GameAudio {
   }
 
   /**
-   * Bot rifles: spatialized fire loops that follow each bot, capped so a
-   * full 8-bot brawl never saturates the mix. Bot respawns get a quiet
-   * spatial cue when nearby.
+   * Bot respawns get a quiet spatial cue when nearby. (Bot weapon shots are
+   * spatial one-shots fired by the Game from each bot's weapon events.)
    */
   private updateBots(botManager: BotManager): void {
-    // Clean up loops for bots that were removed from the roster.
-    for (const [bot, loop] of this.botFireLoops) {
-      if (!botManager.bots.includes(bot)) {
-        loop.stop(0.05);
-        this.botFireLoops.delete(bot);
-      }
-    }
-
     for (const bot of botManager.bots) {
       // Respawn detection (alive edge).
       const wasAlive = this.botWasAlive.get(bot) ?? true;
@@ -1544,35 +1224,11 @@ export class GameAudio {
         });
       }
       this.botWasAlive.set(bot, bot.health.alive);
-
-      // Spatial fire loop management.
-      const firing = bot.health.alive && bot.isFiring;
-      const existing = this.botFireLoops.get(bot);
-
-      if (firing) {
-        if (!existing || existing.stopped) {
-          if (this.botFireLoops.size >= GameAudio.MAX_BOT_FIRE_LOOPS) continue;
-          const loop = audio.loop("plasma_loop", {
-            bus: "weapons",
-            volume: 0.45,
-            rate: 0.94, // slightly lower than the player's — distinguishable
-            fadeIn: 0.05,
-            spatial: true,
-            refDistance: 7,
-            maxDistance: 90,
-          });
-          if (loop) {
-            bot.getPosition(this.tmp);
-            loop.setPosition(this.tmp.x, this.tmp.y, this.tmp.z);
-            this.botFireLoops.set(bot, loop);
-          }
-        } else {
-          bot.getPosition(this.tmp);
-          existing.setPosition(this.tmp.x, this.tmp.y, this.tmp.z);
-        }
-      } else if (existing) {
-        existing.stop(0.07);
-        this.botFireLoops.delete(bot);
+    }
+    // Forget bots removed from the roster.
+    if (this.botWasAlive.size > botManager.bots.length) {
+      for (const bot of [...this.botWasAlive.keys()]) {
+        if (!botManager.bots.includes(bot)) this.botWasAlive.delete(bot);
       }
     }
   }
@@ -1581,26 +1237,12 @@ export class GameAudio {
   // Loop teardown helpers
   // ------------------------------------------------------------------
 
-  private stopCombatLoops(): void {
-    this.plasmaLoop?.stop(0.06);
-    this.plasmaLoop = null;
-    this.plasmaImpactLoop?.stop(0.06);
-    this.plasmaImpactLoop = null;
-    this.heatLoop?.stop(0.1);
-    this.heatLoop = null;
-    this.prevFiring = false;
-  }
 
   private stopMovementLoops(): void {
     this.slideLoop?.stop(0.1);
     this.slideLoop = null;
     this.wallSlideLoop?.stop(0.1);
     this.wallSlideLoop = null;
-  }
-
-  private stopBotLoops(): void {
-    for (const [, loop] of this.botFireLoops) loop.stop(0.08);
-    this.botFireLoops.clear();
   }
 }
 

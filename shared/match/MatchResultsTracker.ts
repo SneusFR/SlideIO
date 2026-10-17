@@ -13,17 +13,12 @@
  *     shot; a shot "hits" when it damages a player. Several victims of the
  *     same shot (shotgun pellets, explosion) count once: hits of the same
  *     attacker + weapon at the same `stamp` are merged.
- *   - BEAM weapons (plasma, poison spray): every 0.1 s of continuous fire
- *     is one shot, which hits if the beam damaged someone during it.
- *   - Melee, Obliterreur, killstreaks and the Hex Sniper bite are not
+ *   - Melee, killstreaks and the Hex Sniper bite are not
  *     aimed shots: they count for damage only.
  */
 
 /** Damage tags (KillMethod / DamageType strings) counted as discrete hits. */
 const DISCRETE_HIT_TAGS: ReadonlySet<string> = new Set([
-  "REVOLVER",
-  "REVOLVER_EXPLOSION",
-  "BASS_BLASTER",
   "HEX_SNIPER_TONGUE",
   "GOOFY_BASKET",
   "POPCORN_SHOTGUN",
@@ -32,17 +27,12 @@ const DISCRETE_HIT_TAGS: ReadonlySet<string> = new Set([
   "FRISBEE_LAUNCHER",
 ]);
 
-/** Continuous beam tags (sampled shots). */
-const BEAM_HIT_TAGS: ReadonlySet<string> = new Set(["PLASMA", "POISON"]);
 
 /**
  * Server-confirmed weapon actions that are one fired shot each
  * (WEAPON_ACTION_CONFIRMED `action` field).
  */
 const SHOT_ACTIONS: ReadonlySet<string> = new Set([
-  "REVOLVER_FIRE",
-  "REVOLVER_THROW",
-  "BASS_FIRE",
   "HEX_TONGUE_HIT",
   "HEX_TONGUE_MISS",
   "BASKET_THROW",
@@ -52,8 +42,6 @@ const SHOT_ACTIONS: ReadonlySet<string> = new Set([
   "FRISBEE_FIRE",
 ]);
 
-/** One beam "shot" = this much continuous fire (seconds). */
-export const BEAM_SAMPLE_SECONDS = 0.1;
 
 /** Upper bound of kill-feed entries kept (bounded network payload). */
 const MAX_FEED = 800;
@@ -93,10 +81,6 @@ interface Entry {
   damage: number;
   shots: number;
   hits: number;
-  /** Continuous-fire time accumulated in the current beam sample. */
-  beamTime: number;
-  /** The beam damaged someone during the current sample. */
-  beamHit: boolean;
   /** Last discrete hit key ("TAG@stamp") — merges multi-victim shots. */
   lastHitKey: string;
 }
@@ -126,29 +110,6 @@ export class MatchResultsTracker {
     this.entry(id).shots += 1;
   }
 
-  /**
-   * Continuous fire sampling — call every simulation step for every
-   * participant (`firing` = its beam weapon is currently firing).
-   */
-  recordBeam(id: string, firing: boolean, dt: number): void {
-    if (!firing) {
-      const e = this.entries.get(id);
-      if (e) {
-        e.beamTime = 0;
-        e.beamHit = false;
-      }
-      return;
-    }
-    const e = this.entry(id);
-    e.beamTime += Math.max(0, dt);
-    while (e.beamTime >= BEAM_SAMPLE_SECONDS) {
-      e.beamTime -= BEAM_SAMPLE_SECONDS;
-      e.shots += 1;
-      if (e.beamHit) e.hits += 1;
-      e.beamHit = false;
-    }
-  }
-
   /** Damage dealt by `attackerId` to ANOTHER player (self / world ignored). */
   recordDamage(attackerId: string | null, victimId: string, amount: number): void {
     if (attackerId === null || attackerId === victimId || !(amount > 0)) return;
@@ -162,10 +123,6 @@ export class MatchResultsTracker {
    */
   recordHit(attackerId: string | null, victimId: string, tag: string, stamp: number): void {
     if (attackerId === null || attackerId === victimId) return;
-    if (BEAM_HIT_TAGS.has(tag)) {
-      this.entry(attackerId).beamHit = true;
-      return;
-    }
     if (!DISCRETE_HIT_TAGS.has(tag)) return;
     const e = this.entry(attackerId);
     const key = `${tag}@${stamp}`;
@@ -209,7 +166,7 @@ export class MatchResultsTracker {
   private entry(id: string): Entry {
     let e = this.entries.get(id);
     if (!e) {
-      e = { damage: 0, shots: 0, hits: 0, beamTime: 0, beamHit: false, lastHitKey: "" };
+      e = { damage: 0, shots: 0, hits: 0, lastHitKey: "" };
       this.entries.set(id, e);
     }
     return e;

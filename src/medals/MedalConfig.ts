@@ -48,7 +48,7 @@ export const ComboMedalRegistry: Readonly<Record<number, MedalType>> = {
 export const SpecialMedalRegistry: Readonly<Partial<Record<KillMethod, MedalType>>> = {
   [KillMethod.HAMMER_SWING]: MedalType.HOMERUN,
   [KillMethod.GROUND_SLAM]: MedalType.SMASHED,
-  [KillMethod.OBLITERREUR]: MedalType.OBLITERATED,
+
   [KillMethod.MOLE_STRIKE]: MedalType.MOLED,
   [KillMethod.SPEAR_RUSH]: MedalType.IMPALED,
 };
@@ -73,7 +73,7 @@ export const MedalStyles: Readonly<Record<MedalType, MedalStyle>> = {
   [MedalType.TRIPLE_KILL]: { label: "TRIPLE KILL!", color: "#ff8a3d", stars: 3 },
   [MedalType.SMASHED]: { label: "SMASHED!", color: "#c98a4a", stars: 0 },
   [MedalType.HOMERUN]: { label: "HOME RUN!", color: "#5cc8ff", stars: 0 },
-  [MedalType.OBLITERATED]: { label: "OBLITERATED!", color: "#ffb347", stars: 0 },
+
   [MedalType.MOLED]: { label: "MOLED!", color: "#a5774a", stars: 0 },
   [MedalType.IMPALED]: { label: "IMPALED!", color: "#8fd14f", stars: 0 },
   [MedalType.HEADSHOT]: { label: "HEADSHOT!", color: "#ff5a4e", stars: 0 },

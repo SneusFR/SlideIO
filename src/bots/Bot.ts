@@ -6,19 +6,18 @@ import { RagdollController } from "../ragdoll/RagdollController";
 import { RagdollConfig as rc } from "../ragdoll/RagdollConfig";
 import { buildSkeletonRagdollParts } from "../ragdoll/SkeletonRagdollFactory";
 import { CorpseManager } from "../ragdoll/CorpseManager";
-import { WeaponConfig as wc } from "../weapons/WeaponConfig";
+
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import { Combatant, Health } from "../combat/Combatant";
-import { KillMethod } from "../combat/KillMethod";
+
 import { HitZone } from "../combat/HitZone";
 import { SpawnManager } from "../combat/SpawnManager";
 import { NavGrid } from "../navigation/NavGrid";
 import { ParticleSystem } from "../effects/ParticleSystem";
-import { HeatSystem } from "../weapons/HeatSystem";
-import { PlasmaBeam } from "../weapons/PlasmaBeam";
-import { castBeam, BeamCastResult } from "../weapons/BeamCombat";
-import { BotModel, BotPose } from "./BotModel";
+import { BotModel, BotModelEnv, BotPose } from "./BotModel";
 import { BotAI } from "./BotAI";
+import { BotWeapon, BotWeaponWorld, BotShooter, randomBotWeapon } from "./BotWeapons";
+import type { RemoteWeaponController } from "../network/remote/RemoteWeaponController";
 
 /** Shared context handed to every bot each frame. */
 export interface BotContext {
@@ -27,22 +26,33 @@ export interface BotContext {
   nav: NavGrid;
   spawner: SpawnManager;
   particles: ParticleSystem;
+  /** Shared weapon world (null until the Game wires it — bots hold fire). */
+  weaponWorld: BotWeaponWorld | null;
+  /**
+   * Path budget of the CURRENT frame (BotManager resets it every frame):
+   * a bot that finds it at 0 waits for the next frame instead of running
+   * another A* — spreads the pathfinding cost across frames.
+   */
+  pathBudget: number;
 }
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
 /**
  * A full FFA combatant: kinematic capsule + character controller,
- * simplified quake-style movement (run/jump/slide/dash), the SAME
- * Plasma Rifle logic as the player (HeatSystem + beam raycast + DPS),
- * a low-poly model and an AI brain.
+ * simplified quake-style movement (run/jump/slide/dash), a RANDOM primary
+ * re-rolled at every respawn (same rules / visuals as the player's weapons,
+ * see BotWeapons), the shared Potato model and an AI brain.
  */
-export class Bot implements Combatant {
+export class Bot implements Combatant, BotShooter {
   readonly health = new Health(cc.botMaxHealth);
   readonly velocity = new THREE.Vector3();
   readonly model: BotModel;
   readonly ai: BotAI;
-  readonly heat = new HeatSystem();
+  /** Current primary (re-rolled at every respawn). */
+  weapon: BotWeapon;
+  /** Shared projectile sweep key (basket / frisbee targets). */
+  readonly targetKey: string;
 
   // Per-bot variation
   readonly speedScale = rand(cc.botSpeedScaleMin, cc.botSpeedScaleMax);
@@ -64,8 +74,6 @@ export class Bot implements Combatant {
   /** > 0 while the HEX SNIPER tongue reels this bot in (locomotion suspended). */
   private pulledTimer = 0;
 
-  /** True while the plasma beam is actually emitting (read by game audio). */
-  isFiring = false;
 
   private readonly body: RAPIER_API.RigidBody;
   private readonly collider: RAPIER_API.Collider;
@@ -73,7 +81,7 @@ export class Bot implements Combatant {
   private readonly physics: PhysicsWorld;
   private readonly scene: THREE.Scene;
   private readonly particles: ParticleSystem;
-  private readonly beam: PlasmaBeam;
+  private weaponWorld: BotWeaponWorld | null = null;
 
   private slideTimer = 0;
   private slideCooldown = 0;
@@ -81,9 +89,7 @@ export class Bot implements Combatant {
   private dashCooldown = 0;
   private readonly dashDir = new THREE.Vector3();
 
-  private impactAccum = 0;
-  private readonly beamResult = new BeamCastResult();
-  private readonly raycaster = new THREE.Raycaster();
+
 
   // ---- Ragdoll (temporary knockdown + death corpse handoff) ----
   private ragdoll: RagdollController | null = null;
@@ -115,9 +121,7 @@ export class Bot implements Combatant {
   private readonly tmp = new THREE.Vector3();
   private readonly delta = new THREE.Vector3();
   private readonly corrected = new THREE.Vector3();
-  private readonly muzzleWorld = new THREE.Vector3();
-  private readonly eyePos = new THREE.Vector3();
-  private readonly sparkColor = new THREE.Color(0xc084fc);
+
   private readonly deathColorA = new THREE.Color(0xc084fc);
   private readonly deathColorB = new THREE.Color(0xffffff);
 
@@ -131,7 +135,9 @@ export class Bot implements Combatant {
     combatants: Combatant[],
     /** Death ragdoll sink (corpse snapshots) — owned by the Game. */
     private readonly corpses: CorpseManager | null = null,
+    modelEnv: BotModelEnv | null = null,
   ) {
+    this.targetKey = `bot:${id}`;
     this.scene = scene;
     this.physics = physics;
     this.particles = particles;
@@ -159,12 +165,13 @@ export class Bot implements Combatant {
     this.controller.setMaxSlopeClimbAngle((55 * Math.PI) / 180);
     this.controller.setSlideEnabled(true);
 
-    this.model = new BotModel(id);
+    this.model = new BotModel(id, modelEnv);
     this.model.group.position.copy(spawn.pos);
     this.model.group.userData.combatant = this;
     scene.add(this.model.group);
 
-    this.beam = new PlasmaBeam(scene);
+    this.weapon = new BotWeapon(randomBotWeapon(), this);
+    this.model.setWeapon(this.weapon.id);
     this.ai = new BotAI(this, spawn.yaw);
     this.health.protectionTimer = cc.spawnProtectionDuration;
 
@@ -183,6 +190,11 @@ export class Bot implements Combatant {
   getEyePosition(out: THREE.Vector3): THREE.Vector3 {
     const t = this.body.translation();
     return out.set(t.x, t.y + 0.55, t.z);
+  }
+
+  /** Third-person weapon presentation (null until the character loads). */
+  get weapons(): RemoteWeaponController | null {
+    return this.model.weapons;
   }
 
   /** Rapier collider handle — lets shape-cast hits map back to this bot. */
@@ -300,8 +312,6 @@ export class Bot implements Combatant {
 
     this.sliding = false;
     this.dashing = false;
-    this.isFiring = false;
-    this.beam.setActive(false);
     this.collider.setEnabled(false); // no invisible standing capsule fights
 
     this.ragdoll.activate(this.model.group, parts, {
@@ -407,7 +417,8 @@ export class Bot implements Combatant {
     this.particles.burst(this.tmp, 30, 8, 0.9, this.deathColorA, 5);
     this.particles.burst(this.tmp, 14, 3.5, 0.5, this.deathColorB, 2);
     this.model.group.visible = false;
-    this.beam.setActive(false);
+    this.weapon.stop(this.weaponWorld);
+    this.model.resetWeaponState();
     this.body.setTranslation({ x: this.id * 3, y: -1000, z: 0 }, true);
     this.velocity.set(0, 0, 0);
     this.respawnTimer = rand(cc.botRespawnDelayMin, cc.botRespawnDelayMax);
@@ -422,8 +433,10 @@ export class Bot implements Combatant {
     this.deathHandled = false;
     this.pulledTimer = 0;
     this.pendingImpactAt = -Infinity;
-    this.heat.heat = 0;
-    this.heat.overheated = false;
+    // New life, new random primary (same TP model / visuals as the players).
+    this.weapon = new BotWeapon(randomBotWeapon(), this);
+    this.model.resetWeaponState();
+    this.model.setWeapon(this.weapon.id);
     this.health.reset(cc.spawnProtectionDuration);
     this.model.group.visible = true;
     this.ai.reset(spawn.yaw);
@@ -439,6 +452,7 @@ export class Bot implements Combatant {
   }
 
   update(dt: number, ctx: BotContext): void {
+    this.weaponWorld = ctx.weaponWorld;
     this.health.update(dt);
 
     if (!this.health.alive) {
@@ -655,72 +669,20 @@ export class Bot implements Combatant {
   }
 
   /**
-   * Fire the Plasma Rifle — SAME rules as the player: continuous beam,
-   * heat/overheat, DPS on the first combatant hit, blocked by walls.
-   * Bot inaccuracy comes only from where the AI is aiming.
+   * Primary weapon tick (after world matrices are up to date): the
+   * BotWeapon owns cadence / ammo / reloads and applies the SAME damage as
+   * the player's weapon; the AI only says where to aim and when to shoot.
    */
-  updateWeapon(dt: number, hittables: THREE.Object3D[], time: number): void {
-    const wantFire = this.health.alive && !this.ragdolled && this.ai.out.wantFire;
-    const firing = wantFire && this.heat.canFire;
-    this.isFiring = firing;
-    this.heat.update(dt, firing);
-    this.ai.notifyHeat(this.heat);
-
-    if (this.heat.consumeOverheatEvent()) {
-      this.model.getMuzzleWorld(this.muzzleWorld);
-      this.particles.burst(this.muzzleWorld, 14, 3, 0.6, this.sparkColor, 2);
-    }
-
-    if (!firing) {
-      this.beam.setActive(false);
-      return;
-    }
-
-    this.getEyePosition(this.eyePos);
-    castBeam(
-      this.raycaster,
-      this.eyePos,
-      this.ai.out.aimDir,
-      wc.beamRange,
-      hittables,
-      this,
-      this.beamResult,
+  updateWeapon(dt: number, world: BotWeaponWorld | null): void {
+    if (!world) return;
+    const canAct = this.health.alive && !this.ragdolled && this.pulledTimer <= 0;
+    const out = this.ai.out;
+    this.weapon.update(
+      dt,
+      out.aimDir,
+      { wantFire: canAct && out.wantFire, targetDistance: out.targetDistance },
+      world,
     );
-
-    if (this.beamResult.combatant) {
-      this.beamResult.combatant.health.applyDamage(
-        wc.plasmaDamagePerSecond * dt,
-        this,
-        KillMethod.PLASMA,
-      );
-    } else if (this.beamResult.trainingTarget) {
-      this.beamResult.trainingTarget.applyDamage(wc.plasmaDamagePerSecond * dt);
-    }
-
-    // Beam from the model's muzzle to the actual hit point.
-    this.model.getMuzzleWorld(this.muzzleWorld);
-    this.beam.setActive(true);
-    this.beam.update(this.muzzleWorld, this.beamResult.point, time);
-
-    // Light impact sparks (no point lights — performance with 8 bots).
-    if (this.beamResult.hit) {
-      this.impactAccum += cc.botImpactParticleRate * dt;
-      while (this.impactAccum >= 1) {
-        this.impactAccum -= 1;
-        this.tmp
-          .set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5)
-          .multiplyScalar(2)
-          .addScaledVector(this.beamResult.normal, 1.5 + Math.random() * 2);
-        this.particles.spawn(
-          this.beamResult.point,
-          this.tmp,
-          0.25 + Math.random() * 0.15,
-          this.sparkColor,
-          4,
-          2,
-        );
-      }
-    }
   }
 
   dispose(): void {
@@ -729,8 +691,7 @@ export class Bot implements Combatant {
     this.ragdolled = false;
     this.scene.remove(this.model.group);
     this.model.dispose();
-    this.beam.setActive(false);
-    this.beam.group.removeFromParent();
+    this.weapon.stop(this.weaponWorld);
     this.physics.world.removeCharacterController(this.controller);
     this.physics.world.removeCollider(this.collider, false);
     this.physics.world.removeRigidBody(this.body);

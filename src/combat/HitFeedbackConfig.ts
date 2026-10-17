@@ -17,8 +17,7 @@ export const HitFeedbackConfig = {
   bodyHitFeedbackInterval: 0.12,
   /** Min interval between two headshot pulses (marker + sound). */
   headshotHitFeedbackInterval: 0.12,
-  /** The Obliterreur AoE ticks slower — calmer aggregated pulse rate. */
-  obliterreurFeedbackInterval: 0.25,
+
   /**
    * PAINTBALL RIFLE: 0 = NO throttle. One ball every 0.1 s: a 0.12 s throttle swallowed every other confirmation, so
    * every ball that connects gets its own hitmarker pulse + hit sound.
