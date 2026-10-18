@@ -1,12 +1,18 @@
 import * as THREE from "three";
 import { PlayerMovement } from "../player/PlayerMovement";
 import type { FrameSections } from "./FrameSections";
+import { frameEventsBetween } from "./frameEvents";
 
 /**
- * A frame gap at least this long is analysed as a HITCH (ms): at 60 Hz, two
- * refreshes or more without a new image (the "51 FPS" dips).
+ * A frame gap is analysed as a HITCH (ms) from THREE normal frames long
+ * (the median frame of the previous stats window), within [12, 30] ms: at
+ * 60 Hz 30 ms (two refreshes without a new image, the "51 FPS" dips); at
+ * 240 Hz 12.5 ms (the "-30 FPS" dips, invisible with a fixed 30 ms bar).
  */
-const HITCH_MS = 30;
+const HITCH_MIN_MS = 12;
+const HITCH_MAX_MS = 30;
+/** Production console: only the big ones (DEV logs every hitch, rate-limited). */
+const PROD_CONSOLE_HITCH_MS = 30;
 /**
  * Frames whose post-frame browser work is remembered (see markFrameEnd): a
  * hitch is analysed 250 ms after it, so the ring must hold that many frames
@@ -94,7 +100,7 @@ export class DebugHUD {
   /** CPU (sim + render) of the last game frame — the "jeu" part of a hitch. */
   private lastFrameCpu = 0;
   /**
-   * HITCH breakdown (frames ≥ HITCH_MS): what the browser's MAIN THREAD was
+   * HITCH breakdown (frames ≥ hitchMs): what the browser's MAIN THREAD was
    * doing during the gap (Long Animation Frames API: scripts, style /
    * layout, rendering — GC and browser work show up as busy time without
    * scripts) vs the time it was simply WAITING (GPU process / compositor:
@@ -120,6 +126,21 @@ export class DebugHUD {
   private sections: FrameSections | null = null;
   private hitchText = "";
   private hitchUntil = 0;
+  /** Current hitch bar (ms): 3 median frames of the last window, in [12, 30]. */
+  private hitchMs = HITCH_MAX_MS;
+  /** Last console log of a hitch (rate limit). */
+  private lastHitchLog = -Infinity;
+  /**
+   * Browser main-thread work after the game frame (see frameEnd), averaged
+   * and worst over the stats window: shown next to the game's CPU — CPU +
+   * navigateur close to the frame time = the main thread is the limit; well
+   * below it = the frame waits for the browser's GPU process / the GPU.
+   */
+  private postSum = 0;
+  private postCount = 0;
+  private postWorst = 0;
+  private postAvgMs = 0;
+  private postWorstMs = 0;
   /** Distinct rAF timestamps, including ticks skipped by the FPS cap. */
   private rafRate = 0;
   private callbackRate = 0;
@@ -128,14 +149,26 @@ export class DebugHUD {
   private lastRafTimestamp: number | null = null;
   private rafCallbacks = 0;
   private rafUnique = 0;
+  /**
+   * Display refresh as the browser paces rAF: shortest usual interval
+   * between two distinct rAF timestamps (10th percentile of a window, best
+   * of the last 10 windows — a slow stretch never hides the real rate).
+   */
+  private readonly rafDeltas: number[] = [];
+  private readonly refreshHistory: number[] = [];
+  private refreshMs = 0;
 
   constructor() {
     this.el = document.getElementById("debug")!;
     this.frameEnd.port1.onmessage = (e: MessageEvent<number>) => {
       const id = e.data;
       const k = id % POST_RING;
-      this.postMs[k] = performance.now() - this.frameEndAt[k];
+      const ms = performance.now() - this.frameEndAt[k];
+      this.postMs[k] = ms;
       this.postId[k] = id;
+      this.postSum += ms;
+      this.postCount++;
+      if (ms > this.postWorst) this.postWorst = ms;
     };
     try {
       new PerformanceObserver((list) => {
@@ -204,6 +237,10 @@ export class DebugHUD {
     this.rafRate = this.callbackRate = this.duplicateCallbacks = 0;
     this.rafWindowStart = this.lastRafTimestamp = null;
     this.rafCallbacks = this.rafUnique = 0;
+    this.rafDeltas.length = 0;
+    this.postSum = this.postCount = this.postWorst = 0;
+    this.postAvgMs = this.postWorstMs = 0;
+    this.hitchMs = HITCH_MAX_MS;
   }
 
   /**
@@ -223,6 +260,11 @@ export class DebugHUD {
       this.duplicateCallbacks = this.rafCallbacks - this.rafUnique;
       this.rafCallbacks = this.rafUnique = 0;
       this.rafWindowStart = timestamp;
+      this.updateRefresh();
+    }
+    if (unique && this.lastRafTimestamp !== null) {
+      const d = timestamp - this.lastRafTimestamp;
+      if (d > 0 && d < 100 && this.rafDeltas.length < 2048) this.rafDeltas.push(d);
     }
     this.rafCallbacks++;
     if (unique) this.rafUnique++;
@@ -230,12 +272,24 @@ export class DebugHUD {
     return unique;
   }
 
+  /** Window closed: 10th percentile of its rAF intervals, best of the last 10 windows. */
+  private updateRefresh(): void {
+    const d = this.rafDeltas;
+    if (d.length >= 8) {
+      d.sort((a, b) => a - b);
+      this.refreshHistory.push(d[Math.floor(d.length * 0.1)]);
+      if (this.refreshHistory.length > 10) this.refreshHistory.shift();
+      this.refreshMs = Math.min(...this.refreshHistory);
+    }
+    d.length = 0;
+  }
+
   update(rawDt: number, movement: PlayerMovement, scene?: THREE.Scene): void {
     this.samples.push(rawDt);
     this.statsTimer += rawDt;
     const now = performance.now();
     // (A gap over 1 s is a hidden tab / breakpoint, not a hitch.)
-    if (rawDt * 1000 >= HITCH_MS && rawDt < 1) {
+    if (rawDt * 1000 >= this.hitchMs && rawDt < 1) {
       // The gap holds the PREVIOUS frame's game CPU: its committed split.
       this.hitchQueue.push({
         start: now - rawDt * 1000,
@@ -262,6 +316,9 @@ export class DebugHUD {
       const sorted = this.samples.slice().sort((a, b) => a - b);
       this.p95Ms = sorted[Math.min(n - 1, Math.floor(n * 0.95))] * 1000;
       this.maxMs = max * 1000;
+      // Hitch bar for the next window: three median frames, within [12, 30] ms.
+      const medianMs = sorted[Math.floor(n / 2)] * 1000;
+      this.hitchMs = Math.min(HITCH_MAX_MS, Math.max(HITCH_MIN_MS, 3 * medianMs));
       this.samples.length = 0;
       this.statsTimer = 0;
       if (this.cpuSamples > 0) {
@@ -271,6 +328,11 @@ export class DebugHUD {
       }
       this.cpuSimSum = this.cpuRenderSum = this.cpuWorst = 0;
       this.cpuSamples = 0;
+      if (this.postCount > 0) {
+        this.postAvgMs = this.postSum / this.postCount;
+        this.postWorstMs = this.postWorst;
+      }
+      this.postSum = this.postCount = this.postWorst = 0;
       if (this.gpuSummary) this.gpuText = this.gpuSummary() ?? this.gpuText;
 
       // Light census: three.js forward lighting shades EVERY scene light
@@ -308,10 +370,11 @@ export class DebugHUD {
       `Grounded: ${movement.grounded}\n` +
       `State:    ${movement.state}\n` +
       `Velocity: ${v.x.toFixed(1)} / ${v.y.toFixed(1)} / ${v.z.toFixed(1)}\n` +
-      `FPS:      ${this.fps}\n` +
+      `FPS:      ${this.fps}${this.refreshMs > 0 ? ` / ${Math.round(1000 / this.refreshMs)} Hz` : ""}\n` +
       `rAF:      ${Math.round(this.rafRate)} unique/s / ${Math.round(this.callbackRate)} calls/s (dup ${this.duplicateCallbacks})\n` +
       `Frame:    ${this.avgMs.toFixed(1)} ms (p95 ${this.p95Ms.toFixed(1)} / max ${this.maxMs.toFixed(1)})\n` +
       `CPU:      ${(this.cpuSimMs + this.cpuRenderMs).toFixed(1)} ms (sim ${this.cpuSimMs.toFixed(1)} / render ${this.cpuRenderMs.toFixed(1)} / max ${this.cpuWorstMs.toFixed(1)})\n` +
+      `Browser:  ${this.postAvgMs.toFixed(1)} ms (max ${this.postWorstMs.toFixed(1)})\n` +
       (this.gpuText ? `GPU:      ${this.gpuText}\n` : "") +
       `World:    ${this.drawCalls} draws / ${(this.triangles / 1000).toFixed(0)}k tris\n` +
       `Render:   ${this.bufferW}x${this.bufferH} (ratio ${this.pixelRatio.toFixed(2)} / DPR ${this.devicePixelRatio.toFixed(2)})\n` +
@@ -364,12 +427,18 @@ export class DebugHUD {
     const loafBrowser = busy - Math.min(busy, scriptMs, game);
     const browser = Math.max(0, Math.min(gap - game, Math.max(post, loafBrowser)));
     const wait = Math.max(0, gap - game - browser);
+    // What the game just did (kill, death, shot…): the likely trigger.
+    const events = frameEventsBetween(h.start - 150, h.end);
     this.hitchText =
       `${gap.toFixed(0)} ms = jeu ${game.toFixed(0)}${h.split && game >= 5 ? ` (${h.split})` : ""}` +
-      ` + navigateur ${browser.toFixed(0)} + attente GPU ${wait.toFixed(0)}`;
+      ` + navigateur ${browser.toFixed(0)} + attente GPU ${wait.toFixed(0)}` +
+      (events.length ? ` · ${events.join(", ")}` : "");
     this.hitchUntil = now + 6000;
-    // Console: every hitch while developing; production keeps only the big ones.
-    if (!import.meta.env.DEV && gap < 60) return;
+    // Console: every hitch while developing (2 per second at most), only the
+    // big ones in production.
+    if (!import.meta.env.DEV && gap < PROD_CONSOLE_HITCH_MS) return;
+    if (now - this.lastHitchLog < 500) return;
+    this.lastHitchLog = now;
     const top = scripts
       .sort((a, b) => b.duration - a.duration)
       .slice(0, 4)

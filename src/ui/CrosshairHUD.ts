@@ -15,6 +15,7 @@
  */
 
 import { FramePulse } from "./framePulse";
+import { noteFrameEvent } from "./frameEvents";
 
 /** Pulse amplitude (px at scale 1) per weapon — a real recoil, not one generic tick. */
 export type CrosshairKick = "light" | "medium" | "heavy";
@@ -65,6 +66,7 @@ export class CrosshairHUD {
 
   /** A shot was actually emitted by the local weapon. Restarts the pulse (no stacking). */
   fire(kick: CrosshairKick = "medium"): void {
+    noteFrameEvent("tir");
     if (!this.root) return;
     this.kick = kick;
     const px = KICK_PX[kick] * (this.aiming ? AIM_KICK_FACTOR : 1);

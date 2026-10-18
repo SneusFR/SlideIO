@@ -156,6 +156,7 @@ import type {
   WeaponActionConfirmedEvent,
 } from "../../shared/combat/NetworkWeapons";
 import { getQualitySettings, webglRendererName } from "./GraphicsQuality";
+import { noteFrameEvent } from "../ui/frameEvents";
 import { installTexParamDedupe } from "../effects/TexParamDedupe";
 import { GpuTimer, timeDraws, timePasses } from "../ui/GpuTimer";
 import { takePaintGpuMs } from "../ui/paint/PaintLayer";
@@ -1260,6 +1261,8 @@ export class Game {
         this.killstreaks.onPlayerKill();
         // Kill-confirmed chime — the grisant payoff that begs for a chain.
         this.gameAudio.killConfirm();
+      } else {
+        noteFrameEvent("kill bot"); // debug HUD "Hitch" line context
       }
       this.gameAudio.botKilled(bot);
       // Loot belongs to a REAL combat death only. Manual bot removal from

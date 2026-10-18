@@ -1,6 +1,7 @@
 import { weaponIconSvg, WeaponIconKey } from "./hudIcons";
 import { PaintLayer } from "./paint/PaintLayer";
 import { PAINT_PROFILES } from "./paint/paintProfiles";
+import { noteFrameEvent } from "./frameEvents";
 
 /**
  * Toy-box HUD kit — shared building blocks for the "Bean Sticker Arcade" HUD.
@@ -147,7 +148,10 @@ export class WeaponPlate {
     this.root.classList.toggle("reloading", state === "reload");
     this.root.classList.toggle("hot", state === "hot");
     if (prev !== null) {
-      if (state === "reload" && prev !== "reload") this.stamp("RELOAD!");
+      if (state === "reload" && prev !== "reload") {
+        noteFrameEvent("recharge");
+        this.stamp("RELOAD!");
+      }
       if (prev === "reload" && state !== "reload") replayAnim(this.badgeFace, "refilled");
     }
     aimTicker.set(this, state);
