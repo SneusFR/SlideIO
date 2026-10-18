@@ -26,6 +26,9 @@ export class DebugHUD {
   private triangles = 0;
   private lightsTotal = 0;
   private lightsActive = 0;
+  /** Lights found by the last scene walk + seconds until the next walk. */
+  private readonly lights: THREE.Light[] = [];
+  private censusTimer = 0;
   /**
    * Rendered resolution (DRAWING-BUFFER pixels — CSS size × pixel ratio),
    * the real fill-rate driver: a 1440p screen at 125 % Windows scaling
@@ -37,6 +40,14 @@ export class DebugHUD {
   private devicePixelRatio = 1;
   /** Static render setup line (preset, MSAA path…) — set once by the Game. */
   private renderSetup = "";
+  /** GPU / backend the browser renders with (software fallback check). */
+  private deviceName = "";
+  /**
+   * DEV: GPU execution time per frame (GpuTimer), pulled with the frame
+   * stats. Null = no line (production / no timer extension).
+   */
+  gpuSummary: (() => string | null) | null = null;
+  private gpuText = "";
   /**
    * Main-thread CPU per frame (ms), averaged + worst over the stats window:
    * `sim` = everything before the render call (AI, physics, weapons, HUD),
@@ -90,6 +101,11 @@ export class DebugHUD {
   /** One-line static render setup (preset, AA path…), shown under the resolution. */
   setRenderSetup(text: string): void {
     this.renderSetup = text;
+  }
+
+  /** GPU name line (see GraphicsQuality.webglRendererName). */
+  setDeviceName(name: string): void {
+    this.deviceName = name;
   }
 
   /** Reset timing windows when gameplay starts (not on Escape/resume). */
@@ -151,19 +167,27 @@ export class DebugHUD {
       }
       this.cpuSimSum = this.cpuRenderSum = this.cpuWorst = 0;
       this.cpuSamples = 0;
+      if (this.gpuSummary) this.gpuText = this.gpuSummary() ?? this.gpuText;
 
       // Light census: three.js forward lighting shades EVERY scene light
       // per pixel — lit or not — so the TOTAL is what costs GPU time.
+      // PERF: the scene walk (thousands of nodes: map, bones…) only runs
+      // every 5 s — the light set is fixed by design (FX light pool); the
+      // "lit" count is re-read from the cached list at every refresh.
       if (scene) {
-        let total = 0;
+        this.censusTimer -= 0.5;
+        if (this.censusTimer <= 0) {
+          this.censusTimer = 5;
+          this.lights.length = 0;
+          scene.traverse((obj) => {
+            const light = obj as THREE.Light;
+            if (!light.isLight || (light as THREE.Light & { isAmbientLight?: boolean }).isAmbientLight) return;
+            this.lights.push(light);
+          });
+        }
         let active = 0;
-        scene.traverse((obj) => {
-          const light = obj as THREE.Light;
-          if (!light.isLight || (light as THREE.Light & { isAmbientLight?: boolean }).isAmbientLight) return;
-          total++;
-          if (light.intensity > 0) active++;
-        });
-        this.lightsTotal = total;
+        for (const light of this.lights) if (light.intensity > 0) active++;
+        this.lightsTotal = this.lights.length;
         this.lightsActive = active;
       }
     }
@@ -184,9 +208,11 @@ export class DebugHUD {
       `rAF:      ${Math.round(this.rafRate)} unique/s / ${Math.round(this.callbackRate)} calls/s (dup ${this.duplicateCallbacks})\n` +
       `Frame:    ${this.avgMs.toFixed(1)} ms (p95 ${this.p95Ms.toFixed(1)} / max ${this.maxMs.toFixed(1)})\n` +
       `CPU:      ${(this.cpuSimMs + this.cpuRenderMs).toFixed(1)} ms (sim ${this.cpuSimMs.toFixed(1)} / render ${this.cpuRenderMs.toFixed(1)} / max ${this.cpuWorstMs.toFixed(1)})\n` +
+      (this.gpuText ? `GPU:      ${this.gpuText}\n` : "") +
       `World:    ${this.drawCalls} draws / ${(this.triangles / 1000).toFixed(0)}k tris\n` +
       `Render:   ${this.bufferW}x${this.bufferH} (ratio ${this.pixelRatio.toFixed(2)} / DPR ${this.devicePixelRatio.toFixed(2)})\n` +
       (this.renderSetup ? `Setup:    ${this.renderSetup}\n` : "") +
+      (this.deviceName ? `Device:   ${this.deviceName}\n` : "") +
       `Lights:   ${this.lightsTotal} (${this.lightsActive} lit)\n` +
       `\n` +
       `Dash:     ${movement.dashReady ? "READY" : "COOLDOWN"}\n` +

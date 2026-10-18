@@ -153,7 +153,8 @@ import type {
   HitConfirmedEvent,
   WeaponActionConfirmedEvent,
 } from "../../shared/combat/NetworkWeapons";
-import { getQualitySettings } from "./GraphicsQuality";
+import { getQualitySettings, webglRendererName } from "./GraphicsQuality";
+import { GpuTimer, timeDraws, timePasses } from "../ui/GpuTimer";
 import { pinNewPrograms } from "../effects/ProgramPin";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { loadCharacterAsset, stripEnemyOutline } from "../characters/PotatoCharacter";
@@ -198,6 +199,10 @@ export class Game {
   private worldOutline: GivreOutlinePass | null = null;
   private fpOverlayPass: RenderPass | null = null;
   private fpOutline: GivreOutlinePass | null = null;
+  /** DEV builds: GPU execution time per frame (debug HUD "GPU" line). */
+  private gpuTimer: GpuTimer | null = null;
+  /** DEV builds: per-draw GPU categories (perfDebug.gpu(true)), uninstall. */
+  private gpuDrawSplit: (() => void) | null = null;
   /** Live cel-shading settings (menu SETTINGS → OUTLINE). */
   private outlineSettings: OutlineSettings = loadOutlineSettings();
   /** Collider (magenta) / playerClip (cyan) wireframes — toggled with KeyH. */
@@ -647,6 +652,7 @@ export class Game {
         ? "MSAA 4x"
         : "none";
     this.hud.setRenderSetup(`${quality.level} · AA ${aa} · shadows ${shadow}`);
+    this.hud.setDeviceName(webglRendererName(this.renderer.getContext()));
 
     this.dashHud = new DashHUD();
     this.combatHud = new CombatHUD();
@@ -750,6 +756,9 @@ export class Game {
     this.fpOutfit.setSelection(loadCharacterCosmetics());
     // GIVRE: cel-shading post-processing chain (needs the FP scene/camera).
     if (isGivre) this.buildGivreComposer();
+    // DEV builds: GPU timer on the debug HUD (after the composer: it times
+    // each of its passes).
+    if (import.meta.env.DEV) this.installGpuTimer();
 
     // ---- Brick Maul (melee): grounded WHIRLWIND + airborne Ground Slam ----
     this.shockwave = new Shockwave(this.scene);
@@ -1085,6 +1094,8 @@ export class Game {
           }
           return out;
         },
+        /** GPU time per draw category on the HUD "GPU" line (false = per pass). */
+        gpu: (on = true) => this.setGpuDrawSplit(on),
         programs: () => this.renderer.info.programs?.length ?? 0,
         /** Compiled program names (diff two calls to see what compiled lazily). */
         programNames: () =>
@@ -1425,6 +1436,52 @@ export class Game {
         perf: this.createGivrePerfToggles(target.samples),
       };
     }
+  }
+
+  /**
+   * DEV builds: GPU execution time on the debug HUD ("GPU" line), split by
+   * pass — world, FP arms, sRGB output, FXAA on Givre; world + arms on the
+   * other maps. `perfDebug.gpu(true)` adds the per-draw categories (map,
+   * sky, bots, snow…). Without EXT_disjoint_timer_query_webgl2 the line says
+   * so: the CPU line then stays the only measure.
+   */
+  private installGpuTimer(): void {
+    const timer = GpuTimer.create(this.renderer);
+    if (!timer) {
+      this.hud.gpuSummary = () => "n/a (EXT_disjoint_timer_query_webgl2 absent)";
+      return;
+    }
+    this.gpuTimer = timer;
+    if (this.composer) {
+      const labels = new Map<object | null, string>([
+        [this.worldRenderPass, "monde"],
+        [this.worldOutline, "contours"],
+        [this.fpOverlayPass, "bras"],
+        [this.fpOutline, "contours bras"],
+      ]);
+      timePasses(this.composer.passes, timer, (pass) =>
+        labels.get(pass) ??
+        (pass instanceof OutputPass ? "sortie" : pass instanceof FXAAPass ? "FXAA" : pass.constructor.name),
+      );
+    }
+    this.hud.gpuSummary = () => {
+      if (timer.dead) return "n/a (no timer query results)";
+      const r = timer.take(this.gpuDrawSplit !== null);
+      if (!r) return null;
+      const parts = r.split.slice(0, this.gpuDrawSplit ? 8 : 5).map(([k, ms]) => `${k} ${ms.toFixed(1)}`);
+      return `${r.total.toFixed(1)} ms (${parts.join(" · ")})`;
+    };
+  }
+
+  /** DEV (perfDebug.gpu): per-draw GPU categories on / off. */
+  private setGpuDrawSplit(on: boolean): string {
+    if (!this.gpuTimer) return "GPU timer unavailable";
+    if (on && !this.gpuDrawSplit) this.gpuDrawSplit = timeDraws(this.renderer, this.gpuTimer);
+    if (!on && this.gpuDrawSplit) {
+      this.gpuDrawSplit();
+      this.gpuDrawSplit = null;
+    }
+    return `GPU split per draw ${on ? "ON" : "OFF"}`;
   }
 
   /**
@@ -3494,11 +3551,14 @@ export class Game {
         // off on this path, so the HUD numbers cover EVERY pass of the frame.
         this.viewmodelSystem.syncCamera(cam);
         const renderStart = performance.now();
+        this.gpuTimer?.beginFrame("monde");
         this.renderComposer();
+        this.gpuTimer?.endFrame();
         this.hud.sampleCpu(renderStart - this.frameCpuStart, performance.now() - renderStart);
         this.hud.sampleRenderInfo(this.renderer);
       } else {
         const renderStart = performance.now();
+        this.gpuTimer?.beginFrame("monde");
         this.renderer.render(this.scene, cam);
         // Debug HUD GPU stats: renderer.info is reset by every render() call,
         // so the WORLD pass numbers must be captured right here.
@@ -3509,7 +3569,9 @@ export class Game {
         // camera-attached viewmodels already rendered inside the world pass
         // above (no double draw — each weapon renders on exactly one path).
         this.viewmodelSystem.syncCamera(cam);
+        this.gpuTimer?.setPass("bras");
         this.viewmodelSystem.render(this.renderer);
+        this.gpuTimer?.endFrame();
         this.hud.sampleCpu(renderStart - this.frameCpuStart, performance.now() - renderStart);
       }
     } finally {

@@ -136,6 +136,31 @@ export function detectQualityLevel(): QualityLevel {
   }
 }
 
+/**
+ * Short name of the GPU / backend the browser REALLY renders with (debug
+ * HUD): "Intel(R) Iris(R) Xe Graphics · D3D11". Reveals a software
+ * fallback ("SwiftShader", "Microsoft Basic Render Driver", "llvmpipe"),
+ * which no game-side optimisation can make fast. Empty when masked.
+ */
+export function webglRendererName(gl: WebGLRenderingContext | WebGL2RenderingContext): string {
+  try {
+    const info = gl.getExtension("WEBGL_debug_renderer_info");
+    const raw = String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER) ?? "");
+    // "ANGLE (Intel, Intel(R) Iris(R) Xe Graphics (0x00009A49) Direct3D11 vs_5_0 ps_5_0, D3D11)"
+    const angle = /^ANGLE \((.*)\)$/.exec(raw);
+    if (!angle) return raw;
+    const parts = angle[1].split(", ");
+    const device = (parts[1] ?? parts[0])
+      .replace(/\s*\(0x[0-9a-f]+\)/i, "")
+      .replace(/\s*Direct3D\S*\s+vs_\S+\s+ps_\S+/i, "")
+      .trim();
+    const backend = parts[2] ?? "";
+    return backend ? `${device} · ${backend}` : device;
+  } catch {
+    return "";
+  }
+}
+
 /** Persisted FPS-cap override (AUTO when never touched / invalid). */
 export function loadFpsCapMode(): FpsCapMode {
   try {
