@@ -211,7 +211,7 @@ export class GivreMap {
         if (std.aoMap) lightmaps.add(std.aoMap);
       }
     });
-    setupLightmapFiltering(lightmaps, givre.lightmapMipLevels);
+    setupLightmapFiltering(lightmaps, givre.lightmapMipLevels, getQualitySettings().anisotropy);
 
     // Static meshes → merged by material, split on the XZ grid (frustum
     // culling + front-to-back), thin closed solids single-sided — see
@@ -400,7 +400,7 @@ function convertToStandardMaterials(scene: THREE.Object3D): void {
  * per source and given to every texture of that source (three uploads one
  * GL texture per source + sampling parameters).
  */
-function setupLightmapFiltering(lightmaps: ReadonlySet<THREE.Texture>, mipLevels: number): void {
+function setupLightmapFiltering(lightmaps: ReadonlySet<THREE.Texture>, mipLevels: number, anisotropy = 1): void {
   const chains = new Map<string, unknown[] | null>();
   for (const t of lightmaps) {
     let chain = chains.get(t.source.uuid);
@@ -412,6 +412,9 @@ function setupLightmapFiltering(lightmaps: ReadonlySet<THREE.Texture>, mipLevels
     if (chain) {
       t.mipmaps = chain as THREE.Texture["mipmaps"];
       t.minFilter = THREE.LinearMipmapLinearFilter;
+      // HIGH: anisotropic filtering — floors / walls stay sharp at grazing
+      // angles instead of sliding to the blurry small levels.
+      t.anisotropy = anisotropy;
     } else {
       t.minFilter = THREE.LinearFilter;
     }

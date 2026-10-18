@@ -46,6 +46,12 @@ export interface QualitySettings {
   maxFieldLights: number;
   /** Multiplier on the force-field rising-particle density. */
   fieldParticleScale: number;
+  /**
+   * Anisotropic filtering of the world textures (baked lightmaps / AO):
+   * sharp floors and walls at grazing angles. Clamped to the GPU maximum.
+   * Free on discrete GPUs, a texture-bandwidth cost on integrated ones.
+   */
+  anisotropy: number;
 }
 
 const STORAGE_KEY = "beanzo.graphicsQuality";
@@ -69,6 +75,7 @@ const PRESETS: Record<QualityLevel, Omit<QualitySettings, "level">> = {
     maxFps: Infinity,
     maxFieldLights: Infinity,
     fieldParticleScale: 1,
+    anisotropy: 8,
   },
   LOW: {
     pixelRatioCap: 1,
@@ -78,6 +85,7 @@ const PRESETS: Record<QualityLevel, Omit<QualitySettings, "level">> = {
     maxFps: 60,
     maxFieldLights: 4,
     fieldParticleScale: 0.5,
+    anisotropy: 1,
   },
 };
 

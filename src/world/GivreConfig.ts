@@ -78,7 +78,10 @@ export const GivreConfig = {
    * now, invisible at gameplay distance with PCF filtering. LOW keeps
    * baking it once at load (staticShadows).
    */
-  shadowMapSize: { HIGH: 2048, LOW: 2048 } as const,
+  // HIGH is back to 4096 × 2048 (≈ 8 cm per texel instead of 17 cm): the
+  // static map is now rendered into it ONCE (StaticShadowCache) — per frame
+  // only a depth copy + the characters, not the whole map.
+  shadowMapSize: { HIGH: 4096, LOW: 2048 } as const,
   /** Low sun, long shadows: slightly stronger biases than v2 (acne-free). */
   shadowBias: -0.0006,
   shadowNormalBias: 0.08,
