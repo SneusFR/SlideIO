@@ -59,7 +59,7 @@ export async function warmUpHud(hooks: readonly HudWarmupHook[] = []): Promise<v
   }
 }
 
-/** Animation state before the warm-up touched it (given back afterwards). */
+/** Animations a pass played / paused (with their state when first touched). */
 type Touched = Map<Animation, { time: CSSNumberish | null; running: boolean }>;
 
 /**
@@ -112,16 +112,35 @@ async function warmPass(
       }
     }
     patch.restore();
-    // Animations that outlive the warm states run on from where they were;
-    // the others ended with their classes (or were finished above).
-    for (const [anim, was] of touched) {
-      if (anim.playState === "idle" || anim.playState === "finished") continue;
-      try {
-        anim.currentTime = was.time;
-        if (was.running) anim.play();
-      } catch {
-        /* animation gone with its element */
-      }
+    endTouchedAnimations(touched);
+  }
+}
+
+/**
+ * After a pass: every CSS animation it played / paused is cancelled unless
+ * its rule still applies to a rendered element. A CSS animation driven by
+ * script outlives the class that started it — without this, the panicking
+ * bean kept trembling, its rays spinning and the HP number throbbing at
+ * full health for the whole match (and a hidden medal kept stale ones for
+ * its next pop). The ones whose rule applies again (the dash chevrons, back
+ * to READY) run on; Web Animations (leaderboard) are reset by their hook.
+ */
+function endTouchedAnimations(touched: Touched): void {
+  for (const anim of touched.keys()) {
+    const name = (anim as Animation & { animationName?: unknown }).animationName;
+    if (typeof name !== "string") continue; // a Web Animation or a CSS transition
+    try {
+      const effect = anim.effect as KeyframeEffect | null;
+      const target = effect?.target;
+      const applies =
+        !!target &&
+        target.getClientRects().length > 0 &&
+        getComputedStyle(target, effect.pseudoElement)
+          .animationName.split(",")
+          .some((n) => n.trim() === name);
+      if (!applies) anim.cancel();
+    } catch {
+      /* element gone */
     }
   }
 }
