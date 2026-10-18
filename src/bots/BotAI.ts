@@ -233,6 +233,7 @@ export class BotAI {
       this.lastAttacker &&
       this.lastAttacker !== this.target &&
       this.lastAttacker.health.alive &&
+      this.lastAttacker.targetable !== false &&
       this.attackedTimer < 1.5 &&
       !this.targetVisible
     ) {

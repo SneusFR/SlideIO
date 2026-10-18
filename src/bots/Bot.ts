@@ -71,6 +71,14 @@ export class Bot implements Combatant, BotShooter {
   /** Fraction of intended horizontal movement that was blocked last frame. */
   blockedAmount = 0;
   respawnTimer = 0;
+  /**
+   * False once the bot is REMOVED from the match (Escape-menu bot count):
+   * every bot AI drops it at once (BotAI), like the burrowed player.
+   */
+  targetable = true;
+  /** Removed: its physics body is gone — position reads use `lastPos`. */
+  private disposed = false;
+  private readonly lastPos = new THREE.Vector3();
   /** > 0 while the HEX SNIPER tongue reels this bot in (locomotion suspended). */
   private pulledTimer = 0;
 
@@ -183,11 +191,16 @@ export class Bot implements Combatant, BotShooter {
 
   // ---- Combatant ----
   getPosition(out: THREE.Vector3): THREE.Vector3 {
+    // A removed bot can still be referenced for a frame (another bot's
+    // target / last attacker…): reading its freed Rapier body would abort
+    // the whole game frame (WASM "unreachable"), every frame.
+    if (this.disposed) return out.copy(this.lastPos);
     const t = this.body.translation();
     return out.set(t.x, t.y, t.z);
   }
 
   getEyePosition(out: THREE.Vector3): THREE.Vector3 {
+    if (this.disposed) return out.set(this.lastPos.x, this.lastPos.y + 0.55, this.lastPos.z);
     const t = this.body.translation();
     return out.set(t.x, t.y + 0.55, t.z);
   }
@@ -219,7 +232,7 @@ export class Bot implements Combatant, BotShooter {
     dt: number,
     blockedRatio: number,
   ): { reached?: boolean; blocked?: boolean; valid?: boolean } {
-    if (!this.health.alive || this.ragdolled) return { valid: false };
+    if (this.disposed || !this.health.alive || this.ragdolled) return { valid: false };
     const t = this.body.translation();
     this.tmp.set(dest.x - t.x, dest.y - t.y, dest.z - t.z);
     const dist = this.tmp.length();
@@ -686,6 +699,9 @@ export class Bot implements Combatant, BotShooter {
   }
 
   dispose(): void {
+    this.getPosition(this.lastPos);
+    this.disposed = true;
+    this.targetable = false;
     this.ragdoll?.dispose();
     this.ragdoll = null;
     this.ragdolled = false;
