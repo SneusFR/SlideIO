@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { adoptSkinnedBounds } from "../effects/skinnedBounds";
 import { RemoteInterpolationConfig as icfg } from "./interpolation/RemoteInterpolationConfig";
 import {
   SnapshotBuffer,
@@ -751,6 +752,7 @@ export class RemotePlayerManager {
     // material must never enter the CorpseManager's fade pool).
     stripEnemyOutline(corpseModel);
     shareOutlineSkeletons(corpseModel); // one skeleton for the whole corpse
+    adoptSkinnedBounds(corpseModel); // never a full CPU skinning at its first draw
 
     // Corpse root at the avatar's exact world transform (group = capsule
     // center; the model keeps its own feet offset inside).

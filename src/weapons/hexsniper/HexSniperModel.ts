@@ -1,5 +1,6 @@
 import { GLTFLoader, GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import hexSniperUrl from "../../assets/potato/HexSniper_Weapon.glb?url";
+import { adoptSkinnedBounds } from "../../effects/skinnedBounds";
 
 /**
  * Shared, cached HexSniper GLB (integration pack canonical asset:
@@ -22,6 +23,13 @@ let gltfPromise: Promise<GLTF> | null = null;
 /** Load + cache the HexSniper weapon GLB exactly once. */
 export function loadHexSniperGltf(): Promise<GLTF> {
   if (gltfPromise) return gltfPromise;
-  gltfPromise = new GLTFLoader().loadAsync(hexSniperUrl);
+  gltfPromise = new GLTFLoader().loadAsync(hexSniperUrl).then((gltf) => {
+    // PERF: the skinned creature (16k vertices) and its tongue get their
+    // sort / culling spheres HERE, once — every clone (FP viewmodel, bot and
+    // remote TP weapons, corpses) inherits them instead of CPU-skinning the
+    // whole creature at its first draw (see adoptSkinnedBounds).
+    adoptSkinnedBounds(gltf.scene);
+    return gltf;
+  });
   return gltfPromise;
 }

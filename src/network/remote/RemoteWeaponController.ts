@@ -10,6 +10,7 @@ import { HexSniperController } from "../../weapons/hexsniper/HexSniperController
 import { HexSniperConfig as hexCfg } from "../../weapons/hexsniper/HexSniperConfig";
 import { markEnemyOutlineOccluder } from "../../characters/PotatoCharacter";
 import { BATCHED_SOURCE_LAYER, batchRigidParts, isRigidPartsBatch } from "../../effects/RigidPartsBatch";
+import { adoptSkinnedBounds } from "../../effects/skinnedBounds";
 import { getQualitySettings } from "../../game/GraphicsQuality";
 import { BrickMaulProfile, BRICKMAUL_EYES, BRICKMAUL_TIMING } from "../../weapons/brickmaul/BrickMaulProfile";
 import { loadBrickMaulGltf, instantiateBrickMaul } from "../../weapons/brickmaul/BrickMaulModel";
@@ -188,6 +189,9 @@ const TP_SHADOW_PART_RATIO = 0.3;
 export function tuneThirdPersonWeapon(root: THREE.Object3D, options: { batch?: boolean } = {}): void {
   if (options.batch) batchRigidParts(root);
   splitTwoPassTransparents(root);
+  // A skinned part without its own sphere would be CPU-skinned in full at
+  // its first draw (sort depth) — a hitch at every respawn with it.
+  adoptSkinnedBounds(root);
   root.updateMatrixWorld(true);
   const rootScale = Math.max(root.matrixWorld.getMaxScaleOnAxis(), 1e-9);
   const parts: { mesh: THREE.Mesh; radius: number }[] = [];

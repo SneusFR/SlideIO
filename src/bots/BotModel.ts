@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { EnemyHealthBars, type EnemyHealthBarSlot } from "./EnemyHealthBars";
 import { skipFreshMatrixUpdate } from "../effects/matrixFresh";
+import { adoptSkinnedBounds } from "../effects/skinnedBounds";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { MovementConfig as mc } from "../player/MovementConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
@@ -538,6 +539,10 @@ export class BotModel {
       // CorpseManager's fade clones).
       stripEnemyOutline(clone);
       shareOutlineSkeletons(clone); // one skeleton for the whole corpse
+      // PERF: a skinned piece the living bot never drew (weapon picked up
+      // at the respawn, off screen until death) has no sphere yet — the
+      // corpse's first frame would CPU-skin it in full (adoptSkinnedBounds).
+      adoptSkinnedBounds(clone);
       corpse.add(clone);
       corpse.updateMatrixWorld(true);
     }
