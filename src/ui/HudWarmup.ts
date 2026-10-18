@@ -388,7 +388,7 @@ let frameMs = 1000 / 60;
  * Past this point (a very slow machine: every frame late), the remaining
  * states are only held a frame each — the loading screen never waits more.
  */
-const WARM_BUDGET_MS = 5000;
+const WARM_BUDGET_MS = 8000;
 let holdDeadline = Infinity;
 
 /** Median interval of a few frames (60 Hz → 16.7 ms, 240 Hz → 4.2 ms). */
