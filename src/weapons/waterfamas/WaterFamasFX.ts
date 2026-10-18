@@ -82,6 +82,15 @@ export class WaterFamasFX {
     return { mesh: body, faceIndex: hit.faceIndex, bary };
   }
 
+  /**
+   * GPU warm-up: makes the body of a temporary clone wettable so the wet
+   * skin program compiles at load (detachUnder() afterwards).
+   */
+  warmCharacter(root: THREE.Object3D): void {
+    const body = this.bodyOf(root);
+    if (body) this.marks.attach(body);
+  }
+
   /** DEATH / respawn: the player is dry again (every client). */
   dryUnder(root: THREE.Object3D): void {
     this.marks.dryUnder(root);

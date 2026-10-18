@@ -154,6 +154,7 @@ import type {
   WeaponActionConfirmedEvent,
 } from "../../shared/combat/NetworkWeapons";
 import { getQualitySettings } from "./GraphicsQuality";
+import { pinNewPrograms } from "../effects/ProgramPin";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { loadCharacterAsset, stripEnemyOutline } from "../characters/PotatoCharacter";
 
@@ -347,6 +348,16 @@ export class Game {
   // ---- FFA match stats (ALL combatants) + live leaderboard HUD ----
   private matchStats: MatchStatsManager;
   private leaderboardHud: LeaderboardHUD;
+  /**
+   * SOLO: a stats change (kill, death, assist, roster) only flags the
+   * leaderboard; the refresh runs at the START of the next frame (see
+   * frame()). PERF: refreshing inside the kill path measured the rows
+   * (getBoundingClientRect / getComputedStyle) after the frame's HUD writes:
+   * a FORCED layout of the whole HUD at every kill (several ms on a laptop).
+   * At the frame start the layout is still clean from the last paint, and
+   * several kills in one frame refresh once. One frame of delay (16 ms).
+   */
+  private leaderboardDirty = false;
 
   // ---- Match clock (5 min FFA) + end-of-match results ----
   /** SOLO end-screen stats (feed / damage / accuracy). MP: server-owned. */
@@ -712,8 +723,9 @@ export class Game {
     // change (kill / death / assist / bot added / removed) — never per frame.
     this.matchStats = new MatchStatsManager();
     this.leaderboardHud = new LeaderboardHUD();
-    this.matchStats.onStatsChanged = () =>
-      this.leaderboardHud.refresh(this.matchStats.getSortedStats());
+    this.matchStats.onStatsChanged = () => {
+      this.leaderboardDirty = true;
+    };
     this.matchStats.register(this.playerCombatant, "VALENTIN", true);
     this.observeForResults(this.playerCombatant);
     // End-screen kill feed: the SAME attribution as the leaderboard (killer
@@ -1655,6 +1667,7 @@ export class Game {
     // never seen before). Warm both far below the map right now.
     let releaseCorpseMats: (() => void) | null = null;
     let paintedWarm: THREE.Object3D | null = null;
+    const skinWarm: { root: THREE.Object3D; order: "wet" | "paint+wet" | "wet+paint" }[] = [];
     // CHARACTER OUTFIT (Potato Astronaut): the suit materials (vertex-color
     // PBR, transparent visor, their outline hulls, and their corpse fade
     // clones) are programs the base character never compiles. Dress one
@@ -1701,6 +1714,19 @@ export class Game {
       this.paintballRifle.fx.warmCharacter(painted);
       paintedWarm = painted;
       temp.push(painted);
+      // WATER FAMAS: the wet skin is another program, and so is each
+      // stacking order with the paint (paint → wet, wet → paint): a bot hit
+      // by both weapons compiled them mid-fight. One clone per variant;
+      // removed in reverse order of application (see cleanup below).
+      for (const order of ["wet", "paint+wet", "wet+paint"] as const) {
+        const clone = skeletonClone(asset.template);
+        clone.position.copy(far);
+        if (order === "paint+wet") this.paintballRifle.fx.warmCharacter(clone);
+        this.waterFamas.fx.warmCharacter(clone);
+        if (order === "wet+paint") this.paintballRifle.fx.warmCharacter(clone);
+        skinWarm.push({ root: clone, order });
+        temp.push(clone);
+      }
     } catch {
       /* character asset failed — nothing to warm */
     }
@@ -1760,6 +1786,37 @@ export class Game {
     // light visible would change the scene light count, and light-count
     // changes recompile every lit material (a freeze). A few frames are
     // rendered so drivers that link programs lazily finish before play.
+    //
+    // STATIC shadows (LOW): the shadow map must EXIST before the first lit
+    // draw. Until its first render three r185 binds a placeholder depth
+    // texture WITHOUT compare mode to the `sampler2DShadow` array
+    // (WebGLUniforms setValueT1Array never sets its compareFunction):
+    // "GL_INVALID_OPERATION: Mismatch between texture format and sampler
+    // type" — WebGL REJECTED every lit warm-up draw. The programs linked,
+    // but those draws never reached the driver, and ANGLE / D3D11 (Windows)
+    // builds part of its shader variants on the first REAL draw → those
+    // builds fell mid-game: hitches. Bake once now, with the real
+    // visibility (the warm objects sit far below the shadow camera); the
+    // final bake below stays the reference.
+    //
+    // Every warm frame goes through the path the map REALLY renders with.
+    // Givre draws through the composer, whose target is LINEAR: three
+    // compiles an "srgb-linear" variant of each program, distinct from the
+    // sRGB-canvas one. Direct renders only compiled variants Givre never
+    // uses (load time), and each FP weapon other than the current one
+    // compiled its real variant on its first use in play (a freeze).
+    const warmWorld = (): void => {
+      if (this.composer) this.renderComposer();
+      else this.renderer.render(this.scene, this.fpsCamera.camera);
+    };
+    const warmFp = (): void => {
+      if (this.composer) this.renderComposer();
+      else this.viewmodelSystem.render(this.renderer);
+    };
+    if (this.staticShadows) {
+      this.renderer.shadowMap.needsUpdate = true;
+      warmWorld();
+    }
     const saved: { obj: THREE.Object3D; visible: boolean; culled: boolean }[] = [];
     this.scene.traverse((obj) => {
       if ((obj as THREE.Light).isLight) return; // keep the light count real
@@ -1768,12 +1825,9 @@ export class Game {
       obj.frustumCulled = false;
     });
     this.scene.updateMatrixWorld(true);
-    for (let i = 0; i < 2; i++) {
-      this.renderer.render(this.scene, this.fpsCamera.camera);
-    }
-    // GIVRE: compile the post chain (outline normal pre-pass programs,
-    // composer targets) with everything forced visible too.
-    if (this.composer) this.renderComposer();
+    // (GIVRE: the composer frames also compile the post chain — outline
+    // normal pre-pass programs, composer targets.)
+    for (let i = 0; i < 2; i++) warmWorld();
 
     // FP scene warm-up: force the arms + mounted weapon visible for a few
     // frames so their shaders compile and textures upload NOW — the first
@@ -1782,8 +1836,7 @@ export class Game {
     const fpWasVisible = this.viewmodelSystem.visible;
     this.viewmodelSystem.setVisible(true);
     this.viewmodelSystem.syncCamera(this.fpsCamera.camera);
-    for (let i = 0; i < 2; i++) this.viewmodelSystem.render(this.renderer);
-    if (this.composer) this.renderComposer(); // FP overlay + FP outline programs
+    for (let i = 0; i < 2; i++) warmFp(); // (GIVRE: + FP overlay / FP outline programs)
     // Brick Maul: when it is NOT the current FP owner, mount it for the
     // warm frames too (its shaders/textures compile now, never on the first
     // melee attack), then hand the arms back to the real owner.
@@ -1798,7 +1851,7 @@ export class Game {
       await this.hammerViewmodel.equip(false);
       this.viewmodelSystem.setVisible(true);
       this.viewmodelSystem.syncCamera(this.fpsCamera.camera);
-      for (let i = 0; i < 2; i++) this.viewmodelSystem.render(this.renderer);
+      for (let i = 0; i < 2; i++) warmFp();
       this.hammerViewmodel.hide();
       if (prevOwner === "HEX_SNIPER") this.hexSniper.takePresentation();
       if (prevOwner === "GOOFY_BASKET") this.goofyBasket.takePresentation();
@@ -1814,9 +1867,7 @@ export class Game {
     // pooled now — the light count never changes — but the warm-up owns
     // transient meshes/materials that must be gone before the bake below).
     this.multiplayer?.vfx.finishWarmUp();
-    for (let i = 0; i < 2; i++) {
-      this.renderer.render(this.scene, this.fpsCamera.camera);
-    }
+    for (let i = 0; i < 2; i++) warmWorld();
 
     for (const s of saved) {
       s.obj.visible = s.visible;
@@ -1829,7 +1880,7 @@ export class Game {
     // this preset (see PotatoCharacter), so the bake never goes stale.
     if (this.staticShadows) {
       this.renderer.shadowMap.needsUpdate = true;
-      this.renderer.render(this.scene, this.fpsCamera.camera);
+      warmWorld();
       // The baked pass must not leave a stale info count on the composer path.
       if (this.composer) this.renderer.info.reset();
     } else if (this.shadowCacheSetup && !this.shadowCache) {
@@ -1838,10 +1889,13 @@ export class Game {
       // compiles the restorer programs now (never on the first frame).
       this.shadowCache = this.shadowCacheSetup();
       if (this.shadowCache) {
-        this.renderer.render(this.scene, this.fpsCamera.camera);
+        warmWorld();
         if (this.composer) this.renderer.info.reset();
       }
     }
+    // Every program compiled above stays cached for the whole session, even
+    // once the warm clones below dispose their materials (see ProgramPin).
+    pinNewPrograms(this.renderer);
 
     // 4. Cleanup: transient warm objects removed, pools back at rest.
     // The corpse fade clones return to the CorpseManager pool with their
@@ -1863,6 +1917,12 @@ export class Game {
     this.waterFamas.endWarmUp();
     this.frisbeeLauncher.endWarmUp();
     if (paintedWarm) this.paintballRifle.fx.detachUnder(paintedWarm);
+    // Last applied skin first: each detach restores the material it found.
+    for (const { root, order } of skinWarm) {
+      if (order === "wet+paint") this.paintballRifle.fx.detachUnder(root);
+      this.waterFamas.fx.detachUnder(root);
+      if (order === "paint+wet") this.paintballRifle.fx.detachUnder(root);
+    }
     this.particles.update(10);
 
     // 5. Audio buffers decode in the background (no gesture required).
@@ -2237,6 +2297,7 @@ export class Game {
     // ALL real players appear on every client, host has zero priority.
     // The local MatchStatsManager stops driving the HUD (solo/bots only).
     this.matchStats.onStatsChanged = null;
+    this.leaderboardDirty = false; // never a late LOCAL refresh over the server's
     this.multiplayer.onStatsChanged = (stats) => this.leaderboardHud.refresh(stats);
 
     // Server-owned HP mirrored into the existing local Health (HUD +
@@ -2494,9 +2555,11 @@ export class Game {
     this.goofyBasket.setTargets(this.soloProjectileTargets(this.basketVec));
     const botsMenuEl = document.getElementById("bots-menu");
     if (botsMenuEl) botsMenuEl.style.display = "";
-    // Back to LOCAL mode: the MatchStatsManager drives the leaderboard again.
-    this.matchStats.onStatsChanged = () =>
-      this.leaderboardHud.refresh(this.matchStats.getSortedStats());
+    // Back to LOCAL mode: the MatchStatsManager drives the leaderboard again
+    // (refreshed at the next frame start — see leaderboardDirty).
+    this.matchStats.onStatsChanged = () => {
+      this.leaderboardDirty = true;
+    };
     this.matchStats.onStatsChanged();
   }
 
@@ -2925,6 +2988,12 @@ export class Game {
     // and edge inputs (wasPressed…) stay pending until input.endFrame() —
     // which only runs on processed frames.
     if (this.frameCapSkip(now)) return;
+
+    // SOLO leaderboard: applied first, while the layout is still clean.
+    if (this.leaderboardDirty) {
+      this.leaderboardDirty = false;
+      this.leaderboardHud.refresh(this.matchStats.getSortedStats());
+    }
 
     // CPU budget of this frame (simulation + render submission) — read by
     // the debug HUD: CPU ≪ frame time ⇒ GPU-bound, CPU ≈ frame ⇒ CPU-bound.
@@ -3453,6 +3522,9 @@ export class Game {
         this.viewmodelSystem.syncCamera(cam);
       }
     }
+    // A program compiled this frame (first use of a variant) stays cached for
+    // the session: never compiled twice (see ProgramPin). Free when none.
+    pinNewPrograms(this.renderer);
     this.input.endFrame();
   }
 

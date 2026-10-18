@@ -625,10 +625,16 @@ export class FrisbeeLauncherWeapon {
     if (!c || !projectiles) return;
     projectiles.fire({ origin: far, direction: new THREE.Vector3(0, -1, 0), owner: FRISBEE_LOCAL_OWNER, visualFrom: far });
     projectiles.update(0.001);
+    // + one impact ring (pooled by endWarmUp's clear: its program stays compiled).
+    projectiles.warmRing(far);
+    // + one dropped cage: its shadow depth variant (HIGH live shadows) is a
+    // program of its own, compiled at the first cage swap otherwise.
+    this.droppedCages?.spawnAt(far, new THREE.Quaternion(), new THREE.Vector3(), 0);
   }
 
   endWarmUp(): void {
     this.projectiles?.clear();
+    this.droppedCages?.clear();
   }
 }
 

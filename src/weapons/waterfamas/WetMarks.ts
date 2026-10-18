@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { meshTopology } from "../../effects/MeshTopology";
 function rng(seed: number): () => number {
     let a = (seed >>> 0) || 0x9e3779b9;
     return () => {
@@ -307,8 +308,8 @@ export class WettableMesh {
     originalMaterial: THREE.Material | THREE.Material[];
     wetAttr: THREE.BufferAttribute;
     weld: Int32Array;
-    members: Array<Int32Array | undefined>;
-    nbr: Array<Int32Array | undefined>;
+    members: ReadonlyArray<Int32Array | undefined>;
+    nbr: ReadonlyArray<Int32Array | undefined>;
     pos: THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
     visited: Int32Array;
     queue: Int32Array;
@@ -339,38 +340,12 @@ export class WettableMesh {
         mesh.geometry = g;
         const patch = (m: THREE.Material) => patchWetMaterial(m, uTime, hold, dry);
         mesh.material = Array.isArray(this.originalMaterial) ? this.originalMaterial.map(patch) : patch(this.originalMaterial);
-        // weld UV-seam duplicates + vertex adjacency (once)
+        // UV-seam weld + vertex adjacency: shared by every clone of this geometry (MeshTopology)
         this.pos = this.original.attributes.position;
-        const key = new Map();
-        this.weld = new Int32Array(n);
-        const mem: number[][] = [];
-        for (let i = 0; i < n; i++) {
-            const k = `${Math.round(this.pos.getX(i) * 1e4)},${Math.round(this.pos.getY(i) * 1e4)},${Math.round(this.pos.getZ(i) * 1e4)}`;
-            let r = key.get(k);
-            if (r === undefined) {
-                r = i;
-                key.set(k, i);
-            }
-            this.weld[i] = r;
-            (mem[r] ??= []).push(i);
-        }
-        this.members = [];
-        for (let i = 0; i < n; i++)
-            if (mem[i])
-                this.members[i] = Int32Array.from(mem[i]);
-        const nb: Array<Set<number> | undefined> = [];
-        const index = this.original.index;
-        const tri = index ? index.count : n;
-        for (let t = 0; t < tri; t += 3) {
-            const v0 = this.weld[index ? index.getX(t) : t], v1 = this.weld[index ? index.getX(t + 1) : t + 1], v2 = this.weld[index ? index.getX(t + 2) : t + 2];
-            (nb[v0] ??= new Set()).add(v1).add(v2);
-            (nb[v1] ??= new Set()).add(v0).add(v2);
-            (nb[v2] ??= new Set()).add(v0).add(v1);
-        }
-        this.nbr = [];
-        for (let i = 0; i < n; i++)
-            if (nb[i])
-                this.nbr[i] = Int32Array.from(nb[i]!);
+        const topology = meshTopology(this.original);
+        this.weld = topology.weld;
+        this.members = topology.members;
+        this.nbr = topology.nbr;
         this.visited = new Int32Array(n);
         this.queue = new Int32Array(n);
     }

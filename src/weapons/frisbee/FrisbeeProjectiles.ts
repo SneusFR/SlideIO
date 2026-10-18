@@ -170,6 +170,7 @@ const _q = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _rn = new THREE.Vector3(); // ring normal (never the sim's scratch vectors: the sim keeps using them after its events)
 const _up = new THREE.Vector3(0, 1, 0);
+const _zAxis = new THREE.Vector3(0, 0, 1);
 const _a = new THREE.Vector3();
 const _b = new THREE.Vector3();
 const _side = new THREE.Vector3();
@@ -208,6 +209,14 @@ export class FrisbeeProjectiles {
     private readonly ringGeo: THREE.RingGeometry;
     private readonly ringMat: THREE.MeshBasicMaterial;
     private readonly rings: Ring[] = [];
+    /**
+     * PERF: finished impact rings are KEPT (mesh + its material clone) and
+     * reused. Disposing each ring's material released the shader program as
+     * soon as no ring was on screen (three.js frees a program with its last
+     * material), so the next bounce RECOMPILED it — a 20–300 ms hitch at
+     * nearly every disc impact.
+     */
+    private readonly ringPool: Ring["m"][] = [];
     private readonly live: LiveDisc[] = [];
     private readonly max: number;
     private acc = 0;
@@ -309,7 +318,7 @@ export class FrisbeeProjectiles {
             const u = r.t / 0.35;
             if (u >= 1) {
                 r.m.removeFromParent();
-                r.m.material.dispose();
+                this.ringPool.push(r.m); // kept: its program stays compiled
                 this.rings.splice(i, 1);
                 continue;
             }
@@ -327,12 +336,27 @@ export class FrisbeeProjectiles {
         };
     }
     private ring(p: THREE.Vector3, n: THREE.Vector3): void {
-        const m = new THREE.Mesh(this.ringGeo, this.ringMat.clone());
+        let m = this.ringPool.pop();
+        if (!m) {
+            m = new THREE.Mesh(this.ringGeo, this.ringMat.clone());
+            m.raycast = () => { };
+        }
+        // Fresh state (a pooled ring ended at full size, fully faded).
+        m.scale.setScalar(0.08);
+        m.material.opacity = 0.6;
         m.position.copy(p).addScaledVector(n, 0.01);
-        m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
-        m.raycast = () => { };
+        m.quaternion.setFromUnitVectors(_zAxis, n);
         this.group.add(m);
         this.rings.push({ m, t: 0 });
+    }
+
+    /**
+     * GPU warm-up: one impact ring far below the map, rendered with the
+     * warm-up frames, then parked in the pool by clear() — the ring program
+     * is compiled at load and stays alive (see ringPool).
+     */
+    warmRing(far: THREE.Vector3): void {
+        this.ring(far, _up);
     }
     private place(l: LiveDisc, dt: number): void {
         const s = l.sim;
@@ -451,12 +475,14 @@ export class FrisbeeProjectiles {
             this.remove(this.live.length - 1);
         for (const r of this.rings) {
             r.m.removeFromParent();
-            r.m.material.dispose();
+            this.ringPool.push(r.m);
         }
         this.rings.length = 0;
     }
     dispose(): void {
         this.clear();
+        for (const m of this.ringPool) m.material.dispose();
+        this.ringPool.length = 0;
         this.group.removeFromParent();
         this.trailMat.dispose();
         this.ringGeo.dispose();

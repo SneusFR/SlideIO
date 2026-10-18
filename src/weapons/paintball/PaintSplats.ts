@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { meshTopology } from "../../effects/MeshTopology";
 import { hideWhenEmpty } from "../../effects/hideWhenEmpty";
 
 /**
@@ -313,8 +314,8 @@ export class PaintableMesh {
   private readonly originalMaterial: THREE.Material | THREE.Material[];
   private readonly paintAttr: THREE.BufferAttribute;
   private readonly weld: Int32Array;            // vertex -> welded representative
-  private readonly members: Int32Array[];       // representative -> its duplicate vertices
-  private readonly nbr: Int32Array[];           // representative -> neighbour representatives
+  private readonly members: ReadonlyArray<Int32Array | undefined>; // representative -> its duplicate vertices
+  private readonly nbr: ReadonlyArray<Int32Array | undefined>;     // representative -> neighbour representatives
   private readonly pos: THREE.BufferAttribute;
   private readonly visited: Int32Array;
   private stamp = 1;
@@ -335,28 +336,12 @@ export class PaintableMesh {
     g.setAttribute("paint", this.paintAttr);
     mesh.geometry = g;
     mesh.material = Array.isArray(this.originalMaterial) ? this.originalMaterial.map(patchPaintMaterial) : patchPaintMaterial(this.originalMaterial);
-    // ---- weld UV-seam duplicates (identical bind positions) and build the vertex adjacency once
+    // ---- UV-seam weld + vertex adjacency: shared by every clone of this geometry (MeshTopology)
     this.pos = this.original.attributes.position as THREE.BufferAttribute;
-    const key = new Map<string, number>();
-    this.weld = new Int32Array(n);
-    const mem: number[][] = [];
-    for (let i = 0; i < n; i++) {
-      const k = `${Math.round(this.pos.getX(i) * 1e4)},${Math.round(this.pos.getY(i) * 1e4)},${Math.round(this.pos.getZ(i) * 1e4)}`;
-      let r = key.get(k);
-      if (r === undefined) { r = i; key.set(k, i); }
-      this.weld[i] = r;
-      (mem[r] ??= []).push(i);
-    }
-    this.members = []; const nb: Set<number>[] = [];
-    for (let i = 0; i < n; i++) if (mem[i]) this.members[i] = Int32Array.from(mem[i]);
-    const index = this.original.index;
-    const tri = index ? index.count : n;
-    for (let t = 0; t < tri; t += 3) {
-      const v0 = this.weld[index ? index.getX(t) : t], v1 = this.weld[index ? index.getX(t + 1) : t + 1], v2 = this.weld[index ? index.getX(t + 2) : t + 2];
-      (nb[v0] ??= new Set()).add(v1).add(v2); (nb[v1] ??= new Set()).add(v0).add(v2); (nb[v2] ??= new Set()).add(v0).add(v1);
-    }
-    this.nbr = [];
-    for (let i = 0; i < n; i++) if (nb[i]) this.nbr[i] = Int32Array.from(nb[i]);
+    const topology = meshTopology(this.original);
+    this.weld = topology.weld;
+    this.members = topology.members;
+    this.nbr = topology.nbr;
     this.visited = new Int32Array(n);
     this.queue = new Int32Array(n);
   }
@@ -385,7 +370,7 @@ export class PaintableMesh {
       const rr = radius * (0.8 + 0.25 * Math.sin(ang * 5 + seed) + 0.12 * Math.sin(ang * 9 + seed * 2.3));
       if (d > rr * 1.25) continue;
       const w = Math.min(1, Math.max(0, 1.2 - d / rr));
-      for (const m of this.members[v]) {
+      for (const m of this.members[v]!) {
         const o = m * 4;
         // premultiplied "over": the new ball covers the old paint
         a[o] = color.r * w + a[o] * (1 - w);

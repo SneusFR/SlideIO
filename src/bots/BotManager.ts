@@ -17,7 +17,7 @@ import type { BotWeaponWorld } from "./BotWeapons";
  * A* searches allowed per frame for the WHOLE roster: the bots that miss
  * the budget simply retry next frame (cost spread instead of spikes).
  */
-const PATHFINDS_PER_FRAME = 2;
+const PATHFINDS_PER_FRAME = 1; // a long Givre path (A* + LOS raycasts) costs a few ms on its own
 
 /**
  * Owns the bot roster: add/remove at runtime from the pause menu,
