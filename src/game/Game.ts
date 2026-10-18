@@ -3649,6 +3649,8 @@ export class Game {
     pinNewPrograms(this.renderer);
     this.input.endFrame();
     sections?.commit();
+    // Debug HUD "Hitch": times the browser's own work that follows this frame.
+    this.hud.markFrameEnd();
   }
 
   /**

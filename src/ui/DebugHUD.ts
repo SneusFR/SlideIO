@@ -7,6 +7,12 @@ import type { FrameSections } from "./FrameSections";
  * refreshes or more without a new image (the "51 FPS" dips).
  */
 const HITCH_MS = 30;
+/**
+ * Frames whose post-frame browser work is remembered (see markFrameEnd): a
+ * hitch is analysed 250 ms after it, so the ring must hold that many frames
+ * even at very high frame rates (250 ms = 60 frames at 240 Hz).
+ */
+const POST_RING = 256;
 
 /** Long Animation Frame entry (Chrome 123+), the fields used here. */
 interface LoafScript {
@@ -96,7 +102,20 @@ export class DebugHUD {
    * line for 6 s and logged to the console with the scripts involved.
    */
   private readonly loaf: LoafEntry[] = [];
-  private readonly hitchQueue: { start: number; end: number; gameMs: number; split: string }[] = [];
+  private readonly hitchQueue: { start: number; end: number; gameMs: number; split: string; prev: number }[] = [];
+  /**
+   * Browser main-thread work AFTER each game frame: a message posted at the
+   * end of the frame only runs once the browser is done with that frame's
+   * rendering steps (style, layout, paint, commit) and with the tasks queued
+   * before it (garbage collection included). The Long Animation Frames API
+   * ignores frames under 50 ms: without this, a 35-45 ms hitch spent in
+   * style / layout was reported as "waiting for the GPU".
+   */
+  private readonly frameEnd = new MessageChannel();
+  private frameId = 0;
+  private readonly frameEndAt = new Float64Array(POST_RING);
+  private readonly postMs = new Float64Array(POST_RING);
+  private readonly postId = new Int32Array(POST_RING).fill(-1);
   /** DEV: per-section CPU split of each game frame (null = no split shown). */
   private sections: FrameSections | null = null;
   private hitchText = "";
@@ -112,6 +131,12 @@ export class DebugHUD {
 
   constructor() {
     this.el = document.getElementById("debug")!;
+    this.frameEnd.port1.onmessage = (e: MessageEvent<number>) => {
+      const id = e.data;
+      const k = id % POST_RING;
+      this.postMs[k] = performance.now() - this.frameEndAt[k];
+      this.postId[k] = id;
+    };
     try {
       new PerformanceObserver((list) => {
         for (const e of list.getEntries()) this.loaf.push(e as unknown as LoafEntry);
@@ -144,6 +169,16 @@ export class DebugHUD {
     this.cpuSamples++;
     this.cpuWorst = Math.max(this.cpuWorst, simMs + renderMs);
     this.lastFrameCpu = simMs + renderMs;
+  }
+
+  /**
+   * End of a game frame (after the render submission): times the browser's
+   * main-thread work that follows it (see frameEnd).
+   */
+  markFrameEnd(): void {
+    const id = ++this.frameId;
+    this.frameEndAt[id % POST_RING] = performance.now();
+    this.frameEnd.port2.postMessage(id);
   }
 
   /** DEV: the game's per-section frame split, quoted on the "Hitch" line. */
@@ -207,6 +242,7 @@ export class DebugHUD {
         end: now,
         gameMs: this.lastFrameCpu,
         split: this.sections?.top() ?? "",
+        prev: this.frameId,
       });
     }
     // LoAF entries arrive a little after their frame: analyse with a delay.
@@ -298,7 +334,10 @@ export class DebugHUD {
    * tasks), `attente` = the rest: the main thread was idle, waiting for the
    * GPU process / compositor (shader compiles, raster, presentation).
    */
-  private analyseHitch(h: { start: number; end: number; gameMs: number; split: string }, now: number): void {
+  private analyseHitch(
+    h: { start: number; end: number; gameMs: number; split: string; prev: number },
+    now: number,
+  ): void {
     const gap = h.end - h.start;
     let busy = 0;
     let scriptMs = 0;
@@ -318,7 +357,12 @@ export class DebugHUD {
       }
     }
     const game = Math.min(h.gameMs, gap);
-    const browser = Math.max(0, Math.min(gap - game, busy - Math.min(busy, scriptMs, game)));
+    // Browser work after the game frame (measured for every frame) or, for
+    // frames of 50 ms and more, the Long Animation Frame's non-game time.
+    const k = h.prev % POST_RING;
+    const post = this.postId[k] === h.prev ? this.postMs[k] : 0;
+    const loafBrowser = busy - Math.min(busy, scriptMs, game);
+    const browser = Math.max(0, Math.min(gap - game, Math.max(post, loafBrowser)));
     const wait = Math.max(0, gap - game - browser);
     this.hitchText =
       `${gap.toFixed(0)} ms = jeu ${game.toFixed(0)}${h.split && game >= 5 ? ` (${h.split})` : ""}` +
