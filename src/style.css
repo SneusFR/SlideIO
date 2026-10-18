@@ -246,16 +246,22 @@ body {
   display: none;
 }
 
-/* LOAD-TIME HUD WARM-UP (src/ui/HudWarmup.ts): for 4 frames of the loading
-   screen, the HUD is drawn ABOVE it at 0.4 % opacity — invisible, but the
-   browser rasterizes every rare HUD effect once (GPU shaders, text, SVG). */
+/* LOAD-TIME HUD WARM-UP (src/ui/HudWarmup.ts): for about two seconds of the
+   loading screen, the HUD is drawn UNDER it, at full opacity, and the loading
+   screen lets 0.4 % of it through — invisible (at most one level out of 255
+   on a pixel), but the browser rasterizes every HUD state once (GPU shaders,
+   text, SVG), composited as in game. Not under an OPAQUE loading screen: the
+   browser skips what an opaque layer covers; and not a see-through HUD on
+   top: a translucent #hud goes through an offscreen pass, unlike in game. */
 html.hud-warm #hud,
 html.hud-warm #hitmarker,
 html.hud-warm #damage-numbers {
   display: block;
-  opacity: 0.004;
-  z-index: 41; /* #menu-loading is 40 */
+  z-index: 39; /* #menu-loading is 40 */
   pointer-events: none;
+}
+html.hud-warm #menu-loading {
+  background: rgba(26, 18, 8, 0.996); /* its #1a1208 at 254/255 */
 }
 
 /* While PAUSED (Escape → pause menu) EVERY in-game HUD element is hidden,

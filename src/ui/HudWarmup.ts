@@ -1,3 +1,5 @@
+import { MedalStyles } from "../medals/MedalConfig";
+import { MedalType } from "../medals/MedalType";
 import { hudFeed } from "./HudFeed";
 
 /** A HUD part with STATE (leaderboard…) warmed through its own API. */
@@ -9,106 +11,98 @@ export interface HudWarmupHook {
 }
 
 /**
- * LOAD-TIME HUD WARM-UP — every RARE HUD state (kill medal, BEANED! sticker,
- * combo tag, killstreak READY capsules, hitmarker, damage numbers, damage /
- * low-HP / heal vignettes, death screen…) is drawn for a few frames while the
- * loading screen is still up: above it, at 0.4 % opacity (invisible — at most
- * one level out of 255 on a pixel).
+ * LOAD-TIME HUD WARM-UP — the HUD states of the match (kill medal, BEANED!
+ * sticker, combo tag, killstreak capsules, hitmarker, damage numbers,
+ * damage / low-HP / heal vignettes, bean faces, death screen…) are drawn
+ * while the loading screen is still up: under it, at full opacity, the
+ * loading screen letting 0.4 % of them through (invisible — at most one
+ * level out of 255 on a pixel; style.css, html.hud-warm).
  *
- * Why: the FIRST time the browser draws a new kind of effect (conic / radial
- * gradients behind a mask, blurred shadows, stroked text, SVG filters) its
- * GPU rasterizer compiles new shaders (D3D11 on Windows: tens of ms each) and
- * builds the text / SVG caches — on the first kill that landed as 100-175 ms
- * frames without any game-code cost. Paid here, during the loading, instead.
+ * Why: the FIRST time the browser draws a new kind of effect (gradients
+ * behind a mask or a rounded clip, blurred shadows, stroked text, SVG
+ * filters) its GPU rasterizer compiles new shaders (D3D11 on Windows: tens
+ * of ms each) — on the first kill that landed as 40-175 ms frames without
+ * any game-code cost. Paid here, during the loading, instead.
+ *
+ * Those shaders depend on HOW an element is drawn, not only on what it is:
+ * mid-animation (in a compositing layer of its own, turned or scaled) or at
+ * rest (axis-aligned, in the HUD's layer, under its parents' rounded
+ * clips), alone or under a filter (the grey "dead" bean wraps the whole
+ * portrait), partly filled (a bar's scaleX). So the warm-up replays real
+ * situations one after the other — the plain first kill, a fight, the rare
+ * looks, death — each with the exact classes / fills the game sets, and
+ * every animation they start is drawn running and paused at several points
+ * of its timeline, then at rest, then through its exit (medal leaving,
+ * sticker leaving, combo tag falling). Each of those states is held until
+ * the browser has really drawn it (holdUntilDrawn): ~2 s in all at
+ * 60 Hz, a little more on a first launch (the shaders compile then).
  *
  * Pure DOM, no game state: every class / text / inline style touched here is
  * recorded and restored exactly (the HUD classes never notice). Parts with a
- * state of their own (the leaderboard) come as `hooks`.
+ * state of their own (the leaderboard) come as `hooks` (replayed with the
+ * first kill).
  */
 export async function warmUpHud(hooks: readonly HudWarmupHook[] = []): Promise<void> {
   if (document.hidden) return; // no frames would come: nothing to warm
-  const patch = new DomPatch();
-  const shown: HudWarmupHook[] = [];
+  const root = new DomPatch();
   try {
     hudFeed(); // the 3 pooled stickers exist from now on
-    patch.add(document.documentElement, "hud-warm");
+    await measureFrameInterval();
+    holdDeadline = performance.now() + WARM_BUDGET_MS;
+    root.add(document.documentElement, "hud-warm");
+    await warmPass(killLook, killExit, hooks, true);
+    await warmPass(hurtLook, hurtExit, [], false);
+    await warmPass(rareLooks, killExit, [], false);
+    await warmPass(deadLook, null, [], false);
+  } finally {
+    root.restore();
+  }
+}
 
-    // Medal badge: every art at once, all stars, the HYPE glow, the pop.
-    const medal = byId("medal-display");
-    patch.remove(medal, "hidden");
-    patch.add(medal, "stars-3", "hype");
-    patch.add(medal?.querySelector(".md-body"), "pop-a");
-    medal?.querySelectorAll(".md-icon").forEach((el) => patch.add(el, "on"));
-    patch.text(medal?.querySelector(".md-label"), "TRIPLE KILL");
+/** Animation state before the warm-up touched it (given back afterwards). */
+type Touched = Map<Animation, { time: CSSNumberish | null; running: boolean }>;
 
-    // Event feed: one sticker of each flavour.
-    const feed: [string, string, string][] = [
-      ["kill", "BEANED!", ""],
-      ["streak", "MOLE STRIKE READY", "[W]"],
-      ["heal", "+35 HP", ""],
-    ];
-    document.querySelectorAll("#event-feed .feed-sticker").forEach((el, i) => {
-      const [kind, title, sub] = feed[i % feed.length];
-      patch.add(el, "show", `feed-${kind}`, "in-a");
-      patch.text(el.querySelector(".feed-title"), title);
-      patch.text(el.querySelector(".feed-sub"), sub);
-    });
-
-    // Combo tag (hottest tier, blinking rope, swing).
-    patch.add(byId("combo-hud"), "show", "tier-3", "ending");
-    patch.add(byId("combo-tag"), "swing-a");
-
-    // Killstreak capsules in their READY look.
-    const ks = byId("killstreak-hud");
-    patch.remove(ks, "hidden");
-    ks?.querySelectorAll(".ks-cap").forEach((cap) => {
-      patch.add(cap, "on", "ready", "pulse-a");
-      const count = cap.querySelector(".ks-count");
-      if (count && !count.textContent) patch.text(count, "3/3");
-      const key = cap.querySelector(".ks-key");
-      if (key && !key.textContent) patch.text(key, "W");
-    });
-
-    // Aim point: fire kick, KILL hitmarker, LOW AMMO ticker.
-    patch.add(byId("crosshair"), "cx-firing");
-    patch.add(byId("hitmarker"), "hm-kill");
-    const ticker = byId("aim-ticker");
-    patch.add(ticker, "show", "low");
-    patch.text(ticker, "LOW AMMO");
-
-    // Damage numbers: a body tick and a headshot kill (temporary nodes).
-    const numbers = byId("damage-numbers");
-    if (numbers) {
-      ["dmg-num", "dmg-num dmg-head dmg-kill"].forEach((cls, i) => {
-        const el = document.createElement("div");
-        el.className = cls;
-        el.style.display = "block";
-        el.style.transform = `translate(${40 + i * 12}vw, 40vh)`;
-        const inner = document.createElement("span");
-        inner.className = "dmg-num-inner dmg-pop";
-        inner.textContent = "100";
-        el.appendChild(inner);
-        patch.append(numbers, el);
-      });
-    }
-
-    // Screen feedback: vignettes, a damage bite, heal / phase glows, the
-    // knockdown banner, the heal "+N", the death card, every buddy face.
-    for (const id of ["damage-vignette", "lowhp-vignette", "heal-flash", "phase-overlay"]) {
-      patch.style(byId(id), "opacity", "1");
-    }
-    patch.style(document.querySelector<HTMLElement>("#damage-dir-container .damage-dir"), "opacity", "1");
-    patch.remove(byId("knockdown-hint"), "hidden");
-    patch.remove(byId("heal-feedback"), "hidden");
-    patch.remove(byId("death-screen"), "hidden");
-    patch.add(byId("bean-buddy"), "mood-worried", "mood-panic", "mood-dead", "ouch");
-
+/**
+ * One situation: its DOM states (+ hooks), every animation they start drawn
+ * running then paused at several points, then at rest, then the exit
+ * states the same way; everything restored at the end. `full` = more points
+ * (the plain kill: the most frequent states of the match).
+ */
+async function warmPass(
+  enter: (p: DomPatch) => void,
+  exit: ((p: DomPatch) => void) | null,
+  hooks: readonly HudWarmupHook[],
+  full: boolean,
+): Promise<void> {
+  const patch = new DomPatch();
+  const shown: HudWarmupHook[] = [];
+  const touched: Touched = new Map();
+  // Animations left alone by the stepping: the HUD's own idle loops (already
+  // drawn every frame), then the entry animations once settled.
+  const skip = new Set(typeof document.getAnimations === "function" ? document.getAnimations() : []);
+  try {
+    enter(patch);
     for (const hook of hooks) {
       shown.push(hook);
       hook.show();
     }
-
-    await frames(4);
+    await holdUntilDrawn();
+    // Early on, at the overshoot, at the end: RUNNING (an animated element
+    // is drawn in a compositing layer of its own), then PAUSED (drawn into
+    // the HUD's layer, under its parents' clips)…
+    await stepAnimations(full ? [0.25, 0.6, 1] : [0.3, 1], touched, skip, true);
+    await stepAnimations(full ? [1, 0.55, 0.25] : [1, 0.4], touched, skip, false);
+    // …then at REST, animations over: back axis-aligned at scale 1, an
+    // element draws with other GPU shaders than the same element turned or
+    // scaled by an animation.
+    await settleAnimations(touched, skip);
+    if (exit) {
+      exit(patch);
+      await holdUntilDrawn();
+      await stepAnimations(full ? [0.35, 0.75] : [0.5], touched, skip, true);
+      await stepAnimations(full ? [0.75, 0.35] : [0.5], touched, skip, false);
+      await settleAnimations(touched, skip);
+    }
   } finally {
     for (let i = shown.length - 1; i >= 0; i--) {
       try {
@@ -118,20 +112,308 @@ export async function warmUpHud(hooks: readonly HudWarmupHook[] = []): Promise<v
       }
     }
     patch.restore();
+    // Animations that outlive the warm states run on from where they were;
+    // the others ended with their classes (or were finished above).
+    for (const [anim, was] of touched) {
+      if (anim.playState === "idle" || anim.playState === "finished") continue;
+      try {
+        anim.currentTime = was.time;
+        if (was.running) anim.play();
+      } catch {
+        /* animation gone with its element */
+      }
+    }
   }
+}
+
+/**
+ * The FIRST KILL exactly as the game shows it (and every later plain kill):
+ * the KILL medal (one star, its own colour, no hype), one BEANED! sticker,
+ * the combo tag at x1 swinging in, the bean's victory hop, the KILL
+ * hitmarker, a body-shot kill number, the fire kick (+ the leaderboard climb,
+ * through its hook).
+ */
+function killLook(p: DomPatch): void {
+  const kill = MedalStyles[MedalType.KILL];
+  const medal = byId("medal-display");
+  p.remove(medal, "hidden");
+  p.add(medal, `stars-${kill.stars}`);
+  p.style(medal, "--md", kill.color);
+  p.add(medal?.querySelector(".md-body"), "pop-a");
+  p.add(medal?.querySelector(`.md-icon[data-medal="${MedalType.KILL}"]`), "on");
+  p.text(medal?.querySelector(".md-label"), kill.label);
+
+  const sticker = document.querySelector("#event-feed .feed-sticker");
+  p.add(sticker, "show", "feed-kill", "in-a");
+  p.text(sticker?.querySelector(".feed-title"), "BEANED!");
+  p.text(sticker?.querySelector(".feed-sub"), "");
+
+  p.add(byId("combo-hud"), "show");
+  p.add(byId("combo-tag"), "swing-a");
+  p.text(byId("combo-count"), "x1");
+  p.style(byId("combo-fill"), "transform", "scaleX(0.6)"); // the rope burning down
+
+  p.add(byId("bean-buddy"), "cheer-a");
+  p.add(byId("hitmarker"), "hm-kill");
+  p.add(byId("crosshair"), "cx-firing");
+  damageNumber(p, "dmg-num dmg-kill", 44);
+}
+
+/**
+ * EXIT states, same classes as the real exits: the medal leaving, the
+ * stickers leaving, the combo tag falling (ComboHUD: "show" → "drop"; a
+ * swinging tag would win over the fall).
+ */
+function killExit(p: DomPatch): void {
+  p.add(byId("medal-display"), "exiting");
+  document.querySelectorAll("#event-feed .feed-sticker.show").forEach((el) => p.add(el, "leaving"));
+  const combo = byId("combo-hud");
+  p.remove(combo, "show");
+  p.add(combo, "drop");
+  p.remove(byId("combo-tag"), "swing-a", "swing-b");
+}
+
+/**
+ * A FIGHT: the bean grimaces and squashes, the HP tube shakes half empty
+ * (mid band, the lost chunk held by the ghost bar), the damage bite +
+ * damage / low-HP vignettes, LOW AMMO under the aim point, a dash and its
+ * cooldown (the pill refilling).
+ */
+function hurtLook(p: DomPatch): void {
+  const buddy = byId("bean-buddy");
+  p.remove(buddy, "mood-happy");
+  p.add(buddy, "mood-worried", "ouch");
+  p.add(byId("buddy-portrait"), "hurt-a");
+  hpTube(p, "mid", 0.45, 0.7, "45");
+  p.add(byId("health-hud"), "hurt-a");
+  p.add(byId("health-value"), "bump-a");
+  const dash = byId("dash-hud");
+  p.remove(dash, "ready");
+  p.add(dash, "dashing");
+  p.style(byId("dash-fill"), "transform", "scaleX(0.4)");
+  p.text(byId("dash-status"), "1.2");
+  for (const id of ["damage-vignette", "lowhp-vignette"]) p.style(byId(id), "opacity", "1");
+  p.style(document.querySelector<HTMLElement>("#damage-dir-container .damage-dir"), "opacity", "1");
+  const ticker = byId("aim-ticker");
+  p.add(ticker, "show", "low");
+  p.text(ticker, "LOW AMMO");
+}
+
+/** The grimace ends (the worried face), the dash is back (its pop). */
+function hurtExit(p: DomPatch): void {
+  p.remove(byId("bean-buddy"), "ouch");
+  const dash = byId("dash-hud");
+  p.remove(dash, "dashing");
+  p.add(dash, "ready", "recharged-a");
+  p.style(byId("dash-fill"), "transform", "scaleX(1)");
+  p.text(byId("dash-status"), "READY");
+}
+
+/** The HP tube at `fill` (band class, ghost bar holding `ghost`, number). */
+function hpTube(p: DomPatch, band: "mid" | "low", fill: number, ghost: number, value: string): void {
+  const hud = byId("health-hud");
+  p.remove(hud, "full", "ok", "mid", "low");
+  p.add(hud, band);
+  p.style(byId("health-fill"), "transform", `scaleX(${fill})`);
+  p.style(byId("health-ghost"), "transform", `scaleX(${ghost})`);
+  p.text(byId("health-value"), value);
+}
+
+/**
+ * The RARE looks, all at once: the hype medal (three stars, every art), the
+ * three sticker flavours, the hottest combo with its blinking rope, READY
+ * killstreak capsules, the panicking bean on a throbbing low-HP tube, a heal
+ * (flash, "+N", sparkles), the phase glow, the knockdown banner, a headshot
+ * kill number.
+ */
+function rareLooks(p: DomPatch): void {
+  const triple = MedalStyles[MedalType.TRIPLE_KILL];
+  const medal = byId("medal-display");
+  p.remove(medal, "hidden");
+  p.add(medal, "stars-3", "hype");
+  p.style(medal, "--md", triple.color);
+  p.add(medal?.querySelector(".md-body"), "pop-a");
+  medal?.querySelectorAll(".md-icon").forEach((el) => p.add(el, "on"));
+  p.text(medal?.querySelector(".md-label"), triple.label);
+
+  const feed: [string, string, string][] = [
+    ["kill", "BEANED!", ""],
+    ["streak", "MOLE STRIKE READY", "[W]"],
+    ["heal", "+35 HP", ""],
+  ];
+  document.querySelectorAll("#event-feed .feed-sticker").forEach((el, i) => {
+    const [kind, title, sub] = feed[i % feed.length];
+    p.add(el, "show", `feed-${kind}`, "in-a");
+    p.text(el.querySelector(".feed-title"), title);
+    p.text(el.querySelector(".feed-sub"), sub);
+  });
+
+  p.add(byId("combo-hud"), "show", "tier-3", "ending");
+  p.add(byId("combo-tag"), "swing-a");
+  p.text(byId("combo-count"), "x3");
+  p.style(byId("combo-fill"), "transform", "scaleX(0.15)");
+
+  const ks = byId("killstreak-hud");
+  p.remove(ks, "hidden");
+  ks?.querySelectorAll(".ks-cap").forEach((cap) => {
+    p.add(cap, "on", "ready", "pulse-a");
+    const count = cap.querySelector(".ks-count");
+    if (count && !count.textContent) p.text(count, "3/3");
+    const key = cap.querySelector(".ks-key");
+    if (key && !key.textContent) p.text(key, "W");
+  });
+
+  const buddy = byId("bean-buddy");
+  p.remove(buddy, "mood-happy");
+  p.add(buddy, "mood-panic");
+  hpTube(p, "low", 0.2, 0.35, "20");
+  p.add(buddy?.querySelector(".buddy-frame"), "heal-a");
+  p.style(byId("heal-flash"), "opacity", "1");
+  p.remove(byId("heal-feedback"), "hidden");
+  p.style(byId("phase-overlay"), "opacity", "1");
+  p.remove(byId("knockdown-hint"), "hidden");
+  damageNumber(p, "dmg-num dmg-head dmg-kill", 56);
+  damageNumber(p, "dmg-num", 32);
+}
+
+/** DEATH: the death card, the grey slumped bean. */
+function deadLook(p: DomPatch): void {
+  p.remove(byId("death-screen"), "hidden");
+  p.add(byId("hud"), "player-dead");
+  const buddy = byId("bean-buddy");
+  p.remove(buddy, "mood-happy");
+  p.add(buddy, "mood-dead");
+}
+
+/** A temporary damage number (removed by the patch). */
+function damageNumber(p: DomPatch, cls: string, xVw: number): void {
+  const numbers = byId("damage-numbers");
+  if (!numbers) return;
+  const el = document.createElement("div");
+  el.className = cls;
+  el.style.display = "block";
+  el.style.transform = `translate(${xVw}vw, 40vh)`;
+  const inner = document.createElement("span");
+  inner.className = "dmg-num-inner dmg-pop";
+  inner.textContent = "100";
+  el.appendChild(inner);
+  p.append(numbers, el);
+}
+
+/** True for an element of the warmed HUD (the game HUD, hitmarker, damage numbers). */
+function inWarmedHud(target: Element | null | undefined): boolean {
+  return !!target?.closest("#hud, #hitmarker, #damage-numbers");
+}
+
+/**
+ * Every animation of the warmed HUD set at `p` × its duration (first
+ * iteration, after its delay), one progress point after the other:
+ * `running` → it plays on from there (the compositor takes it over),
+ * otherwise → it is paused there. Each point is held until drawn.
+ */
+async function stepAnimations(
+  points: readonly number[],
+  touched: Touched,
+  skip: ReadonlySet<Animation>,
+  running: boolean,
+): Promise<void> {
+  if (typeof document.getAnimations !== "function") return;
+  for (const p of points) {
+    for (const anim of document.getAnimations()) {
+      if (skip.has(anim)) continue;
+      const effect = anim.effect as KeyframeEffect | null;
+      if (!effect || !inWarmedHud(effect.target)) continue;
+      const timing = effect.getComputedTiming();
+      const duration = typeof timing.duration === "number" ? timing.duration : 0;
+      if (!(duration > 0)) continue;
+      if (!touched.has(anim)) touched.set(anim, { time: anim.currentTime, running: anim.playState === "running" });
+      try {
+        anim.currentTime = (timing.delay ?? 0) + duration * Math.min(p, 0.999);
+        if (running) anim.play();
+        else anim.pause();
+      } catch {
+        /* cancelled meanwhile */
+      }
+    }
+    await holdUntilDrawn();
+  }
+}
+
+/**
+ * The end of every animation touched by stepAnimations (finite ones are
+ * finished, endless ones play on), those states at rest held until drawn.
+ * They are left alone from then on (`skip`).
+ */
+async function settleAnimations(touched: Touched, skip: Set<Animation>): Promise<void> {
+  for (const anim of touched.keys()) {
+    if (skip.has(anim)) continue;
+    skip.add(anim);
+    try {
+      const end = anim.effect?.getComputedTiming().endTime;
+      if (typeof end === "number" && Number.isFinite(end)) anim.finish();
+      else anim.play();
+    } catch {
+      /* cancelled meanwhile */
+    }
+  }
+  await holdUntilDrawn();
 }
 
 function byId(id: string): HTMLElement | null {
   return document.getElementById(id);
 }
 
-/** `n` rendered frames (style, layout, paint, raster) — bounded by a timeout. */
-function frames(n: number): Promise<void> {
+/** Frame interval of this display (ms), measured when the warm-up starts. */
+let frameMs = 1000 / 60;
+/**
+ * Past this point (a very slow machine: every frame late), the remaining
+ * states are only held a frame each — the loading screen never waits more.
+ */
+const WARM_BUDGET_MS = 5000;
+let holdDeadline = Infinity;
+
+/** Median interval of a few frames (60 Hz → 16.7 ms, 240 Hz → 4.2 ms). */
+function measureFrameInterval(): Promise<void> {
   return new Promise((resolve) => {
-    let left = n;
-    const timer = window.setTimeout(resolve, 100 * n);
-    const step = (): void => {
-      if (--left <= 0) {
+    const stamps: number[] = [];
+    const timer = window.setTimeout(resolve, 500);
+    const step = (now: number): void => {
+      stamps.push(now);
+      if (stamps.length < 7) {
+        requestAnimationFrame(step);
+        return;
+      }
+      window.clearTimeout(timer);
+      const gaps = stamps.slice(1).map((t, i) => t - stamps[i]).sort((a, b) => a - b);
+      frameMs = Math.min(50, Math.max(4, gaps[gaps.length >> 1]));
+      resolve();
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+/**
+ * Keeps the current HUD state on screen until the browser has really drawn
+ * it. The GPU work of a new state (raster, shader compiles) runs after the
+ * frame that shows it, and while the GPU process is busy the next frames
+ * come late — so the state stays until two frames in a row come on time
+ * again: at least 3 frames, at most `maxMs`. Changing it after 1-2 frames
+ * (the 3rd-pass warm-up) cancelled most of that work before it ran: the
+ * shaders were then compiled at the first kill anyway.
+ */
+function holdUntilDrawn(maxMs = 600): Promise<void> {
+  return new Promise((resolve) => {
+    const start = performance.now();
+    maxMs = Math.min(maxMs, Math.max(0, holdDeadline - start));
+    let last = -1;
+    let count = 0;
+    let onTime = 0;
+    const timer = window.setTimeout(resolve, maxMs + 100);
+    const step = (now: number): void => {
+      if (last >= 0) onTime = now - last <= frameMs * 1.6 ? onTime + 1 : 0;
+      last = now;
+      count++;
+      if ((count >= 3 && onTime >= 2) || performance.now() - start >= maxMs) {
         window.clearTimeout(timer);
         resolve();
       } else requestAnimationFrame(step);
