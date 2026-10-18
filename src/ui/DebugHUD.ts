@@ -1,8 +1,12 @@
 import * as THREE from "three";
 import { PlayerMovement } from "../player/PlayerMovement";
+import type { FrameSections } from "./FrameSections";
 
-/** A frame gap at least this long is analysed as a HITCH (ms). */
-const HITCH_MS = 50;
+/**
+ * A frame gap at least this long is analysed as a HITCH (ms): at 60 Hz, two
+ * refreshes or more without a new image (the "51 FPS" dips).
+ */
+const HITCH_MS = 30;
 
 /** Long Animation Frame entry (Chrome 123+), the fields used here. */
 interface LoafScript {
@@ -92,7 +96,9 @@ export class DebugHUD {
    * line for 6 s and logged to the console with the scripts involved.
    */
   private readonly loaf: LoafEntry[] = [];
-  private readonly hitchQueue: { start: number; end: number; gameMs: number }[] = [];
+  private readonly hitchQueue: { start: number; end: number; gameMs: number; split: string }[] = [];
+  /** DEV: per-section CPU split of each game frame (null = no split shown). */
+  private sections: FrameSections | null = null;
   private hitchText = "";
   private hitchUntil = 0;
   /** Distinct rAF timestamps, including ticks skipped by the FPS cap. */
@@ -138,6 +144,11 @@ export class DebugHUD {
     this.cpuSamples++;
     this.cpuWorst = Math.max(this.cpuWorst, simMs + renderMs);
     this.lastFrameCpu = simMs + renderMs;
+  }
+
+  /** DEV: the game's per-section frame split, quoted on the "Hitch" line. */
+  setFrameSections(sections: FrameSections | null): void {
+    this.sections = sections;
   }
 
   /** One-line static render setup (preset, AA path…), shown under the resolution. */
@@ -190,7 +201,13 @@ export class DebugHUD {
     const now = performance.now();
     // (A gap over 1 s is a hidden tab / breakpoint, not a hitch.)
     if (rawDt * 1000 >= HITCH_MS && rawDt < 1) {
-      this.hitchQueue.push({ start: now - rawDt * 1000, end: now, gameMs: this.lastFrameCpu });
+      // The gap holds the PREVIOUS frame's game CPU: its committed split.
+      this.hitchQueue.push({
+        start: now - rawDt * 1000,
+        end: now,
+        gameMs: this.lastFrameCpu,
+        split: this.sections?.top() ?? "",
+      });
     }
     // LoAF entries arrive a little after their frame: analyse with a delay.
     while (this.hitchQueue.length > 0 && now - this.hitchQueue[0].end > 250) {
@@ -281,7 +298,7 @@ export class DebugHUD {
    * tasks), `attente` = the rest: the main thread was idle, waiting for the
    * GPU process / compositor (shader compiles, raster, presentation).
    */
-  private analyseHitch(h: { start: number; end: number; gameMs: number }, now: number): void {
+  private analyseHitch(h: { start: number; end: number; gameMs: number; split: string }, now: number): void {
     const gap = h.end - h.start;
     let busy = 0;
     let scriptMs = 0;
@@ -304,23 +321,23 @@ export class DebugHUD {
     const browser = Math.max(0, Math.min(gap - game, busy - Math.min(busy, scriptMs, game)));
     const wait = Math.max(0, gap - game - browser);
     this.hitchText =
-      `${gap.toFixed(0)} ms = jeu ${game.toFixed(0)} + navigateur ${browser.toFixed(0)}` +
-      ` + attente GPU ${wait.toFixed(0)}`;
+      `${gap.toFixed(0)} ms = jeu ${game.toFixed(0)}${h.split && game >= 5 ? ` (${h.split})` : ""}` +
+      ` + navigateur ${browser.toFixed(0)} + attente GPU ${wait.toFixed(0)}`;
     this.hitchUntil = now + 6000;
-    if (gap >= 60) {
-      const top = scripts
-        .sort((a, b) => b.duration - a.duration)
-        .slice(0, 4)
-        .map((sc) => {
-          const src = (sc.sourceURL ?? "").split("/").pop()?.split("?")[0] ?? "";
-          const forced = sc.forcedStyleAndLayoutDuration ? `, layout forcé ${sc.forcedStyleAndLayoutDuration.toFixed(0)}` : "";
-          return `${sc.invoker ?? "?"} ${sc.sourceFunctionName || ""} ${src} ${sc.duration.toFixed(0)} ms${forced}`.trim();
-        });
-      console.warn(
-        `[hitch] ${this.hitchText} | thread principal occupé ${busy.toFixed(0)} ms ` +
-          `(scripts ${scriptMs.toFixed(0)}, rendu ${renderMs.toFixed(0)} dont style/layout ${styleMs.toFixed(0)})` +
-          (top.length ? ` | ${top.join(" ; ")}` : ""),
-      );
-    }
+    // Console: every hitch while developing; production keeps only the big ones.
+    if (!import.meta.env.DEV && gap < 60) return;
+    const top = scripts
+      .sort((a, b) => b.duration - a.duration)
+      .slice(0, 4)
+      .map((sc) => {
+        const src = (sc.sourceURL ?? "").split("/").pop()?.split("?")[0] ?? "";
+        const forced = sc.forcedStyleAndLayoutDuration ? `, layout forcé ${sc.forcedStyleAndLayoutDuration.toFixed(0)}` : "";
+        return `${sc.invoker ?? "?"} ${sc.sourceFunctionName || ""} ${src} ${sc.duration.toFixed(0)} ms${forced}`.trim();
+      });
+    console.warn(
+      `[hitch] ${this.hitchText} | thread principal occupé ${busy.toFixed(0)} ms ` +
+        `(scripts ${scriptMs.toFixed(0)}, rendu ${renderMs.toFixed(0)} dont style/layout ${styleMs.toFixed(0)})` +
+        (top.length ? ` | ${top.join(" ; ")}` : ""),
+    );
   }
 }

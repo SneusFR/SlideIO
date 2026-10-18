@@ -35,6 +35,7 @@ import {
 import { loadOutlineSettings, type OutlineSettings } from "./OutlineSettings";
 import { InteractHUD } from "../ui/InteractHUD";
 import { DebugHUD } from "../ui/DebugHUD";
+import { FrameSections } from "../ui/FrameSections";
 
 import { DashHUD } from "../ui/DashHUD";
 import { CombatHUD } from "../ui/CombatHUD";
@@ -457,6 +458,8 @@ export class Game {
   private nextFrameAt = 0;
   /** performance.now() at the start of the current processed frame (debug HUD CPU split). */
   private frameCpuStart = 0;
+  /** DEV builds: CPU split of each frame by section (debug HUD "Hitch" line). */
+  private readonly sections: FrameSections | null = import.meta.env.DEV ? new FrameSections() : null;
   /**
    * LOW preset: STATIC shadows — the map's shadow map is baked once (map
    * and lights never move; characters don't cast on LOW) instead of being
@@ -645,6 +648,7 @@ export class Game {
     }
     this.movement = new PlayerMovement(this.player, this.input, this.fpsCamera);
     this.hud = new DebugHUD();
+    this.hud.setFrameSections(this.sections);
     const shadow = quality.staticShadows ? "baked" : "live";
     const aa = isGivre
       ? quality.antialias
@@ -3079,12 +3083,15 @@ export class Game {
     // and edge inputs (wasPressed…) stay pending until input.endFrame() —
     // which only runs on processed frames.
     if (this.frameCapSkip(now)) return;
+    const sections = this.sections;
+    sections?.begin(now);
 
     // SOLO leaderboard: applied first, while the layout is still clean.
     if (this.leaderboardDirty) {
       this.leaderboardDirty = false;
       this.leaderboardHud.refresh(this.matchStats.getSortedStats());
     }
+    sections?.lap("classement");
 
     // CPU budget of this frame (simulation + render submission) — read by
     // the debug HUD: CPU ≪ frame time ⇒ GPU-bound, CPU ≈ frame ⇒ CPU-bound.
@@ -3181,6 +3188,7 @@ export class Game {
       } else {
         this.updatePlayerDeath(dt);
       }
+      sections?.lap("joueur");
 
       // MOLE STRIKE phase timers (enter / burrow timeout / emerge AoE).
       this.moleStrike.update(dt);
@@ -3192,6 +3200,7 @@ export class Game {
       // Runs even while the viewmodel is hidden — an active attack is never
       // dropped just because it is off-screen.
       this.hexSniper.fixedUpdate(dt);
+      sections?.lap("bots IA");
       this.physics.step(dt);
       // Corpses: bodies were just integrated — sync visuals, lifetimes,
       // fades and the max-corpse cap (cheap when no corpse exists).
@@ -3202,6 +3211,7 @@ export class Game {
       // Loot: idle animation, lifetimes and walk-over collection.
       this.player.getPosition(this.playerPos);
       this.pickups.update(dt, this.playerPos, this.playerCombatant.health, this.elapsed);
+      sections?.lap("physique");
     }
 
     this.playerCombatant.syncProxy();
@@ -3251,6 +3261,7 @@ export class Game {
       this.interactNearby = false;
     }
 
+    sections?.lap("décor");
     // Sync bot visuals to their post-step physics positions, then refresh
     // world matrices so every beam raycast this frame is exact.
     this.botManager.postStep(
@@ -3266,12 +3277,14 @@ export class Game {
     this.corpses.markMatricesFresh();
     // GIVRE: puff instances + garland halos from the final node matrices.
     this.givreEffects?.afterMatrixUpdate();
+    sections?.lap("bots anim");
 
     // Enemy readability: outline + name + HP bar only with REAL line of
     // sight (frustum + wall raycasts) — never through walls.
     this.botManager.updateVisibility(this.fpsCamera.camera);
     // Loot: instanced batches published with this frame's camera.
     this.pickups.publish();
+    sections?.lap("bots vue");
 
     if (running) {
       // Melee weapons: hit windows / rush bookkeeping + viewmodel anims.
@@ -3458,7 +3471,9 @@ export class Game {
       );
 
 
+      sections?.lap("armes");
       this.botManager.updateWeapons(dt);
+      sections?.lap("armes bots");
       this.handlePhaseEffects();
       this.particles.update(dt);
       this.shockwave.update(dt);
@@ -3485,6 +3500,7 @@ export class Game {
       this.crosshairHud.flush();
       this.hitmarkerHud.flush();
       this.gameAudio.setComboLayer(this.combo.active, this.combo.comboCount);
+      sections?.lap("effets");
     }
 
     // Audio: listener follows the camera; loops/cadence/edges are polled.
@@ -3495,6 +3511,7 @@ export class Game {
       botManager: this.botManager,
       running,
     });
+    sections?.lap("audio");
 
     this.hud.update(rawDt, this.movement, this.scene);
 
@@ -3520,6 +3537,7 @@ export class Game {
     this.comboHud.update(this.combo);
     // Mode pill clock: SOLO game time / MULTIPLAYER server clock.
     if (!this.matchOver) this.matchClockHud.set(this.matchSecondsLeft());
+    sections?.lap("HUD");
 
     // Multiplayer (Phase 2): remote avatars + fixed-rate transform send.
     // Runs its own network accumulator — never one send per render frame.
@@ -3535,6 +3553,7 @@ export class Game {
     // impacts, explosions…) to the 2 physical pooled lights — MUST run
     // after every VFX update and before the render.
     fxLights.commit();
+    sections?.lap("réseau");
 
     // ---- RENDER SCOPE: Brick Maul whirlwind camera spin (r6) ----
     // Every simulation read and every network send happened ABOVE. The
@@ -3579,6 +3598,7 @@ export class Game {
     this.waterFamas.postCameraUpdate(running ? dt : 0);
     // FRISBEE LAUNCHER (pack order): controller AFTER syncCamera, then the shared discs + thrown cages.
     this.frisbeeLauncher.postCameraUpdate(running ? dt : 0);
+    sections?.lap("armes (vue)");
     try {
       // LOW preset: the shadow map is STATIC (baked once at load — see
       // warmUpRendering). No per-frame refresh: the caster re-render was the
@@ -3623,10 +3643,12 @@ export class Game {
         this.viewmodelSystem.syncCamera(cam);
       }
     }
+    sections?.lap("rendu");
     // A program compiled this frame (first use of a variant) stays cached for
     // the session: never compiled twice (see ProgramPin). Free when none.
     pinNewPrograms(this.renderer);
     this.input.endFrame();
+    sections?.commit();
   }
 
   /**
