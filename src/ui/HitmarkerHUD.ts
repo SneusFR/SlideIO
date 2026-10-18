@@ -1,5 +1,6 @@
 import { HitZone } from "../combat/HitZone";
 import { HitFeedbackConfig as hfc } from "../combat/HitFeedbackConfig";
+import { FramePulse } from "./framePulse";
 
 /**
  * Crosshair-centered hitmarker (DOM/CSS, zero per-frame JS). The centre stays free: the
@@ -12,7 +13,8 @@ import { HitFeedbackConfig as hfc } from "../combat/HitFeedbackConfig";
  *    confirmation arriving inside that window never overwrites it.
  *
  * All animation ends at opacity 0, so nothing lingers and no update() call is ever needed.
- * `show()` retriggers via the classic reflow trick.
+ * `show()` retriggers through FramePulse: the state class is written once per frame and
+ * `hm-alt` swaps the animations to their identical twins (no forced reflow per hit).
  */
 export class HitmarkerHUD {
   private readonly root: HTMLDivElement;
@@ -40,6 +42,16 @@ export class HitmarkerHUD {
   private overridden = false;
   /** performance.now() until which a KILL pulse is protected from being overwritten. */
   private killUntil = 0;
+  /** State class requested since the last flush (hm-body / hm-head / hm-kill). */
+  private pendingClass: string | null = null;
+  private readonly pulse = new FramePulse((restart) => {
+    const cls = this.pendingClass;
+    if (!cls) return;
+    this.pendingClass = null;
+    this.root.classList.remove("hm-body", "hm-head", "hm-kill");
+    this.root.classList.add(cls);
+    if (restart) this.root.classList.toggle("hm-alt");
+  });
 
   /**
    * Pulse the hitmarker. Retriggers cleanly even mid-animation.
@@ -64,8 +76,12 @@ export class HitmarkerHUD {
       this.root.style.setProperty("--hm-head-dur", `${hfc.headshotHitmarkerDuration}s`);
       this.overridden = false;
     }
-    this.root.classList.remove("hm-body", "hm-head", "hm-kill");
-    void this.root.offsetWidth; // reflow → restart the CSS animations
-    this.root.classList.add(kill ? "hm-kill" : head ? "hm-head" : "hm-body");
+    this.pendingClass = kill ? "hm-kill" : head ? "hm-head" : "hm-body";
+    this.pulse.request();
+  }
+
+  /** Apply this frame's pulse (Game: once per frame, after the hits). */
+  flush(): void {
+    this.pulse.flush();
   }
 }

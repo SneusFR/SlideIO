@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { HitZone } from "../combat/HitZone";
 import { Combatant } from "../combat/Combatant";
 import { HitFeedbackConfig as hfc } from "../combat/HitFeedbackConfig";
+import { frameStamp } from "./framePulse";
 
 /** One live floating number (pooled — never re-created per hit). */
 interface DamageEntry {
@@ -25,6 +26,10 @@ interface DamageEntry {
   /** KILL number: distinct animation, longer lifetime, frozen anchor. */
   kill: boolean;
   active: boolean;
+  /** A merged tick asked for the pop-in to restart (applied by update()). */
+  popPending: boolean;
+  /** frameStamp() of the last restart: one per frame at most. */
+  popFrame: number;
 }
 
 /**
@@ -160,6 +165,7 @@ export class DamageNumbersHUD {
         this.release(entry);
         continue;
       }
+      if (entry.popPending) this.applyPop(entry);
 
       // Follow a living target; freeze the anchor once it dies.
       if (entry.target && entry.target.health.alive) {
@@ -243,6 +249,8 @@ export class DamageNumbersHUD {
       tilt: 0,
       kill: false,
       active: false,
+      popPending: false,
+      popFrame: Number.NaN,
     };
   }
 
@@ -250,6 +258,7 @@ export class DamageNumbersHUD {
     entry.active = false;
     entry.target = null;
     entry.kill = false;
+    entry.popPending = false;
     entry.el.classList.remove("dmg-kill");
     entry.el.style.display = "none";
     if (this.byKey.get(entry.key) === entry) this.byKey.delete(entry.key);
@@ -260,11 +269,23 @@ export class DamageNumbersHUD {
     entry.inner.textContent = String(Math.max(1, Math.round(entry.total)));
   }
 
-  /** Restart the pop-in bounce via the classic reflow trick. */
+  /**
+   * Restart the pop-in bounce — applied by the next update() (same frame for
+   * hits landed in the game frame), never through a forced reflow: `dmg-alt`
+   * swaps the animation to its identical twin (dmg-pop ⇄ dmg-pop-b), at most
+   * once per frame (two swaps before a render would cancel each other out).
+   */
   private retriggerPop(entry: DamageEntry): void {
-    entry.inner.classList.remove("dmg-pop");
-    void entry.inner.offsetWidth;
+    entry.popPending = true;
+  }
+
+  private applyPop(entry: DamageEntry): void {
+    entry.popPending = false;
     entry.inner.classList.add("dmg-pop");
+    const t = frameStamp();
+    if (t === entry.popFrame) return;
+    entry.popFrame = t;
+    entry.inner.classList.toggle("dmg-alt");
   }
 }
 

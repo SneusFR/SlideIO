@@ -124,11 +124,12 @@ import { ComboManager } from "../combo/ComboManager";
 import { MedalManager } from "../medals/MedalManager";
 import { MedalHUD } from "../ui/MedalHUD";
 import { ComboHUD } from "../ui/ComboHUD";
-import { MatchStatsManager } from "../stats/MatchStatsManager";
+import { MatchStatsManager, type PlayerMatchStats } from "../stats/MatchStatsManager";
 import { MatchResultsTracker, type MatchResults } from "../../shared/match/MatchResultsTracker";
 import { MATCH_DURATION_SECONDS } from "../../shared/match/MatchRules";
 import { MatchClockHUD } from "../match/MatchClockHUD";
 import { LeaderboardHUD } from "../ui/LeaderboardHUD";
+import type { HudWarmupHook } from "../ui/HudWarmup";
 import { NetworkDebugHUD } from "../ui/NetworkDebugHUD";
 import { MultiplayerGameController } from "../network/MultiplayerGameController";
 import type { MultiplayerClient } from "../network/MultiplayerClient";
@@ -1670,6 +1671,34 @@ export class Game {
       this.sendNetworkOutfit(outfit);
     }
     this.input.requestPointerLock();
+  }
+
+  /**
+   * HUD warm-up hooks (main.ts → warmUpHud, behind the loading screen): the
+   * leaderboard runs ONE real update — two rows, the local player takes the
+   * lead (row flight, score pop, "+1", crown flight, landing dots) — so its
+   * code is compiled and its effects drawn before the first kill, then it is
+   * emptied again: the first real snapshot rebuilds it exactly as before.
+   */
+  hudWarmupHooks(): HudWarmupHook[] {
+    const lb = this.leaderboardHud;
+    const row = (id: number, name: string, kills: number, local: boolean): PlayerMatchStats => ({
+      combatantId: id,
+      displayName: name,
+      isLocalPlayer: local,
+      kills,
+      deaths: 0,
+      assists: 0,
+    });
+    return [
+      {
+        show: () => {
+          lb.refresh([row(-2, "BOT", 0, false), row(-1, "PLAYER", 0, true)]);
+          lb.refresh([row(-1, "PLAYER", 1, true), row(-2, "BOT", 0, false)]);
+        },
+        hide: () => lb.refresh([]),
+      },
+    ];
   }
 
   /**
@@ -3445,6 +3474,11 @@ export class Game {
             (hexEquipped && this.input.isMouseDown(2))),
       );
       this.damageNumbersHud.update(dt, this.fpsCamera.camera);
+      // Fire kick + hitmarker requested by this frame's shots / hits: ONE
+      // animation restart each, written now (same rendered frame), never
+      // through a forced reflow (framePulse.ts).
+      this.crosshairHud.flush();
+      this.hitmarkerHud.flush();
       this.gameAudio.setComboLayer(this.combo.active, this.combo.comboCount);
     }
 

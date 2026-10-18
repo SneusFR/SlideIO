@@ -11,7 +11,10 @@
  * A burst RESTARTS the same fixed-amplitude pulse (never stacks), and a shot fired in the
  * middle of an aim transition simply plays on the inner layer. Impact / kill diagonals are
  * owned by HitmarkerHUD (a separate element), driven only by confirmed hits.
+ * Restarts go through FramePulse (twin keyframes, once per frame): never a forced reflow.
  */
+
+import { FramePulse } from "./framePulse";
 
 /** Pulse amplitude (px at scale 1) per weapon — a real recoil, not one generic tick. */
 export type CrosshairKick = "light" | "medium" | "heavy";
@@ -49,15 +52,29 @@ export class CrosshairHUD {
     this.root.classList.toggle("cx-aim", on);
   }
 
+  /**
+   * Restarts the fire pulse: `cx-alt` swaps the animation to its identical
+   * twin (cx-fire ⇄ cx-fire-b), at most once per frame — no forced reflow.
+   */
+  private readonly pulse = new FramePulse((restart) => {
+    const root = this.root;
+    if (!root) return;
+    root.classList.add("cx-firing");
+    if (restart) root.classList.toggle("cx-alt");
+  });
+
   /** A shot was actually emitted by the local weapon. Restarts the pulse (no stacking). */
   fire(kick: CrosshairKick = "medium"): void {
     if (!this.root) return;
     this.kick = kick;
     const px = KICK_PX[kick] * (this.aiming ? AIM_KICK_FACTOR : 1);
     this.root.style.setProperty("--cx-kick", String(px));
-    this.root.classList.remove("cx-firing");
-    void this.root.offsetWidth; // reflow → restart the CSS animation
-    this.root.classList.add("cx-firing");
+    this.pulse.request();
+  }
+
+  /** Apply this frame's fire pulse (Game: once per frame, after the weapons). */
+  flush(): void {
+    this.pulse.flush();
   }
 
   /** Last kick class used (debug / preview). */

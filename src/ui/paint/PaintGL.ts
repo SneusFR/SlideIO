@@ -4,7 +4,10 @@ import { PAINT_FRAG_MAIN } from "./paintShaderMain";
 import { PAINT_MAX_CLUSTERS, PAINT_MAX_NODES } from "./paintTypes";
 import type { PaintDripSim } from "./PaintDripSim";
 
-/** Offscreen pixel density of the paint canvas (CSS px → GL px). */
+/**
+ * MAX offscreen pixel density of the paint canvas (plate px → GL px). The
+ * layers render at their on-screen density (PaintLayer.measure), never above.
+ */
 export const PAINT_RENDER_SCALE = 3;
 
 /**
@@ -69,18 +72,23 @@ export class PaintGL {
     this.scene.add(this.quad);
   }
 
-  /** Draw `sim`; returns the GL canvas (valid until the next draw) or null. */
-  draw(sim: PaintDripSim): HTMLCanvasElement | null {
+  /**
+   * Draw `sim` at `scale` GL px per plate px; returns the GL canvas (valid
+   * until the next draw) or null.
+   */
+  draw(sim: PaintDripSim, scale = PAINT_RENDER_SCALE): HTMLCanvasElement | null {
     if (this.lost) return null;
     const p = sim.profile;
-    const w = Math.round(p.canvas.w * PAINT_RENDER_SCALE);
-    const h = Math.round(p.canvas.h * PAINT_RENDER_SCALE);
+    const w = Math.round(p.canvas.w * scale);
+    const h = Math.round(p.canvas.h * scale);
     if (w !== this.w || h !== this.h) {
       this.w = w;
       this.h = h;
       this.renderer.setSize(w, h, false);
     }
     const u = this.material.uniforms;
+    // Silhouette anti-aliasing width = one GL pixel, in plate px.
+    u.uPx.value = 1 / scale;
     (u.uNodes.value as Float32Array).set(sim.nodes);
     (u.uLinks.value as Float32Array).set(sim.links);
     const cl = u.uCl.value as Float32Array;

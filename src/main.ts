@@ -8,6 +8,7 @@ import { LobbyController } from "./network/LobbyController";
 import { MultiplayerClient } from "./network/MultiplayerClient";
 import { loadDisplayName, parseJoinRoomId } from "./network/MultiplayerConfig";
 import { MatchEndController } from "./match/MatchEndController";
+import { warmUpHud } from "./ui/HudWarmup";
 
 /**
  * Boot flow — "the menu is just an overlay on top of the game":
@@ -40,6 +41,10 @@ async function main(): Promise<void> {
   // ready before the menu appears — CLICK TO PLAY is then instant.
   const game = await Game.create(container);
   await game.warmUpRendering();
+  // The rare HUD effects (kill medal, combo, vignettes, death card…) are
+  // drawn once, invisibly, before the loading screen goes away: the first
+  // kill / hit / death never pays their first-draw cost in game.
+  await warmUpHud(game.hudWarmupHooks());
 
   // ---- Menu overlay over the live game renderer ----
   const sounds = new MenuAudio();
@@ -54,6 +59,12 @@ async function main(): Promise<void> {
 
   // ---- Reveal: cinematic map preview + UI fade-in + menu music ----
   loading.classList.add("hidden");
+  // Once faded out (0.5 s), take it out of the rendering for good: its logo
+  // bob + pulse animations kept being restyled every frame for the whole
+  // session (opacity 0 does not stop CSS animations).
+  window.setTimeout(() => {
+    loading.style.display = "none";
+  }, 700);
   game.startMenuPreview();
   menu.reveal();
   sounds.startMusic();

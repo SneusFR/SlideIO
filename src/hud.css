@@ -1687,6 +1687,10 @@
   inset: 0;
   opacity: 0;
   pointer-events: none;
+  /* PERF: CombatHUD writes their opacity frame after frame (decay, low-HP
+     pulse). Own compositor layer → the GPU just blends it with a new alpha;
+     without it every step re-rasterized the WHOLE screen of HUD stickers. */
+  will-change: opacity;
 }
 
 /* Warm tomato splash (not a sci-fi red). */
