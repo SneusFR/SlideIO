@@ -3,6 +3,7 @@ import { PAINT_FRAG_HEAD, PAINT_VERT } from "./paintShader";
 import { PAINT_FRAG_MAIN } from "./paintShaderMain";
 import { PAINT_MAX_CLUSTERS, PAINT_MAX_NODES } from "./paintTypes";
 import type { PaintDripSim } from "./PaintDripSim";
+import { GpuTimer } from "../GpuTimer";
 
 /**
  * MAX offscreen pixel density of the paint canvas (plate px → GL px). The
@@ -26,6 +27,11 @@ export class PaintGL {
   lost = false;
   private w = 0;
   private h = 0;
+  /**
+   * DEV: GPU time of the paint draws. This context is NOT the game's, so its
+   * cost never shows in the debug HUD's GPU line otherwise (see takeGpu).
+   */
+  private readonly timer: GpuTimer | null;
 
   constructor() {
     this.renderer = new THREE.WebGLRenderer({
@@ -45,6 +51,7 @@ export class PaintGL {
     this.renderer.domElement.addEventListener("webglcontextrestored", () => {
       this.lost = false;
     });
+    this.timer = import.meta.env.DEV ? GpuTimer.create(this.renderer) : null;
     this.material = new THREE.ShaderMaterial({
       vertexShader: PAINT_VERT,
       fragmentShader: PAINT_FRAG_HEAD + PAINT_FRAG_MAIN,
@@ -109,8 +116,17 @@ export class PaintGL {
     u.uRect0.value.set(...p.frame.rects[0]);
     u.uRect1.value.set(...p.frame.rects[1]);
     u.uRad.value.set(p.frame.radii[0], p.frame.radii[1]);
+    this.timer?.beginFrame("peinture");
     this.renderer.render(this.scene, this.camera);
+    this.timer?.endFrame();
     return this.renderer.domElement;
+  }
+
+  /** DEV: total GPU ms of the paint draws measured since the last call. */
+  takeGpu(): number | null {
+    if (!this.timer || this.timer.dead) return null;
+    const r = this.timer.take();
+    return r ? r.total * r.frames : 0;
   }
 
   dispose(): void {

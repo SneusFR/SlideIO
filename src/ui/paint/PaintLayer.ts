@@ -68,6 +68,14 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) wake();
 });
 
+/**
+ * DEV (debug HUD "GPU" line): GPU ms spent drawing the plate paint since the
+ * last call — null when it cannot be measured (no paint context / timer).
+ */
+export function takePaintGpuMs(): number | null {
+  return gl ? gl.takeGpu() : null;
+}
+
 // Window resize / zoom / DPR change: every plate re-measures its on-screen size.
 window.addEventListener("resize", () => {
   for (const layer of layers) layer.remeasure();

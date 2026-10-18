@@ -156,6 +156,7 @@ import type {
 } from "../../shared/combat/NetworkWeapons";
 import { getQualitySettings, webglRendererName } from "./GraphicsQuality";
 import { GpuTimer, timeDraws, timePasses } from "../ui/GpuTimer";
+import { takePaintGpuMs } from "../ui/paint/PaintLayer";
 import { pinNewPrograms } from "../effects/ProgramPin";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { loadCharacterAsset, stripEnemyOutline } from "../characters/PotatoCharacter";
@@ -1466,11 +1467,15 @@ export class Game {
       );
     }
     this.hud.gpuSummary = () => {
+      // The Paintball / Poison plate paint draws in ITS OWN WebGL context:
+      // measured apart and shown as a separate term (per game frame).
+      const paintMs = takePaintGpuMs();
       if (timer.dead) return "n/a (no timer query results)";
       const r = timer.take(this.gpuDrawSplit !== null);
       if (!r) return null;
       const parts = r.split.slice(0, this.gpuDrawSplit ? 8 : 5).map(([k, ms]) => `${k} ${ms.toFixed(1)}`);
-      return `${r.total.toFixed(1)} ms (${parts.join(" · ")})`;
+      const paint = paintMs !== null && paintMs > 0 ? ` + peinture HUD ${(paintMs / r.frames).toFixed(1)}` : "";
+      return `${r.total.toFixed(1)} ms (${parts.join(" · ")})${paint}`;
     };
   }
 

@@ -1,6 +1,25 @@
 import * as THREE from "three";
 import { PlayerMovement } from "../player/PlayerMovement";
 
+/** A frame gap at least this long is analysed as a HITCH (ms). */
+const HITCH_MS = 50;
+
+/** Long Animation Frame entry (Chrome 123+), the fields used here. */
+interface LoafScript {
+  invoker?: string;
+  sourceFunctionName?: string;
+  sourceURL?: string;
+  duration: number;
+  forcedStyleAndLayoutDuration?: number;
+}
+interface LoafEntry {
+  startTime: number;
+  duration: number;
+  renderStart: number;
+  styleAndLayoutStart: number;
+  scripts?: LoafScript[];
+}
+
 /**
  * Minimal development HUD: speed, state, velocity, FPS + frame timing.
  *
@@ -62,6 +81,20 @@ export class DebugHUD {
   private cpuSimMs = 0;
   private cpuRenderMs = 0;
   private cpuWorstMs = 0;
+  /** CPU (sim + render) of the last game frame — the "jeu" part of a hitch. */
+  private lastFrameCpu = 0;
+  /**
+   * HITCH breakdown (frames ≥ HITCH_MS): what the browser's MAIN THREAD was
+   * doing during the gap (Long Animation Frames API: scripts, style /
+   * layout, rendering — GC and browser work show up as busy time without
+   * scripts) vs the time it was simply WAITING (GPU process / compositor:
+   * shader compiles, rasterization, presentation). Shown on the "Hitch"
+   * line for 6 s and logged to the console with the scripts involved.
+   */
+  private readonly loaf: LoafEntry[] = [];
+  private readonly hitchQueue: { start: number; end: number; gameMs: number }[] = [];
+  private hitchText = "";
+  private hitchUntil = 0;
   /** Distinct rAF timestamps, including ticks skipped by the FPS cap. */
   private rafRate = 0;
   private callbackRate = 0;
@@ -73,6 +106,14 @@ export class DebugHUD {
 
   constructor() {
     this.el = document.getElementById("debug")!;
+    try {
+      new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) this.loaf.push(e as unknown as LoafEntry);
+        if (this.loaf.length > 64) this.loaf.splice(0, this.loaf.length - 64);
+      }).observe({ type: "long-animation-frame", buffered: false });
+    } catch {
+      // No Long Animation Frames API: hitches still show (no main-thread split).
+    }
   }
 
   /**
@@ -96,6 +137,7 @@ export class DebugHUD {
     this.cpuRenderSum += renderMs;
     this.cpuSamples++;
     this.cpuWorst = Math.max(this.cpuWorst, simMs + renderMs);
+    this.lastFrameCpu = simMs + renderMs;
   }
 
   /** One-line static render setup (preset, AA path…), shown under the resolution. */
@@ -145,6 +187,15 @@ export class DebugHUD {
   update(rawDt: number, movement: PlayerMovement, scene?: THREE.Scene): void {
     this.samples.push(rawDt);
     this.statsTimer += rawDt;
+    const now = performance.now();
+    // (A gap over 1 s is a hidden tab / breakpoint, not a hitch.)
+    if (rawDt * 1000 >= HITCH_MS && rawDt < 1) {
+      this.hitchQueue.push({ start: now - rawDt * 1000, end: now, gameMs: this.lastFrameCpu });
+    }
+    // LoAF entries arrive a little after their frame: analyse with a delay.
+    while (this.hitchQueue.length > 0 && now - this.hitchQueue[0].end > 250) {
+      this.analyseHitch(this.hitchQueue.shift()!, now);
+    }
     if (this.statsTimer >= 0.5) {
       const n = this.samples.length;
       let total = 0;
@@ -213,6 +264,7 @@ export class DebugHUD {
       `Render:   ${this.bufferW}x${this.bufferH} (ratio ${this.pixelRatio.toFixed(2)} / DPR ${this.devicePixelRatio.toFixed(2)})\n` +
       (this.renderSetup ? `Setup:    ${this.renderSetup}\n` : "") +
       (this.deviceName ? `Device:   ${this.deviceName}\n` : "") +
+      (this.hitchText && performance.now() < this.hitchUntil ? `Hitch:    ${this.hitchText}\n` : "") +
       `Lights:   ${this.lightsTotal} (${this.lightsActive} lit)\n` +
       `\n` +
       `Dash:     ${movement.dashReady ? "READY" : "COOLDOWN"}\n` +
@@ -221,5 +273,54 @@ export class DebugHUD {
       `Phase Wall: ${pd.wallPhaseable ? "TRUE" : "FALSE"}\n` +
       `Exit Clear: ${pd.exitClear ? "TRUE" : "FALSE"}\n` +
       `Wall Thickness: ${pd.wallThickness.toFixed(1)}`;
+  }
+
+  /**
+   * Split one long frame gap: `jeu` = the game frame's own CPU, `navigateur`
+   * = other main-thread work inside the gap (style / layout / paint, GC,
+   * tasks), `attente` = the rest: the main thread was idle, waiting for the
+   * GPU process / compositor (shader compiles, raster, presentation).
+   */
+  private analyseHitch(h: { start: number; end: number; gameMs: number }, now: number): void {
+    const gap = h.end - h.start;
+    let busy = 0;
+    let scriptMs = 0;
+    let styleMs = 0;
+    let renderMs = 0;
+    const scripts: LoafScript[] = [];
+    for (const l of this.loaf) {
+      const end = l.startTime + l.duration;
+      const overlap = Math.min(end, h.end) - Math.max(l.startTime, h.start);
+      if (overlap <= 0) continue;
+      busy += overlap;
+      if (l.renderStart > 0) renderMs += end - l.renderStart;
+      if (l.styleAndLayoutStart > 0) styleMs += end - l.styleAndLayoutStart;
+      for (const sc of l.scripts ?? []) {
+        scriptMs += sc.duration;
+        scripts.push(sc);
+      }
+    }
+    const game = Math.min(h.gameMs, gap);
+    const browser = Math.max(0, Math.min(gap - game, busy - Math.min(busy, scriptMs, game)));
+    const wait = Math.max(0, gap - game - browser);
+    this.hitchText =
+      `${gap.toFixed(0)} ms = jeu ${game.toFixed(0)} + navigateur ${browser.toFixed(0)}` +
+      ` + attente GPU ${wait.toFixed(0)}`;
+    this.hitchUntil = now + 6000;
+    if (gap >= 60) {
+      const top = scripts
+        .sort((a, b) => b.duration - a.duration)
+        .slice(0, 4)
+        .map((sc) => {
+          const src = (sc.sourceURL ?? "").split("/").pop()?.split("?")[0] ?? "";
+          const forced = sc.forcedStyleAndLayoutDuration ? `, layout forcé ${sc.forcedStyleAndLayoutDuration.toFixed(0)}` : "";
+          return `${sc.invoker ?? "?"} ${sc.sourceFunctionName || ""} ${src} ${sc.duration.toFixed(0)} ms${forced}`.trim();
+        });
+      console.warn(
+        `[hitch] ${this.hitchText} | thread principal occupé ${busy.toFixed(0)} ms ` +
+          `(scripts ${scriptMs.toFixed(0)}, rendu ${renderMs.toFixed(0)} dont style/layout ${styleMs.toFixed(0)})` +
+          (top.length ? ` | ${top.join(" ; ")}` : ""),
+      );
+    }
   }
 }
