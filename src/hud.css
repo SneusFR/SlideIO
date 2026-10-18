@@ -345,6 +345,10 @@
   border-radius: 999px;
   background: linear-gradient(90deg, var(--bean-deep), var(--bean));
   transform-origin: left center;
+  /* PERF: ComboHUD burns it down with scaleX during the whole combo window —
+     without its own layer the whole top-centre stack re-rasterized at every
+     step, i.e. nearly every frame after a kill (rule 14). */
+  will-change: transform;
 }
 
 #combo-hud.tier-2 #combo-count { color: var(--gold); }
@@ -899,6 +903,9 @@
 #health-ghost {
   background: #fff6e0;
   opacity: 0.85;
+  /* PERF: CombatHUD drains it with scaleX, step after step: its own layer
+     → the compositor rescales it, nothing to re-rasterize (rule 14). */
+  will-change: transform;
 }
 
 #health-fill {
@@ -1006,6 +1013,8 @@
   transform-origin: left center;
   opacity: 0.7;
   transition: opacity 0.2s ease;
+  /* PERF: DashHUD refills it with scaleX during the whole cooldown (rule 14). */
+  will-change: transform;
 }
 
 #dash-hud > :not(#dash-bar) {
@@ -1754,16 +1763,21 @@
   box-shadow: 0 3px 0 rgba(40, 27, 12, 0.7);
 }
 
-/* Soft screen-edge glow in the same direction (big layer, rotated too). */
+/* Soft screen-edge glow in the same direction (rotated too). The gradient
+   ellipse is 64 × 38.4 vmax, centred 60.8 vmax above the aim point, and fully
+   transparent past 72 % of it (46.08 × 27.65 vmax): the box only covers that
+   part (+ a margin). PERF: it used to be a 160 × 160 vmax square around the
+   aim point — the SAME pixels, but six composited layers of 4 552 × 4 552 px
+   each at 1440p, rasterized over the whole screen as soon as one showed. */
 .damage-dir::after {
   content: "";
   position: absolute;
-  left: -80vmax;
-  top: -80vmax;
-  width: 160vmax;
-  height: 160vmax;
+  left: -46.5vmax;
+  top: -88.8vmax;
+  width: 93vmax;
+  height: 56vmax;
   background: radial-gradient(
-    ellipse 40% 24% at 50% 12%,
+    ellipse 64vmax 38.4vmax at 50% 50%,
     rgba(255, 74, 54, 0.55) 0%,
     rgba(255, 74, 54, 0.22) 45%,
     rgba(255, 74, 54, 0) 72%
@@ -1786,6 +1800,11 @@
     rgba(40, 27, 12, 0.25) 0%,
     rgba(40, 27, 12, 0.7) 100%
   );
+  /* PERF: its own layer. Without it this full-screen card was merged into
+     the layer of a small composited element it covers (crosshair, debug
+     panel…), which then grew to the whole screen: everything in it was
+     re-rasterized at the death, and again at the respawn. */
+  will-change: opacity;
 }
 
 #death-screen.hidden {
