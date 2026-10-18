@@ -10,6 +10,7 @@ import { HexSniperController } from "../../weapons/hexsniper/HexSniperController
 import { HexSniperConfig as hexCfg } from "../../weapons/hexsniper/HexSniperConfig";
 import { markEnemyOutlineOccluder } from "../../characters/PotatoCharacter";
 import { BATCHED_SOURCE_LAYER, batchRigidParts, isRigidPartsBatch } from "../../effects/RigidPartsBatch";
+import { getQualitySettings } from "../../game/GraphicsQuality";
 import { BrickMaulProfile, BRICKMAUL_EYES, BRICKMAUL_TIMING } from "../../weapons/brickmaul/BrickMaulProfile";
 import { loadBrickMaulGltf, instantiateBrickMaul } from "../../weapons/brickmaul/BrickMaulModel";
 import { BrickMaulEyes } from "../../weapons/brickmaul/BrickMaulEyes";
@@ -215,6 +216,14 @@ export function tuneThirdPersonWeapon(root: THREE.Object3D, options: { batch?: b
     }
     if (!mesh.frustumCulled && !instanced && !skinned && mesh.matrixAutoUpdate) mesh.frustumCulled = true;
   }
+  // LOW preset: the shadow map is baked ONCE (static shadows) and the
+  // characters never cast there — a held weapon would freeze its silhouette
+  // into the bake at the avatar's spawn point.
+  if (getQualitySettings().staticShadows) {
+    root.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) o.castShadow = false;
+    });
+  }
 }
 
 /**
@@ -314,6 +323,8 @@ type MaulPhase = "whirlwind" | "slamStart" | "slamDive" | "slamLand" | "inspect"
 export class RemoteWeaponController {
   /** SERVER-equipped weapon (from the synced schema). */
   private equipped: NetworkWeaponId = NetworkWeaponId.GOOFY_BASKET;
+  /** False until the first setWeapon() (the default above was never requested). */
+  private equippedApplied = false;
   /** Temporary melee display override (sweep/slam visuals). */
   private overrideId: NetworkWeaponId | null = null;
   private overrideTimer = 0;
@@ -438,11 +449,15 @@ export class RemoteWeaponController {
     const skin = sanitizeWeaponSkin(raw, rawSkin);
     const skinChanged = skin !== this.skinId;
     this.skinId = skin;
-    if (this.equipped === raw) {
+    // `equipped` starts at GOOFY_BASKET with nothing displayed: the FIRST
+    // call must always resolve the weapon, otherwise an avatar whose first
+    // weapon is the basket (bot spawn, remote join) never shows its ball.
+    if (this.equipped === raw && this.equippedApplied) {
       if (skinChanged) this.basket?.setSkin(skin);
       return;
     }
     this.equipped = raw;
+    this.equippedApplied = true;
     this.refreshDisplayed();
   }
 
