@@ -17,6 +17,10 @@ export class PlayerController {
   crouched = false;
 
   readonly physics: PhysicsWorld;
+  /** PERF: Rapier targets (no vector allocated per call) — read at once, never kept. */
+  private readonly rPos = { x: 0, y: 0, z: 0 };
+  private readonly rMove = { x: 0, y: 0, z: 0 };
+  private readonly rNext = { x: 0, y: 0, z: 0 };
 
   constructor(physics: PhysicsWorld) {
     this.physics = physics;
@@ -46,7 +50,7 @@ export class PlayerController {
   }
 
   getPosition(out: THREE.Vector3): THREE.Vector3 {
-    const t = this.body.translation();
+    const t = this.body.translation(this.rPos);
     return out.set(t.x, t.y, t.z);
   }
 
@@ -68,18 +72,14 @@ export class PlayerController {
    * Returns the corrected movement actually applied.
    */
   move(delta: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 {
-    this.controller.computeColliderMovement(this.collider, {
-      x: delta.x,
-      y: delta.y,
-      z: delta.z,
-    });
-    const corrected = this.controller.computedMovement();
-    const t = this.body.translation();
-    this.body.setNextKinematicTranslation({
-      x: t.x + corrected.x,
-      y: t.y + corrected.y,
-      z: t.z + corrected.z,
-    });
+    this.controller.computeColliderMovement(this.collider, delta);
+    const corrected = this.controller.computedMovement(this.rMove);
+    const t = this.body.translation(this.rPos);
+    const next = this.rNext;
+    next.x = t.x + corrected.x;
+    next.y = t.y + corrected.y;
+    next.z = t.z + corrected.z;
+    this.body.setNextKinematicTranslation(next);
     return out.set(corrected.x, corrected.y, corrected.z);
   }
 

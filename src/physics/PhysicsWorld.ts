@@ -1,6 +1,30 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 
 /**
+ * PERF: Rapier's JS API wraps the optional filter predicate of every query
+ * (castRay, castShape, character controller…) in a closure — even when NO
+ * predicate is given, so the WASM side sees a function and calls back into
+ * JS for every candidate collider (the closure answers `undefined`, i.e.
+ * "keep it"). The character controllers of 8 bots alone made ~100 such
+ * round trips per frame, each allocating. Without a predicate nothing is
+ * passed, which the WASM side treats as "no predicate": same results
+ * (checked on 8 controllers × 200 steps + filtered / unfiltered rays), no
+ * callbacks. Callbacks that ARE given (predicates, intersection visitors)
+ * are wrapped exactly as before.
+ */
+{
+  const proto = RAPIER.ColliderSet.prototype as unknown as {
+    castClosure?: (f: unknown) => unknown;
+  };
+  const castClosure = proto.castClosure;
+  if (typeof castClosure === "function") {
+    proto.castClosure = function (this: unknown, f: unknown) {
+      return f ? castClosure.call(this, f) : undefined;
+    };
+  }
+}
+
+/**
  * Rapier interaction groups (packed `membership << 16 | filter`).
  *
  * - STATIC world geometry keeps the DEFAULT groups (membership 0xffff /

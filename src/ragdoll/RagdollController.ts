@@ -92,6 +92,15 @@ const _m1 = new THREE.Matrix4();
 const _m2 = new THREE.Matrix4();
 const _m3 = new THREE.Matrix4();
 const _v1 = new THREE.Vector3();
+/**
+ * PERF: Rapier targets for the per-frame body reads (translation / rotation /
+ * velocities of every part of every live ragdoll): written in place instead
+ * of a new vector per call. Read at once, never kept across another read.
+ */
+const _rt = { x: 0, y: 0, z: 0 };
+const _rl = { x: 0, y: 0, z: 0 };
+const _ra = { x: 0, y: 0, z: 0 };
+const _rq = { x: 0, y: 0, z: 0, w: 1 };
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
@@ -382,14 +391,14 @@ export class RagdollController {
   /** Root (pelvis) world position. */
   getRootPosition(out: THREE.Vector3): THREE.Vector3 {
     if (this.parts.length === 0) return out.set(0, 0, 0);
-    const t = this.parts[0].body.translation();
+    const t = this.parts[0].body.translation(_rt);
     return out.set(t.x, t.y, t.z);
   }
 
   /** Root (pelvis) linear velocity. */
   getRootVelocity(out: THREE.Vector3): THREE.Vector3 {
     if (this.parts.length === 0) return out.set(0, 0, 0);
-    const v = this.parts[0].body.linvel();
+    const v = this.parts[0].body.linvel(_rl);
     return out.set(v.x, v.y, v.z);
   }
 
@@ -403,8 +412,8 @@ export class RagdollController {
     if (this.elapsed < rc.temporaryMinDuration) return false;
     if (this.elapsed >= rc.temporaryMaxDuration) return true;
     const root = this.parts[0];
-    const lv = root.body.linvel();
-    const av = root.body.angvel();
+    const lv = root.body.linvel(_rl);
+    const av = root.body.angvel(_ra);
     const lin = Math.hypot(lv.x, lv.y, lv.z);
     const ang = Math.hypot(av.x, av.y, av.z);
     return lin < rc.recoveryLinearVelocity && ang < rc.recoveryAngularVelocity;
@@ -472,18 +481,18 @@ export class RagdollController {
   /** Hard safeties: velocity clamps + NaN detection (never into space). */
   private clampAndValidate(): void {
     for (const part of this.parts) {
-      const t = part.body.translation();
+      const t = part.body.translation(_rt);
       if (!Number.isFinite(t.x) || !Number.isFinite(t.y) || !Number.isFinite(t.z)) {
         this.corrupted = true;
         return;
       }
-      const lv = part.body.linvel();
+      const lv = part.body.linvel(_rl);
       const lin = Math.hypot(lv.x, lv.y, lv.z);
       if (lin > rc.maxLinearVelocity) {
         const s = rc.maxLinearVelocity / lin;
         part.body.setLinvel({ x: lv.x * s, y: lv.y * s, z: lv.z * s }, true);
       }
-      const av = part.body.angvel();
+      const av = part.body.angvel(_ra);
       const ang = Math.hypot(av.x, av.y, av.z);
       if (ang > rc.maxAngularVelocity) {
         const s = rc.maxAngularVelocity / ang;
@@ -521,8 +530,8 @@ export class RagdollController {
         parent.updateWorldMatrix(true, false);
       }
 
-      const t = part.body.translation();
-      const r = part.body.rotation();
+      const t = part.body.translation(_rt);
+      const r = part.body.rotation(_rq);
       _q1.set(r.x, r.y, r.z, r.w);
 
       // Target node world transform = bodyWorld * (constant rigid offset).

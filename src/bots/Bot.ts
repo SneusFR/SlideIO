@@ -129,6 +129,14 @@ export class Bot implements Combatant, BotShooter {
   private readonly tmp = new THREE.Vector3();
   private readonly delta = new THREE.Vector3();
   private readonly corrected = new THREE.Vector3();
+  /**
+   * PERF: Rapier targets — body.translation() / computedMovement() write here
+   * instead of allocating a vector per call (several per bot per frame at
+   * 240 Hz = garbage → collections). Read at once, never kept.
+   */
+  private readonly rPos = { x: 0, y: 0, z: 0 };
+  private readonly rMove = { x: 0, y: 0, z: 0 };
+  private readonly rIn = { x: 0, y: 0, z: 0 };
 
   private readonly deathColorA = new THREE.Color(0xc084fc);
   private readonly deathColorB = new THREE.Color(0xffffff);
@@ -195,13 +203,13 @@ export class Bot implements Combatant, BotShooter {
     // target / last attacker…): reading its freed Rapier body would abort
     // the whole game frame (WASM "unreachable"), every frame.
     if (this.disposed) return out.copy(this.lastPos);
-    const t = this.body.translation();
+    const t = this.body.translation(this.rPos);
     return out.set(t.x, t.y, t.z);
   }
 
   getEyePosition(out: THREE.Vector3): THREE.Vector3 {
     if (this.disposed) return out.set(this.lastPos.x, this.lastPos.y + 0.55, this.lastPos.z);
-    const t = this.body.translation();
+    const t = this.body.translation(this.rPos);
     return out.set(t.x, t.y + 0.55, t.z);
   }
 
@@ -233,24 +241,21 @@ export class Bot implements Combatant, BotShooter {
     blockedRatio: number,
   ): { reached?: boolean; blocked?: boolean; valid?: boolean } {
     if (this.disposed || !this.health.alive || this.ragdolled) return { valid: false };
-    const t = this.body.translation();
+    const t = this.body.translation(this.rPos);
     this.tmp.set(dest.x - t.x, dest.y - t.y, dest.z - t.z);
     const dist = this.tmp.length();
     if (dist <= stopDistance) return { reached: true };
     const step = Math.min(maxDistance, dist - stopDistance);
     if (step <= 1e-6) return { reached: true };
     this.delta.copy(this.tmp).multiplyScalar(step / dist);
-    this.controller.computeColliderMovement(this.collider, {
-      x: this.delta.x,
-      y: this.delta.y,
-      z: this.delta.z,
-    });
-    const cm = this.controller.computedMovement();
-    this.body.setNextKinematicTranslation({
-      x: t.x + cm.x,
-      y: t.y + cm.y,
-      z: t.z + cm.z,
-    });
+    const tx = t.x, ty = t.y, tz = t.z;
+    this.controller.computeColliderMovement(this.collider, this.delta);
+    const cm = this.controller.computedMovement(this.rMove);
+    const next = this.rIn;
+    next.x = tx + cm.x;
+    next.y = ty + cm.y;
+    next.z = tz + cm.z;
+    this.body.setNextKinematicTranslation(next);
     this.pulledTimer = 0.2; // refreshed every pulled step; expires on release
     this.grounded = false;
     // Momentum: the release keeps the reel-in velocity (never a hard reset).
@@ -486,7 +491,7 @@ export class Bot implements Combatant, BotShooter {
     }
 
     // Kill plane safety.
-    if (this.body.translation().y < mc.killPlaneY) {
+    if (this.body.translation(this.rPos).y < mc.killPlaneY) {
       this.health.kill(null);
       this.onDeath();
       return;
@@ -604,19 +609,15 @@ export class Bot implements Combatant, BotShooter {
 
     // ---- Move through the character controller ----
     this.delta.copy(v).multiplyScalar(dt);
-    this.controller.computeColliderMovement(this.collider, {
-      x: this.delta.x,
-      y: this.delta.y,
-      z: this.delta.z,
-    });
-    const cm = this.controller.computedMovement();
+    this.controller.computeColliderMovement(this.collider, this.delta);
+    const cm = this.controller.computedMovement(this.rMove);
     this.corrected.set(cm.x, cm.y, cm.z);
-    const t = this.body.translation();
-    this.body.setNextKinematicTranslation({
-      x: t.x + cm.x,
-      y: t.y + cm.y,
-      z: t.z + cm.z,
-    });
+    const t = this.body.translation(this.rPos);
+    const next = this.rIn;
+    next.x = t.x + cm.x;
+    next.y = t.y + cm.y;
+    next.z = t.z + cm.z;
+    this.body.setNextKinematicTranslation(next);
     this.grounded = this.controller.computedGrounded();
 
     // Blocked detection (for AI stuck logic / strafe flips).
@@ -665,7 +666,7 @@ export class Bot implements Combatant, BotShooter {
       return;
     }
 
-    const t = this.body.translation();
+    const t = this.body.translation(this.rPos);
     this.model.group.position.set(t.x, t.y, t.z);
     const dist = camPos.distanceTo(this.model.group.position);
     this.model.group.visible = dist < 200;
