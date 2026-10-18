@@ -156,6 +156,7 @@ import type {
   WeaponActionConfirmedEvent,
 } from "../../shared/combat/NetworkWeapons";
 import { getQualitySettings, webglRendererName } from "./GraphicsQuality";
+import { installTexParamDedupe } from "../effects/TexParamDedupe";
 import { GpuTimer, timeDraws, timePasses } from "../ui/GpuTimer";
 import { takePaintGpuMs } from "../ui/paint/PaintLayer";
 import { pinNewPrograms } from "../effects/ProgramPin";
@@ -517,6 +518,9 @@ export class Game {
       // drawing buffer must carry stencil bits (three defaults to false).
       stencil: true,
     });
+    // PERF (240 Hz): the ~70 texParameteri per frame that only repeat a bone
+    // texture's sampler settings never reach the browser's GPU process.
+    installTexParamDedupe(this.renderer.getContext() as WebGL2RenderingContext);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
     this.renderer.shadowMap.enabled = true;
