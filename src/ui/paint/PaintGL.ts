@@ -79,6 +79,11 @@ export class PaintGL {
     this.scene.add(this.quad);
   }
 
+  /** The GL canvas (shown directly by the single visible plate — see PaintLayer). */
+  get canvas(): HTMLCanvasElement {
+    return this.renderer.domElement;
+  }
+
   /**
    * Draw `sim` at `scale` GL px per plate px; returns the GL canvas (valid
    * until the next draw) or null.

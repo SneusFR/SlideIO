@@ -22,6 +22,16 @@ import type { PaintProfile } from "./paintTypes";
  * where the plate is big on screen (≥ 1.5 device px per plate px: a
  * 1536-px window at 125 %, 1440p…); small windows stop rendering pixels
  * the screen cannot show (1280-px window: 2.25× instead of 3×, −44 %).
+ *
+ * PERF (240 Hz): the ONE visible layer (in game: the equipped weapon's
+ * plate) shows the GL canvas ITSELF, placed exactly where its 2D canvas
+ * sits — same class, box and backing size, so the same pixels. Copying the
+ * GL canvas into the 2D canvas made Chrome snapshot the WebGL drawing
+ * buffer into a freshly allocated GPU image, then re-draw that image into
+ * the 2D canvas, at every paint frame — up to 240 times per second after
+ * each shot, all in the browser's GPU process, which the game's own frames
+ * need too. The 2D copy remains the path when several plates show at once
+ * (HUD preview page).
  */
 const CREEP_INTERVAL = 0.05;
 /** Backing pixels per ON-SCREEN pixel kept by the paint (supersampling). */
@@ -34,6 +44,8 @@ let glFailed = false;
 const layers = new Set<PaintLayer>();
 let raf = 0;
 let last = 0;
+/** The single visible layer that displays the GL canvas directly (no 2D copy). */
+let direct: PaintLayer | null = null;
 
 function getGL(): PaintGL | null {
   if (gl || glFailed) return gl;
@@ -43,6 +55,23 @@ function getGL(): PaintGL | null {
     glFailed = true;
   }
   return gl;
+}
+
+/** Exactly one visible layer → it shows the GL canvas itself; otherwise nobody does. */
+function updateDirect(): void {
+  let only: PaintLayer | null = null;
+  let visible = 0;
+  for (const layer of layers) {
+    if (!layer.visible) continue;
+    visible++;
+    only = layer;
+  }
+  const next = visible === 1 ? only : null;
+  if (next === direct) return;
+  const prev = direct;
+  direct = null;
+  prev?.releaseDirect();
+  if (next && next.adoptDirect()) direct = next;
 }
 
 function loop(now: number): void {
@@ -82,12 +111,19 @@ window.addEventListener("resize", () => {
 });
 
 export class PaintLayer {
+  /** The 2D canvas of the plate (shown unless the GL canvas stands in for it). */
   readonly canvas: HTMLCanvasElement;
   readonly sim: PaintDripSim;
   visible = false;
   /** Preview / debug: slow-motion factor applied to the paint clock. */
   timeScale = 1;
   private readonly ctx: CanvasRenderingContext2D | null;
+  /** Box of the paint canvas on the plate (CSS), shared by both canvases. */
+  private readonly boxCss: string;
+  /** The shared GL canvas while this layer displays it directly (see updateDirect). */
+  private glCanvas: HTMLCanvasElement | null = null;
+  /** The GL canvas was just moved here: kept invisible until this layer drew in it. */
+  private glPending = false;
   private dirty = true;
   private creepT = 0;
   /** Backing pixels per plate pixel (max until the on-screen size is known). */
@@ -101,9 +137,10 @@ export class PaintLayer {
     this.canvas.className = "wpn-paint";
     this.canvas.width = Math.round(profile.canvas.w * this.scale);
     this.canvas.height = Math.round(profile.canvas.h * this.scale);
-    this.canvas.style.cssText =
+    this.boxCss =
       `left:${profile.canvas.x}px;top:${profile.canvas.y}px;` +
       `width:${profile.canvas.w}px;height:${profile.canvas.h}px;`;
+    this.canvas.style.cssText = this.boxCss;
     this.ctx = this.canvas.getContext("2d");
     host.appendChild(this.canvas);
     layers.add(this);
@@ -118,6 +155,37 @@ export class PaintLayer {
       this.measureIn = MEASURE_DELAY;
       wake();
     }
+    updateDirect();
+  }
+
+  /**
+   * Show the shared GL canvas in place of this layer's 2D canvas: same
+   * class (stacking, positioning), same box, same backing size (set by every
+   * PaintGL.draw). Hidden until this layer has drawn in it (it may still
+   * hold another plate's paint). False when there is no GL context.
+   */
+  adoptDirect(): boolean {
+    const glc = getGL()?.canvas ?? null;
+    if (!glc || !this.canvas.parentElement) return false;
+    glc.className = this.canvas.className;
+    glc.style.cssText = this.boxCss + "visibility:hidden;";
+    this.canvas.after(glc);
+    this.canvas.style.display = "none";
+    this.glCanvas = glc;
+    this.glPending = true;
+    this.dirty = true;
+    return true;
+  }
+
+  /** Back to the 2D canvas (redrawn on the next tick if the plate shows). */
+  releaseDirect(): void {
+    const glc = this.glCanvas;
+    if (!glc) return;
+    this.glCanvas = null;
+    this.glPending = false;
+    if (glc.previousElementSibling === this.canvas) glc.remove();
+    this.canvas.style.display = "";
+    this.dirty = true;
   }
 
   /** The window changed (size / zoom / screen): measure again once settled. */
@@ -149,7 +217,16 @@ export class PaintLayer {
     this.creepT = 0;
     this.dirty = act === 2; // one more frame once the motion has stopped
     const src = getGL()?.draw(this.sim, this.scale);
-    if (!src || !this.ctx) return;
+    if (!src) return;
+    if (src === this.glCanvas) {
+      // Direct: the browser composites the GL canvas as drawn — no copy.
+      if (this.glPending) {
+        this.glPending = false;
+        src.style.visibility = "";
+      }
+      return;
+    }
+    if (!this.ctx) return;
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.ctx.drawImage(src, 0, 0);
   }
@@ -161,7 +238,8 @@ export class PaintLayer {
    * after the enter animation (its scale would read too small).
    */
   private measure(): void {
-    const w = this.canvas.getBoundingClientRect().width;
+    // The canvas actually displayed (the hidden one has no box).
+    const w = (this.glCanvas ?? this.canvas).getBoundingClientRect().width;
     if (w <= 0) {
       // Not laid out yet (HUD hidden behind the menu): keep the current
       // scale and look again a little later.
@@ -180,10 +258,16 @@ export class PaintLayer {
 
   dispose(): void {
     layers.delete(this);
+    if (direct === this) {
+      direct = null;
+      this.releaseDirect();
+    }
     this.canvas.remove();
     if (layers.size === 0 && gl) {
       gl.dispose();
       gl = null;
+    } else {
+      updateDirect();
     }
   }
 }
