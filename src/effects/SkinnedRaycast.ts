@@ -17,7 +17,12 @@ import * as THREE from "three";
  * (same pose, same triangles, double-sided like the body material).
  */
 interface SkinCache {
-  geometry: THREE.BufferGeometry;
+  /**
+   * The bind-pose positions the cache was built for. Keyed on the ATTRIBUTE,
+   * not the geometry: the paint / wet layers swap in a geometry WRAPPER that
+   * shares it (first hit, then back on death) — the same buffer stays valid.
+   */
+  source: THREE.BufferAttribute;
   frame: number;
   positions: Float32Array;
 }
@@ -110,9 +115,9 @@ function skinnedPositions(mesh: THREE.SkinnedMesh): Float32Array | null {
   // Safety net when nobody bumps the frame (other contexts): 30 ms validity.
   if (performance.now() - lastBump > 30) nextSkinnedRaycastFrame();
   let cache = caches.get(mesh);
-  if (cache && cache.geometry === geometry && cache.frame === frame) return cache.positions;
-  if (!cache || cache.geometry !== geometry) {
-    cache = { geometry, frame: -1, positions: new Float32Array(pos.count * 3) };
+  if (cache && cache.source === pos && cache.frame === frame) return cache.positions;
+  if (!cache || cache.source !== pos) {
+    cache = { source: pos, frame: -1, positions: new Float32Array(pos.count * 3) };
     caches.set(mesh, cache);
   }
   // Bone matrices of the CURRENT pose (bones' matrixWorld are up to date in
