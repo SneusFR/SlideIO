@@ -1,4 +1,11 @@
 import * as THREE from "three";
+/**
+ * PERF: shadow depth material of these RIGID dynamic casters. three.js draws
+ * every caster with ONE shared depth material by default; alternating rigid
+ * casters with skinned ones (characters, weapon batches) re-selected its
+ * program at each switch. Same material settings → same shadow.
+ */
+const RIGID_DEPTH = new THREE.MeshDepthMaterial();
 // cage geometry in cage-node units (FrisbeeLauncher_Weapon.glb, node "Cage": origin = top centre, axis +Y)
 const TOP = 0.08;
 const BOTTOM = -1.64;
@@ -75,6 +82,7 @@ export class DroppedCages {
             const m = o as THREE.Mesh;
             if (m.isMesh) {
                 m.castShadow = true;
+                m.customDepthMaterial = RIGID_DEPTH;
                 m.frustumCulled = false;
                 m.raycast = () => { };
             }

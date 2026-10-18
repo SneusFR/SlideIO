@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { PhysicsWorld, RAPIER, CollisionGroups } from "../physics/PhysicsWorld";
 import { ParticleSystem } from "../effects/ParticleSystem";
+import { markMatrixFresh } from "../effects/matrixFresh";
 import { Combatant } from "../combat/Combatant";
 import { KillMethod } from "../combat/KillMethod";
 import { HitZone } from "../combat/HitZone";
@@ -137,6 +138,15 @@ export class BotManager {
   /** Visual sync (after the physics step, before render). */
   postStep(dt: number, camQuat: THREE.Quaternion, camPos: THREE.Vector3, time: number): void {
     for (const bot of this.bots) bot.postStep(dt, camQuat, camPos, time);
+  }
+
+  /**
+   * The bots' world matrices were just refreshed by the frame's scene pass
+   * and nothing moves a bot before the render: the renderer's own pass
+   * skips them (see matrixFresh).
+   */
+  markMatricesFresh(): void {
+    for (const bot of this.bots) markMatrixFresh(bot.model.group);
   }
 
   /**

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { GivreFootprintsData } from "./GivreData";
+import { hideWhenEmpty } from "../effects/hideWhenEmpty";
 
 /**
  * GIVRE v3 — bare-foot prints in the snow (adapted from
@@ -281,6 +282,7 @@ export class GivreFootprints {
     const zero = new THREE.Matrix4().makeScale(0, 0, 0);
     for (let i = 0; i < this.pool; i++) this.mesh.setMatrixAt(i, zero);
     this.mesh.count = 0; // grows up to the pool size step after step
+    hideWhenEmpty(this.mesh);
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = false;
     this.mesh.receiveShadow = false;

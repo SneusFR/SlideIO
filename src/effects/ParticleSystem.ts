@@ -29,6 +29,8 @@ export class ParticleSystem {
   private cursor = 0;
 
   private readonly geometry: THREE.BufferGeometry;
+  /** PERF: hidden (no draw, no upload) while no particle is alive. */
+  private readonly points: THREE.Points;
   private readonly tmpDir = new THREE.Vector3();
   private readonly tmpT1 = new THREE.Vector3();
   private readonly tmpT2 = new THREE.Vector3();
@@ -73,7 +75,9 @@ export class ParticleSystem {
     const points = new THREE.Points(this.geometry, material);
     points.frustumCulled = false;
     points.renderOrder = 6;
+    points.visible = false; // nothing alive yet
     scene.add(points);
+    this.points = points;
   }
 
   /** Spawn a single particle (overwrites the oldest slot when full). */
@@ -106,6 +110,10 @@ export class ParticleSystem {
     this.colors[i * 3] = color.r;
     this.colors[i * 3 + 1] = color.g;
     this.colors[i * 3 + 2] = color.b;
+    // Visible (and uploaded) this very frame, even when spawned after update().
+    (this.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+    (this.geometry.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+    this.points.visible = true;
   }
 
   /** Radial burst (target explosions, overheat vents…). */
@@ -171,6 +179,8 @@ export class ParticleSystem {
   update(dt: number): void {
     const pos = this.positions;
     const col = this.colors;
+    let live = 0;
+    let changed = false;
 
     for (let i = 0; i < this.max; i++) {
       const p = this.particles[i];
@@ -178,6 +188,7 @@ export class ParticleSystem {
 
       p.life -= dt;
       const j = i * 3;
+      changed = true;
 
       if (p.life <= 0) {
         pos[j + 1] = -9999;
@@ -186,6 +197,7 @@ export class ParticleSystem {
         col[j + 2] = 0;
         continue;
       }
+      live++;
 
       p.vy -= p.gravity * dt;
       if (p.drag > 0) {
@@ -205,7 +217,12 @@ export class ParticleSystem {
       col[j + 2] = p.b * fade;
     }
 
-    (this.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
-    (this.geometry.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+    // PERF: no upload while nothing moves, no draw while nothing lives
+    // (the pool used to be uploaded AND drawn every frame, even empty).
+    if (changed) {
+      (this.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+      (this.geometry.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+    }
+    this.points.visible = live > 0;
   }
 }

@@ -243,7 +243,7 @@ class RemotePlayer {
     const model = skeletonClone(asset.template);
     // The group's origin is the CAPSULE CENTER; the model root is the feet.
     model.position.y = -FEET_OFFSET;
-    shareOutlineSkeletons(model); // one bone update per body part (not two)
+    shareOutlineSkeletons(model); // ONE skeleton update + bone upload per avatar
     this.model = model;
     this.group.add(model);
     this.group.visible = false; // hidden until the first snapshot arrives
@@ -750,6 +750,7 @@ export class RemotePlayerManager {
     // contour (a dead body is no longer a threat, and the shared outline
     // material must never enter the CorpseManager's fade pool).
     stripEnemyOutline(corpseModel);
+    shareOutlineSkeletons(corpseModel); // one skeleton for the whole corpse
 
     // Corpse root at the avatar's exact world transform (group = capsule
     // center; the model keeps its own feet offset inside).

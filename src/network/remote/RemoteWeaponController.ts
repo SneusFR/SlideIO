@@ -9,6 +9,7 @@ import { loadHexSniperGltf } from "../../weapons/hexsniper/HexSniperModel";
 import { HexSniperController } from "../../weapons/hexsniper/HexSniperController";
 import { HexSniperConfig as hexCfg } from "../../weapons/hexsniper/HexSniperConfig";
 import { markEnemyOutlineOccluder } from "../../characters/PotatoCharacter";
+import { BATCHED_SOURCE_LAYER, batchRigidParts, isRigidPartsBatch } from "../../effects/RigidPartsBatch";
 import { BrickMaulProfile, BRICKMAUL_EYES, BRICKMAUL_TIMING } from "../../weapons/brickmaul/BrickMaulProfile";
 import { loadBrickMaulGltf, instantiateBrickMaul } from "../../weapons/brickmaul/BrickMaulModel";
 import { BrickMaulEyes } from "../../weapons/brickmaul/BrickMaulEyes";
@@ -161,6 +162,130 @@ export function preloadRemoteWeaponTemplates(): Promise<void> {
   jobs.push(loadWaterFamasGltf()); // Water FAMAS (profile path, shared with FP)
   jobs.push(loadFrisbeeLauncherGltf()); // Frisbee Launcher (profile path, shared with FP)
   return Promise.all(jobs).then(() => undefined);
+}
+
+/**
+ * PERF — third-person (remote player / bot) held weapons. Three costs per
+ * avatar, every frame, for details nobody can see in third person:
+ *   1. DRAW CALLS: a profile weapon (popcorn, paintball, FAMAS, frisbee) is
+ *      10 to 15 rigid parts, mostly sharing ONE vertex-colour material —
+ *      each part was its own draw (and shadow draw). With `batch`, the
+ *      parts sharing a material become one skinned draw (RigidPartsBatch):
+ *      the controllers keep animating the very same part objects.
+ *   2. SHADOWS (HIGH): of the parts left alone, only the LARGE ones (≥ 30 %
+ *      of the weapon's biggest part) keep casting: the gun's shadow
+ *      silhouette is unchanged, tiny / transparent parts no longer
+ *      re-render in the shadow pass.
+ *   3. CULLING: rigid parts parented to the hand bone were never
+ *      frustum-culled ("moves with the animated bone") — but a rigid mesh's
+ *      bounds follow its matrixWorld exactly, so culling is valid. An avatar
+ *      behind the camera no longer draws its weapon. Skinned / instanced /
+ *      world-space parts keep their own (conservative) setting.
+ * Call once after the weapon is mounted in the character's hand.
+ */
+const TP_SHADOW_PART_RATIO = 0.3;
+export function tuneThirdPersonWeapon(root: THREE.Object3D, options: { batch?: boolean } = {}): void {
+  if (options.batch) batchRigidParts(root);
+  splitTwoPassTransparents(root);
+  root.updateMatrixWorld(true);
+  const rootScale = Math.max(root.matrixWorld.getMaxScaleOnAxis(), 1e-9);
+  const parts: { mesh: THREE.Mesh; radius: number }[] = [];
+  let maxRadius = 0;
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    // Batched sources are not drawn any more; the batches keep their setup.
+    if (!mesh.isMesh || !mesh.layers.isEnabled(0) || isRigidPartsBatch(mesh)) return;
+    const geometry = mesh.geometry;
+    if (!geometry.boundingSphere) geometry.computeBoundingSphere();
+    // The node's OWN scale is ignored: parts hidden by a 0-scale key
+    // (reload bottle, hand disc) are sized as they appear.
+    const parentScale = mesh.parent ? mesh.parent.matrixWorld.getMaxScaleOnAxis() : 1;
+    const radius = ((geometry.boundingSphere?.radius ?? 0) * parentScale) / rootScale;
+    parts.push({ mesh, radius });
+    const special = (mesh as THREE.InstancedMesh).isInstancedMesh || (mesh as THREE.SkinnedMesh).isSkinnedMesh;
+    if (!special && mesh.visible) maxRadius = Math.max(maxRadius, radius);
+  });
+  for (const { mesh, radius } of parts) {
+    const instanced = (mesh as THREE.InstancedMesh).isInstancedMesh === true;
+    const skinned = (mesh as THREE.SkinnedMesh).isSkinnedMesh === true;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const transparent = mats.some((m) => m.transparent);
+    if (mesh.castShadow && (instanced || transparent || radius < maxRadius * TP_SHADOW_PART_RATIO)) {
+      mesh.castShadow = false;
+    }
+    if (!mesh.frustumCulled && !instanced && !skinned && mesh.matrixAutoUpdate) mesh.frustumCulled = true;
+  }
+}
+
+/**
+ * PERF — transparent DOUBLE-SIDED parts (tank / hopper glass) are drawn by
+ * three.js in two passes, back faces then front faces, flagging the material
+ * `needsUpdate` before each pass: a full program re-selection twice per part
+ * and per frame. The same two passes as two meshes with a fixed side each
+ * (shared geometry, cached BackSide / FrontSide clones of the material): the
+ * back one is created first, so at equal depth it still sorts first — same
+ * blending order, same image, no re-selection. The source mesh stays in the
+ * graph (controllers keep toggling it; dropped copies reuse its material)
+ * but moves to a layer no camera renders; its `visible` still hides both.
+ */
+const sideClones = new WeakMap<THREE.Material, { back: THREE.Material; front: THREE.Material }>();
+
+/** Cached clone of `source` for a rigid mesh that must not share it with a skinned one. */
+const rigidClones = new WeakMap<THREE.Material, THREE.Material>();
+function rigidCloneOf(source: THREE.Material): THREE.Material {
+  let clone = rigidClones.get(source);
+  if (!clone) {
+    clone = source.clone();
+    // Material.copy never copies the shader hooks.
+    clone.onBeforeCompile = source.onBeforeCompile;
+    clone.customProgramCacheKey = source.customProgramCacheKey;
+    rigidClones.set(source, clone);
+  }
+  return clone;
+}
+function splitTwoPassTransparents(root: THREE.Object3D): void {
+  const targets: THREE.Mesh[] = [];
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || Array.isArray(mesh.material) || !mesh.layers.isEnabled(0)) return;
+    if ((mesh as THREE.InstancedMesh).isInstancedMesh || (mesh as THREE.SkinnedMesh).isSkinnedMesh) return;
+    if (isRigidPartsBatch(mesh) || mesh.userData.twoPassSplit) return;
+    const m = mesh.material;
+    if (!m.transparent || m.side !== THREE.DoubleSide || m.forceSinglePass) return;
+    if (mesh.onBeforeRender !== THREE.Object3D.prototype.onBeforeRender) return;
+    targets.push(mesh);
+  });
+  for (const mesh of targets) {
+    const source = mesh.material as THREE.Material;
+    let pair = sideClones.get(source);
+    if (!pair) {
+      const sided = (side: THREE.Side) => {
+        const clone = source.clone();
+        clone.side = side;
+        // Material.copy never copies the shader hooks.
+        clone.onBeforeCompile = source.onBeforeCompile;
+        clone.customProgramCacheKey = source.customProgramCacheKey;
+        return clone;
+      };
+      pair = { back: sided(THREE.BackSide), front: sided(THREE.FrontSide) };
+      sideClones.set(source, pair);
+    }
+    for (const material of [pair.back, pair.front]) {
+      const pass = new THREE.Mesh(mesh.geometry, material);
+      pass.name = `${mesh.name}_${material === pair.back ? "back" : "front"}`;
+      pass.renderOrder = mesh.renderOrder;
+      pass.castShadow = false;
+      pass.receiveShadow = mesh.receiveShadow;
+      pass.frustumCulled = mesh.frustumCulled;
+      pass.matrixAutoUpdate = false; // identity under the source
+      pass.raycast = () => {};
+      pass.userData.noOutline = mesh.userData.noOutline === true;
+      pass.userData.twoPassSplit = true;
+      mesh.add(pass);
+    }
+    mesh.userData.twoPassSplit = true;
+    mesh.layers.set(BATCHED_SOURCE_LAYER);
+  }
 }
 
 /** Swing animation duration (procedural grip rotation, seconds) — SPEAR only. */
@@ -1041,10 +1166,19 @@ export class RemoteWeaponController {
     // materials are shared with the FP viewmodel (same GLB cache) —
     // harmless there: the FP pass runs AFTER the outline already drew.
     markEnemyOutlineOccluder(weapon);
+    // The world-space tether shares the skinned creature's material: three.js
+    // re-selected the program at every skinned ↔ rigid switch. Private clone
+    // (one per source, shared by every remote sniper), taken AFTER the
+    // occluder stencil setup above so it carries it too.
+    const tether = visuals.tether as THREE.Mesh;
+    if (!Array.isArray(tether.material)) tether.material = rigidCloneOf(tether.material);
 
     const mount = createWeaponMount("HexSniperMount", HexSniperProfile.tpMount);
     socket.add(mount);
     mount.add(weapon);
+    // The four static armour / metal / rubber / lime pieces differ only by
+    // material constants: one uber batch instead of four draws.
+    tuneThirdPersonWeapon(weapon, { batch: true });
 
     this.hexVisuals = visuals;
     this.hexWeapon = weapon;
@@ -1073,6 +1207,7 @@ export class RemoteWeaponController {
     const mount = createWeaponMount("BrickMaulMount", BrickMaulProfile.tpMount);
     socket.add(mount);
     mount.add(weapon);
+    tuneThirdPersonWeapon(weapon);
 
     this.maulWeapon = weapon;
     this.maulMount = mount;
@@ -1144,6 +1279,7 @@ export class RemoteWeaponController {
     const mount = createWeaponMount("PopcornShotgunTPMount", PopcornShotgunProfile.tpMount);
     socket.add(mount);
     mount.add(controller.object);
+    tuneThirdPersonWeapon(controller.object, { batch: true });
     if (this.popcornAmmo !== null) controller.setAmmo(this.popcornAmmo);
     this.popcorn = controller;
     this.popcornMount = mount;
@@ -1185,6 +1321,7 @@ export class RemoteWeaponController {
     const mount = createWeaponMount("PaintballRifleTPMount", PaintballRifleProfile.tpMount);
     socket.add(mount);
     mount.add(controller.object);
+    tuneThirdPersonWeapon(controller.object, { batch: true });
     if (this.paintballAmmo !== null) controller.setAmmo(this.paintballAmmo);
     this.paintball = controller;
     this.paintballMount = mount;
@@ -1222,6 +1359,7 @@ export class RemoteWeaponController {
     const mount = createWeaponMount("WaterFamasTPMount", WaterFamasProfile.tpMount);
     socket.add(mount);
     mount.add(controller.object);
+    tuneThirdPersonWeapon(controller.object, { batch: true });
     if (this.famasAmmo !== null) controller.setAmmo(this.famasAmmo);
     this.famas = controller;
     this.famasMount = mount;
@@ -1260,6 +1398,7 @@ export class RemoteWeaponController {
     const mount = createWeaponMount("FrisbeeLauncherTPMount", FrisbeeLauncherProfile.tpMount);
     socket.add(mount);
     mount.add(controller.object);
+    tuneThirdPersonWeapon(controller.object, { batch: true });
     if (this.frisbeeAmmo !== null) controller.setAmmo(this.frisbeeAmmo.deck, this.frisbeeAmmo.cage);
     this.frisbee = controller;
     this.frisbeeMount = mount;
@@ -1327,6 +1466,7 @@ export class RemoteWeaponController {
     grip.position.multiplyScalar(inv);
 
     bone.add(grip);
+    tuneThirdPersonWeapon(weapon);
     this.grip = grip;
     this.baseRotation.copy(att.rotation);
     this.displayed = id;

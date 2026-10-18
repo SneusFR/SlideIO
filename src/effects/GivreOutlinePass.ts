@@ -369,6 +369,10 @@ export class GivreOutlinePass extends Pass {
     visit(this.scene);
     const prevOverride = this.scene.overrideMaterial;
     const prevBackground = this.scene.background;
+    // PERF: the colour pass of this scene ran just before (same frame, same
+    // camera) and already refreshed every world matrix — a second full
+    // scene-graph update here would only recompute identical matrices.
+    const prevMatrixAuto = this.scene.matrixWorldAutoUpdate;
     const prevAutoClear = renderer.autoClear;
     const prevShadowAutoUpdate = renderer.shadowMap.autoUpdate;
     const prevShadowNeedsUpdate = renderer.shadowMap.needsUpdate;
@@ -377,6 +381,7 @@ export class GivreOutlinePass extends Pass {
 
     this.scene.overrideMaterial = this.normalMaterial;
     this.scene.background = null;
+    this.scene.matrixWorldAutoUpdate = false;
     renderer.autoClear = false;
     // The shadow map was already refreshed by the colour pass: never redo it.
     renderer.shadowMap.autoUpdate = false;
@@ -389,6 +394,7 @@ export class GivreOutlinePass extends Pass {
     } finally {
       this.scene.overrideMaterial = prevOverride;
       this.scene.background = prevBackground;
+      this.scene.matrixWorldAutoUpdate = prevMatrixAuto;
       renderer.setClearColor(this.prevClearColor, prevClearAlpha);
       renderer.autoClear = prevAutoClear;
       renderer.shadowMap.autoUpdate = prevShadowAutoUpdate;

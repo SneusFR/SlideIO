@@ -7,6 +7,7 @@ import { YardConfig as yard } from "./YardConfig";
 import { getQualitySettings } from "../game/GraphicsQuality";
 import mapModelUrl from "../assets/MAP/Yard/yard_01.glb?url";
 import mapPhysicsData from "../assets/MAP/Yard/yard_01.physics.json";
+import { batchStaticMap, batchAnimatedMeshes, freezeStaticTransforms } from "./MapBatching";
 
 /**
  * "YARD 01 Expanded" — acid parkour and power tower (8 players).
@@ -93,11 +94,34 @@ export class YardMap {
 
     // ---- Visual scene (GLB) ----
     mapScene.name = "YARD_01";
+    // PERF: the static meshes (everything but the animated objects and the
+    // acid, whose material YardEffects patches) are merged per material on
+    // a 40 m grid, the constant-only materials sharing one uber material;
+    // the rigid animated props (fans, cameras, terminal) become skinned
+    // batches driven by the same mixer — see MapBatching.
+    const animated = new Set<THREE.Object3D>();
+    for (const clip of animations) {
+      for (const track of clip.tracks) {
+        const { nodeName } = THREE.PropertyBinding.parseTrackName(track.name);
+        mapScene.getObjectByName(nodeName)?.traverse((o) => animated.add(o));
+      }
+    }
+    const isAcid = (m: THREE.Material | THREE.Material[]) =>
+      (Array.isArray(m) ? m : [m]).some((x) => /ACID/i.test(x.name));
+    batchStaticMap(mapScene, {
+      cellSize: 40,
+      uber: true,
+      exclude: (mesh) => animated.has(mesh) || mesh.name === "ACID_LIQUID_SURFACE" || isAcid(mesh.material),
+    });
+    const animatedMeshes = [...animated].filter((o) => (o as THREE.Mesh).isMesh && !isAcid((o as THREE.Mesh).material));
+    for (const batch of batchAnimatedMeshes(animatedMeshes, { uber: true })) mapScene.add(batch);
     mapScene.traverse((object) => {
       const mesh = object as THREE.Mesh;
       if (!mesh.isMesh) return;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
+      // Skinned animated batches: never raycast, culling off (see MapBatching).
+      if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) return;
       mesh.frustumCulled = true; // spatial sectors → cheap culling
       mesh.geometry.computeBoundingBox();
       mesh.geometry.computeBoundingSphere();
@@ -105,6 +129,10 @@ export class YardMap {
       mesh.geometry.computeBoundsTree();
     });
     this.group.add(mapScene);
+    // PERF: only the clip-animated props move (YardEffects' mixer): every
+    // other node keeps a constant local matrix — no recompose / forced
+    // world refresh of the whole map twice per frame (see Game).
+    freezeStaticTransforms(this.group, animated);
 
     // ---- Fixed colliders (exact physics export, created ONCE) ----
     // Cuboids keep their quaternion; hull vertices are already absolute.

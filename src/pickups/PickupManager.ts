@@ -7,6 +7,7 @@ import { PickupAssets } from "./PickupAssets";
 import { Pickup } from "./Pickup";
 import { HealthPickup } from "./HealthPickup";
 import { CoinPickup } from "./CoinPickup";
+import { PickupBatch } from "./PickupBatch";
 
 /**
  * Owns every loot pickup in the world.
@@ -26,6 +27,17 @@ export class PickupManager {
 
   private readonly assets = new PickupAssets();
   private readonly active: Pickup[] = [];
+  /**
+   * PERF: instanced rendering of every active pickup (see PickupBatch) —
+   * 6-7 draws per KIND instead of 6-7 per pickup. Built once the template
+   * is loaded; the pickups' roots are pure transforms (never in the scene).
+   */
+  private coinBatch: PickupBatch | null = null;
+  private medkitBatch: PickupBatch | null = null;
+  /** Camera used for the per-pickup frustum culling (set by the Game). */
+  camera: THREE.Camera | null = null;
+  private readonly frustum = new THREE.Frustum();
+  private readonly projView = new THREE.Matrix4();
   private readonly medkitPool: HealthPickup[] = [];
   private readonly coinPool: CoinPickup[] = [];
 
@@ -47,12 +59,52 @@ export class PickupManager {
    * and uploaded their textures mid-fight — a visible freeze. Waits for
    * the async template loads; failed assets are simply skipped.
    */
-  async createWarmUpVisuals(): Promise<THREE.Object3D[]> {
+  async createWarmUpVisuals(at?: THREE.Vector3): Promise<THREE.Object3D[]> {
     await this.assets.ready;
-    const visuals: THREE.Object3D[] = [];
-    if (this.assets.medkitTemplate) visuals.push(this.assets.medkitTemplate.clone());
-    if (this.assets.coinTemplate) visuals.push(this.assets.coinTemplate.clone());
-    return visuals;
+    this.ensureBatches();
+    // ONE instance of each kind at `at` (far below the map) for the warm
+    // frames: the instanced programs compile + the textures upload now.
+    // The next update() publishes the real (empty) state again.
+    if (at) {
+      const m = new THREE.Matrix4().makeTranslation(at.x, at.y, at.z);
+      for (const batch of [this.coinBatch, this.medkitBatch]) {
+        batch?.begin();
+        batch?.push(m, null);
+        batch?.end();
+      }
+    }
+    return [];
+  }
+
+  private ensureBatches(): void {
+    if (!this.coinBatch && this.assets.coinTemplate) {
+      this.coinBatch = new PickupBatch(this.assets.coinTemplate, this.scene, pc.maxActivePickups);
+    }
+    if (!this.medkitBatch && this.assets.medkitTemplate) {
+      this.medkitBatch = new PickupBatch(this.assets.medkitTemplate, this.scene, pc.maxActivePickups);
+    }
+  }
+
+  /**
+   * Publish the visible pickups to the instanced batches — once per frame,
+   * right before rendering (camera final for the frame; also while paused).
+   */
+  publish(): void {
+    let frustum: THREE.Frustum | null = null;
+    if (this.camera) {
+      this.projView.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+      frustum = this.frustum.setFromProjectionMatrix(this.projView);
+    }
+    this.coinBatch?.begin();
+    this.medkitBatch?.begin();
+    for (const p of this.active) {
+      if (!p.hasModel) continue;
+      p.root.updateMatrix(); // parentless root: matrix = world matrix
+      const batch = p instanceof CoinPickup ? this.coinBatch : this.medkitBatch;
+      batch?.push(p.root.matrix, frustum);
+    }
+    this.coinBatch?.end();
+    this.medkitBatch?.end();
   }
 
   /**
@@ -105,12 +157,11 @@ export class PickupManager {
     for (let i = this.active.length - 1; i >= 0; i--) {
       const p = this.active[i];
 
-      // Lazy model attach: templates load async at startup; each pickup
-      // clones the shared template once, the first frame it's available.
+      // Lazy model: templates load async at startup; a pickup is drawn
+      // (instanced) as soon as the batch of its kind exists.
       if (!p.hasModel) {
-        const tpl =
-          p instanceof CoinPickup ? this.assets.coinTemplate : this.assets.medkitTemplate;
-        if (tpl) p.attachModel(tpl);
+        this.ensureBatches();
+        p.hasModel = (p instanceof CoinPickup ? this.coinBatch : this.medkitBatch) !== null;
       }
 
       // Lifetime + idle animation (bob / spin / settle / fade).
@@ -171,13 +222,15 @@ export class PickupManager {
   }
 
   private attach(p: Pickup): void {
-    this.scene.add(p.root);
+    // The root is a pure transform (never added to the scene): the
+    // instanced batches draw the pickup from it.
     this.active.push(p);
   }
 
   /** Remove every active pickup (fresh match) — back to the pools. */
   clear(): void {
     for (let i = this.active.length - 1; i >= 0; i--) this.recycle(i);
+    this.publish();
   }
 
   /** Return the pickup at `index` to its pool (swap-remove). */

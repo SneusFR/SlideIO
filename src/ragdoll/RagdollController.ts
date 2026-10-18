@@ -78,6 +78,13 @@ interface RagdollPart {
   restPos: THREE.Vector3;
   restQuat: THREE.Quaternion;
   debugMesh: THREE.Mesh | null;
+  /**
+   * Plain (non-part) nodes between this part's node and the nearest node
+   * already refreshed earlier in syncVisuals (the root or a previous part /
+   * chain), top-down — null when the node is not under the root (the full
+   * ancestor walk is used then). See syncVisuals.
+   */
+  chain: THREE.Object3D[] | null;
 }
 
 // Module-level scratch (controllers never run concurrently within a frame).
@@ -136,6 +143,8 @@ export class RagdollController {
   elapsed = 0;
   /** True once a NaN / runaway body was detected (caller should dispose). */
   corrupted = false;
+  /** Visuals were synced while every body was asleep (see update). */
+  private syncedAsleep = false;
 
   constructor(
     private readonly physics: PhysicsWorld,
@@ -162,6 +171,7 @@ export class RagdollController {
     this.mode = options.mode;
     this.elapsed = 0;
     this.corrupted = false;
+    this.syncedAsleep = false;
 
     const world = this.physics.world;
 
@@ -215,6 +225,7 @@ export class RagdollController {
         restPos: def.node.position.clone(),
         restQuat: def.node.quaternion.clone(),
         debugMesh: null,
+        chain: null,
       };
       this.parts.push(part);
       this.byName.set(def.name, part);
@@ -235,6 +246,23 @@ export class RagdollController {
       const joint = this.physics.world.createImpulseJoint(data, parent.body, part.body, true);
       joint.setContactsEnabled(false);
       this.joints.push(joint);
+    }
+
+    // ---- Visual sync plan (see syncVisuals) ----
+    const fresh = new Set<THREE.Object3D>([visualRoot]);
+    for (const part of this.parts) {
+      const node = part.def.node;
+      const between: THREE.Object3D[] = [];
+      let o = node.parent;
+      while (o && !fresh.has(o)) {
+        between.push(o);
+        o = o.parent;
+      }
+      if (o) {
+        part.chain = between.reverse();
+        for (const n of between) fresh.add(n);
+      }
+      fresh.add(node);
     }
 
     this.active = true;
@@ -333,10 +361,22 @@ export class RagdollController {
   update(_dt: number): void {
     if (!this.active) return;
     this.elapsed += _dt;
+    // PERF: a settled ragdoll (every body asleep in Rapier) does not move —
+    // its visuals already match the last sync (done while asleep): nothing
+    // to clamp, validate or write. Any wake-up (impulse, contact) resumes it.
+    if (this.syncedAsleep && this.allAsleep()) return;
     this.clampAndValidate();
     if (this.corrupted) return;
     this.syncVisuals();
     if (this.debugGroup) this.syncDebugMeshes();
+    this.syncedAsleep = this.allAsleep();
+  }
+
+  /** True when every body of the ragdoll is asleep. */
+  private allAsleep(): boolean {
+    if (this.parts.length === 0) return false;
+    for (const part of this.parts) if (!part.body.isSleeping()) return false;
+    return true;
   }
 
   /** Root (pelvis) world position. */
@@ -461,12 +501,25 @@ export class RagdollController {
    */
   private syncVisuals(): void {
     if (!this.root) return;
-    this.root.updateMatrixWorld(true);
+    // PERF: only what each part needs is refreshed, ONCE per frame: the root
+    // (+ its ancestors), then per part the plain bones between it and the
+    // nodes already refreshed (precomputed chain, top-down) — never whole
+    // subtrees (they re-multiplied the full skeleton ~11 times per corpse)
+    // nor the full ancestor walk per part. The scene-level update later in
+    // the frame refreshes every descendant once for rendering.
+    this.root.updateWorldMatrix(true, false);
 
     for (const part of this.parts) {
       const node = part.def.node;
       const parent = node.parent;
       if (!parent) continue;
+      // Parent world matrix up to date (it may be a part written this frame
+      // or a plain bone between parts).
+      if (part.chain) {
+        for (const n of part.chain) n.updateWorldMatrix(false, false);
+      } else {
+        parent.updateWorldMatrix(true, false);
+      }
 
       const t = part.body.translation();
       const r = part.body.rotation();
@@ -488,7 +541,7 @@ export class RagdollController {
       _m3.decompose(_v2, _q1, _v3);
       node.position.copy(_v2);
       node.quaternion.copy(_q1);
-      node.updateWorldMatrix(false, true);
+      node.updateWorldMatrix(false, false);
     }
   }
 

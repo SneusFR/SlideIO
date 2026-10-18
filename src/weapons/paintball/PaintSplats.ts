@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { hideWhenEmpty } from "../../effects/hideWhenEmpty";
 
 /**
  * PAINT SPLATS — what a paintball leaves behind. Purely visual (damage stays in the gameplay code).
@@ -113,6 +114,7 @@ export class PaintSplats {
     this.surfaceMesh.name = "PaintSplats";
     this.surfaceMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.surfaceMesh.count = 0;
+    hideWhenEmpty(this.surfaceMesh);
     this.surfaceMesh.frustumCulled = false;
     this.surfaceMesh.castShadow = false;
     this.surfaceMesh.receiveShadow = true;

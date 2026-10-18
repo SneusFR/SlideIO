@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { markMatrixFresh, skipFreshMatrixUpdate } from "../effects/matrixFresh";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { RagdollController, RagdollPartDef, RagdollImpact } from "./RagdollController";
 import { RagdollConfig as rc } from "./RagdollConfig";
@@ -92,7 +93,30 @@ export class CorpseManager {
    */
   warmUp(visual: THREE.Object3D): () => void {
     const materials = this.claimMaterials(visual);
+    // A corpse has TWO looks with different programs: its opaque life (one
+    // double-sided pass, see singlePassWhileOpaque) and its fade (three's
+    // back-face + front-face passes). Each warm draw of a piece alternates
+    // between them, so both compile during the loading screen.
+    const sourceOf = new Map<THREE.Material, THREE.Material>();
+    for (const entry of materials) sourceOf.set(entry.mat, entry.source);
+    const hooked: { mesh: THREE.Mesh; previous: THREE.Mesh["onBeforeRender"] }[] = [];
+    visual.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const previous = mesh.onBeforeRender;
+      let draws = 0;
+      mesh.onBeforeRender = function (this: THREE.Mesh, ...args) {
+        const fading = draws++ % 2 === 1;
+        for (const mat of Array.isArray(this.material) ? this.material : [this.material]) {
+          const source = sourceOf.get(mat);
+          if (source) mat.forceSinglePass = fading ? source.forceSinglePass : singlePassWhileOpaque(source);
+        }
+        previous.apply(this, args);
+      };
+      hooked.push({ mesh, previous });
+    });
     return () => {
+      for (const { mesh, previous } of hooked) mesh.onBeforeRender = previous;
       for (const entry of materials) this.releaseMaterial(entry);
     };
   }
@@ -112,6 +136,8 @@ export class CorpseManager {
     }
 
     this.scene.add(visual);
+    // PERF: final after Game.frame's matrix pass — the renderer skips it (see matrixFresh).
+    skipFreshMatrixUpdate(visual);
 
     const materials = this.claimMaterials(visual);
     const ragdoll = new RagdollController(this.physics, this.scene);
@@ -149,6 +175,11 @@ export class CorpseManager {
     }
   }
 
+  /** Corpse matrices are final for this frame (see BotManager.markMatricesFresh). */
+  markMatricesFresh(): void {
+    for (const corpse of this.corpses) markMatrixFresh(corpse.visual);
+  }
+
   /** Remove every corpse now (fresh match) — pooled materials are kept. */
   clear(): void {
     for (let i = this.corpses.length - 1; i >= 0; i--) this.remove(i);
@@ -173,7 +204,13 @@ export class CorpseManager {
     // The clones are ALREADY transparent (created that way — see the
     // class doc: no program recompile). Only depthWrite flips here, which
     // is pure GL state (no shader change, no needsUpdate, no hitch).
-    for (const entry of corpse.materials) entry.mat.depthWrite = false;
+    // The dissolve blends: double-sided pieces go back to three's two-pass
+    // (back faces, then front faces) for the fade only (see
+    // singlePassWhileOpaque) — again pure render state.
+    for (const entry of corpse.materials) {
+      entry.mat.depthWrite = false;
+      entry.mat.forceSinglePass = entry.source.forceSinglePass;
+    }
   }
 
   private remove(index: number): void {
@@ -250,6 +287,7 @@ export class CorpseManager {
       // would hide the face behind it) until the fade flips it off.
       pooled.opacity = source.opacity;
       pooled.depthWrite = source.depthWrite;
+      pooled.forceSinglePass = singlePassWhileOpaque(source);
       return pooled;
     }
     const clone = source.clone();
@@ -260,6 +298,7 @@ export class CorpseManager {
     // until their fade; already-transparent sources (helmet glass) keep
     // depthWrite=false so the eyes and smile stay readable through them.
     clone.depthWrite = source.depthWrite;
+    clone.forceSinglePass = singlePassWhileOpaque(source);
     // Corpses are NOT threats: never write the enemy-outline stencil mask
     // (inherited from living enemy materials via clone) — a corpse behind
     // a living enemy must not punch holes in that enemy's red contour.
@@ -297,4 +336,19 @@ export class CorpseManager {
     }
     pool.push(entry.mat);
   }
+}
+
+/**
+ * PERF — a fade clone of an OPAQUE source (opacity 1, writes depth) is
+ * transparent only so that the dissolve never recompiles: until its fade it
+ * looks exactly opaque. three.js still drew every transparent double-sided
+ * piece TWICE (back faces, then front faces — and re-selected the program
+ * for each pass): for a fully opaque, depth-writing surface the nearest
+ * fragment wins either way, so one double-sided pass gives the same image
+ * for half the draws. The fade (blended, no depth write) restores the
+ * source's setting. Already-translucent sources (glass) keep two passes.
+ */
+function singlePassWhileOpaque(source: THREE.Material): boolean {
+  if (source.forceSinglePass) return true;
+  return !source.transparent && source.opacity >= 1 && source.depthWrite && source.blending === THREE.NormalBlending;
 }

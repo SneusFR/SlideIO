@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { WetMarks } from "./WetMarks";
+import { hideWhenEmpty } from "../../effects/hideWhenEmpty";
 const RINGS = 72;
 const SIDES = 12;
 const G = 9.81;
@@ -260,6 +261,7 @@ export class WaterJets {
         for (let i = 0; i < MS; i++)
             this.streams.setMatrixAt(i, _m.identity());
         this.streams.count = 0;
+        hideWhenEmpty(this.streams);
         this.streams.frustumCulled = false;
         this.streams.castShadow = false;
         this.streams.renderOrder = 5;
@@ -291,6 +293,7 @@ export class WaterJets {
         this.droplets.castShadow = false;
         this.droplets.raycast = () => { };
         this.droplets.count = 0;
+        hideWhenEmpty(this.droplets);
         this.droplets.renderOrder = 6;
         parent.add(this.droplets);
     }
@@ -465,6 +468,10 @@ export class WaterJets {
                     this.splash(i, s, 3, false);
             }
         }
+        // PERF: no live rope → nothing to draw (count = high-water mark otherwise;
+        // the next spawn restores it). hideWhenEmpty then drops the draw call.
+        if (this.liveS === 0 && this.streams.count !== 0)
+            this.streams.count = 0;
         // ---- droplets
         if (this.liveD === 0) {
             if (this.droplets.count !== 0) {

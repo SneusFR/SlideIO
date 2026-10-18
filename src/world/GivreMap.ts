@@ -13,6 +13,7 @@ import {
   toStandardMaterial,
   type StaticEntry,
 } from "./GivreRenderOptim";
+import { applyUberMaterial, batchAnimatedMeshes, freezeStaticTransforms } from "./MapBatching";
 import mapModelUrl from "../assets/MAP/Givre/givre_01.glb?url";
 import backdropModelUrl from "../assets/MAP/Givre/givre_01_fond.glb?url";
 
@@ -127,6 +128,17 @@ export class GivreMap {
     });
     this.backdrop = backdrop;
 
+    // PERF: the map never moves — only the clip TARGETS animate (mixer).
+    // Every other node (batches, holders, empties, the meshes riding an
+    // animated node, halos, puff instances, lights, the backdrop) keeps a
+    // constant LOCAL matrix: no recompose, and — with the scene root frozen
+    // too (Game) — no forced world-matrix refresh of the whole map in the
+    // two scene-graph updates of every frame. A node riding an animated
+    // parent still follows it (the parent's update forces its subtree).
+    const targets = new Set(this.animated.nodes.values());
+    freezeStaticTransforms(this.group, targets);
+    freezeStaticTransforms(backdrop);
+
     // ---- Fixed colliders (created ONCE; hull vertices already absolute) ----
     for (const c of data.colliders) {
       if (!addCollider(physics, c)) console.warn(`GivreMap: collider failed for "${c.id}"`);
@@ -206,12 +218,15 @@ export class GivreMap {
     // GivreRenderOptim. Shot targets + snow surfaces.
     const merged = new THREE.Group();
     merged.name = "givre_01_merged";
-    for (const mesh of mergeStaticBatches(scene, animated)) {
+    const { meshes, snow } = mergeStaticBatches(scene, animated);
+    for (const mesh of meshes) {
       merged.add(mesh);
       this.hittables.push(mesh);
-      const name = (mesh.material as THREE.Material).name;
-      if (name === SNOW_MATERIAL) this.snowSurfaces.push(mesh);
     }
+    // Snow surfaces (footprints): CPU-side queries only — with the uber
+    // material the drawn batches mix materials, so the snow is kept as its
+    // own (never rendered) merged mesh with the original GIV_Neige material.
+    if (snow) this.snowSurfaces.push(snow);
     this.group.add(merged);
 
     // Animated nodes: never shadow casters. Only collider-backed ones (the
@@ -233,7 +248,24 @@ export class GivreMap {
     const instanced = instanceRepeated(nodes);
     for (const { mesh } of instanced) this.group.add(mesh);
 
+    // PERF: the rest of the animated décor (garlands, banners, pipes,
+    // gauges, pumps, boiler…) → skinned batches (~95 draw calls → a few):
+    // the constant-only materials share one uber batch, the others get one
+    // batch per material. Same nodes, same mixer: see
+    // MapBatching.batchAnimatedMeshes.
+    const decorBatches = batchAnimatedMeshes(animated, {
+      keep: DECOR_KEEP_MATERIALS,
+      attributes: [...KEEP_ATTRIBUTES],
+      uber: givre.staticBatching.uberMaterial,
+    });
+    for (const mesh of decorBatches) {
+      mesh.name = `givre_${mesh.name}`;
+      this.group.add(mesh);
+    }
+
     // What remains of the glb scene: the animated nodes + FX empties.
+    // (Their static transforms are frozen with the rest of the map — see the
+    // end of the constructor.)
     scene.name = "givre_01_animated";
     this.group.add(scene);
     return { root: scene, clips: gltf.animations, nodes, instanced };
@@ -401,7 +433,7 @@ function setupLightmapFiltering(lightmaps: ReadonlySet<THREE.Texture>, mipLevels
 function mergeStaticBatches(
   scene: THREE.Object3D,
   animated: ReadonlySet<THREE.Object3D>,
-): THREE.Mesh[] {
+): { meshes: THREE.Mesh[]; snow: THREE.Mesh | null } {
   const entries: StaticEntry[] = [];
   const staticMeshes: THREE.Mesh[] = [];
   scene.traverse((o) => {
@@ -440,7 +472,26 @@ function mergeStaticBatches(
     parent.remove(mesh);
   }
 
+  // Snow surfaces (footprints) BEFORE the uber rewrite: original material,
+  // position / normal / uv only — a CPU-side mesh, never rendered.
+  let snow: THREE.Mesh | null = null;
+  const snowEntries = entries.filter((e) => e.material.name === SNOW_MATERIAL);
+  if (snowEntries.length > 0) {
+    const geometry = mergeGeometries(snowEntries.map((e) => e.geometry), false);
+    if (geometry) {
+      snow = new THREE.Mesh(geometry, snowEntries[0].material);
+      snow.name = "givre_snow_surfaces";
+      snow.matrixAutoUpdate = false;
+      snow.raycast = () => {};
+    }
+  }
+
   const b = givre.staticBatching;
+  // GIV_Feu's emissive is animated through the shared material instance
+  // (GivreEffects fire flicker) — never cloned, never merged into the uber.
+  const keepMaterials = new Set(["GIV_Feu"]);
+  // GIV_Lampe keeps its own batches: its panels never cast (see below).
+  if (b.uberMaterial) applyUberMaterial(entries, new Set([...keepMaterials, "GIV_Lampe"]));
   const box = givre.shadowBounds; // playable envelope (X / Z)
   const batches = buildStaticBatches(entries, (g) => mergeGeometries(g, false), {
     grid: {
@@ -453,9 +504,7 @@ function mergeStaticBatches(
     },
     chunkMinTriangles: b.chunkMinTriangles,
     singleSidedMaxThickness: b.singleSidedMaxThickness,
-    // GIV_Feu's emissive is animated through the shared material instance
-    // (GivreEffects fire flicker) — never cloned.
-    keepMaterials: new Set(["GIV_Feu"]),
+    keepMaterials,
   });
   entries.forEach((e) => e.geometry.dispose());
 
@@ -474,7 +523,7 @@ function mergeStaticBatches(
     mesh.updateMatrix();
     out.push(mesh);
   }
-  return out;
+  return { meshes: out, snow };
 }
 
 /**
@@ -511,6 +560,9 @@ function instanceRepeated(
   }
   return out;
 }
+
+/** Animated materials never batched: GIV_Feu's emissive flickers through the shared instance (GivreEffects). */
+const DECOR_KEEP_MATERIALS = new Set(["GIV_Feu"]);
 
 /** One fixed collider of the Yard-format JSON. Returns false on failure. */
 function addCollider(

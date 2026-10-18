@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader, GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { MovementConfig as moveCfg } from "../player/MovementConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import { CHARACTER_HITBOX_SCALE } from "../../shared/combat/NetworkWeapons";
@@ -81,6 +82,25 @@ export const POTATO_BONES = {
 } as const;
 
 /**
+ * Skinned parts of Potato_TP_Character.glb (all children of "Armature", one
+ * shared skin). The BODY keeps its exact name and geometry: the paintball /
+ * water FAMAS effects and the astronaut outfit (masks.json signature) find
+ * and validate it by name. The small parts are merged at load time (see
+ * consolidateCharacterParts).
+ */
+export const POTATO_BODY_MESH = "Potato";
+/** Both eyes + mouth + teeth + leaf, merged into ONE mesh (see consolidateCharacterParts). */
+export const POTATO_DETAILS_MESH = "Potato_Details";
+/** Fallback split: both eyes (same material and texture). */
+export const POTATO_EYES_MESH = "Potato_Eyes";
+/** Fallback split: mouth + teeth + leaf (per-part colour / roughness palette). */
+export const POTATO_ACCESSORIES_MESH = "Potato_Accessories";
+// Blender names; GLTFLoader sanitizes node names ("Eye Image.001" →
+// "Eye_Image001"), both spellings are looked up.
+const EYE_PARTS = ["Eye Image", "Eye Image.001"] as const;
+const ACCESSORY_PARTS = ["Potato.001", "Teth", "Plant"] as const; // mouth, teeth, leaf
+
+/**
  * Shared, cached Potato character asset (load once → clone per avatar).
  * Used by BOTH the multiplayer remote avatars AND the solo bots — every
  * humanoid enemy in the game shares this exact model + animations.
@@ -157,35 +177,47 @@ export function markEnemyOutlineOccluder(root: THREE.Object3D): void {
 }
 
 /**
+ * PERF: SkeletonUtils.clone() gives EVERY skinned mesh of a clone its own
+ * Skeleton, although every part of the Potato (body, eyes, accessories and
+ * their red outline hulls) is skinned to the SAME 37 bones with the SAME
+ * inverse bind matrices (one glTF skin). Each duplicate skeleton cost a
+ * full bone-matrix pass + a bone-texture upload per frame — 12 per avatar.
+ * Rebind every skinned mesh of the clone onto ONE skeleton (the body's,
+ * which the astronaut outfit also binds to): one update + one upload per
+ * avatar and per frame. Meshes skinned to a different rig are left alone.
+ * Call once on each fresh character clone (living avatars AND corpses).
+ */
+export function shareOutlineSkeletons(root: THREE.Object3D): void {
+  const skinned: THREE.SkinnedMesh[] = [];
+  root.traverse((obj) => {
+    const sm = obj as THREE.SkinnedMesh;
+    if (sm.isSkinnedMesh && sm.skeleton) skinned.push(sm);
+  });
+  const reference =
+    skinned.find((sm) => sm.name === POTATO_BODY_MESH && !sm.userData.enemyOutline) ?? skinned[0];
+  if (!reference) return;
+  const shared = reference.skeleton;
+  for (const sm of skinned) {
+    if (sm.skeleton === shared || !sameRig(sm.skeleton, shared)) continue;
+    sm.bind(shared, sm.bindMatrix);
+  }
+}
+
+/** Same bones (by identity) with the same inverse bind matrices? */
+function sameRig(a: THREE.Skeleton, b: THREE.Skeleton): boolean {
+  if (a.bones.length !== b.bones.length) return false;
+  for (let i = 0; i < a.bones.length; i++) {
+    if (a.bones[i] !== b.bones[i]) return false;
+    if (!a.boneInverses[i].equals(b.boneInverses[i])) return false;
+  }
+  return true;
+}
+
+/**
  * Remove every outline hull mesh under `root` (corpse clones: a dead body
  * is no longer a threat — the red contour must die with it). Also spares
  * the CorpseManager from claiming/fading the shared outline material.
  */
-/**
- * PERF: SkeletonUtils.clone() gives EVERY skinned mesh of a clone its own
- * Skeleton — so each red outline hull carried a duplicate of its body
- * part's skeleton, and the renderer recomputed (and re-uploaded) the bone
- * matrices twice per part per frame. Rebind every hull onto the SAME
- * skeleton as the body mesh it outlines (same geometry, same parent): one
- * skeleton update per body part. Call once on each fresh character clone.
- */
-export function shareOutlineSkeletons(root: THREE.Object3D): void {
-  const bodies = new Map<THREE.BufferGeometry, THREE.SkinnedMesh>();
-  const hulls: THREE.SkinnedMesh[] = [];
-  root.traverse((obj) => {
-    const sm = obj as THREE.SkinnedMesh;
-    if (!sm.isSkinnedMesh) return;
-    if (sm.userData.enemyOutline) hulls.push(sm);
-    else if (!bodies.has(sm.geometry)) bodies.set(sm.geometry, sm);
-  });
-  for (const hull of hulls) {
-    const body = bodies.get(hull.geometry);
-    if (body && body.parent === hull.parent && hull.skeleton !== body.skeleton) {
-      hull.bind(body.skeleton, body.bindMatrix);
-    }
-  }
-}
-
 export function stripEnemyOutline(root: THREE.Object3D): void {
   const doomed: THREE.Object3D[] = [];
   root.traverse((obj) => {
@@ -258,14 +290,22 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
     model.position.y -= box.min.y;
     model.rotation.y = MODEL_YAW_OFFSET;
 
+    // PERF: 6 skinned parts → 2 (body untouched; eyes + mouth + teeth +
+    // leaf merged into one "details" mesh). Every avatar then costs 2 draws
+    // instead of 6 in the world pass, 2 red outline hulls instead of 6 and
+    // 2 shadow draws instead of 6 — same image.
+    consolidateCharacterParts(model);
+
     // LOW preset bakes a STATIC shadow map once at load (see Game /
     // GraphicsQuality): moving characters must NOT cast shadows there or
-    // their silhouette would be frozen into the bake. HIGH keeps them.
+    // their silhouette would be frozen into the bake. HIGH keeps them
+    // (fallback split only: the separate eyes mesh does not cast — it sits
+    // inside the head's shadow).
     const characterShadows = !getQualitySettings().staticShadows;
     model.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
       if (mesh.isMesh) {
-        mesh.castShadow = characterShadows;
+        mesh.castShadow = characterShadows && mesh.name !== POTATO_EYES_MESH;
         mesh.receiveShadow = false;
         // PERF: frustum culling STAYS ON. Skinned bounds move with the
         // animation, so the bind-pose bounding sphere is inflated once
@@ -292,8 +332,13 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       const sm = obj as THREE.SkinnedMesh;
       if (sm.isSkinnedMesh) skinnedParts.push(sm);
     });
-    for (const src of skinnedParts) {
-      const outline = new THREE.SkinnedMesh(src.geometry, getEnemyOutlineMaterial());
+    // PERF: parts sharing one binding (body + merged details) get ONE hull
+    // (merged geometry, same skeleton): one outline draw per enemy instead
+    // of one per part — same contour (same material, same inflated normals,
+    // opaque single colour).
+    const merged = mergedOutlineHull(skinnedParts);
+    for (const src of merged ? [skinnedParts[0]] : skinnedParts) {
+      const outline = new THREE.SkinnedMesh(merged?.geometry ?? src.geometry, getEnemyOutlineMaterial());
       outline.bind(src.skeleton, src.bindMatrix);
       outline.position.copy(src.position);
       outline.quaternion.copy(src.quaternion);
@@ -304,7 +349,8 @@ export function loadCharacterAsset(): Promise<CharacterAsset> {
       outline.userData.enemyOutline = true;
       // Purely visual: never a raycast target.
       outline.raycast = () => {};
-      adoptCullingBounds(outline);
+      if (merged) outline.boundingSphere = merged.bounds.clone();
+      else adoptCullingBounds(outline);
       src.parent!.add(outline);
     }
 
@@ -743,6 +789,243 @@ function overlayClip(base: THREE.AnimationClip, layer: THREE.AnimationClip, name
   return new THREE.AnimationClip(name, layer.duration, tracks);
 }
 
+/**
+ * Merge the small skinned parts of the Potato (load time, ONCE on the
+ * template — every clone inherits it): both eyes + mouth + teeth + leaf →
+ * ONE skinned mesh (POTATO_DETAILS_MESH) with ONE material:
+ *   - colour: the eye texture (eyes keep their UVs) × a per-vertex colour.
+ *     The mouth / teeth / leaf were untextured flat colours: their UVs all
+ *     point at the centre of a large uniform white block of the eye image
+ *     (verified at load) and their vertex colour is their base colour
+ *     divided by that texel → the exact same albedo;
+ *   - roughness: a tiny palette texture read through `uv1` (one texel per
+ *     part), metalness shared.
+ * The body is NEVER touched (name + geometry are a contract: paint, wet
+ * marks, astronaut masks). All parts share one skin and one parent, so the
+ * merge is exact: same bones, same bind matrix, geometries concatenated.
+ * If the eye texture does not have the expected white block, the eyes and
+ * the accessories are merged separately (POTATO_EYES_MESH +
+ * POTATO_ACCESSORIES_MESH, palette colours). Anything else unexpected
+ * (renamed parts, another rig, textured accessories) → model left as-is.
+ */
+function consolidateCharacterParts(model: THREE.Object3D): void {
+  const parts = new Map<string, THREE.SkinnedMesh>();
+  model.traverse((o) => {
+    const sm = o as THREE.SkinnedMesh;
+    if (sm.isSkinnedMesh) parts.set(sm.name, sm);
+  });
+  const body = parts.get(POTATO_BODY_MESH);
+  if (!body?.parent) return;
+  const find = (names: readonly string[]) => names.map((n) => parts.get(n) ?? parts.get(THREE.PropertyBinding.sanitizeNodeName(n)));
+  const eyes = find(EYE_PARTS);
+  const accessories = find(ACCESSORY_PARTS);
+  if ([...eyes, ...accessories].some((m) => !m)) return;
+  const eyeMeshes = eyes as THREE.SkinnedMesh[];
+  const accMeshes = accessories as THREE.SkinnedMesh[];
+  const sameBinding = (m: THREE.SkinnedMesh) =>
+    m.parent === body.parent &&
+    sameRig(m.skeleton, body.skeleton) &&
+    m.bindMatrix.equals(body.bindMatrix) &&
+    m.position.equals(body.position) &&
+    m.quaternion.equals(body.quaternion) &&
+    m.scale.equals(body.scale) &&
+    !Array.isArray(m.material) &&
+    (m.material as THREE.MeshStandardMaterial).isMeshStandardMaterial === true;
+  if (![...eyeMeshes, ...accMeshes].every(sameBinding)) return;
+
+  // Eyes: the plain material (the other copy only differs by an all-white
+  // COLOR_0 attribute, which made GLTFLoader compile a vertex-colour variant).
+  const eyeMats = eyeMeshes.map((m) => m.material as THREE.MeshStandardMaterial);
+  const eyeMaterial = eyeMats.find((m) => !m.vertexColors) ?? eyeMats[0];
+  const accMats = accMeshes.map((m) => m.material as THREE.MeshStandardMaterial);
+  const plain = (m: THREE.MeshStandardMaterial) =>
+    !m.roughnessMap && !m.metalnessMap && !m.normalMap && !m.emissiveMap && !m.aoMap && !m.alphaMap && !m.transparent;
+  if (!accMats.every((m) => plain(m) && !m.map) || !eyeMats.every(plain)) return;
+
+  const KEEP = ["position", "normal", "uv", "skinIndex", "skinWeight"];
+  const prepare = (m: THREE.SkinnedMesh): THREE.BufferGeometry | null => {
+    const g = m.geometry.clone();
+    for (const name of Object.keys(g.attributes)) if (!KEEP.includes(name)) g.deleteAttribute(name);
+    if (KEEP.some((name) => !g.getAttribute(name))) return null;
+    g.morphAttributes = {};
+    g.clearGroups();
+    return g;
+  };
+  const replace = (sources: THREE.SkinnedMesh[], geometry: THREE.BufferGeometry, material: THREE.Material, name: string) => {
+    const merged = new THREE.SkinnedMesh(geometry, material);
+    merged.name = name;
+    merged.position.copy(body.position);
+    merged.quaternion.copy(body.quaternion);
+    merged.scale.copy(body.scale);
+    merged.bind(body.skeleton, body.bindMatrix);
+    body.parent!.add(merged);
+    for (const m of sources) {
+      m.removeFromParent();
+      m.geometry.dispose();
+    }
+  };
+  const fillUv = (g: THREE.BufferGeometry, name: string, u: number, v: number) => {
+    const count = g.getAttribute("position").count;
+    const data = new Float32Array(count * 2);
+    for (let k = 0; k < count; k++) {
+      data[k * 2] = u;
+      data[k * 2 + 1] = v;
+    }
+    g.setAttribute(name, new THREE.Float32BufferAttribute(data, 2));
+  };
+  const fillColor = (g: THREE.BufferGeometry, c: THREE.Color) => {
+    const count = g.getAttribute("position").count;
+    const data = new Float32Array(count * 3);
+    for (let k = 0; k < count; k++) data.set([c.r, c.g, c.b], k * 3);
+    g.setAttribute("color", new THREE.Float32BufferAttribute(data, 3));
+  };
+  /** n-texel palette (sRGB colours or linear values), nearest, no mipmaps. */
+  const palette = (data: Uint8Array, n: number, colorSpace: THREE.ColorSpace) => {
+    const t = new THREE.DataTexture(data, n, 1, THREE.RGBAFormat);
+    t.colorSpace = colorSpace;
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.needsUpdate = true;
+    return t;
+  };
+  const roughnessTexels = (values: number[]) => {
+    const data = new Uint8Array(values.length * 4);
+    values.forEach((r, i) => {
+      const b = Math.round(THREE.MathUtils.clamp(r, 0, 1) * 255);
+      data.set([b, b, b, 255], i * 4);
+    });
+    return palette(data, values.length, THREE.NoColorSpace);
+  };
+  const metalness = eyeMaterial.metalness;
+  const sameMetal = accMats.every((m) => m.metalness === metalness);
+
+  // ---- ONE details mesh (needs a uniform white block in the eye image) ----
+  const white = sameMetal ? eyeWhiteTexel(eyeMaterial.map) : null;
+  if (white) {
+    const pieces: THREE.BufferGeometry[] = [];
+    const rough: number[] = [];
+    const color = new THREE.Color();
+    eyeMeshes.forEach((m, i) => {
+      const g = prepare(m);
+      if (!g) return;
+      fillColor(g, color.setRGB(1, 1, 1));
+      rough.push(eyeMats[i].roughness);
+      pieces.push(g);
+    });
+    accMeshes.forEach((m, i) => {
+      const g = prepare(m);
+      if (!g) return;
+      fillUv(g, "uv", white.u, white.v);
+      // Albedo = texel × vertex colour → vertex colour = base / texel.
+      const base = accMats[i].color;
+      fillColor(g, color.setRGB(base.r / white.linear, base.g / white.linear, base.b / white.linear));
+      rough.push(accMats[i].roughness);
+      pieces.push(g);
+    });
+    if (pieces.length === eyeMeshes.length + accMeshes.length) {
+      const n = rough.length;
+      pieces.forEach((g, i) => fillUv(g, "uv1", (i + 0.5) / n, 0.5));
+      const geometry = mergeGeometries(pieces, false);
+      pieces.forEach((g) => g.dispose());
+      if (geometry) {
+        const roughnessMap = roughnessTexels(rough);
+        roughnessMap.channel = 1;
+        const material = new THREE.MeshStandardMaterial({
+          name: "Details",
+          map: eyeMaterial.map,
+          vertexColors: true,
+          roughness: 1,
+          roughnessMap,
+          metalness,
+          side: eyeMaterial.side,
+        });
+        geometry.name = POTATO_DETAILS_MESH;
+        replace([...eyeMeshes, ...accMeshes], geometry, material, POTATO_DETAILS_MESH);
+        for (const m of new Set([...eyeMats, ...accMats])) m.dispose(); // (the eye texture lives on in `material`)
+        return;
+      }
+    } else {
+      pieces.forEach((g) => g.dispose());
+    }
+  }
+
+  // ---- Fallback: eyes merged together, accessories merged (palette) ----
+  const eyeGeoms = eyeMeshes.map(prepare);
+  const eyeGeometry = eyeGeoms.every(Boolean) ? mergeGeometries(eyeGeoms as THREE.BufferGeometry[], false) : null;
+  eyeGeoms.forEach((g) => g?.dispose());
+  if (!eyeGeometry) return;
+  for (const m of eyeMats) if (m !== eyeMaterial) m.dispose();
+  eyeMaterial.vertexColors = false;
+  eyeMaterial.name = "Eyes";
+  eyeGeometry.name = POTATO_EYES_MESH;
+  replace(eyeMeshes, eyeGeometry, eyeMaterial, POTATO_EYES_MESH);
+
+  const n = accMeshes.length;
+  const colors = new Uint8Array(n * 4);
+  const srgb = new THREE.Color();
+  accMats.forEach((m, i) => {
+    // material.color is LINEAR (three colour management) → sRGB texel.
+    srgb.copy(m.color).convertLinearToSRGB();
+    colors.set([Math.round(srgb.r * 255), Math.round(srgb.g * 255), Math.round(srgb.b * 255), 255], i * 4);
+  });
+  const accGeoms = accMeshes.map(prepare);
+  if (accGeoms.some((g) => !g)) {
+    accGeoms.forEach((g) => g?.dispose());
+    return;
+  }
+  accGeoms.forEach((g, i) => fillUv(g!, "uv", (i + 0.5) / n, 0.5));
+  const accGeometry = mergeGeometries(accGeoms as THREE.BufferGeometry[], false);
+  accGeoms.forEach((g) => g?.dispose());
+  if (!accGeometry) return;
+  const accMaterial = new THREE.MeshStandardMaterial({
+    name: "Accessories",
+    map: palette(colors, n, THREE.SRGBColorSpace),
+    roughnessMap: roughnessTexels(accMats.map((m) => m.roughness)),
+    roughness: 1,
+    metalness: accMats[0].metalness,
+    side: accMats[0].side,
+  });
+  accGeometry.name = POTATO_ACCESSORIES_MESH;
+  replace(accMeshes, accGeometry, accMaterial, POTATO_ACCESSORIES_MESH);
+  for (const m of accMats) m.dispose();
+}
+
+/**
+ * Centre of a uniform, opaque, near-white 9 × 9 block of the Potato eye
+ * image (asset-specific location, VERIFIED on the decoded pixels) — the
+ * flat-coloured parts sample it. Null when the image differs / is not
+ * readable (→ fallback path, no visual change).
+ */
+const EYE_WHITE_PX = { x: 741, y: 1382 } as const;
+function eyeWhiteTexel(map: THREE.Texture | null): { u: number; v: number; linear: number } | null {
+  const image = map?.image as (CanvasImageSource & { width: number; height: number }) | undefined;
+  if (!map || !image || !image.width || !image.height || map.flipY) return null;
+  if (map.repeat.x !== 1 || map.repeat.y !== 1 || map.offset.x !== 0 || map.offset.y !== 0 || map.rotation !== 0) return null;
+  const R = 4;
+  const { x, y } = EYE_WHITE_PX;
+  if (x - R < 0 || y - R < 0 || x + R >= image.width || y + R >= image.height) return null;
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 2 * R + 1;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(image, x - R, y - R, 2 * R + 1, 2 * R + 1, 0, 0, 2 * R + 1, 2 * R + 1);
+    const d = ctx.getImageData(0, 0, 2 * R + 1, 2 * R + 1).data;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] !== d[0] || d[i + 1] !== d[0] || d[i + 2] !== d[0] || d[i + 3] !== 255) return null;
+    }
+    if (d[0] < 240) return null;
+    const value = d[0] / 255;
+    // (THREE.SRGBToLinear is typed but not exported by the three build.)
+    const linear =
+      map.colorSpace === THREE.SRGBColorSpace ? new THREE.Color().setRGB(value, value, value, THREE.SRGBColorSpace).r : value;
+    return { u: (x + 0.5) / image.width, v: (y + 0.5) / image.height, linear };
+  } catch {
+    return null; // tainted / undecodable image
+  }
+}
+
 /** Bounding-sphere inflation factor for skinned culling (see above). */
 const SKINNED_CULL_MARGIN = 2.5;
 
@@ -751,6 +1034,61 @@ const SKINNED_CULL_MARGIN = 2.5;
  * for every animated pose. Idempotent — geometries shared between the
  * body mesh and its rim duplicate are only inflated once.
  */
+/**
+ * One outline hull geometry for skinned parts that share the SAME binding
+ * (parent, bones, bind matrix, local transform): the parts' positions /
+ * normals / skin attributes merged as float data (in the shared mesh space),
+ * with the union of the parts' inflated culling spheres. Null when the parts
+ * differ in any of these (one hull per part then, as before).
+ */
+function mergedOutlineHull(
+  parts: readonly THREE.SkinnedMesh[],
+): { geometry: THREE.BufferGeometry; bounds: THREE.Sphere } | null {
+  if (parts.length < 2) return null;
+  const ref = parts[0];
+  const same = (m: THREE.SkinnedMesh) =>
+    m.parent === ref.parent &&
+    sameRig(m.skeleton, ref.skeleton) &&
+    m.bindMatrix.equals(ref.bindMatrix) &&
+    m.position.equals(ref.position) &&
+    m.quaternion.equals(ref.quaternion) &&
+    m.scale.equals(ref.scale);
+  if (!parts.every(same)) return null;
+  const pieces: THREE.BufferGeometry[] = [];
+  const bounds = new THREE.Sphere();
+  for (const part of parts) {
+    const src = part.geometry;
+    const g = new THREE.BufferGeometry();
+    for (const [name, type] of [
+      ["position", Float32Array],
+      ["normal", Float32Array],
+      ["skinIndex", Uint16Array],
+      ["skinWeight", Float32Array],
+    ] as const) {
+      const a = src.getAttribute(name) as THREE.BufferAttribute | undefined;
+      if (!a) return null;
+      const out = new type(a.count * a.itemSize);
+      for (let i = 0; i < a.count; i++) {
+        for (let c = 0; c < a.itemSize; c++) out[i * a.itemSize + c] = a.getComponent(i, c);
+      }
+      g.setAttribute(name, new THREE.BufferAttribute(out, a.itemSize));
+    }
+    if (src.index) g.setIndex(src.index.clone());
+    else g.setIndex([...Array(g.getAttribute("position").count).keys()]);
+    pieces.push(g);
+    inflateCullingBounds(src);
+    if (src.boundingSphere) {
+      if (bounds.isEmpty()) bounds.copy(src.boundingSphere);
+      else bounds.union(src.boundingSphere);
+    }
+  }
+  const geometry = mergeGeometries(pieces, false);
+  pieces.forEach((g) => g.dispose());
+  if (!geometry) return null;
+  geometry.name = "Potato_OutlineHull";
+  return { geometry, bounds };
+}
+
 function inflateCullingBounds(geometry: THREE.BufferGeometry): void {
   if (geometry.userData.cullBoundsInflated) return;
   geometry.userData.cullBoundsInflated = true;

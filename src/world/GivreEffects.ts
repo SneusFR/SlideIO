@@ -63,7 +63,7 @@ export class GivreEffects {
       this.mixer = null;
     }
 
-    // ---- Halos (647 sprites, 15 draw calls) ----
+    // ---- Halos (647 sprites, ONE draw call) ----
     this.halos = givreData.halos ? new GivreHalos(givreData.halos, map.group, anim.nodes) : null;
 
     // ---- Boiler fire flicker (emissive only) ----
@@ -127,6 +127,7 @@ export class GivreEffects {
     this.serverSynced = true;
     this.mixer.setTime((serverNowMs / 1000) % this.loop);
     this.copyInstances();
+    this.halos?.update();
   }
 
   /**
@@ -139,11 +140,35 @@ export class GivreEffects {
     if (this.disposed) return;
     this.time += dt;
     this.mixer?.update(dt);
-    this.copyInstances();
+    // Puff instances + garland halos are synced in afterMatrixUpdate(), once
+    // the Game has refreshed the scene's world matrices (no second walk of
+    // the glb hierarchy here).
     this.halos?.setViewportHeight(viewportHeightPx);
     this.updateFireFlicker();
     this.snow?.update(this.time, camera, viewportHeightPx);
     this.footprints?.update(this.time);
+  }
+
+  /**
+   * Every frame, right AFTER the Game's scene.updateMatrixWorld(): the
+   * animated nodes' world matrices are final → copy them into the puff
+   * instances and the garland halos.
+   */
+  afterMatrixUpdate(): void {
+    if (this.disposed) return;
+    this.copyInstances(false);
+    this.halos?.update();
+  }
+
+  /**
+   * Frames WITHOUT the Game's per-frame scene matrix update (menu preview,
+   * play-transition flight): refresh the animated subtree's matrices and
+   * sync the puffs + halos right after update().
+   */
+  syncStandalone(): void {
+    if (this.disposed) return;
+    this.copyInstances(true);
+    this.halos?.update();
   }
 
   /** Graphics option (live). */
@@ -152,9 +177,9 @@ export class GivreEffects {
   }
 
   /** Animated puff matrices → their InstancedMesh (after the mixer). */
-  private copyInstances(): void {
+  private copyInstances(updateMatrices = true): void {
     if (this.instanced.length === 0) return;
-    this.root.updateMatrixWorld(); // animated node matrices up to date
+    if (updateMatrices) this.root.updateMatrixWorld(); // animated node matrices up to date
     const parent = this.instanced[0].mesh.parent;
     if (parent) this.rootInverse.copy(parent.matrixWorld).invert();
     else this.rootInverse.identity();

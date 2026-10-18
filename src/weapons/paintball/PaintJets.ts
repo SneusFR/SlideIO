@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { rng, type PaintSplats } from "./PaintSplats";
 import type { PaintHit } from "./PaintballProjectiles";
 import { BODY_RINGS, NOSE_RINGS, PAINT_JET as K, RADIAL } from "./PaintJetSettings";
+import { hideWhenEmpty } from "../../effects/hideWhenEmpty";
 
 /**
  * Live muzzle of the shooter (WORLD), read every update while the jet is
@@ -1141,7 +1142,7 @@ function makeInstanced(geometry: THREE.BufferGeometry, material: THREE.Material,
   mesh.count = 0;
   mesh.setColorAt(0, new THREE.Color(1, 1, 1)); // allocate instanceColor
   mesh.instanceColor!.setUsage(THREE.DynamicDrawUsage);
-  return mesh;
+  return hideWhenEmpty(mesh);
 }
 
 /** Upload only the first `count` items of a dynamic attribute. */

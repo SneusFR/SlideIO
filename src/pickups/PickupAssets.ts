@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { PickupConfig as pc } from "./PickupConfig";
 
 /**
@@ -139,6 +140,7 @@ function normalizeTemplate(
       }
     }
   });
+  mergeFlatColorParts(model);
 
   const wrapper = new THREE.Group();
   wrapper.add(model);
@@ -147,6 +149,139 @@ function normalizeTemplate(
   // userData is copied by clone(), so every drop inherits the flag.
   wrapper.userData.noOutline = true;
   return wrapper;
+}
+
+/**
+ * PERF — ONE MESH PER LOOT KIND. The credit coin and the medkit GLBs are a
+ * single mesh split into one primitive per flat colour (6 / 5 primitives →
+ * as many instanced draw calls per loot kind, every frame loot lies on the
+ * ground). Their materials only differ by the base colour (untextured, same
+ * roughness / metalness / side, glow emissive = base colour): the parts are
+ * merged into one geometry whose VERTEX COLOUR carries each part's base
+ * colour, and the emissive follows the vertex colour too (tiny shader
+ * patch) — the exact same shading, one draw per loot kind.
+ * Anything unexpected (textures, different roughness, transforms on
+ * different parents…) → the template is left untouched.
+ */
+function mergeFlatColorParts(model: THREE.Object3D): void {
+  const parts: THREE.Mesh[] = [];
+  let ok = true;
+  model.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    if ((mesh as THREE.SkinnedMesh).isSkinnedMesh || (mesh as THREE.InstancedMesh).isInstancedMesh) ok = false;
+    parts.push(mesh);
+  });
+  if (!ok || parts.length < 2) return;
+  const parent = parts[0].parent;
+  const mats = parts.map((m) => m.material as THREE.MeshStandardMaterial);
+  const first = mats[0];
+  const flat = (m: THREE.MeshStandardMaterial) =>
+    !Array.isArray(m) &&
+    m instanceof THREE.MeshStandardMaterial &&
+    !(m as THREE.MeshStandardMaterial & { isMeshPhysicalMaterial?: boolean }).isMeshPhysicalMaterial &&
+    !m.map && !m.normalMap && !m.bumpMap && !m.roughnessMap && !m.metalnessMap && !m.emissiveMap &&
+    !m.aoMap && !m.alphaMap && !m.lightMap && !m.envMap && !m.displacementMap &&
+    !m.transparent && !m.vertexColors && !m.flatShading && !m.wireframe &&
+    m.opacity === 1 && m.alphaTest === 0 &&
+    m.roughness === first.roughness && m.metalness === first.metalness &&
+    m.side === first.side && m.emissiveIntensity === first.emissiveIntensity &&
+    m.emissive.equals(m.color) &&
+    m.onBeforeCompile === THREE.Material.prototype.onBeforeCompile;
+  if (!parent || !parts.every((p) => p.parent === parent) || !mats.every(flat)) return;
+
+  const pieces: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const src = parts[i].geometry;
+    const pos = src.getAttribute("position") as THREE.BufferAttribute | undefined;
+    const normal = src.getAttribute("normal") as THREE.BufferAttribute | undefined;
+    if (!pos || !normal || src.groups.length > 1 || Object.keys(src.morphAttributes).length > 0) break;
+    // Compact copy of the part: only the vertices its triangles use (the
+    // primitives of one glTF mesh share a single vertex buffer).
+    const index = src.getIndex();
+    const start = src.drawRange.start;
+    const end = Math.min(index ? index.count : pos.count, start + src.drawRange.count);
+    const remap = new Map<number, number>();
+    const outPos: number[] = [];
+    const outNormal: number[] = [];
+    const outIndex: number[] = [];
+    for (let k = start; k < end; k++) {
+      const v = index ? index.getX(k) : k;
+      let n = remap.get(v);
+      if (n === undefined) {
+        n = outPos.length / 3;
+        remap.set(v, n);
+        outPos.push(pos.getX(v), pos.getY(v), pos.getZ(v));
+        outNormal.push(normal.getX(v), normal.getY(v), normal.getZ(v));
+      }
+      outIndex.push(n);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(outPos, 3));
+    g.setAttribute("normal", new THREE.Float32BufferAttribute(outNormal, 3));
+    const c = mats[i].color; // linear, like vertex colours
+    const colors = new Float32Array(outPos.length);
+    for (let k = 0; k < colors.length; k += 3) {
+      colors[k] = c.r;
+      colors[k + 1] = c.g;
+      colors[k + 2] = c.b;
+    }
+    g.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    g.setIndex(outIndex);
+    // Same placement under the shared parent as the part itself.
+    parts[i].updateMatrix();
+    g.applyMatrix4(parts[i].matrix);
+    if (parts[i].matrix.determinant() < 0) {
+      // Mirrored part: keep the triangles front-facing after the bake.
+      const idx = g.getIndex()!;
+      for (let k = 0; k + 2 < idx.count; k += 3) {
+        const b = idx.getX(k + 1);
+        idx.setX(k + 1, idx.getX(k + 2));
+        idx.setX(k + 2, b);
+      }
+    }
+    pieces.push(g);
+  }
+  if (pieces.length !== parts.length) {
+    pieces.forEach((g) => g.dispose());
+    return;
+  }
+  const geometry = mergeGeometries(pieces, false);
+  pieces.forEach((g) => g.dispose());
+  if (!geometry) return;
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+
+  const material = new THREE.MeshStandardMaterial({
+    name: `${first.name || "pickup"}_merged`,
+    color: 0xffffff,
+    vertexColors: true,
+    roughness: first.roughness,
+    metalness: first.metalness,
+    side: first.side,
+    emissive: 0xffffff,
+    emissiveIntensity: first.emissiveIntensity,
+  });
+  // Glow = base colour (vertex colour) × intensity, as on every former part.
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <emissivemap_fragment>",
+      "#include <emissivemap_fragment>\n\ttotalEmissiveRadiance *= vColor.rgb;",
+    );
+  };
+  material.customProgramCacheKey = () => "pickup-flat-merged";
+  material.userData.shared = true;
+
+  const merged = new THREE.Mesh(geometry, material);
+  merged.name = "pickup_merged";
+  merged.castShadow = false;
+  merged.receiveShadow = false;
+  parent.add(merged);
+  for (const p of parts) {
+    p.removeFromParent();
+    p.geometry.dispose();
+  }
+  for (const m of new Set(mats)) m.dispose();
 }
 
 /**

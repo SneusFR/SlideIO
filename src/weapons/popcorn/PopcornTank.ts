@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { PopcornTankSim, PState } from "./PopcornTankSim";
+import { hideWhenEmpty } from "../../effects/hideWhenEmpty";
 
 /** Authored tank data (the GLB `Tank` node extras → Object3D.userData). */
 export interface PopcornTankData {
@@ -114,7 +115,8 @@ export class PopcornTank {
     mesh.castShadow = false;
     mesh.receiveShadow = false;
     mesh.raycast = () => {};
-    return mesh;
+    // Empty pool (no kernel left, empty tank) → no draw call at all.
+    return hideWhenEmpty(mesh);
   }
 
   /** Popcorn pieces currently in the tank. */

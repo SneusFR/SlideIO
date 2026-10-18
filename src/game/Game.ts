@@ -44,6 +44,9 @@ import { CombatConfig as cc } from "../combat/CombatConfig";
 import { ParticleSystem } from "../effects/ParticleSystem";
 import { Shockwave } from "../effects/Shockwave";
 import { fxLights } from "../effects/FXLightPool";
+import { StaticShadowCache, findStaticShadowSetup } from "../effects/StaticShadowCache";
+import { nextSkinnedRaycastFrame } from "../effects/SkinnedRaycast";
+import { warmUpEnemyHealthBars } from "../bots/BotModel";
 
 import { HammerWeapon, HammerState } from "../weapons/HammerWeapon";
 import { HammerViewmodel } from "../weapons/HammerViewmodel";
@@ -443,6 +446,13 @@ export class Game {
    * the short/long frame cadence of the old half-rate refresh.
    */
   private readonly staticShadows: boolean;
+  /**
+   * HIGH preset (live shadows): the static map's shadow depth is cached once
+   * and copied back at the start of every shadow pass — only the moving
+   * casters (characters) are re-rendered per frame (see StaticShadowCache).
+   */
+  private shadowCache: StaticShadowCache | null = null;
+  private readonly shadowCacheSetup: (() => StaticShadowCache | null) | null;
   private readonly playerPos = new THREE.Vector3();
   private readonly rightDir = new THREE.Vector3();
   private readonly attackerPos = new THREE.Vector3();
@@ -505,6 +515,11 @@ export class Game {
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
+    // PERF: the scene root never moves (identity). With matrixAutoUpdate on,
+    // every scene.updateMatrixWorld() (two per frame) recomposed it and
+    // FORCED a world-matrix multiply on every node of the graph; frozen,
+    // the static subtrees (the map: see GivreMap) are only visited.
+    this.scene.matrixAutoUpdate = false;
     // Shared FX light pool: created BEFORE any weapon/VFX so the scene
     // light count is final from the first shader compile (adding a light
     // later would force three.js to recompile every lit material).
@@ -545,11 +560,26 @@ export class Game {
     // Map visuals + exact Rapier colliders were already loaded/created in
     // Game.create (async) — just attach the group.
     this.scene.add(map.group);
+    // HIGH: static-shadow cache, armed after the GPU warm-up (the map is
+    // final then). Animated map nodes keep casting live.
+    this.shadowCacheSetup = quality.staticShadows
+      ? null
+      : () => {
+          const setup =
+            map instanceof YardMap
+              ? findStaticShadowSetup(map.group, map.animations, map.root)
+              : findStaticShadowSetup(map.group);
+          if (!setup) return null;
+          const cache = new StaticShadowCache(this.renderer, this.scene, setup.light, setup.casters);
+          cache.bake();
+          return cache;
+        };
     if (map instanceof GivreMap) {
       // Out-of-bounds mountains + debug wireframes are added to the SCENE
       // (not map.group) so they never join the beam-raycast hittables.
       this.scene.add(map.backdrop);
-      this.scene.add(map.colliderDebug);
+      // PERF: the 527 collider wireframes join the scene ONLY while shown
+      // (hidden, they still cost a matrix update per node, twice a frame).
       this.colliderDebug = map.colliderDebug;
       // v3: falling snow + footprints live in the SCENE (never hittable);
       // the halos are children of map.group / the garlands (raycast-off).
@@ -1129,6 +1159,7 @@ export class Game {
 
     // ---- Loot pickups (medkits + coins dropped by dead bots) ----
     this.pickups = new PickupManager(this.scene, this.physics, this.particles);
+    this.pickups.camera = this.fpsCamera.camera; // per-pickup frustum culling
     this.pickups.onMedkitCollected = (healed) => {
       this.combatHud.notifyHeal(healed);
       this.gameAudio.healthPickup();
@@ -1372,9 +1403,7 @@ export class Game {
         fp: fpOutline,
         apply: (s: Partial<OutlineSettings>) =>
           this.applyOutlineSettings({ ...this.outlineSettings, ...s }),
-        colliders: (on: boolean) => {
-          if (this.colliderDebug) this.colliderDebug.visible = on;
-        },
+        colliders: (on: boolean) => this.showColliderDebug(on),
         renderInfo: () => ({ ...this.renderer.info.render }),
         // v3: GPU memory + effects state (verification / perf comparison).
         memoryInfo: () => ({ ...this.renderer.info.memory }),
@@ -1676,7 +1705,8 @@ export class Game {
       /* character asset failed — nothing to warm */
     }
     try {
-      for (const loot of await this.pickups.createWarmUpVisuals()) {
+      // Instanced loot batches: one instance of each kind far below the map.
+      for (const loot of await this.pickups.createWarmUpVisuals(far)) {
         loot.position.copy(far);
         temp.push(loot);
       }
@@ -1714,6 +1744,9 @@ export class Game {
     // Mount EVERY primary once on a hidden character clone for the warm
     // frames below.
     const tpWeaponCleanup = await this.warmThirdPersonWeapons(temp, far);
+    // ENEMY HEALTH BARS: the shared instanced batch (one shader for every
+    // bot's bar + "BOT" label) compiles now, not on the first bot in view.
+    const releaseHealthBar = warmUpEnemyHealthBars(this.scene, far);
     for (const obj of temp) this.scene.add(obj);
     this.shockwave.spawn(far, 1, 0.5, this.phaseColor);
     this.particles.burst(far, 4, 1, 0.3, this.phaseColor, 0);
@@ -1799,6 +1832,15 @@ export class Game {
       this.renderer.render(this.scene, this.fpsCamera.camera);
       // The baked pass must not leave a stale info count on the composer path.
       if (this.composer) this.renderer.info.reset();
+    } else if (this.shadowCacheSetup && !this.shadowCache) {
+      // HIGH (live shadows): cache the static map's depth ONCE — the live
+      // pass then only redraws the characters on top of it. One render
+      // compiles the restorer programs now (never on the first frame).
+      this.shadowCache = this.shadowCacheSetup();
+      if (this.shadowCache) {
+        this.renderer.render(this.scene, this.fpsCamera.camera);
+        if (this.composer) this.renderer.info.reset();
+      }
     }
 
     // 4. Cleanup: transient warm objects removed, pools back at rest.
@@ -1811,6 +1853,8 @@ export class Game {
     // private materials (the shared library geometries stay alive).
     for (const slot of outfitSlots) slot.dispose();
     tpWeaponCleanup();
+    releaseHealthBar();
+    this.pickups.publish(); // the warm-up loot instances leave the batches
     for (const obj of temp) this.scene.remove(obj);
     releaseCorpseMats?.();
     this.shockwave.update(10);
@@ -1873,6 +1917,7 @@ export class Game {
       // on the next microtask of each setWeapon.
       await preloadRemoteWeaponTemplates();
       const holders: THREE.Object3D[] = [];
+      const livingHolders: THREE.Object3D[] = [];
       for (const id of PRIMARY_WEAPON_IDS) {
         // Two holders per weapon: one LIVING (opaque weapon materials) and
         // one CORPSE (the death clone keeps the weapon in hand → the
@@ -1887,6 +1932,7 @@ export class Game {
           controllers.push(ctrl);
           temp.push(holder);
           if (corpse) holders.push(holder);
+          else livingHolders.push(holder);
         }
       }
       // setWeapon resolves its (cached) GLB promise asynchronously: let the
@@ -1917,6 +1963,25 @@ export class Game {
           for (const [mesh, mat] of original) mesh.material = mat;
         });
       }
+      // LIVING holders: some controllers own PER-INSTANCE materials and
+      // dispose them with the controller (WaterTank body / surface / pour
+      // stream — shader-patched liquids). Disposing the instances rendered
+      // here dropped their programs' last reference: three.js destroyed the
+      // programs right after the warm-up and the first bot holding a FAMAS
+      // recompiled them mid-fight. Hand the controllers never-rendered
+      // clones to dispose instead: the warmed instances stay alive, so do
+      // their programs (same trick as the CorpseManager's pooled clones).
+      releases.push(() => {
+        for (const holder of livingHolders) {
+          holder.traverse((o) => {
+            const mesh = o as THREE.Mesh;
+            if (!mesh.isMesh) return;
+            mesh.material = Array.isArray(mesh.material)
+              ? mesh.material.map((m) => m.clone())
+              : mesh.material.clone();
+          });
+        }
+      });
     } catch (err) {
       console.warn("Third-person weapon warm-up skipped", err);
     }
@@ -2518,6 +2583,7 @@ export class Game {
     this.yardEffects?.update(dt, null);
     // GIVRE: animations, halos, flicker and snow keep living in the menu.
     this.givreEffects?.update(dt, p.camera, this.renderer.domElement.height);
+    this.givreEffects?.syncStandalone(); // puffs + halos (no frame() matrix pass here)
 
     this.renderWorld(p.camera);
   }
@@ -2557,6 +2623,7 @@ export class Game {
           const flightDt = Math.min((nowMs - this.lastTime) / 1000, 1 / 20);
           this.lastTime = nowMs;
           this.givreEffects.update(flightDt, p.camera, this.renderer.domElement.height);
+          this.givreEffects.syncStandalone();
         }
         // Smooth ease-in-out (accelerate → glide in).
         const e = t * t * (3 - 2 * t);
@@ -2810,6 +2877,15 @@ export class Game {
     return true;
   }
 
+  /** GIVRE collider wireframes: in the scene only while shown (see constructor). */
+  private showColliderDebug(on: boolean): void {
+    const debug = this.colliderDebug;
+    if (!debug) return;
+    debug.visible = on;
+    if (on && debug.parent !== this.scene) this.scene.add(debug);
+    else if (!on && debug.parent) debug.removeFromParent();
+  }
+
   /**
    * Frame-cap deadline gate (see frameIntervalMs). Returns true when this
    * rAF tick must be SKIPPED (deadline not reached yet). On a rendered
@@ -2853,6 +2929,8 @@ export class Game {
     // CPU budget of this frame (simulation + render submission) — read by
     // the debug HUD: CPU ≪ frame time ⇒ GPU-bound, CPU ≈ frame ⇒ CPU-bound.
     this.frameCpuStart = now;
+    // Paint / wet hit placement: skinned poses cached for THIS frame only.
+    nextSkinnedRaycastFrame();
 
     // RAW frame delta (for the FPS/frame-time stats ONLY — feeding the
     // clamped dt to the counter capped it at 30 FPS and hid every drop).
@@ -2896,7 +2974,7 @@ export class Game {
         this.playerCombatant.setHitboxDebug(this.hitboxDebug);
         // GIVRE: same debug toggle shows the static colliders (magenta)
         // and the character-only player clips (cyan) as wireframes.
-        if (this.colliderDebug) this.colliderDebug.visible = this.hitboxDebug;
+        this.showColliderDebug(this.hitboxDebug);
       }
       // Applied every frame (state-guarded, free) so bots added later from
       // the Escape menu inherit the current debug state automatically.
@@ -3022,10 +3100,18 @@ export class Game {
       this.elapsed,
     );
     this.scene.updateMatrixWorld();
+    // Bots and corpses are final for this frame: the render's own scene
+    // pass skips their subtrees (see matrixFresh).
+    this.botManager.markMatricesFresh();
+    this.corpses.markMatricesFresh();
+    // GIVRE: puff instances + garland halos from the final node matrices.
+    this.givreEffects?.afterMatrixUpdate();
 
     // Enemy readability: outline + name + HP bar only with REAL line of
     // sight (frustum + wall raycasts) — never through walls.
     this.botManager.updateVisibility(this.fpsCamera.camera);
+    // Loot: instanced batches published with this frame's camera.
+    this.pickups.publish();
 
     if (running) {
       // Melee weapons: hit windows / rush bookkeeping + viewmodel anims.
@@ -3309,6 +3395,9 @@ export class Game {
       this.botManager.updateVisibility(cam);
       this.botManager.rebillboard(cam.quaternion, this.elapsed);
       this.damageNumbersHud.update(0, cam);
+      // Loot is culled on the CPU (PickupBatch): re-cull with the SPUN view,
+      // otherwise the drops around the player vanish while the camera turns.
+      this.pickups.publish();
     }
     // POPCORN SHOTGUN (pack §3): weapon clips + popcorn tank AFTER the FP
     // camera follows the FINAL game-camera pose (the tank reads the real

@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { EnemyHealthBars, type EnemyHealthBarSlot } from "./EnemyHealthBars";
+import { skipFreshMatrixUpdate } from "../effects/matrixFresh";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { MovementConfig as mc } from "../player/MovementConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
@@ -77,10 +79,10 @@ const HEALTHBAR_HEIGHT = MODEL_TOP + 0.24;
 
 // ---- Shared enemy-readability resources (created once for all bots) ----
 
-/** "BOT" nameplate texture + material, shared by every bot. */
-let labelMat: THREE.MeshBasicMaterial | null = null;
-function getLabelMaterial(): THREE.MeshBasicMaterial {
-  if (!labelMat) {
+/** "BOT" nameplate texture, shared by every bot. */
+let labelTexture: THREE.CanvasTexture | null = null;
+function getLabelTexture(): THREE.CanvasTexture {
+  if (!labelTexture) {
     const canvas = document.createElement("canvas");
     canvas.width = 256;
     canvas.height = 96;
@@ -95,16 +97,37 @@ function getLabelMaterial(): THREE.MeshBasicMaterial {
     ctx.strokeText("BOT", 128, 50);
     ctx.fillStyle = "#ffffff";
     ctx.fillText("BOT", 128, 50);
-    const tex = new THREE.CanvasTexture(canvas);
-    labelMat = new THREE.MeshBasicMaterial({
-      map: tex,
-      transparent: true,
-      depthWrite: false,
-      toneMapped: false,
-    });
-    labelMat.userData.shared = true;
+    labelTexture = new THREE.CanvasTexture(canvas);
   }
-  return labelMat;
+  return labelTexture;
+}
+
+/**
+ * Enemy UI of every bot (dark bar 1.15 × 0.16 at 72 % + red fill + "BOT"
+ * nameplate) — ONE instanced draw call for the whole scene (EnemyHealthBars).
+ */
+function healthBarsOf(scene: THREE.Object3D): EnemyHealthBars {
+  return EnemyHealthBars.for(scene, {
+    label: getLabelTexture(),
+    bgColor: 0x14161c,
+    bgOpacity: 0.72,
+    fillColor: 0xef4444,
+    showName: () => cc.enemyNameVisible,
+  });
+}
+
+/**
+ * GPU warm-up (Game.warmUpRendering): one enemy health bar shown at `at`
+ * for the warm renders, so the shared batch's program compiles and the
+ * "BOT" label uploads during the loading screen — never on the first bot
+ * that comes into view. Call the returned function once the warm renders
+ * are done.
+ */
+export function warmUpEnemyHealthBars(scene: THREE.Object3D, at: THREE.Vector3): () => void {
+  const slot = healthBarsOf(scene).acquire();
+  slot.set(at, new THREE.Quaternion(), 1);
+  slot.setVisible(true);
+  return () => slot.release();
 }
 
 /**
@@ -176,10 +199,10 @@ export class BotModel {
   private headBone: THREE.Object3D | null = null;
   private hitboxList: THREE.Object3D[] = [];
 
-  // ---- Enemy UI ----
-  private readonly healthBar: THREE.Group;
-  private readonly healthFill: THREE.Mesh;
-  private readonly nameLabel: THREE.Mesh;
+  // ---- Enemy UI (slot of the scene's shared instanced batch) ----
+  private healthBar: EnemyHealthBarSlot | null = null;
+  /** Line of sight says "show the bar" (setSeen). */
+  private healthBarWanted = false;
   private seen = false;
 
   private flashAmount = 0;
@@ -195,6 +218,8 @@ export class BotModel {
     _index: number,
     private readonly env: BotModelEnv | null = null,
   ) {
+    // PERF: final after Game.frame's matrix pass — the renderer skips it (see matrixFresh).
+    skipFreshMatrixUpdate(this.group);
     // ---- Hitboxes (synchronous — gameplay never waits for the GLB) ----
     // DAMAGE volumes calibrated on the SCALED (2.25 m) silhouette via the
     // central CHARACTER_HITBOX_SCALE — the MOVEMENT capsule is untouched.
@@ -228,33 +253,8 @@ export class BotModel {
     this.hitboxList = [this.bodyHitbox, this.headHitbox];
 
     // ---- Enemy UI (billboarded, above the head): BOT + big red HP bar ----
-    this.healthBar = new THREE.Group();
-    this.healthBar.position.y = HEALTHBAR_HEIGHT;
-    const barBg = new THREE.Mesh(
-      new THREE.PlaneGeometry(1.15, 0.16),
-      new THREE.MeshBasicMaterial({
-        color: 0x14161c,
-        transparent: true,
-        opacity: 0.72,
-        toneMapped: false,
-      }),
-    );
-    this.healthFill = new THREE.Mesh(
-      new THREE.PlaneGeometry(1.09, 0.115),
-      new THREE.MeshBasicMaterial({ color: 0xef4444, toneMapped: false }),
-    );
-    this.healthFill.position.z = 0.002;
-    this.nameLabel = new THREE.Mesh(new THREE.PlaneGeometry(0.52, 0.195), getLabelMaterial());
-    this.nameLabel.position.y = 0.19;
-    this.nameLabel.visible = cc.enemyNameVisible;
-    this.healthBar.add(barBg, this.healthFill, this.nameLabel);
-    this.healthBar.visible = false; // hidden until the player actually sees the bot
-    this.healthBar.userData.noOutline = true; // 3D HUD: never cel-outlined (Givre)
-    // UI planes must NEVER count as body hits for beam raycasts.
-    barBg.raycast = NO_RAYCAST;
-    this.healthFill.raycast = NO_RAYCAST;
-    this.nameLabel.raycast = NO_RAYCAST;
-    this.group.add(this.healthBar);
+    // One slot of the scene's shared instanced batch (acquired lazily in
+    // updateUI once the group is in the scene) — hidden until seen.
 
     // ---- Async: shared Potato character (cached — one load, N clones) ----
     void loadCharacterAsset().then((asset) => {
@@ -265,7 +265,7 @@ export class BotModel {
       const model = skeletonClone(asset.template);
       // Group origin = CAPSULE CENTER; the model root is the feet.
       model.position.y = -FEET_OFFSET;
-      shareOutlineSkeletons(model); // one bone update per body part (not two)
+      shareOutlineSkeletons(model); // ONE skeleton update + bone upload per bot
       this.model = model;
       this.group.add(model);
 
@@ -384,7 +384,8 @@ export class BotModel {
     this.seen = seen;
     const outlineOn = seen && cc.enemyOutlineEnabled;
     for (const outline of this.outlineMeshes) outline.visible = outlineOn;
-    this.healthBar.visible = seen && cc.enemyHealthBarVisible;
+    this.healthBarWanted = seen && cc.enemyHealthBarVisible;
+    this.healthBar?.setVisible(this.healthBarWanted && this.group.visible);
   }
 
   /** World position of the in-hand weapon muzzle. */
@@ -498,14 +499,19 @@ export class BotModel {
       else m.emissive.setScalar(glow);
     }
 
-    // Enemy UI: pure billboard (never rotates with the body) + fill.
-    // The group itself rotates with the body yaw, so cancel it by applying
-    // the camera quaternion in world terms (premultiply the inverse yaw).
-    this.healthBar.quaternion
-      .setFromAxisAngle(Y_AXIS, -this.group.rotation.y)
-      .multiply(camQuat);
-    this.healthFill.scale.x = Math.max(hpRatio, 0.001);
-    this.healthFill.position.x = -0.545 * (1 - hpRatio);
+    // Enemy UI: pure billboard (camera rotation in WORLD terms — never
+    // rotates with the body), HEALTHBAR_HEIGHT above the capsule centre
+    // (the group is a scene child rotating about Y only) + fill ratio.
+    if (!this.healthBar) {
+      const scene = this.env?.scene ?? this.group.parent;
+      if (scene) this.healthBar = healthBarsOf(scene).acquire();
+    }
+    if (this.healthBar) {
+      this.tmpA.copy(this.group.position);
+      this.tmpA.y += HEALTHBAR_HEIGHT;
+      this.healthBar.set(this.tmpA, camQuat, hpRatio);
+      this.healthBar.setVisible(this.healthBarWanted && this.group.visible);
+    }
   }
 
   /**
@@ -531,6 +537,7 @@ export class BotModel {
       // with it (also keeps the shared outline material out of the
       // CorpseManager's fade clones).
       stripEnemyOutline(clone);
+      shareOutlineSkeletons(clone); // one skeleton for the whole corpse
       corpse.add(clone);
       corpse.updateMatrixWorld(true);
     }
@@ -607,18 +614,11 @@ export class BotModel {
     this.flashBase.clear();
     this.bodyHitbox.geometry.dispose();
     this.headHitbox.geometry.dispose();
-    this.healthBar.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (m.isMesh) {
-        m.geometry.dispose();
-        const mat = m.material as THREE.Material;
-        if (!mat.userData.shared) mat.dispose();
-      }
-    });
+    this.healthBar?.release();
+    this.healthBar = null;
   }
 }
 
-const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const NO_RAYCAST = () => {};
 /** Shared material for the invisible hitbox meshes (never rendered). */
 const HITBOX_MATERIAL = new THREE.MeshBasicMaterial({ visible: false });

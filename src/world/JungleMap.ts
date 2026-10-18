@@ -7,6 +7,7 @@ import { SpaceConfig as space } from "./SpaceConfig";
 import { getQualitySettings } from "../game/GraphicsQuality";
 import mapModelUrl from "../assets/MAP/ancient_jungle_city.glb?url";
 import mapPhysicsData from "../assets/MAP/ancient_jungle_city.physics.json";
+import { batchStaticMap, freezeStaticTransforms } from "./MapBatching";
 
 /**
  * "Ancient Jungle City" — 120 × 120 m outdoor FPS map (8 players).
@@ -57,11 +58,17 @@ export class JungleMap {
 
     // ---- Visual scene (GLB) ----
     mapScene.name = "Ancient Jungle City";
+    // PERF: 92 meshes over 4 constant-only materials → ONE uber material,
+    // merged per 40 m cell (≈ 9 draw calls instead of 92, same image — see
+    // MapBatching). The batches get their BVH / shadow flags below.
+    batchStaticMap(mapScene, { cellSize: 40, uber: true });
     mapScene.traverse((object) => {
       const mesh = object as THREE.Mesh;
       if (!mesh.isMesh) return;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
+      // Skinned animated batches: never raycast, culling off (see MapBatching).
+      if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) return;
       mesh.frustumCulled = true; // 30 m sectors → cheap culling
       mesh.geometry.computeBoundingBox();
       mesh.geometry.computeBoundingSphere();
@@ -70,6 +77,9 @@ export class JungleMap {
       mesh.geometry.computeBoundsTree();
     });
     this.group.add(mapScene);
+    // PERF: nothing in the jungle map moves — constant local matrices (no
+    // recompose / forced world refresh twice per frame, see Game).
+    freezeStaticTransforms(this.group);
 
     // ---- Fixed colliders (exact physics export, never approximate) ----
     const colliders = mapPhysicsData.colliders as unknown as MapColliderEntry[];

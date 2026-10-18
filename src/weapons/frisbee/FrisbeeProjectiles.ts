@@ -1,4 +1,11 @@
 import * as THREE from "three";
+/**
+ * PERF: shadow depth material of these RIGID dynamic casters. three.js draws
+ * every caster with ONE shared depth material by default; alternating rigid
+ * casters with skinned ones (characters, weapon batches) re-selected its
+ * program at each switch. Same material settings → same shadow.
+ */
+const RIGID_DEPTH = new THREE.MeshDepthMaterial();
 import { FrisbeeLauncherConfig, type FrisbeeTuning } from "../../../shared/combat/FrisbeeLauncherRules";
 /**
  * Flight / damage tuning of a disc = the SHARED FrisbeeLauncherConfig.tuning (ONE source for the server and every client:
@@ -224,6 +231,12 @@ export class FrisbeeProjectiles {
             opacity: 0.2, depthWrite: false, side: THREE.DoubleSide, vertexColors: true, blending: THREE.AdditiveBlending });
         this.ringGeo = new THREE.RingGeometry(0.7, 1.0, 20);
         this.ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide });
+        // PERF: one pass instead of three.js' two (back faces, then front faces — and a program re-selection
+        // per pass) for these double-sided transparent FX. Same image: the trail is ADDITIVE without depth
+        // writes (order-independent) and the impact ring is flat (each triangle faces one way: it was drawn
+        // by exactly one of the two passes anyway).
+        this.trailMat.forceSinglePass = true;
+        this.ringMat.forceSinglePass = true;
         this.group.name = "Frisbees";
         parent.add(this.group);
     }
@@ -241,6 +254,7 @@ export class FrisbeeProjectiles {
         const obj = this.template.clone(true);
         obj.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) {
             m.castShadow = true;
+            m.customDepthMaterial = RIGID_DEPTH;
             m.frustumCulled = false;
             m.raycast = () => { };
         } });

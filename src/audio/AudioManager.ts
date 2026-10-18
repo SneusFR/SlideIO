@@ -557,6 +557,12 @@ export class AudioManager {
   // Listener (camera)
   // ------------------------------------------------------------------
 
+  /** Last listener update (AudioContext time) + position (rate limit). */
+  private listenerTime = -1;
+  private listenerX = 0;
+  private listenerY = 0;
+  private listenerZ = 0;
+
   setListener(
     px: number,
     py: number,
@@ -572,6 +578,16 @@ export class AudioManager {
     if (!ctx || ctx.state !== "running") return;
     const l = ctx.listener;
     const t = ctx.currentTime;
+    // PERF: 9 AudioParam automation events per call — at 144-240 FPS the
+    // listener was rescheduled far faster than the 30 ms smoothing it uses.
+    // ~60 Hz is plenty, except after a jump (respawn / teleport).
+    const jump =
+      Math.abs(px - this.listenerX) + Math.abs(py - this.listenerY) + Math.abs(pz - this.listenerZ) > 0.5;
+    if (!jump && t - this.listenerTime < 0.015) return;
+    this.listenerTime = t;
+    this.listenerX = px;
+    this.listenerY = py;
+    this.listenerZ = pz;
     if (l.positionX) {
       l.positionX.setTargetAtTime(px, t, 0.03);
       l.positionY.setTargetAtTime(py, t, 0.03);

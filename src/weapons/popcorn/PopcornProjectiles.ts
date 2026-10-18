@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { hideWhenEmpty } from "../../effects/hideWhenEmpty";
 
 /**
  * Popcorns tirés — PUREMENT VISUEL (les dégâts viennent des raycasts gameplay).
@@ -95,6 +96,7 @@ export class PopcornProjectiles {
     this.mesh.receiveShadow = false;
     this.mesh.raycast = () => {}; // jamais touché par les raycasts gameplay
     this.mesh.count = 0;
+    hideWhenEmpty(this.mesh);
     parent.add(this.mesh);
   }
 

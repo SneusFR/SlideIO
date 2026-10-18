@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { WetMarks, waterHitBarycentric } from "./WetMarks";
 import { WaterJets, type WaterJetHit } from "./WaterJets";
 import { WaterFamasConfig } from "../../../shared/combat/WaterFamasRules";
+import { raycastSkinnedMesh, type SkinnedHit } from "../../effects/SkinnedRaycast";
 
 /** Name of the Potato body SkinnedMesh (the wettable skin). */
 const BODY_MESH = "Potato";
@@ -25,8 +26,6 @@ export type WaterFamasAnchor = (out: THREE.Vector3) => boolean;
 export class WaterFamasFX {
   readonly marks: WetMarks;
   readonly jets: WaterJets;
-  private readonly ray = new THREE.Raycaster();
-  private readonly hits: THREE.Intersection[] = [];
   private readonly bodies = new WeakMap<THREE.Object3D, THREE.SkinnedMesh>();
   private readonly center = new THREE.Vector3();
   private readonly dir = new THREE.Vector3();
@@ -125,30 +124,12 @@ export class WaterFamasFX {
     return found;
   }
 
-  private castBody(body: THREE.SkinnedMesh, origin: THREE.Vector3, dir: THREE.Vector3, far: number): THREE.Intersection | null {
-    this.ray.set(origin, dir);
-    this.ray.near = 0;
-    this.ray.far = far;
-    this.hits.length = 0;
-    // Direct skinned raycast: the characters' meshes are raycast-disabled for
-    // gameplay (hitboxes own the shots) — this VISUAL query bypasses it. Broad
-    // phase = the geometry sphere swapped in for the query only (no per-shot
-    // re-skinning of the whole body, the culling sphere is untouched).
-    const geo = body.geometry;
-    if (!geo.boundingSphere) geo.computeBoundingSphere();
-    const broad = geo.boundingSphere;
-    if (!broad) return null;
-    const saved = body.boundingSphere;
-    body.boundingSphere = broad;
-    try {
-      THREE.SkinnedMesh.prototype.raycast.call(body, this.ray, this.hits);
-    } finally {
-      body.boundingSphere = saved;
-    }
-    if (this.hits.length === 0) return null;
-    let best = this.hits[0];
-    for (const h of this.hits) if (h.distance < best.distance) best = h;
-    return best;
+  private castBody(body: THREE.SkinnedMesh, origin: THREE.Vector3, dir: THREE.Vector3, far: number): SkinnedHit | null {
+    // VISUAL query on the skinned body (the characters' meshes are
+    // raycast-disabled for gameplay — hitboxes own the shots). PERF: the
+    // body is skinned once per frame into a cached buffer (SkinnedRaycast)
+    // instead of three's per-triangle CPU re-skinning on every ray.
+    return raycastSkinnedMesh(body, origin, dir, far);
   }
 }
 

@@ -105,6 +105,12 @@ export const GivreConfig = {
      * outside, half the rasterised triangles). 0 disables it.
      */
     singleSidedMaxThickness: 2,
+    /**
+     * PERF: every lightmapped flat-colour material shares ONE material
+     * (constants moved to vertex attributes — MapBatching
+     * applyUberMaterial): ~70 static batches → ~14, same image.
+     */
+    uberMaterial: true,
   },
   /**
    * Draw the map with MeshStandardMaterial instead of the
