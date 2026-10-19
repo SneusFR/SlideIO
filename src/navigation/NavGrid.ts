@@ -106,9 +106,15 @@ export class NavGrid {
   /** Reused query ray (castRay is synchronous). */
   private readonly ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 });
 
+  /**
+   * @param cacheName localStorage slot of this map's grid (see loadCached):
+   *   the grid is rebuilt — and the slot refreshed — whenever its inputs
+   *   differ from the cached ones. Omitted → always built.
+   */
   constructor(
     private physics: PhysicsWorld,
     bounds: NavGridBounds = JUNGLE_NAV_BOUNDS,
+    cacheName?: string,
   ) {
     this.bounds = bounds;
     this.nx = Math.floor((bounds.maxX - bounds.minX) / NavGrid.CELL) + 1;
@@ -125,8 +131,131 @@ export class NavGrid {
     this.heapF = new Float32Array(n * 8 + 8);
     this.chain = new Int32Array(n);
     this.region = new Int32Array(n).fill(-1);
-    this.build();
+    const signature = cacheName ? this.signature() : null;
+    if (!signature || !this.loadCached(cacheName!, signature)) {
+      this.build();
+      if (signature) this.saveCache(cacheName!, signature);
+    }
     this.labelRegions();
+  }
+
+  // ------------------------------------------------------------------
+  // Cache — PERF (loading): the grid is a pure function of the STATIC
+  // colliders, the bounds and build() itself; ~27 000 ground rays + capsule
+  // overlaps on Givre (~0.1 s of the loading screen). It is kept in
+  // localStorage under a 64-bit signature of exactly those inputs (every
+  // collider's shape, pose, groups; the bounds; build()'s source text; the
+  // Rapier version) and read back in a few ms. Any change — a map edit, a
+  // re-exported collider, other bounds, a change to build() — gives another
+  // signature: rebuilt, slot overwritten (one slot per map).
+  // ------------------------------------------------------------------
+
+  private static readonly CACHE_FORMAT = "navgrid-v1";
+
+  /** Signature of the grid's inputs, or null when a collider shape is not covered. */
+  private signature(): string | null {
+    let h1 = 0x811c9dc5;
+    let h2 = 0x01000193 ^ 0x5bd1e995;
+    const f32 = new Float32Array(1);
+    const u32 = new Uint32Array(f32.buffer);
+    const word = (w: number): void => {
+      h1 = Math.imul(h1 ^ w, 0x01000193);
+      h2 = Math.imul(h2 ^ w, 0x5bd1e995);
+      h2 ^= h2 >>> 15;
+    };
+    const num = (x: number): void => {
+      f32[0] = x;
+      word(u32[0]);
+    };
+    const text = (t: string): void => {
+      for (let i = 0; i < t.length; i++) word(t.charCodeAt(i));
+    };
+    text(NavGrid.CACHE_FORMAT);
+    text(String(RAPIER.version()));
+    text(NavGrid.prototype.build.toString());
+    const b = this.bounds;
+    for (const x of [NavGrid.CELL, b.minX, b.maxX, b.minZ, b.maxZ, b.maxFloorY, b.minFloorY, this.nx, this.nz]) num(x);
+    let covered = true;
+    let colliders = 0;
+    const T = RAPIER.ShapeType;
+    this.physics.world.colliders.forEach((c) => {
+      if (!covered) return;
+      colliders++;
+      const type = c.shapeType();
+      word(type);
+      word(c.collisionGroups());
+      word(c.isSensor() ? 1 : 0);
+      word(c.isEnabled() ? 1 : 0);
+      const t = c.translation();
+      const r = c.rotation();
+      for (const x of [t.x, t.y, t.z, r.x, r.y, r.z, r.w]) num(x);
+      if (type === T.Cuboid || type === T.RoundCuboid) {
+        const e = c.halfExtents();
+        if (!e) covered = false;
+        else for (const x of [e.x, e.y, e.z]) num(x);
+        if (type === T.RoundCuboid) num(c.roundRadius());
+      } else if (type === T.Ball) {
+        num(c.radius());
+      } else if (type === T.Capsule || type === T.Cylinder || type === T.Cone) {
+        num(c.radius());
+        num(c.halfHeight());
+      } else if (type === T.ConvexPolyhedron || type === T.TriMesh || type === T.Polyline) {
+        const vertices = c.vertices();
+        const indices = c.indices();
+        word(vertices.length);
+        for (let i = 0; i < vertices.length; i++) num(vertices[i]);
+        word(indices ? indices.length : 0);
+        if (indices) for (let i = 0; i < indices.length; i++) word(indices[i]);
+      } else {
+        covered = false; // heightfield, compound… — never cached
+      }
+    });
+    word(colliders);
+    if (!covered) return null;
+    return (h1 >>> 0).toString(16).padStart(8, "0") + (h2 >>> 0).toString(16).padStart(8, "0");
+  }
+
+  /** Fills walkable / groundY from the cache slot; false when absent or stale. */
+  private loadCached(name: string, signature: string): boolean {
+    let value: string | null = null;
+    try {
+      value = localStorage.getItem(`slideio.navgrid.${name}`);
+    } catch {
+      return false;
+    }
+    if (!value) return false;
+    const head = `${NavGrid.CACHE_FORMAT}|${signature}|`;
+    if (!value.startsWith(head)) return false;
+    try {
+      const bin = atob(value.slice(head.length));
+      const n = this.walkable.length;
+      if (bin.length !== n + n * 4) return false;
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      this.walkable.set(bytes.subarray(0, n));
+      new Uint8Array(this.groundY.buffer).set(bytes.subarray(n));
+      return true;
+    } catch {
+      this.walkable.fill(0);
+      this.groundY.fill(0);
+      return false;
+    }
+  }
+
+  private saveCache(name: string, signature: string): void {
+    try {
+      const n = this.walkable.length;
+      const bytes = new Uint8Array(n + n * 4);
+      bytes.set(this.walkable);
+      bytes.set(new Uint8Array(this.groundY.buffer), n);
+      let bin = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000) as unknown as number[]);
+      }
+      localStorage.setItem(`slideio.navgrid.${name}`, `${NavGrid.CACHE_FORMAT}|${signature}|${btoa(bin)}`);
+    } catch {
+      /* storage full / unavailable: the grid is simply built next time */
+    }
   }
 
   private build(): void {

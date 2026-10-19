@@ -626,6 +626,7 @@ export class Game {
     this.nav = new NavGrid(
       this.physics,
       isYard ? YARD_NAV_BOUNDS : isGivre ? GIVRE_NAV_BOUNDS : JUNGLE_NAV_BOUNDS,
+      mapId, // cached per map (rebuilt whenever its colliders change)
     );
     this.spawner = new SpawnManager(
       this.physics,
