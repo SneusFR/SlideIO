@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
-import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from "three-mesh-bvh";
+import { queueMapBvh } from "./MapBvh";
 import { PhysicsWorld, CollisionGroups } from "../physics/PhysicsWorld";
 import { GivreConfig as givre } from "./GivreConfig";
 import { getQualitySettings } from "../game/GraphicsQuality";
@@ -58,10 +58,7 @@ export type { GivreZone } from "./GivreData";
  * applied by Game.
  */
 
-// BVH-accelerated raycasting (idempotent — same prototypes as Jungle/Yard).
-THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
-THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
-THREE.Mesh.prototype.raycast = acceleratedRaycast;
+// BVH-accelerated raycasting: see MapBvh (built after the loading screen).
 
 /** v3: `uv` carries the baked light (emissiveMap + aoMap). */
 const KEEP_ATTRIBUTES = new Set(["position", "normal", "uv"]);
@@ -93,7 +90,7 @@ export class GivreMap {
   /** Out-of-bounds plain + mountains — added to the scene by Game, never hittable. */
   readonly backdrop: THREE.Group;
   /** Collider (magenta) / playerClip (cyan) wireframes — hidden by default. */
-  readonly colliderDebug: THREE.Group;
+  private colliderDebugGroup: THREE.Group | null = null;
   /** Named zones (callouts). */
   readonly zones: GivreZone[];
   /** Merged snow meshes (material GIV_Neige) — footprint surfaces. */
@@ -150,8 +147,15 @@ export class GivreMap {
         console.warn(`GivreMap: player clip failed for "${c.id}"`);
       }
     }
+  }
 
-    this.colliderDebug = createColliderDebug(data.colliders, data.playerClips);
+  /**
+   * Collider wireframes (debug view), built on FIRST use: 527 meshes, one
+   * convex hull each — tens of ms of loading for a view almost never shown.
+   */
+  get colliderDebug(): THREE.Group {
+    this.colliderDebugGroup ??= createColliderDebug(givreData.colliders, givreData.playerClips);
+    return this.colliderDebugGroup;
   }
 
   /** Loads both GLBs and builds every fixed collider. */
@@ -521,8 +525,9 @@ function mergeStaticBatches(
   for (const { geometry, material, cell, singleSided } of batches) {
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
-    // BVH per batch: O(log n) beam/hitscan raycasts (built once).
-    geometry.computeBoundsTree();
+    // BVH per batch: O(log n) beam/hitscan raycasts (built once, after the
+    // loading screen — see MapBvh).
+    queueMapBvh(geometry);
     const mesh = new THREE.Mesh(geometry, material);
     mesh.name = `givre_${material.name}${singleSided ? "_1s" : ""}${cell >= 0 ? `_c${cell}` : ""}`;
     // Emissive lamp panels and transparent materials never cast.

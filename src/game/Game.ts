@@ -157,6 +157,7 @@ import type {
 } from "../../shared/combat/NetworkWeapons";
 import { getQualitySettings, webglRendererName } from "./GraphicsQuality";
 import { noteFrameEvent } from "../ui/frameEvents";
+import { flushMapBvhs } from "../world/MapBvh";
 import { installTexParamDedupe } from "../effects/TexParamDedupe";
 // Bit-identical, faster skinned bounding boxes / spheres (loading: character template).
 import "../effects/FastSkinnedBounds";
@@ -212,8 +213,12 @@ export class Game {
   private gpuDrawSplit: (() => void) | null = null;
   /** Live cel-shading settings (menu SETTINGS → OUTLINE). */
   private outlineSettings: OutlineSettings = loadOutlineSettings();
-  /** Collider (magenta) / playerClip (cyan) wireframes — toggled with KeyH. */
-  private colliderDebug: THREE.Object3D | null = null;
+  /**
+   * Collider (magenta) / playerClip (cyan) wireframes — toggled with KeyH,
+   * built on first use (see showColliderDebug).
+   */
+  private colliderDebug: (() => THREE.Object3D) | null = null;
+  private colliderDebugBuilt = false;
   /**
    * GIVRE v3 client-only effects (ONE instance per loaded Givre map): the
    * 8 s animation loop, bulb halos, fire flicker, falling snow, footprints.
@@ -608,7 +613,7 @@ export class Game {
       this.scene.add(map.backdrop);
       // PERF: the 527 collider wireframes join the scene ONLY while shown
       // (hidden, they still cost a matrix update per node, twice a frame).
-      this.colliderDebug = map.colliderDebug;
+      this.colliderDebug = () => map.colliderDebug;
       // v3: falling snow + footprints live in the SCENE (never hittable);
       // the halos are children of map.group / the garlands (raycast-off).
       if (this.givreEffects) {
@@ -2669,6 +2674,8 @@ export class Game {
   }
 
   start(): void {
+    // Raycast BVHs still queued (MapBvh): built before the first frame of play.
+    flushMapBvhs();
     this.releaseMenuPreview();
     this.lastTime = performance.now();
     this.nextFrameAt = 0;
@@ -3047,8 +3054,9 @@ export class Game {
 
   /** GIVRE collider wireframes: in the scene only while shown (see constructor). */
   private showColliderDebug(on: boolean): void {
-    const debug = this.colliderDebug;
-    if (!debug) return;
+    if (!this.colliderDebug || (!on && !this.colliderDebugBuilt)) return;
+    const debug = this.colliderDebug();
+    this.colliderDebugBuilt = true;
     debug.visible = on;
     if (on && debug.parent !== this.scene) this.scene.add(debug);
     else if (!on && debug.parent) debug.removeFromParent();

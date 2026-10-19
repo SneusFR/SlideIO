@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
-import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from "three-mesh-bvh";
+import { queueMapBvh } from "./MapBvh";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { SpaceConfig as space } from "./SpaceConfig";
 import { getQualitySettings } from "../game/GraphicsQuality";
@@ -36,9 +36,7 @@ import { batchStaticMap, freezeStaticTransforms } from "./MapBatching";
 // BVH when a geometry has one (built below for every map mesh) and falls
 // back to the stock raycast otherwise (bot models, player proxy, targets
 // stay untouched).
-THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
-THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
-THREE.Mesh.prototype.raycast = acceleratedRaycast;
+// (prototypes installed by MapBvh — BVHs built after the loading screen).
 
 interface MapColliderEntry {
   id: string;
@@ -73,8 +71,9 @@ export class JungleMap {
       mesh.geometry.computeBoundingBox();
       mesh.geometry.computeBoundingSphere();
       // BVH per map mesh: O(log n) beam/hitscan raycasts instead of
-      // brute-force triangle iteration (built once at load time).
-      mesh.geometry.computeBoundsTree();
+      // brute-force triangle iteration (built once, after the loading
+      // screen — see MapBvh).
+      queueMapBvh(mesh.geometry);
     });
     this.group.add(mapScene);
     // PERF: nothing in the jungle map moves — constant local matrices (no

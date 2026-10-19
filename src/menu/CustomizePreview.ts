@@ -23,7 +23,13 @@ type PreviewSubject = "ball" | "character";
 export class CustomizePreview {
   readonly canvas: HTMLCanvasElement;
 
-  private readonly renderer: THREE.WebGLRenderer;
+  /**
+   * Created on the first start() (menu opened), not at boot: a WebGL context
+   * is a synchronous round trip to the browser's GPU process — at the end of
+   * the loading phase that meant waiting for everything still queued there
+   * (the GPU / HUD warm-ups) before the menu could appear.
+   */
+  private renderer: THREE.WebGLRenderer | null = null;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.PerspectiveCamera;
   private readonly turntable = new THREE.Group();
@@ -58,13 +64,6 @@ export class CustomizePreview {
   constructor() {
     this.canvas = document.createElement("canvas");
     this.canvas.className = "cz-preview-canvas";
-    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, alpha: true });
-    this.renderer.setClearColor(0x000000, 0);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    // Same output pipeline as the game so the skins read identically.
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     // Pulled back a bit so the ball (and its aura / plasma effects) breathes
     // inside the taller stage instead of filling it edge to edge.
@@ -209,9 +208,24 @@ export class CustomizePreview {
     this.spinVelocity = direction * 5.5;
   }
 
+  /** The preview's own renderer (created once, on the first start). */
+  private ensureRenderer(): THREE.WebGLRenderer {
+    if (this.renderer) return this.renderer;
+    const renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, alpha: true });
+    renderer.setClearColor(0x000000, 0);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Same output pipeline as the game so the skins read identically.
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer = renderer;
+    return renderer;
+  }
+
   /** Start rendering (menu opened). Idempotent. */
   start(): void {
     if (this.running || this.disposed) return;
+    this.ensureRenderer();
     this.running = true;
     this.lastTime = performance.now();
     const frame = () => {
@@ -256,16 +270,17 @@ export class CustomizePreview {
       // Same idle clip as the in-game avatars (real skeleton, real clocks).
       this.characterAnim.update(dt, NetworkMovementState.IDLE, 0, 0, 0, 0);
     }
-    this.renderer.render(this.scene, this.camera);
+    this.renderer?.render(this.scene, this.camera);
   }
 
   private resize(): void {
+    const renderer = this.renderer;
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
-    if (w === 0 || h === 0) return;
-    const pr = this.renderer.getPixelRatio();
+    if (!renderer || w === 0 || h === 0) return;
+    const pr = renderer.getPixelRatio();
     if (this.canvas.width !== Math.floor(w * pr) || this.canvas.height !== Math.floor(h * pr)) {
-      this.renderer.setSize(w, h, false);
+      renderer.setSize(w, h, false);
       this.camera.aspect = w / h;
       this.camera.updateProjectionMatrix();
     }
@@ -287,7 +302,7 @@ export class CustomizePreview {
     this.characterAnim = null;
     this.character?.removeFromParent();
     this.character = null;
-    this.renderer.dispose();
+    this.renderer?.dispose();
   }
 }
 

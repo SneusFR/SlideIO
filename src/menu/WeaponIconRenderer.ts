@@ -47,6 +47,32 @@ const FRAME_MARGIN = 1.12;
 
 const iconCache = new Map<string, Promise<string | null>>();
 
+// ---- Scheduling ------------------------------------------------------
+// PERF (loading): the menus ask for their icons as soon as they are BUILT —
+// at the end of the loading phase. Each snapshot parses a weapon GLB (up to
+// 13 MB), spins up a WebGL context and compiles its shaders: rendered then,
+// they lengthened the loading and made the menu's first seconds stutter.
+// They now wait for startWeaponIcons() (menu up, or a menu that shows them
+// opened) and run ONE AT A TIME, each in an idle slot of the menu's frames.
+let openGate: () => void = () => {};
+const gate = new Promise<void>((resolve) => {
+  openGate = resolve;
+});
+let queue: Promise<unknown> = gate;
+
+/** Lets the queued icon snapshots run (idempotent). */
+export function startWeaponIcons(): void {
+  openGate();
+}
+
+/** Next idle slot of the page (a short timeout keeps it from starving). */
+function nextIdle(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestIdleCallback === "function") requestIdleCallback(() => resolve(), { timeout: 250 });
+    else setTimeout(resolve, 16);
+  });
+}
+
 /** True when a 3D icon exists for this loadout item id. */
 export function hasWeaponIcon(id: string): boolean {
   return id in MODEL_URLS;
@@ -64,7 +90,12 @@ export function getWeaponIconUrl(id: string, skinId: string = DEFAULT_WEAPON_SKI
   const key = `${id}|${skin}`;
   let cached = iconCache.get(key);
   if (!cached) {
-    cached = renderIcon(url, id, skin).catch((err) => {
+    // Counted from the queue on: the shared context lives until the LAST
+    // queued icon is done (one context for the whole batch, as before).
+    pendingRenders++;
+    const job = queue.then(nextIdle).then(() => renderIcon(url, id, skin));
+    queue = job.catch(() => undefined); // one failed icon never stalls the next ones
+    cached = job.catch((err) => {
       console.warn(`[loadout] weapon icon failed for ${key}`, err);
       return null;
     });
@@ -122,7 +153,6 @@ function releaseContextIfIdle(): void {
 }
 
 async function renderIcon(url: string, weaponId: string, skinId: string): Promise<string | null> {
-  pendingRenders++;
   try {
     const gltf = await new GLTFLoader().loadAsync(url);
     const { renderer, scene, camera } = getContext();

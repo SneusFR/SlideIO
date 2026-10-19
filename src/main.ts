@@ -9,6 +9,8 @@ import { MultiplayerClient } from "./network/MultiplayerClient";
 import { loadDisplayName, parseJoinRoomId } from "./network/MultiplayerConfig";
 import { MatchEndController } from "./match/MatchEndController";
 import { warmUpHud } from "./ui/HudWarmup";
+import { startWeaponIcons } from "./menu/WeaponIconRenderer";
+import { buildMapBvhsWhenIdle, flushMapBvhs } from "./world/MapBvh";
 
 /**
  * Boot flow — "the menu is just an overlay on top of the game":
@@ -68,13 +70,25 @@ async function main(): Promise<void> {
   game.startMenuPreview();
   menu.reveal();
   sounds.startMusic();
+  // Loadout / customize icon snapshots: once the menu is up (they are queued
+  // since the menus were built — see WeaponIconRenderer), or right away when
+  // one of those menus opens first.
+  window.setTimeout(startWeaponIcons, 1200);
+  // The map's raycast BVHs, one per idle slot of the menu (see MapBvh).
+  buildMapBvhsWhenIdle();
 
   // ---- Menu wiring ----
-  menu.onLoadout = () => loadoutMenu.open();
+  menu.onLoadout = () => {
+    startWeaponIcons();
+    loadoutMenu.open();
+  };
   // CUSTOMIZE: cosmetic skins (live 3D preview of the real ball). The
   // selection is persisted; the game re-reads it in applyLoadout() (match
   // entry / respawn / solo resume) — a skin change never resets a weapon.
-  menu.onCustomize = () => customizeMenu.open();
+  menu.onCustomize = () => {
+    startWeaponIcons();
+    customizeMenu.open();
+  };
   menu.onChangeLobby = () => browser.open();
   // FPS LIMIT (settings popover): pure loop pacing — applies live.
   menu.onFpsCapChange = (maxFps) => game.setFpsCap(maxFps);
@@ -135,6 +149,9 @@ async function main(): Promise<void> {
    */
   const enterGameplay = async (withCameraFlight: boolean): Promise<void> => {
     inGame = true;
+    // Raycast BVHs not built yet (PLAY right after the menu appeared): now,
+    // before the camera flight — never during it.
+    flushMapBvhs();
 
     sounds.fadeOutMusic(0.8);
     menu.fadeOut();

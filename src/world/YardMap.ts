@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
-import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from "three-mesh-bvh";
+import { queueMapBvh } from "./MapBvh";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { YardConfig as yard } from "./YardConfig";
 import { getQualitySettings } from "../game/GraphicsQuality";
@@ -30,11 +30,7 @@ import { batchStaticMap, batchAnimatedMeshes, freezeStaticTransforms } from "./M
  * distinct from the Jungle map's violet space rig.
  */
 
-// BVH-accelerated raycasting (idempotent — JungleMap installs the same
-// prototypes; whichever map loads first wins, the result is identical).
-THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
-THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
-THREE.Mesh.prototype.raycast = acceleratedRaycast;
+// BVH-accelerated raycasting: see MapBvh (built after the loading screen).
 
 interface YardColliderEntry {
   id: string;
@@ -125,8 +121,9 @@ export class YardMap {
       mesh.frustumCulled = true; // spatial sectors → cheap culling
       mesh.geometry.computeBoundingBox();
       mesh.geometry.computeBoundingSphere();
-      // BVH per map mesh: O(log n) beam/hitscan raycasts (built once).
-      mesh.geometry.computeBoundsTree();
+      // BVH per map mesh: O(log n) beam/hitscan raycasts (built once, after
+      // the loading screen — see MapBvh).
+      queueMapBvh(mesh.geometry);
     });
     this.group.add(mapScene);
     // PERF: only the clip-animated props move (YardEffects' mixer): every
