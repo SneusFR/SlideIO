@@ -306,6 +306,44 @@ export function medalIconSvg(medal: MedalType): string {
   return `<svg class="md-icon" data-medal="${medal}" viewBox="0 0 64 64" aria-hidden="true">${MEDAL_ICONS[medal]}</svg>`;
 }
 
+/**
+ * Medal sunburst (fill from CSS: `.md-rays-art`). Same pixels as the former
+ * `repeating-conic-gradient(c 0 11deg, transparent 11deg 26deg)` under
+ * `mask: radial-gradient(circle, #000 30%, transparent 68%)` on a square box:
+ *  - wedges of 11° every 26° clockwise from the top — 14 of them, the last
+ *    period cut at 360° (26 does not divide 360: the gradient's seam is kept);
+ *  - `circle` = farthest-corner radius (√2/2 of the side = 70.71 in this
+ *    100-unit box): opaque up to 30 % of it (21.21), transparent from 68 %
+ *    (48.08) — so the wedges never need to go past r = 48.1.
+ * Drawn as SVG so the fade is rasterized once with the layer (see hud.css).
+ */
+export function medalRaysSvg(): string {
+  const C = 50;
+  const R = 48.2;
+  const at = (deg: number): string => {
+    const a = (deg * Math.PI) / 180;
+    return `${(C + R * Math.sin(a)).toFixed(3)} ${(C - R * Math.cos(a)).toFixed(3)}`;
+  };
+  let d = "";
+  for (let start = 0; start < 360; start += 26) {
+    d += `M${C} ${C}L${at(start)}A${R} ${R} 0 0 1 ${at(Math.min(start + 11, 360))}Z`;
+  }
+  const fadeFull = (0.3 * 70.711) / 48.08; // offset of the 30 % stop inside r = 68 %
+  return `<svg class="md-rays-art" viewBox="0 0 100 100" aria-hidden="true">
+    <defs>
+      <radialGradient id="md-rays-fade" cx="50" cy="50" r="48.08" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#fff"/>
+        <stop offset="${fadeFull.toFixed(4)}" stop-color="#fff"/>
+        <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+      </radialGradient>
+      <mask id="md-rays-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
+        <rect width="100" height="100" fill="url(#md-rays-fade)"/>
+      </mask>
+    </defs>
+    <path d="${d}" mask="url(#md-rays-mask)"/>
+  </svg>`;
+}
+
 /** Notched ribbon tail tucked behind the medal ribbon (fill from CSS). */
 export function ribbonTailSvg(side: "l" | "r"): string {
   const d = side === "l" ? "M25 2H2l7 13-7 13h23z" : "M1 2h23l-7 13 7 13H1z";

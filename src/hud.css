@@ -1410,14 +1410,27 @@
   transform: translateX(-50%);
   pointer-events: none;
   z-index: 5;
+  /* PERF: hidden by OPACITY on its own layer, never `display: none`. The
+     badge pops at every kill: `display: none` threw its layers and their
+     raster away at each exit, so each medal rebuilt the layer tree and
+     re-rasterized the disc, the art and the stroked label. At opacity 0
+     (+ will-change: opacity) the layers and their tiles stay, nothing is
+     drawn, and the next pop only starts compositor animations. */
+  will-change: opacity;
 }
-#medal-display.hidden { display: none; }
+#medal-display.hidden { opacity: 0; }
+/* Hidden: every animation stops (the endless loops would keep the compositor
+   animating an invisible badge every frame) and all of them restart from 0
+   at the next pop (MedalHUD.show removes `.hidden` and swaps pop-a / pop-b
+   in the same frame) — exactly what `display: none` did. */
+#medal-display.hidden * { animation: none; }
 
 .md-body {
   display: flex;
   flex-direction: column;
   align-items: center;
   transform-origin: 50% 60%;
+  will-change: transform, opacity;
 }
 .md-body.pop-a { animation: md-pop-a 0.5s var(--pop) both; }
 .md-body.pop-b { animation: md-pop-b 0.5s var(--pop) both; }
@@ -1438,6 +1451,9 @@
   height: calc(var(--md-size) * 0.26);
   overflow: visible;
   filter: drop-shadow(0 2px 0 var(--ink));
+  /* PERF: popped at every combo medal — a layer of its own for good (see
+     #medal-display): no layer tree rebuild, no re-raster at each pop. */
+  will-change: transform, opacity;
 }
 #medal-display.stars-1 .md-stars svg:nth-child(1),
 #medal-display.stars-2 .md-stars svg:nth-child(-n + 2),
@@ -1457,20 +1473,43 @@
   width: var(--md-size);
   height: var(--md-size);
   animation: md-bob 1.3s ease-in-out 0.5s infinite;
+  will-change: transform;
 }
 
+/* PERF — sunburst rays:
+   - The pop (scale + opacity, .md-rays) and the endless spin (.md-rays-art)
+     are on TWO elements. Both animated `transform` on .md-rays: Chrome
+     cannot composite two transform animations on one element
+     (TargetHasIncompatibleAnimations), so the rays ran on the MAIN THREAD —
+     style, layer update and commit at every frame while a medal was up.
+   - The art is a static SVG (hudIcons.medalRaysSvg: the same 14 wedges of
+     11° every 26° from the top, the same radial fade from 30 % to 68 % of
+     the farthest-corner radius) instead of a conic gradient under a CSS
+     mask: a compositor-animated CSS mask needs its own render surface and a
+     mask blend at EVERY frame; the SVG's fade is rasterized once into the
+     layer's tiles, and the spin only turns those tiles. */
 .md-rays {
   position: absolute;
   inset: -40%;
-  border-radius: 50%;
-  background: repeating-conic-gradient(color-mix(in srgb, var(--md) 55%, #fff6e0) 0 11deg, transparent 11deg 26deg);
-  -webkit-mask: radial-gradient(circle, #000 30%, transparent 68%);
-  mask: radial-gradient(circle, #000 30%, transparent 68%);
   opacity: 0.6;
-  animation: rays-spin 8s linear infinite;
+  will-change: transform, opacity;
 }
-.md-body.pop-a .md-rays { animation: md-rays-a 0.6s ease-out, rays-spin 8s linear 0.6s infinite; }
-.md-body.pop-b .md-rays { animation: md-rays-b 0.6s ease-out, rays-spin 8s linear 0.6s infinite; }
+.md-rays-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: color-mix(in srgb, var(--md) 55%, #fff6e0);
+  animation: rays-spin 8s linear infinite;
+  will-change: transform;
+}
+.md-body.pop-a .md-rays { animation: md-rays-a 0.6s ease-out; }
+.md-body.pop-b .md-rays { animation: md-rays-b 0.6s ease-out; }
+/* The spin starts once the pop is over, as before. One rule for pop-a and
+   pop-b: a chained medal never restarts it (it restarts from 0 when the
+   badge shows again after `.hidden`). */
+.md-body.pop-a .md-rays-art,
+.md-body.pop-b .md-rays-art { animation: rays-spin 8s linear 0.6s infinite; }
 
 .md-disc {
   position: absolute;
@@ -1509,6 +1548,7 @@
 .md-art {
   width: 88%;
   height: 88%;
+  will-change: transform; /* squashed at every pop (see #medal-display) */
 }
 .md-icon {
   display: none;
@@ -1527,6 +1567,8 @@
   z-index: 2;
   margin-top: calc(var(--md-size) * -0.16);
   transform: rotate(-2deg);
+  /* Unrolled at every pop: its stroked label stays rasterized (see #medal-display). */
+  will-change: transform, opacity;
 }
 .md-plank {
   position: relative;
@@ -1586,6 +1628,7 @@
   background: var(--md);
   box-shadow: 0 0 0 1.5px var(--ink);
   opacity: 0;
+  will-change: transform, opacity; /* 8 tiny layers kept between pops */
 }
 .md-confetti i:nth-child(1) { --cx: -70px; --cy: -48px; --cr: -200deg; background: #ff5fa2; }
 .md-confetti i:nth-child(2) { --cx: -8px; --cy: -80px; --cr: 160deg; background: var(--gold); }

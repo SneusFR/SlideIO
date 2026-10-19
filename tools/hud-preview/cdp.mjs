@@ -21,14 +21,14 @@ const getJson = (url) =>
     }).on("error", rej);
   });
 
-export async function launch({ width, height, url, port = 9333 }) {
+export async function launch({ width, height, url, port = 9333, args = [] }) {
   if (!CHROME) throw new Error("no Chrome / Edge found");
   const dir = mkdtempSync(join(tmpdir(), "hudcdp-"));
   const proc = spawn(CHROME, [
     "--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`,
     `--window-size=${width},${height}`, "--hide-scrollbars", "--no-first-run",
     "--force-device-scale-factor=1", "--enable-unsafe-swiftshader", "--use-angle=swiftshader",
-    "--ignore-gpu-blocklist", "--disable-background-timer-throttling", "about:blank",
+    "--ignore-gpu-blocklist", "--disable-background-timer-throttling", ...args, "about:blank",
   ], { stdio: "ignore" });
   let targets;
   for (let i = 0; i < 60; i++) {
@@ -41,8 +41,11 @@ export async function launch({ width, height, url, port = 9333 }) {
   let id = 0;
   const pending = new Map();
   const logs = [];
+  /** CDP event listeners (method → callbacks), see `on()` below. */
+  const listeners = new Map();
   ws.on("message", (m) => {
     const msg = JSON.parse(m);
+    if (msg.method) for (const cb of listeners.get(msg.method) ?? []) cb(msg.params);
     if (msg.id && pending.has(msg.id)) {
       const { res, rej } = pending.get(msg.id);
       pending.delete(msg.id);
@@ -59,6 +62,11 @@ export async function launch({ width, height, url, port = 9333 }) {
   return {
     logs,
     send,
+    /** Subscribe to a CDP event (e.g. "Tracing.dataCollected", "LayerTree.layerPainted"). */
+    on(method, cb) {
+      if (!listeners.has(method)) listeners.set(method, []);
+      listeners.get(method).push(cb);
+    },
     async eval(expr) {
       const r = await send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
       if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);

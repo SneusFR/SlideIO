@@ -1,7 +1,7 @@
 import { MedalType } from "../medals/MedalType";
 import { MedalStyles, MedalConfig as mc } from "../medals/MedalConfig";
 import { MedalDisplay } from "../medals/MedalManager";
-import { medalIconSvg, MEDAL_STAR_SVG, ribbonTailSvg } from "./hudIcons";
+import { medalIconSvg, medalRaysSvg, MEDAL_STAR_SVG, ribbonTailSvg } from "./hudIcons";
 import { replayAnim } from "./hudKit";
 
 /** Chain length from which the badge goes "hype" (faster rays, bigger pop). */
@@ -42,7 +42,7 @@ export class MedalHUD implements MedalDisplay {
       <div class="md-body">
         <div class="md-stars">${MEDAL_STAR_SVG.repeat(3)}</div>
         <div class="md-medallion">
-          <div class="md-rays"></div>
+          <div class="md-rays">${medalRaysSvg()}</div>
           <div class="md-disc">
             <div class="md-art">${allMedals.map((m) => medalIconSvg(m)).join("")}</div>
           </div>
