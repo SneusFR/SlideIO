@@ -85,6 +85,16 @@ export class PaintGL {
   }
 
   /**
+   * Starts compiling the raymarch program now (see warmUpPaint): the GPU
+   * process works on it in the background — on several threads where the
+   * browser compiles in parallel — and the first draw only waits for what
+   * may be left.
+   */
+  precompile(): void {
+    if (!this.lost) this.renderer.compile(this.scene, this.camera);
+  }
+
+  /**
    * Draw `sim` at `scale` GL px per plate px; returns the GL canvas (valid
    * until the next draw) or null.
    */

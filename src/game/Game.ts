@@ -1951,6 +1951,36 @@ export class Game {
     this.shockwave.update(0.01);
     this.particles.update(0.01);
 
+    // The weapon the player HOLDS at the first frame of play (applyLoadout on
+    // PLAY hands it the FP arms) is mounted for the warm-up too — only the
+    // Brick Maul used to be: the primary's FP-rig programs (FP lights, no
+    // fog, no shadow) were compiled at the FIRST GAMEPLAY FRAME, a freeze
+    // right after the camera flight (4 programs for the Popcorn Shotgun).
+    // Released at the end: PLAY equips it for real (Equip clip), as before.
+    const warmFpOwner = this.fpOwner === "NONE" && this.desiredFpOwner() !== "NONE";
+    if (warmFpOwner) {
+      this.refreshFpOwner();
+      // Its FP poses are already loaded: the mount lands within a few tasks.
+      for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
+    }
+    // Every OTHER primary's FP model joins the FP scene for the warm-up too:
+    // a primary picked in the loadout menu after the loading screen — or
+    // from the pause menu — compiled its FP programs at its first frame in
+    // hand (Hex Sniper: 1, Water FAMAS: 2). Compiled with the FP scene (3a),
+    // then drawn by the forced-visible FP frames only (the holder is hidden
+    // until then) and out of the FP camera's view: every program, texture
+    // and draw-time shader variant is set up, no pixel is shaded. Removed
+    // right after those frames; a mount attaches the model to the arms as
+    // before (its own transform never touched).
+    const fpExtras = new THREE.Group();
+    fpExtras.visible = false;
+    fpExtras.position.set(0, -10000, 0);
+    for (const weapon of [this.hexSniper, this.popcornShotgun, this.paintballRifle, this.waterFamas, this.frisbeeLauncher]) {
+      const root = weapon.fpWarmRoot;
+      if (root) fpExtras.add(root);
+    }
+    this.viewmodelSystem.scene.add(fpExtras);
+
     // 3a. The programs of the warm objects added above (weapons, corpse,
     // skins, loot, projectiles, VFX) go to the GPU process too. Where the
     // browser compiles in parallel (KHR_parallel_shader_compile: Chrome /
@@ -2029,7 +2059,24 @@ export class Game {
     const fpWasVisible = this.viewmodelSystem.visible;
     this.viewmodelSystem.setVisible(true);
     this.viewmodelSystem.syncCamera(this.fpsCamera.camera);
+    // Hidden parts of the FP scene drawn too (the weapon mounted above stays
+    // hidden until play; flashes / glows of the arms rig): their textures
+    // upload and their first draws happen now. Lights untouched (FP light
+    // count kept), visibility restored right after.
+    const fpSaved: { obj: THREE.Object3D; visible: boolean; culled: boolean }[] = [];
+    this.viewmodelSystem.scene.traverse((obj) => {
+      if ((obj as THREE.Light).isLight) return;
+      fpSaved.push({ obj, visible: obj.visible, culled: obj.frustumCulled });
+      obj.visible = true;
+      obj.frustumCulled = false;
+    });
     for (let i = 0; i < 2; i++) warmFp(); // (GIVRE: + FP overlay / FP outline programs)
+    for (const s of fpSaved) {
+      s.obj.visible = s.visible;
+      s.obj.frustumCulled = s.culled;
+    }
+    for (const root of [...fpExtras.children]) root.removeFromParent();
+    fpExtras.removeFromParent();
     // Brick Maul: when it is NOT the current FP owner, mount it for the
     // warm frames too (its shaders/textures compile now, never on the first
     // melee attack), then hand the arms back to the real owner.
@@ -2117,6 +2164,11 @@ export class Game {
       if (order === "paint+wet") this.paintballRifle.fx.detachUnder(root);
     }
     this.particles.update(10);
+    // Back to "no FP owner": PLAY equips the loadout for real (see above).
+    if (warmFpOwner) {
+      this.releaseFpPresentation();
+      this.fpOwner = "NONE";
+    }
     // HUD warm-up after the warm frames when the compile could not run
     // alongside it (see 3a).
     if (alongside) await alongside(Promise.resolve());
@@ -2364,19 +2416,7 @@ export class Game {
   private refreshFpOwner(): void {
     const want = this.desiredFpOwner();
     if (want === this.fpOwner) return;
-    // Release the previous owner (the sniper keeps its gameplay off-screen;
-    // the maul drops actions / inspect and detaches).
-    if (this.fpOwner === "HEX_SNIPER") this.hexSniper.releasePresentation();
-    if (this.fpOwner === "GOOFY_BASKET") this.goofyBasket.releasePresentation();
-    // Weapon switch: an unfinished reload is cancelled (pack §3) inside.
-    if (this.fpOwner === "POPCORN_SHOTGUN") this.popcornShotgun.releasePresentation();
-    if (this.fpOwner === "PAINTBALL_RIFLE") this.paintballRifle.releasePresentation();
-    if (this.fpOwner === "WATER_FAMAS") this.waterFamas.releasePresentation();
-    if (this.fpOwner === "FRISBEE_LAUNCHER") this.frisbeeLauncher.releasePresentation();
-    if (this.fpOwner === "HAMMER") {
-      this.hammerInspecting = false;
-      this.hammerViewmodel.hide();
-    }
+    this.releaseFpPresentation();
     this.fpOwner = want;
     if (want === "HAMMER") {
       // Real slot equip plays the 0.65 s Equip clip; a melee override from
@@ -2396,6 +2436,25 @@ export class Game {
       this.frisbeeLauncher.takePresentation(); // real Equip clip
     }
     this.syncNetworkMeleeShown();
+  }
+
+  /**
+   * Releases the current FP owner's presentation (the sniper keeps its
+   * gameplay off-screen; the maul drops actions / inspect and detaches; a
+   * weapon switch cancels an unfinished reload — pack §3 — inside).
+   * `fpOwner` itself is left to the caller.
+   */
+  private releaseFpPresentation(): void {
+    if (this.fpOwner === "HEX_SNIPER") this.hexSniper.releasePresentation();
+    if (this.fpOwner === "GOOFY_BASKET") this.goofyBasket.releasePresentation();
+    if (this.fpOwner === "POPCORN_SHOTGUN") this.popcornShotgun.releasePresentation();
+    if (this.fpOwner === "PAINTBALL_RIFLE") this.paintballRifle.releasePresentation();
+    if (this.fpOwner === "WATER_FAMAS") this.waterFamas.releasePresentation();
+    if (this.fpOwner === "FRISBEE_LAUNCHER") this.frisbeeLauncher.releasePresentation();
+    if (this.fpOwner === "HAMMER") {
+      this.hammerInspecting = false;
+      this.hammerViewmodel.hide();
+    }
   }
 
   /**

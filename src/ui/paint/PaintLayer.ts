@@ -98,6 +98,21 @@ document.addEventListener("visibilitychange", () => {
 });
 
 /**
+ * Loading screen (main.ts): the shared paint context is created and its
+ * raymarch program compiled NOW. Both used to wait for the first plate shown
+ * — the first frame of play with the Popcorn Shotgun / Paintball Rifle in
+ * hand: a WebGL context creation + a heavy shader compile (nested raymarch
+ * loops: long under D3D11) at that very frame.
+ */
+export function warmUpPaint(): void {
+  try {
+    getGL()?.precompile();
+  } catch {
+    /* no paint context: the plates fall back as before */
+  }
+}
+
+/**
  * DEV (debug HUD "GPU" line): GPU ms spent drawing the plate paint since the
  * last call — null when it cannot be measured (no paint context / timer).
  */

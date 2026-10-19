@@ -262,6 +262,15 @@ export class PaintballRifleWeapon {
     return this.presentationOwner;
   }
 
+  /**
+   * The FP model while it is OFF the arms (null while mounted / not loaded):
+   * Game.warmUpRendering draws it in the FP scene with the warm frames.
+   */
+  get fpWarmRoot(): THREE.Object3D | null {
+    const root = this.controller?.object ?? null;
+    return root && !root.parent ? root : null;
+  }
+
   private equipPresentation(playEquipClip: boolean): void {
     const c = this.controller;
     if (!c) return; // load() equips once the GLB is mounted

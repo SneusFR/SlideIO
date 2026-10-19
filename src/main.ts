@@ -9,6 +9,7 @@ import { MultiplayerClient } from "./network/MultiplayerClient";
 import { loadDisplayName, parseJoinRoomId } from "./network/MultiplayerConfig";
 import { MatchEndController } from "./match/MatchEndController";
 import { measureDisplayFrames, warmUpHud } from "./ui/HudWarmup";
+import { warmUpPaint } from "./ui/paint/PaintLayer";
 import { startWeaponIcons } from "./menu/WeaponIconRenderer";
 import { buildMapBvhsWhenIdle, flushMapBvhs } from "./world/MapBvh";
 
@@ -49,6 +50,10 @@ async function main(): Promise<void> {
   // The map, physics, nav grid, every weapon GLB and every shader are
   // ready before the menu appears — CLICK TO PLAY is then instant.
   const game = await Game.create(container);
+  // The weapon plates' paint (own WebGL context): its shader compiles in the
+  // background, alongside the game's (never awaited: the first plate shown,
+  // after the menu, at worst waits for the rest of that compile).
+  warmUpPaint();
   // GPU warm-up + HUD warm-up: the rare HUD effects (kill medal, combo,
   // vignettes, death card…) are drawn once, invisibly, before the loading
   // screen goes away — the first kill / hit / death never pays their

@@ -91,6 +91,11 @@ export class PaintballHopper {
     this.ballMesh = mesh;
     hopperNode.add(mesh);
     this.setAmmo(d.capacity);
+    // The balls (and their per-instance colour buffer) exist from the start.
+    // That colour buffer is part of the shader program: created by the first
+    // update, it made the GPU warm-up draw the hopper without it (count 0, no
+    // colours) — the real variant compiled at the weapon's first frame in hand.
+    this.writeInstances();
   }
 
   /** Balls currently in the hopper. */

@@ -223,6 +223,14 @@ export class FrisbeeLauncherWeapon {
   get ownsPresentation(): boolean {
     return this.presentationOwner;
   }
+  /**
+   * The FP model while it is OFF the arms (null while mounted / not loaded):
+   * Game.warmUpRendering draws it in the FP scene with the warm frames.
+   */
+  get fpWarmRoot(): THREE.Object3D | null {
+    const root = this.controller?.object ?? null;
+    return root && !root.parent ? root : null;
+  }
   /** The FP launcher controller (its disc / cage templates feed the shared pools). */
   get launcher(): FrisbeeLauncherController | null {
     return this.controller;
