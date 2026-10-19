@@ -36,19 +36,32 @@ export interface HudWarmupHook {
  * sticker leaving, combo tag falling). Each of those states is held until
  * the browser has really drawn it (holdUntilDrawn): ~2 s in all at
  * 60 Hz, a little more on a first launch (the shaders compile then).
+ * Where the browser compiles WebGL shaders in parallel, the whole pass runs
+ * DURING the GPU warm-up's shader compile (Game.warmUpRendering, step 3a)
+ * instead of after it — `gpuBusy`: the budget below only starts counting
+ * once that compile is over.
  *
  * Pure DOM, no game state: every class / text / inline style touched here is
  * recorded and restored exactly (the HUD classes never notice). Parts with a
  * state of their own (the leaderboard) come as `hooks` (replayed with the
  * first kill).
  */
-export async function warmUpHud(hooks: readonly HudWarmupHook[] = []): Promise<void> {
+export async function warmUpHud(
+  hooks: readonly HudWarmupHook[] = [],
+  gpuBusy: Promise<unknown> | null = null,
+): Promise<void> {
   if (document.hidden) return; // no frames would come: nothing to warm
   const root = new DomPatch();
   try {
     hudFeed(); // the 3 pooled stickers exist from now on
-    await measureFrameInterval();
+    await measureDisplayFrames();
     holdDeadline = performance.now() + WARM_BUDGET_MS;
+    // Run alongside the GPU warm-up's shader compiles (Game.warmUpRendering):
+    // while they share the machine, states may need longer to be drawn —
+    // the budget only starts counting once they are done.
+    void gpuBusy?.then(() => {
+      holdDeadline = Math.max(holdDeadline, performance.now() + WARM_BUDGET_MS);
+    });
     root.add(document.documentElement, "hud-warm");
     await warmPass(killLook, killExit, hooks, true);
     await warmPass(hurtLook, hurtExit, [], false);
@@ -382,7 +395,7 @@ function byId(id: string): HTMLElement | null {
   return document.getElementById(id);
 }
 
-/** Frame interval of this display (ms), measured when the warm-up starts. */
+/** Frame interval of this display (ms) — see measureDisplayFrames. */
 let frameMs = 1000 / 60;
 /**
  * Past this point (a very slow machine: every frame late), the remaining
@@ -391,21 +404,49 @@ let frameMs = 1000 / 60;
 const WARM_BUDGET_MS = 8000;
 let holdDeadline = Infinity;
 
-/** Median interval of a few frames (60 Hz → 16.7 ms, 240 Hz → 4.2 ms). */
+let frameMeasure: Promise<void> | null = null;
+
+/**
+ * The display's frame interval, measured ONCE. main.ts starts it with the
+ * boot, while the loading screen mostly waits on downloads; warmUpHud and
+ * the GPU warm-up wait for it. Measured later — during the shader compile
+ * the HUD warm-up runs alongside (Game.warmUpRendering, step 3a), whose
+ * polling delays some frames — it could read 2× too long at 240 Hz, and
+ * every "on time" test of holdUntilDrawn would then pass too easily.
+ */
+export function measureDisplayFrames(): Promise<void> {
+  frameMeasure ??= measureFrameInterval();
+  return frameMeasure;
+}
+
+/**
+ * The display's interval (60 Hz → 16.7 ms, 240 Hz → 4.2 ms): the second
+ * shortest of a dozen frame gaps. A frame comes late when the thread is busy
+ * (a multiple of the interval), never early: the shortest gaps are the
+ * display's own — the second one ignores a lone outlier.
+ */
 function measureFrameInterval(): Promise<void> {
   return new Promise((resolve) => {
     const stamps: number[] = [];
-    const timer = window.setTimeout(resolve, 500);
+    let done = false;
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      const gaps = stamps.slice(1).map((t, i) => t - stamps[i]).sort((a, b) => a - b);
+      if (gaps.length >= 2) frameMs = Math.min(50, Math.max(4, gaps[1]));
+      resolve();
+    };
+    // Hidden tab (no frames) or a thread busy for 2 s: the 60 Hz default.
+    const timer = window.setTimeout(finish, 2000);
     const step = (now: number): void => {
+      if (done) return;
       stamps.push(now);
-      if (stamps.length < 7) {
+      if (stamps.length < 13) {
         requestAnimationFrame(step);
         return;
       }
       window.clearTimeout(timer);
-      const gaps = stamps.slice(1).map((t, i) => t - stamps[i]).sort((a, b) => a - b);
-      frameMs = Math.min(50, Math.max(4, gaps[gaps.length >> 1]));
-      resolve();
+      finish();
     };
     requestAnimationFrame(step);
   });

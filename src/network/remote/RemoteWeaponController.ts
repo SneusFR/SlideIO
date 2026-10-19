@@ -33,6 +33,7 @@ import { FrisbeeLauncherController, type FrisbeeCageDrop } from "../../weapons/f
 import { loadFrisbeeLauncherGltf } from "../../weapons/frisbee/FrisbeeLauncherModel";
 // Real weapon GLBs (same optimized assets as the local viewmodels/menu).
 import spearUrl from "../../assets/lance_opt.glb?url";
+import { instantiateLance } from "../../weapons/LanceModel";
 
 /**
  * How a legacy weapon GLB sits in a remote POTATO character's hand.
@@ -117,7 +118,13 @@ export function loadRemoteWeaponTemplate(id: NetworkWeaponId): Promise<THREE.Gro
     // (attachHexSniper) owns the loading. Never normalized here.
     return Promise.reject(new Error(`No static remote template for ${id}`));
   }
-  cached = new GLTFLoader().loadAsync(att.url).then((gltf) => {
+  // The lance: an own copy of the GLB the FP viewmodel parsed too (one parse
+  // for both — see LanceModel); any other static weapon: its own load.
+  const load =
+    att.url === spearUrl
+      ? instantiateLance().then((scene) => ({ scene }))
+      : new GLTFLoader().loadAsync(att.url);
+  cached = load.then((gltf) => {
     const scene = gltf.scene;
     // Normalize ONCE: uniform target size, centered on the origin.
     const box = new THREE.Box3().setFromObject(scene);

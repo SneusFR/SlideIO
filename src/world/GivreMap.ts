@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
 import { queueMapBvh } from "./MapBvh";
@@ -158,16 +158,28 @@ export class GivreMap {
     return this.colliderDebugGroup;
   }
 
-  /** Loads both GLBs and builds every fixed collider. */
-  static async create(physics: PhysicsWorld): Promise<GivreMap> {
+  private static assets: Promise<[GLTF, GLTF]> | null = null;
+
+  /**
+   * Starts downloading + parsing both GLBs (idempotent): Game.create calls it
+   * before the physics WASM starts, so both run side by side.
+   */
+  static preload(): void {
+    if (GivreMap.assets) return;
     const loader = new GLTFLoader();
+    GivreMap.assets = Promise.all([loader.loadAsync(mapModelUrl), loader.loadAsync(backdropModelUrl)]);
+    GivreMap.assets.catch(() => {}); // reported by create()
+  }
+
+  /** Loads both GLBs (see preload) and builds every fixed collider. */
+  static async create(physics: PhysicsWorld): Promise<GivreMap> {
+    GivreMap.preload();
+    const assets = GivreMap.assets!;
+    GivreMap.assets = null; // the parsed files are not kept past the build
     let map;
     let backdrop;
     try {
-      [map, backdrop] = await Promise.all([
-        loader.loadAsync(mapModelUrl),
-        loader.loadAsync(backdropModelUrl),
-      ]);
+      [map, backdrop] = await assets;
     } catch (err) {
       throw new Error(`GivreMap: failed to load givre_01.glb / givre_01_fond.glb — ${String(err)}`);
     }

@@ -8,7 +8,7 @@ import { LobbyController } from "./network/LobbyController";
 import { MultiplayerClient } from "./network/MultiplayerClient";
 import { loadDisplayName, parseJoinRoomId } from "./network/MultiplayerConfig";
 import { MatchEndController } from "./match/MatchEndController";
-import { warmUpHud } from "./ui/HudWarmup";
+import { measureDisplayFrames, warmUpHud } from "./ui/HudWarmup";
 import { startWeaponIcons } from "./menu/WeaponIconRenderer";
 import { buildMapBvhsWhenIdle, flushMapBvhs } from "./world/MapBvh";
 
@@ -17,7 +17,11 @@ import { buildMapBvhsWhenIdle, flushMapBvhs } from "./world/MapBvh";
  *
  *   page load
  *   → ONE loading phase (physics WASM + map + NavGrid + every weapon GLB
- *     + full GPU shader warm-up — everything gameplay needs)
+ *     + full GPU shader warm-up — everything gameplay needs). Its steps
+ *     overlap instead of waiting for each other: every file is requested at
+ *     its start, the shaders compile in the browser's GPU process while the
+ *     weapons are parsed, the HUD warm-up runs during that compile (where
+ *     the browser compiles in parallel).
  *   → Main Menu revealed: the REAL map renders behind the UI with a slow
  *     cinematic orbit camera (same renderer/scene as gameplay — no
  *     duplicate scene, no second loading later)
@@ -37,16 +41,23 @@ async function main(): Promise<void> {
   const container = document.getElementById("app")!;
   const hud = document.getElementById("hud")!;
   const loading = document.getElementById("menu-loading")!;
+  // The display's frame interval (the HUD warm-up's "drawn" tests rely on
+  // it): measured now, while the loading screen mostly waits on downloads.
+  void measureDisplayFrames();
 
   // ---- ONE loading phase: build + warm EVERYTHING now ----
   // The map, physics, nav grid, every weapon GLB and every shader are
   // ready before the menu appears — CLICK TO PLAY is then instant.
   const game = await Game.create(container);
-  await game.warmUpRendering();
-  // The rare HUD effects (kill medal, combo, vignettes, death card…) are
-  // drawn once, invisibly, before the loading screen goes away: the first
-  // kill / hit / death never pays their first-draw cost in game.
-  await warmUpHud(game.hudWarmupHooks());
+  // GPU warm-up + HUD warm-up: the rare HUD effects (kill medal, combo,
+  // vignettes, death card…) are drawn once, invisibly, before the loading
+  // screen goes away — the first kill / hit / death never pays their
+  // first-draw cost in game. Where the browser compiles shaders in
+  // parallel, the HUD warm-up runs DURING the shader compile (see
+  // Game.warmUpRendering, step 3a), otherwise right after the GPU warm-up.
+  await game.warmUpRendering((gpuBusy) =>
+    warmUpHud(game.hudWarmupHooks(), gpuBusy),
+  );
 
   // ---- Menu overlay over the live game renderer ----
   const sounds = new MenuAudio();

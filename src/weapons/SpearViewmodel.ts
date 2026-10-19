@@ -1,7 +1,6 @@
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { SpearConfig as sc } from "./SpearConfig";
-import spearModelUrl from "../assets/lance_opt.glb?url";
+import { instantiateLance } from "./LanceModel";
 
 type VmMode = "HIDDEN" | "SWEEP" | "RUSH_ALIGN" | "RUSH_LOOP" | "RUSH_END";
 
@@ -62,11 +61,10 @@ export class SpearViewmodel {
   // ------------------------------------------------------------------
 
   private loadModel(): void {
-    const loader = new GLTFLoader();
-    loader.load(
-      spearModelUrl,
-      (gltf) => {
-      const model = gltf.scene;
+    // Own copy of the shared lance (one parse for FP + TP — see LanceModel):
+    // its materials are tuned below without touching the third-person ones.
+    instantiateLance().then(
+      (model) => {
 
       // Detect the shaft axis (longest dimension) and rotate it onto +Y.
       const box = new THREE.Box3().setFromObject(model);
@@ -108,7 +106,6 @@ export class SpearViewmodel {
       this.spear.add(model);
       this.readyResolve();
       },
-      undefined,
       () => this.readyResolve(), // failed load must never hang the warm-up
     );
   }

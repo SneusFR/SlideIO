@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { queueMapBvh } from "./MapBvh";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
@@ -161,12 +161,23 @@ export class YardMap {
     }
   }
 
-  /** Loads the GLB (Meshopt) and builds every fixed collider. */
+  private static asset: Promise<GLTF> | null = null;
+
+  /** Starts downloading + decoding the GLB (idempotent) — see Game.create. */
+  static preload(): void {
+    if (YardMap.asset) return;
+    YardMap.asset = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(mapModelUrl);
+    YardMap.asset.catch(() => {}); // reported by create()
+  }
+
+  /** Loads the GLB (Meshopt — see preload) and builds every fixed collider. */
   static async create(physics: PhysicsWorld): Promise<YardMap> {
-    const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+    YardMap.preload();
+    const asset = YardMap.asset!;
+    YardMap.asset = null; // the parsed file is not kept past the build
     let gltf;
     try {
-      gltf = await loader.loadAsync(mapModelUrl);
+      gltf = await asset;
     } catch (err) {
       throw new Error(
         `YardMap: failed to load/decode yard_01.glb (Meshopt) — ${String(err)}`,

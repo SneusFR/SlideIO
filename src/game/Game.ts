@@ -130,7 +130,7 @@ import { MatchResultsTracker, type MatchResults } from "../../shared/match/Match
 import { MATCH_DURATION_SECONDS } from "../../shared/match/MatchRules";
 import { MatchClockHUD } from "../match/MatchClockHUD";
 import { LeaderboardHUD } from "../ui/LeaderboardHUD";
-import type { HudWarmupHook } from "../ui/HudWarmup";
+import { measureDisplayFrames, type HudWarmupHook } from "../ui/HudWarmup";
 import { NetworkDebugHUD } from "../ui/NetworkDebugHUD";
 import { MultiplayerGameController } from "../network/MultiplayerGameController";
 import type { MultiplayerClient } from "../network/MultiplayerClient";
@@ -166,6 +166,51 @@ import { takePaintGpuMs } from "../ui/paint/PaintLayer";
 import { pinNewPrograms } from "../effects/ProgramPin";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { loadCharacterAsset, stripEnemyOutline } from "../characters/PotatoCharacter";
+
+/**
+ * PERF (loading): every asset the loading phase needs, requested at its very
+ * START (Game.create) instead of when the step that needs it comes up — each
+ * through its module's own cached loader, so a file is still fetched and
+ * parsed exactly once. The GPU warm-up used to wait for them one after the
+ * other: the character + its outfit, then the ball skins, then every
+ * third-person weapon (the 13 MB lance included).
+ */
+function preloadGameAssets(): void {
+  const jobs: Promise<unknown>[] = [
+    loadCharacterAsset(),
+    getAstronautLibrary(),
+    getGoofyBasketSkinLibrary(),
+    loadGoofyBasketGltf(),
+    preloadRemoteWeaponTemplates(),
+  ];
+  // A failure is reported by the step that needs the asset.
+  for (const job of jobs) job.catch(() => {});
+}
+
+/**
+ * PERF (loading): resolves once EVERY program the renderer holds is linked
+ * (KHR_parallel_shader_compile — a status query that never waits for the
+ * compile). One query per 10 ms at most: three remembers a linked program,
+ * so the check stops at the first one still compiling. A program released
+ * meanwhile leaves the list (three's own compileAsync polls per MATERIAL and
+ * stalls for good on a material disposed mid-compile); a lost context links
+ * nothing — the warm frames then go ahead after 20 s, as before.
+ */
+function programsLinked(renderer: THREE.WebGLRenderer, timeoutMs = 20000): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  const linked = (program: THREE.WebGLProgram): boolean => {
+    const isReady = (program as unknown as { isReady?: () => boolean }).isReady;
+    return isReady ? isReady.call(program) === true : true;
+  };
+  return new Promise((resolve) => {
+    const check = (): void => {
+      const pending = (renderer.info.programs ?? []).some((program) => !linked(program));
+      if (!pending || performance.now() > deadline) resolve();
+      else window.setTimeout(check, 10);
+    };
+    check();
+  });
+}
 
 /**
  * Top-level game: rendering, main loop and wiring between subsystems.
@@ -529,6 +574,9 @@ export class Game {
     // PERF (240 Hz): the ~70 texParameteri per frame that only repeat a bone
     // texture's sampler settings never reach the browser's GPU process.
     installTexParamDedupe(this.renderer.getContext() as WebGL2RenderingContext);
+    // PERF (loading): shader logs + link status read back for every program
+    // (four round trips to the GPU process each) only while developing.
+    this.renderer.debug.checkShaderErrors = import.meta.env.DEV;
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
     this.renderer.shadowMap.enabled = true;
@@ -1651,7 +1699,6 @@ export class Game {
   }
 
   static async create(container: HTMLElement): Promise<Game> {
-    const physics = await PhysicsWorld.create();
     // Load the SELECTED map BEFORE the Game constructor: the NavGrid and
     // the spawn system are built from the physics world during
     // construction, so every static collider must exist first. The map id
@@ -1660,6 +1707,14 @@ export class Game {
     // graphics-quality preset).
     const mapId = loadMapSelection();
     const t0 = performance.now();
+    // PERF (loading): the map's GLBs first, then every other asset of the
+    // loading phase, are requested NOW — downloaded and parsed while the
+    // physics WASM starts, instead of one step after the other.
+    if (mapId === MapId.YARD) YardMap.preload();
+    else if (mapId === MapId.GIVRE) GivreMap.preload();
+    else JungleMap.preload();
+    preloadGameAssets();
+    const physics = await PhysicsWorld.create();
     const map =
       mapId === MapId.YARD
         ? await YardMap.create(physics)
@@ -1734,9 +1789,16 @@ export class Game {
    * for that frame. Without this, the FIRST melee swing / throw / weapon
    * reveal compiled shaders mid-fight — a visible freeze.
    */
-  async warmUpRendering(): Promise<void> {
+  async warmUpRendering(alongside?: (gpuBusy: Promise<unknown>) => Promise<void>): Promise<void> {
     if (this.gpuWarmedUp) return;
     this.gpuWarmedUp = true;
+
+    // 0. PERF (loading): every program of what the scenes ALREADY hold (map,
+    // sky, bots, snow, FX pools, FP arms…) goes to the GPU process NOW. It
+    // compiles them while this thread waits for / parses the weapon GLBs and
+    // builds the warm clones below (steps 1-2) — that work used to wait for
+    // the warm frames of step 3, which compiled every program one by one.
+    const earlyCompile = this.precompileScenes();
 
     // 1. Every async weapon asset must be parsed and attached first
     // (viewmodelSystem.ready = the shared FP arms rig; hexSniper.ready
@@ -1889,6 +1951,27 @@ export class Game {
     this.shockwave.update(0.01);
     this.particles.update(0.01);
 
+    // 3a. The programs of the warm objects added above (weapons, corpse,
+    // skins, loot, projectiles, VFX) go to the GPU process too. Where the
+    // browser compiles in parallel (KHR_parallel_shader_compile: Chrome /
+    // Edge on Windows, worker threads of the GPU process) this thread is
+    // free meanwhile: the HUD warm-up (`alongside`, frame-paced, mostly
+    // waiting) runs during the compile instead of after it. Without the
+    // extension the GPU process compiles one program after the other on its
+    // main thread — the HUD warm-up then waits for the warm frames below
+    // (it would only fight the compile for that thread).
+    const compiled = Promise.all([earlyCompile, this.precompileScenes()]);
+    let hud: Promise<void> = Promise.resolve();
+    if (alongside && this.renderer.extensions.has("KHR_parallel_shader_compile")) {
+      hud = alongside(compiled);
+      // The warm frames block this thread: never while the HUD warm-up
+      // measures the display's frame interval.
+      await Promise.all([compiled, measureDisplayFrames(), hud]);
+      alongside = undefined;
+    } else {
+      await compiled;
+    }
+
     // 3. Forced-visible renders: hidden viewmodels (hammer, spear,
     // FP weapon meshes), projectile / impact meshes and
     // pooled VFX meshes all get their programs compiled + textures
@@ -2034,9 +2117,43 @@ export class Game {
       if (order === "paint+wet") this.paintballRifle.fx.detachUnder(root);
     }
     this.particles.update(10);
+    // HUD warm-up after the warm frames when the compile could not run
+    // alongside it (see 3a).
+    if (alongside) await alongside(Promise.resolve());
+    await hud;
 
     // 5. Audio buffers decode in the background (no gesture required).
     void this.gameAudio.preload();
+  }
+
+  /**
+   * PERF (loading): hands the GPU process every program the world scene and
+   * the FP scene need RIGHT NOW (three's compile(): program creation only,
+   * no draw), then resolves once they are all linked (programsLinked; at
+   * once without KHR_parallel_shader_compile — the first draw then waits
+   * for the compile already under way). Same variants as the real frames:
+   * the composer path draws into a LINEAR target (three's "srgb-linear"
+   * variant, no tone mapping), so its target is bound for the call, like
+   * the real passes do. A program whose state differs at draw time (none
+   * expected) is simply compiled by the warm frames, as before.
+   */
+  private precompileScenes(): Promise<void> {
+    const renderer = this.renderer;
+    const previous = renderer.getRenderTarget();
+    renderer.setRenderTarget(this.composer ? this.composer.renderTarget1 : null);
+    try {
+      renderer.compile(this.scene, this.fpsCamera.camera);
+      renderer.compile(this.viewmodelSystem.scene, this.viewmodelSystem.camera);
+    } catch (err) {
+      console.warn("Shader precompile skipped", err);
+      return Promise.resolve();
+    } finally {
+      renderer.setRenderTarget(previous);
+    }
+    // Without the extension nothing tells when a program is linked: the
+    // GPU process works through them, the first draw waits for the rest.
+    if (!renderer.extensions.has("KHR_parallel_shader_compile")) return Promise.resolve();
+    return programsLinked(renderer);
   }
 
   /**

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { queueMapBvh } from "./MapBvh";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
@@ -109,10 +109,21 @@ export class JungleMap {
     }
   }
 
-  /** Loads the GLB (Meshopt) and builds every fixed collider. */
+  private static asset: Promise<GLTF> | null = null;
+
+  /** Starts downloading + decoding the GLB (idempotent) — see Game.create. */
+  static preload(): void {
+    if (JungleMap.asset) return;
+    JungleMap.asset = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(mapModelUrl);
+    JungleMap.asset.catch(() => {}); // reported by create()
+  }
+
+  /** Loads the GLB (Meshopt — see preload) and builds every fixed collider. */
   static async create(physics: PhysicsWorld): Promise<JungleMap> {
-    const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
-    const gltf = await loader.loadAsync(mapModelUrl);
+    JungleMap.preload();
+    const asset = JungleMap.asset!;
+    JungleMap.asset = null; // the parsed file is not kept past the build
+    const gltf = await asset;
     return new JungleMap(physics, gltf.scene);
   }
 
