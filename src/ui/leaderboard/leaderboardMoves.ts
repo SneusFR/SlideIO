@@ -1,18 +1,29 @@
 import { AnimHost } from "./leaderboardAnim";
 import { LbMotion } from "./leaderboardMotion";
-import { Row, cancelRowAnims } from "./leaderboardRows";
+import { NO_SCALE, Row, Scale, cancelRowAnims, displayedScale } from "./leaderboardRows";
 
 const y = (px: number): string => `translateY(${px}px)`;
-
-/** The drawn scale of an element (animations included), so a new shell animation continues from it. */
-function drawnScale(el: Element): { x: number; y: number } {
-  const mtx = new DOMMatrix(getComputedStyle(el).transform);
-  return { x: mtx.a || 1, y: mtx.d || 1 };
-}
 
 function drawnTranslate(el: Element): string {
   const t = getComputedStyle(el).translate;
   return !t || t === "none" ? "0px 0px" : t.includes(" ") ? t : `${t} 0px`;
+}
+
+/**
+ * What the hero / loss recipes continue from: the lateral kick (`translate`
+ * of the row) and the capsule's squash / stretch (transform of the shell), as
+ * DRAWN — read before the update writes anything (see leaderboardRows).
+ */
+export interface DrawnRow {
+  translate: string;
+  shell: Scale;
+}
+
+export function measureDrawn(row: Row): DrawnRow {
+  return {
+    translate: row.lateral || row.entering ? drawnTranslate(row.el) : "0px 0px",
+    shell: row.shellAnim ? displayedScale(row.shell) : NO_SCALE,
+  };
 }
 
 /**
@@ -29,7 +40,7 @@ export class RowMover {
   ) {}
 
   /** Overtake: slight lateral advance, slide, 2-3px overshoot, settle. */
-  hero(row: Row, from: number, top: number, ms: number, lead: boolean): void {
+  hero(row: Row, from: number, top: number, ms: number, lead: boolean, drawn: DrawnRow): void {
     const m = this.motion();
     const dir = Math.sign(top - from) || -1;
     row.move = this.host.play(
@@ -45,12 +56,11 @@ export class RowMover {
       },
     );
     const lat = m.gainLateral;
-    const start = drawnTranslate(row.el);
     row.lateral?.cancel();
     row.lateral = this.host.play(
       row.el,
       [
-        { translate: start, easing: "ease-out" },
+        { translate: drawn.translate, easing: "ease-out" },
         { translate: `${-lat}px 0px`, offset: 0.24 },
         { translate: `${-lat}px 0px`, offset: lead ? 0.7 : 0.66, easing: "ease-in-out" },
         { translate: "0px 0px" },
@@ -60,11 +70,11 @@ export class RowMover {
         row.lateral = null;
       },
     );
-    this.shell(row, ms, m.gainShell);
+    this.shell(row, ms, m.gainShell, drawn.shell);
   }
 
   /** Losing places: a quieter descent, tiny overshoot, no lateral kick, no reward. */
-  loss(row: Row, from: number, top: number): void {
+  loss(row: Row, from: number, top: number, drawn: DrawnRow): void {
     const m = this.motion();
     const dir = Math.sign(top - from) || 1;
     row.move = this.host.play(
@@ -79,7 +89,7 @@ export class RowMover {
         row.move = null;
       },
     );
-    this.shell(row, m.lossMoveMs, m.lossShell);
+    this.shell(row, m.lossMoveMs, m.lossShell, drawn.shell);
   }
 
   /** Plain slide: yielding rows, opponents and reduced motion. */
@@ -97,9 +107,8 @@ export class RowMover {
   }
 
   /** Capsule-only squash & stretch: stretch while travelling, squash on touch-down. */
-  private shell(row: Row, ms: number, amount: number): void {
+  private shell(row: Row, ms: number, amount: number, cur: Scale): void {
     if (amount <= 0) return;
-    const cur = drawnScale(row.shell);
     row.shellAnim?.cancel();
     row.shellAnim = this.host.play(
       row.shell,
@@ -119,13 +128,16 @@ export class RowMover {
   /** A player joined: the capsule fades in from the side, no teleport. */
   enter(row: Row): void {
     const dx = this.isReduced() ? 0 : 10;
-    this.host.play(
+    row.entering = this.host.play(
       row.el,
       [
         { opacity: 0, translate: `${dx}px 0px` },
         { opacity: 1, translate: "0px 0px" },
       ],
       { duration: this.motion().quietMs, easing: "ease-out" },
+      () => {
+        row.entering = null;
+      },
     );
   }
 

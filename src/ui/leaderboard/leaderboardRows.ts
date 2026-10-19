@@ -29,6 +29,8 @@ export interface Row {
   gainSum: number;
   move: Animation | null;
   lateral: Animation | null;
+  /** The join fade-in (it animates `translate` too); never cancelled with the others. */
+  entering: Animation | null;
   shellAnim: Animation | null;
   scoreAnim: Animation | null;
   gainAnim: Animation | null;
@@ -71,6 +73,7 @@ export function createRow(e: LbEntry): Row {
     gainSum: 0,
     move: null,
     lateral: null,
+    entering: null,
     shellAnim: null,
     scoreAnim: null,
     gainAnim: null,
@@ -100,14 +103,48 @@ export function updateRow(row: Row, e: LbEntry, rank: number): void {
   }
 }
 
+/** A drawn 2D scale (animations included). */
+export interface Scale {
+  x: number;
+  y: number;
+}
+
+/** What an element with no transform (and no animation) is drawn at. */
+export const NO_SCALE: Readonly<Scale> = { x: 1, y: 1 };
+
+/*
+ * The DRAWN state is read through computed style (running animations
+ * included). Each read flushes pending style — and layout, for `transform` —
+ * so an update reads everything it needs FIRST, before its first write
+ * (LeaderboardHUD.apply): a read after a write forces a style + layout pass
+ * of the whole page in the middle of the game frame, once per read. And it
+ * reads nothing when nothing animates that value: a row is then drawn at its
+ * slot (inline translateY), a counter / capsule unscaled (no CSS transform).
+ */
+
+/** Where the row is DRAWN (design px): its slot, unless its move is running. */
+export function drawnY(row: Row): number {
+  return row.move ? displayedY(row.el) : row.top;
+}
+
+/** The counter's drawn scale (1 unless it is popping). */
+export function drawnScoreScale(row: Row): Scale {
+  return row.scoreAnim ? displayedScale(row.score) : NO_SCALE;
+}
+
 /** Where the row is DRAWN right now (design px), including any running animation. */
 export function displayedY(el: Element): number {
   return new DOMMatrix(getComputedStyle(el).transform).m42;
 }
 
-function displayedScale(el: Element): { x: number; y: number } {
+export function displayedScale(el: Element): Scale {
   const m = new DOMMatrix(getComputedStyle(el).transform);
   return { x: m.a || 1, y: m.d || 1 };
+}
+
+/** Drawn opacity of the "+N" (0 when it is not animating). */
+export function drawnGainOpacity(row: Row): number {
+  return row.gain && row.gainAnim ? Number(getComputedStyle(row.gain).opacity) || 0 : 0;
 }
 
 export function cancelRowAnims(row: Row): void {
@@ -120,9 +157,11 @@ export function cancelRowAnims(row: Row): void {
   row.gainSum = 0;
 }
 
-/** The counter alone reacts: compression → slight overshoot → back to shape. */
-export function popScore(host: AnimHost, row: Row, m: LbMotion, reduced: boolean): void {
-  const cur = displayedScale(row.score);
+/**
+ * The counter alone reacts: compression → slight overshoot → back to shape,
+ * from `cur`, its drawn scale read before the update wrote anything.
+ */
+export function popScore(host: AnimHost, row: Row, m: LbMotion, reduced: boolean, cur: Readonly<Scale>): void {
   row.scoreAnim?.cancel();
   const clear = (): void => {
     row.scoreAnim = null;
@@ -151,11 +190,13 @@ export function popScore(host: AnimHost, row: Row, m: LbMotion, reduced: boolean
   );
 }
 
-/** "+N" lives INSIDE the row: it follows the row wherever it goes. Rapid points add up. */
-export function showGain(host: AnimHost, row: Row, delta: number, m: LbMotion): void {
+/**
+ * "+N" lives INSIDE the row: it follows the row wherever it goes. Rapid points
+ * add up. `startOpacity`: drawnGainOpacity(row), read before the update wrote.
+ */
+export function showGain(host: AnimHost, row: Row, delta: number, m: LbMotion, startOpacity: number): void {
   const el = row.gain;
   if (!el) return;
-  const startOpacity = row.gainAnim ? Number(getComputedStyle(el).opacity) || 0 : 0;
   row.gainAnim?.cancel();
   row.gainSum += delta;
   el.textContent = `+${row.gainSum}`;

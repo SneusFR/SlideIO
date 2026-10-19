@@ -12,8 +12,20 @@ import {
   sameSnapshot,
 } from "./leaderboard/leaderboardLogic";
 import { LbMotion, NORMAL, REDUCED } from "./leaderboard/leaderboardMotion";
-import { RowMover } from "./leaderboard/leaderboardMoves";
-import { Row, cancelRowAnims, createRow, displayedY, popScore, showGain, updateRow } from "./leaderboard/leaderboardRows";
+import { DrawnRow, RowMover, measureDrawn } from "./leaderboard/leaderboardMoves";
+import {
+  NO_SCALE,
+  Row,
+  Scale,
+  cancelRowAnims,
+  createRow,
+  drawnGainOpacity,
+  drawnScoreScale,
+  drawnY,
+  popScore,
+  showGain,
+  updateRow,
+} from "./leaderboard/leaderboardRows";
 
 /** Width of the reference frame the design was drawn on. */
 const REF_WIDTH = 1816;
@@ -154,10 +166,27 @@ export class LeaderboardHUD {
     const reduced = m === REDUCED;
     const L = diff.localId;
 
-    // 1. Measure what is DRAWN right now (running animations included).
-    const crownFrom = this.crown.measure();
+    const reward = diff.kind === "gain" && L !== null && diff.scoreDeltas.has(L);
+    const lost = diff.kind === "loss";
+
+    // 1. Measure what is DRAWN right now (running animations included):
+    //    EVERY read of the update happens here, before its first write — a
+    //    computed-style / geometry read after a write forces a style + layout
+    //    pass of the whole page mid-frame, once per read (see leaderboardRows).
+    const owner = crownOwner(next);
+    const crownMoves = owner !== this.crown.ownerId;
+    const crownFrom = crownMoves ? this.crown.measure() : null;
     const drawn = new Map<number, number>();
-    for (const [id, row] of this.rows) drawn.set(id, displayedY(row.el));
+    for (const [id, row] of this.rows) drawn.set(id, drawnY(row));
+    // Only my row has the hero / loss recipes.
+    const me = L !== null ? this.rows.get(L) : undefined;
+    const meDrawn: DrawnRow | null = me && (reward || lost) && !reduced ? measureDrawn(me) : null;
+    // Counters about to react (a row created below has nothing drawn yet).
+    const counters = new Map<number, { scale: Scale; gain: number }>();
+    for (const id of diff.scoreDeltas.keys()) {
+      const row = this.rows.get(id);
+      if (row) counters.set(id, { scale: reduced ? NO_SCALE : drawnScoreScale(row), gain: drawnGainOpacity(row) });
+    }
 
     // 2. Players who left fade out where they are drawn.
     const nextIds = new Set(next.map((e) => e.id));
@@ -170,8 +199,6 @@ export class LeaderboardHUD {
     // 3. New slots; contents are written immediately.
     const { tops, height } = layoutSlots(next);
     this.list.style.height = `${height}px`;
-    const reward = diff.kind === "gain" && L !== null && diff.scoreDeltas.has(L);
-    const lost = diff.kind === "loss";
     const passed = new Set(diff.passed);
     const heroMs = (reward && diff.tookLead ? m.leadMoveMs : m.gainMoveMs) + Math.min(60, 20 * Math.max(0, diff.places - 1));
     let landed: Row | null = null;
@@ -202,10 +229,10 @@ export class LeaderboardHUD {
       }
       const isMe = e.id === L;
       if (isMe && reward && !reduced) {
-        this.mover.hero(row, from, top, heroMs, diff.tookLead);
+        this.mover.hero(row, from, top, heroMs, diff.tookLead, meDrawn ?? measureDrawn(row));
         landed = row;
       } else if (isMe && lost && !reduced) {
-        this.mover.loss(row, from, top);
+        this.mover.loss(row, from, top, meDrawn ?? measureDrawn(row));
       } else {
         const ms = isMe && reward ? heroMs : passed.has(e.id) || isMe ? m.yieldMs : m.quietMs;
         this.mover.slide(row, from, top, ms);
@@ -216,13 +243,13 @@ export class LeaderboardHUD {
     for (const [id, delta] of diff.scoreDeltas) {
       const row = this.rows.get(id);
       if (!row) continue;
-      popScore(this.host, row, m, reduced);
-      if (row.isLocal) showGain(this.host, row, delta, m);
+      const c = counters.get(id);
+      popScore(this.host, row, m, reduced, c?.scale ?? NO_SCALE);
+      if (row.isLocal) showGain(this.host, row, delta, m, c?.gain ?? 0);
     }
 
     // 5. The single crown.
-    const owner = crownOwner(next);
-    if (owner !== this.crown.ownerId) {
+    if (crownMoves) {
       const kind: CrownMove = reward && diff.tookLead ? "lead-gain" : lost && diff.lostLead ? "lead-loss" : "none";
       this.crown.move(owner === null ? null : (this.rows.get(owner) ?? null), this.rows.values(), crownFrom, kind, m, this.scale);
     }
