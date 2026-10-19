@@ -38,6 +38,18 @@ export interface BotContext {
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
+/** Seconds between two checks of the prepared corpse clone (Bot.update). */
+const CORPSE_SPARE_RECHECK = 1.0;
+
+/**
+ * First corpse-clone preparation of a life: shortly after the respawn
+ * (weapon attached), staggered per bot, and before the spawn protection
+ * (CombatConfig.spawnProtectionDuration) ends — a bot cannot die before.
+ */
+function corpseSpareDelay(id: number): number {
+  return 0.2 + (id % 8) * 0.05;
+}
+
 /**
  * A full FFA combatant: kinematic capsule + character controller,
  * simplified quake-style movement (run/jump/slide/dash), a RANDOM primary
@@ -71,6 +83,8 @@ export class Bot implements Combatant, BotShooter {
   /** Fraction of intended horizontal movement that was blocked last frame. */
   blockedAmount = 0;
   respawnTimer = 0;
+  /** Next check of the prepared corpse clone (see update). */
+  private corpseSpareTimer: number;
   /**
    * False once the bot is REMOVED from the match (Escape-menu bot count):
    * every bot AI drops it at once (BotAI), like the burrowed player.
@@ -182,6 +196,7 @@ export class Bot implements Combatant, BotShooter {
     this.controller.setSlideEnabled(true);
 
     this.model = new BotModel(id, modelEnv);
+    this.corpseSpareTimer = corpseSpareDelay(id);
     this.model.group.position.copy(spawn.pos);
     this.model.group.userData.combatant = this;
     scene.add(this.model.group);
@@ -458,6 +473,7 @@ export class Bot implements Combatant, BotShooter {
     this.health.reset(cc.spawnProtectionDuration);
     this.model.group.visible = true;
     this.ai.reset(spawn.yaw);
+    this.corpseSpareTimer = corpseSpareDelay(this.id);
   }
 
   // ---- Frame update (AI + movement, before physics.step) ----
@@ -477,6 +493,15 @@ export class Bot implements Combatant, BotShooter {
       this.respawnTimer -= dt;
       if (this.respawnTimer <= 0) this.respawn(ctx);
       return;
+    }
+
+    // PERF: the corpse clone is built on a calm frame of this life (bots
+    // staggered), never in the kill frame — then only re-checked (cheap) in
+    // case the body changed shape (BotModel.prepareCorpseVisual).
+    this.corpseSpareTimer -= dt;
+    if (this.corpseSpareTimer <= 0) {
+      this.corpseSpareTimer = CORPSE_SPARE_RECHECK;
+      this.model.prepareCorpseVisual();
     }
 
     // RAGDOLLED: no AI, no locomotion — the physics owns the body. The

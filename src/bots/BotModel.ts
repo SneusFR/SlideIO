@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { EnemyHealthBars, type EnemyHealthBarSlot } from "./EnemyHealthBars";
 import { skipFreshMatrixUpdate } from "../effects/matrixFresh";
-import { adoptSkinnedBounds } from "../effects/skinnedBounds";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { CorpseCloneSpare, cloneCorpseModel } from "../ragdoll/CorpseCloneSpare";
 import { MovementConfig as mc } from "../player/MovementConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import { HitZone } from "../combat/HitZone";
@@ -14,7 +14,6 @@ import { RemoteWeaponController } from "../network/remote/RemoteWeaponController
 import type { FrisbeeCageDrop } from "../weapons/frisbee/FrisbeeLauncherController";
 import {
   loadCharacterAsset,
-  stripEnemyOutline,
   shareOutlineSkeletons,
   FEET_OFFSET,
   MODEL_TOP,
@@ -154,6 +153,8 @@ export class BotModel {
 
   /** Skinned character clone (null until the shared asset resolves). */
   private model: THREE.Object3D | null = null;
+  /** Corpse clone built ahead of the kill frame (see prepareCorpseVisual). */
+  private readonly corpseSpare = new CorpseCloneSpare();
   private anim: RemotePlayerAnimationController | null = null;
   /** Red contour hull meshes of THIS clone (visibility follows setSeen). */
   private readonly outlineMeshes: THREE.Object3D[] = [];
@@ -533,20 +534,25 @@ export class BotModel {
     corpse.quaternion.copy(this.group.quaternion);
     corpse.scale.copy(this.group.scale);
     if (this.model) {
-      const clone = skeletonClone(this.model);
-      // A dead body is no longer a threat: the red enemy contour dies
-      // with it (also keeps the shared outline material out of the
-      // CorpseManager's fade clones).
-      stripEnemyOutline(clone);
-      shareOutlineSkeletons(clone); // one skeleton for the whole corpse
-      // PERF: a skinned piece the living bot never drew (weapon picked up
-      // at the respawn, off screen until death) has no sphere yet — the
-      // corpse's first frame would CPU-skin it in full (adoptSkinnedBounds).
-      adoptSkinnedBounds(clone);
+      // PERF: the clone prepared on a calm frame, brought to the current
+      // pose/materials — the same object cloneCorpseModel would build now.
+      // The full clone only when the body changed shape since (or none yet).
+      const clone = this.corpseSpare.take(this.model) ?? cloneCorpseModel(this.model);
       corpse.add(clone);
       corpse.updateMatrixWorld(true);
     }
     return corpse;
+  }
+
+  /**
+   * PERF — build the corpse clone NOW, outside the kill frame (Bot calls
+   * this on calm frames of each life). A spare that no longer matches the
+   * body (weapon or outfit changed since) is rebuilt; a matching one is
+   * kept (cheap check). See CorpseCloneSpare.
+   */
+  prepareCorpseVisual(): void {
+    if (!this.model || this.corpseSpare.matches(this.model)) return;
+    this.corpseSpare.prepare(this.model);
   }
 
   /**
