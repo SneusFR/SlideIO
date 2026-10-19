@@ -24,6 +24,7 @@ function fakeEl(): Record<string, unknown> {
     classList: {
       add: (c: string) => { domLog.push(`add ${c}`); },
       remove: (...c: string[]) => { domLog.push(`remove ${c.join(",")}`); },
+      toggle: (c: string) => { domLog.push(`toggle ${c}`); },
     },
     appendChild(c: unknown) { (el.children as unknown[]).push(c); },
     getContext: () => new Proxy({}, { get: () => () => {}, set: () => true }),
@@ -138,12 +139,17 @@ try {
     assert.deepEqual(a.shows.map((s) => s.dur), zones.map((z) => (z === HitZone.HEAD ? HFC.paintballHeadHitmarkerDuration : HFC.paintballBodyHitmarkerDuration)));
   });
 
-  await test("hitmarker HUD: every pulse restarts the CSS animation (remove, reflow, add) with the short tick; other weapons get the default lifetime back", () => {
+  await test("hitmarker HUD: every pulse restarts the CSS animation (state class + twin swap, once per frame, no reflow) with the short tick; other weapons get the default lifetime back", async () => {
     const hud = new HitmarkerHUD();
     domLog.length = 0;
-    for (let i = 0; i < 10; i++) hud.show(HitZone.BODY, HFC.paintballBodyHitmarkerDuration);
-    const restarts = domLog.join("|").split("remove hm-body,hm-head,hm-kill|reflow|add hm-body").length - 1;
-    assert.equal(restarts, 10, "10 clean restarts (remove, reflow, add)");
+    for (let i = 0; i < 10; i++) {
+      hud.show(HitZone.BODY, HFC.paintballBodyHitmarkerDuration);
+      hud.flush(); // the game flushes the HUD pulses once per frame, after the hits
+      await new Promise((r) => setTimeout(r, 2)); // next frame
+    }
+    const restarts = domLog.join("|").split("remove hm-body,hm-head,hm-kill|add hm-body|toggle hm-alt").length - 1;
+    assert.equal(restarts, 10, "10 clean restarts, one per frame (state class + animation twin swap)");
+    assert.ok(!domLog.includes("reflow"), "no forced reflow (offsetWidth never read)");
     assert.ok(domLog.includes(`var --hm-body-dur=${HFC.paintballBodyHitmarkerDuration}s`), "short tick lifetime applied");
     domLog.length = 0;
     hud.show(HitZone.BODY);

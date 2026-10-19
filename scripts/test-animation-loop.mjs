@@ -227,7 +227,8 @@ try {
       if (i > 0) hud.update(1 / 120, movement);
     }
     assert.match(debugElement.textContent, /120 unique\/s \/ 120 calls\/s \(dup 0\)/);
-    assert.match(debugElement.textContent, /FPS:\s+120\n/);
+    // FPS of the half-second window / refresh rate the browser paces rAF at.
+    assert.match(debugElement.textContent, /FPS:\s+120 \/ 120 Hz\n/);
     assert.ok(hud.sampleAnimationFrame(10000), "return from a suspended tab is accepted");
     console.log("PASS HUD duplicate detection, boundary, reset and genuine 120 Hz");
   }

@@ -121,9 +121,12 @@ export function takePaintGpuMs(): number | null {
 }
 
 // Window resize / zoom / DPR change: every plate re-measures its on-screen size.
-window.addEventListener("resize", () => {
-  for (const layer of layers) layer.remeasure();
-});
+// (No window in the headless test scripts that import the game modules.)
+if (typeof window !== "undefined") {
+  window.addEventListener("resize", () => {
+    for (const layer of layers) layer.remeasure();
+  });
+}
 
 export class PaintLayer {
   /** The 2D canvas of the plate (shown unless the GL canvas stands in for it). */

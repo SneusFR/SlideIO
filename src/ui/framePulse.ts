@@ -21,13 +21,19 @@
 
 /** Timestamp of the frame being prepared — identical for every callback of one frame. */
 export function frameStamp(): number {
-  const t = document.timeline?.currentTime;
+  const t = typeof document !== "undefined" ? document.timeline?.currentTime : undefined;
   return typeof t === "number" ? t : performance.now();
 }
 
+/** requestAnimationFrame — a ~60 Hz timer in the headless test scripts (Node has none). */
+const nextFrame: (cb: () => void) => void =
+  typeof requestAnimationFrame === "function"
+    ? (cb) => requestAnimationFrame(cb)
+    : (cb) => setTimeout(cb, 16);
+
 export class FramePulse {
   private pending = false;
-  private raf = 0;
+  private scheduled = false;
   private lastFrame = Number.NaN;
 
   /** `apply(restart)`: write the requested state; swap the twin only when `restart`. */
@@ -36,7 +42,10 @@ export class FramePulse {
   /** Ask for a restart (applied by the next flush — this frame or the next one). */
   request(): void {
     this.pending = true;
-    if (!this.raf) this.raf = requestAnimationFrame(this.onFrame);
+    if (!this.scheduled) {
+      this.scheduled = true;
+      nextFrame(this.onFrame);
+    }
   }
 
   /** Apply the pending request now (call from inside the game frame). */
@@ -50,7 +59,7 @@ export class FramePulse {
   }
 
   private readonly onFrame = (): void => {
-    this.raf = 0;
+    this.scheduled = false;
     this.flush();
   };
 }

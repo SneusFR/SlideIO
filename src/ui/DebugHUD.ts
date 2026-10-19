@@ -170,6 +170,9 @@ export class DebugHUD {
       this.postCount++;
       if (ms > this.postWorst) this.postWorst = ms;
     };
+    // Node (headless test scripts): a listening port would keep the process
+    // alive once the tests are done. No such method in browsers.
+    (this.frameEnd.port1 as unknown as { unref?: () => void }).unref?.();
     try {
       new PerformanceObserver((list) => {
         for (const e of list.getEntries()) this.loaf.push(e as unknown as LoafEntry);
