@@ -10,6 +10,7 @@ import { prepareStraightFireClips } from "./PopcornStraightFire";
 import { PopcornShotgunController, type PopcornShotgunEvents } from "./PopcornShotgunController";
 import { PopcornProjectiles } from "./PopcornProjectiles";
 import { loadPopcornShotgunGltf } from "./PopcornShotgunModel";
+import { splitTwoPassTransparents } from "../../effects/TwoPassTransparentSplit";
 import {
   PopcornShotgunConfig as P,
   popcornAimDirection,
@@ -151,23 +152,37 @@ export class PopcornShotgunWeapon {
    * FP-pass materials: private clones so FP-only state never leaks to the
    * remote TP instances sharing the GLB (the enemy-outline stencil marking
    * is dropped here — the FP pass has no outline). Glass stays transparent.
+   *
+   * PERF (FP pass, every frame): three.js picks a material's program per
+   * object kind — a material drawn both by plain meshes (body, pump…) and by
+   * the tank's instanced popcorns re-selected its program twice per frame
+   * (instancing on / off). Instanced meshes get their own clone (same
+   * properties → the same two programs, no switch). The double-sided glass
+   * becomes two fixed-side passes (see TwoPassTransparentSplit): same
+   * blending order, no program re-selection.
    */
   private prepareViewmodelMaterials(root: THREE.Object3D): void {
     const cloned = new Map<THREE.Material, THREE.Material>();
-    const fpClone = (mat: THREE.Material): THREE.Material => {
-      let copy = cloned.get(mat);
+    const clonedInstanced = new Map<THREE.Material, THREE.Material>();
+    const fpClone = (mat: THREE.Material, instanced: boolean): THREE.Material => {
+      const cache = instanced ? clonedInstanced : cloned;
+      let copy = cache.get(mat);
       if (!copy) {
         copy = mat.clone();
         copy.stencilWrite = false;
-        cloned.set(mat, copy);
+        cache.set(mat, copy);
       }
       return copy;
     };
     root.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
       if (!mesh.isMesh) return;
-      mesh.material = Array.isArray(mesh.material) ? mesh.material.map(fpClone) : fpClone(mesh.material);
+      const instanced = (mesh as THREE.InstancedMesh).isInstancedMesh === true;
+      mesh.material = Array.isArray(mesh.material)
+        ? mesh.material.map((m) => fpClone(m, instanced))
+        : fpClone(mesh.material, instanced);
     });
+    splitTwoPassTransparents(root);
   }
 
   // ------------------------------------------------------------------
