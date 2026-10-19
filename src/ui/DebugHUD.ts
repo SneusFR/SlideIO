@@ -48,6 +48,9 @@ interface LoafEntry {
  */
 export class DebugHUD {
   private el: HTMLElement;
+  /** Panel lines (see setText) and the text they show. */
+  private readonly lineNodes: Text[] = [];
+  private shownText = "";
   /** RAW frame-time samples (seconds) since the last stats refresh. */
   private readonly samples: number[] = [];
   private fps = 0;
@@ -368,7 +371,7 @@ export class DebugHUD {
 
     const v = movement.velocity;
     const pd = movement.phaseDebug;
-    this.el.textContent =
+    this.setText(
       `Speed:    ${movement.horizontalSpeed.toFixed(1)}\n` +
       `Grounded: ${movement.grounded}\n` +
       `State:    ${movement.state}\n` +
@@ -391,7 +394,41 @@ export class DebugHUD {
       `Grace:    ${movement.phaseGraceActive ? "ACTIVE" : "INACTIVE"}\n` +
       `Phase Wall: ${pd.wallPhaseable ? "TRUE" : "FALSE"}\n` +
       `Exit Clear: ${pd.exitClear ? "TRUE" : "FALSE"}\n` +
-      `Wall Thickness: ${pd.wallThickness.toFixed(1)}`;
+      `Wall Thickness: ${pd.wallThickness.toFixed(1)}`,
+    );
+  }
+
+  /**
+   * Panel text, one Text node per line (the same inline content as a single
+   * node: identical rendering). Only the lines that changed are written, and
+   * nothing at all — no style, layout, paint or raster — when the text is the
+   * same: standing still, the panel changes about twice a second (the frame
+   * stats, every 0.5 s) instead of being rewritten 15 times. (A refresh that
+   * does change a line still lays the whole panel out.)
+   */
+  private setText(text: string): void {
+    if (text === this.shownText) return;
+    this.shownText = text;
+    const nodes = this.lineNodes;
+    if (nodes.length === 0) this.el.textContent = "";
+    let start = 0;
+    let i = 0;
+    for (;;) {
+      const nl = text.indexOf("\n", start);
+      const line = nl < 0 ? text.slice(start) : text.slice(start, nl + 1);
+      const node = nodes[i];
+      if (!node) {
+        const created = document.createTextNode(line);
+        nodes.push(created);
+        this.el.appendChild(created);
+      } else if (node.data !== line) {
+        node.data = line;
+      }
+      i++;
+      if (nl < 0) break;
+      start = nl + 1;
+    }
+    while (nodes.length > i) nodes.pop()!.remove();
   }
 
   /**

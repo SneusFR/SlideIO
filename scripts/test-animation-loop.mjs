@@ -26,10 +26,30 @@ function restoreGlobal(name, descriptor) {
 }
 
 try {
-  const debugElement = { textContent: "" };
+  // The debug panel writes its text line by line (one Text node per line):
+  // the stub keeps child text nodes and reads them back like the DOM does.
+  const textNode = (parent, data) => ({
+    data,
+    parent,
+    remove() {
+      if (this.parent) this.parent.nodes.splice(this.parent.nodes.indexOf(this), 1);
+      this.parent = null;
+    },
+  });
+  const debugElement = {
+    nodes: [],
+    get textContent() { return this.nodes.map((n) => n.data).join(""); },
+    set textContent(v) { this.nodes = v ? [textNode(this, String(v))] : []; },
+    appendChild(n) { n.parent = this; this.nodes.push(n); return n; },
+  };
   // Some HUD modules register document listeners at import time (PaintLayer
   // visibilitychange): the stub must exist BEFORE Game.ts is evaluated.
-  globalThis.document = { getElementById: () => debugElement, addEventListener() {}, hidden: false };
+  globalThis.document = {
+    getElementById: () => debugElement,
+    createTextNode: (data) => textNode(null, data),
+    addEventListener() {},
+    hidden: false,
+  };
   const { Game } = await server.ssrLoadModule("/src/game/Game.ts");
   const { DebugHUD } = await server.ssrLoadModule("/src/ui/DebugHUD.ts");
 
