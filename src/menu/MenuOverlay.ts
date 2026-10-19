@@ -47,6 +47,14 @@ import {
 } from "../game/GivreSnowSettings";
 import type { GivreSnowLevel } from "../world/GivreSnow";
 
+/** Ping dot colour classes (exactly one is set). */
+const PING_TIERS = ["good", "ok", "bad", "off"] as const;
+
+/** textContent write only when it changes (a rewrite re-lays out / repaints). */
+function setTextIfChanged(el: HTMLElement, text: string): void {
+  if (el.textContent !== text) el.textContent = text;
+}
+
 /**
  * MenuOverlay — the new Beanzo.io main menu: a pure DOM overlay rendered
  * ON TOP of the live game renderer (the map preview runs behind it).
@@ -89,7 +97,9 @@ export class MenuOverlay {
 
   private readonly root: HTMLElement;
   private readonly adSlot: AdSlot;
+  /** Live ping + lobby refresh timer — running only while the menu shows. */
   private pingTimer: number | null = null;
+  private disposed = false;
   private settingsOpen = false;
   private readonly cleanups: (() => void)[] = [];
 
@@ -132,9 +142,7 @@ export class MenuOverlay {
     this.wireClickToPlay();
 
     // ---- Live ping + lobby state (5 s, cheap) ----
-    const tick = () => void this.refreshLive();
-    void this.refreshLive();
-    this.pingTimer = window.setInterval(tick, 5000);
+    this.startLive();
   }
 
   // ------------------------------------------------------------- wiring
@@ -528,6 +536,24 @@ export class MenuOverlay {
 
   // ------------------------------------------------------- live status
 
+  /**
+   * Live refresh (ping + lobby) every 5 s — only while the menu is on screen.
+   * Hidden in game, it kept probing the server over HTTP and rewriting the
+   * ping / lobby text every 5 s: style + layout passes of an invisible menu,
+   * for nothing. Shown again → refreshed at once.
+   */
+  private startLive(): void {
+    if (this.pingTimer !== null || this.disposed) return;
+    this.pingTimer = window.setInterval(() => void this.refreshLive(), 5000);
+    void this.refreshLive();
+  }
+
+  private stopLive(): void {
+    if (this.pingTimer === null) return;
+    window.clearInterval(this.pingTimer);
+    this.pingTimer = null;
+  }
+
   /** Ping + lobby occupancy refresh (connected RTT or HTTP probe). */
   private async refreshLive(): Promise<void> {
     let ping: number | null = null;
@@ -536,17 +562,15 @@ export class MenuOverlay {
     } else {
       ping = await this.client.probeLatency();
     }
-    if (this.pingTimer === null) return; // disposed while probing
+    if (this.pingTimer === null) return; // hidden / disposed while probing
 
     const valueEl = document.getElementById("menu-ping-value");
     const dotEl = document.getElementById("menu-ping-dot");
-    if (valueEl) valueEl.textContent = ping !== null ? `${ping} ms` : "— ms";
+    if (valueEl) setTextIfChanged(valueEl, ping !== null ? `${ping} ms` : "— ms");
     if (dotEl) {
-      dotEl.classList.remove("good", "ok", "bad", "off");
-      if (ping === null) dotEl.classList.add("off");
-      else if (ping < 60) dotEl.classList.add("good");
-      else if (ping < 120) dotEl.classList.add("ok");
-      else dotEl.classList.add("bad");
+      const tier = ping === null ? "off" : ping < 60 ? "good" : ping < 120 ? "ok" : "bad";
+      // toggle(force) leaves the attribute alone when already in that state.
+      for (const t of PING_TIERS) dotEl.classList.toggle(t, t === tier);
     }
     this.renderLobbyState();
   }
@@ -558,16 +582,18 @@ export class MenuOverlay {
     if (!lobbyEl) return;
     if (this.client.isConnected && this.client.roomId) {
       const players = this.client.getPlayers().length;
-      lobbyEl.textContent = `${this.client.roomId} · ${players} in`;
+      setTextIfChanged(lobbyEl, `${this.client.roomId} · ${players} in`);
       if (subEl) {
-        subEl.textContent =
+        setTextIfChanged(
+          subEl,
           this.client.phase === "PLAYING"
             ? "Match in progress — go go go!"
-            : "Waiting in lobby — host starts the match!";
+            : "Waiting in lobby — host starts the match!",
+        );
       }
     } else {
-      lobbyEl.textContent = "SOLO · VS BOTS";
-      if (subEl) subEl.textContent = "Every bean for themselves!";
+      setTextIfChanged(lobbyEl, "SOLO · VS BOTS");
+      if (subEl) setTextIfChanged(subEl, "Every bean for themselves!");
     }
   }
 
@@ -575,11 +601,13 @@ export class MenuOverlay {
 
   reveal(): void {
     this.root.classList.remove("menu-hidden");
+    this.startLive();
   }
 
   /** Show the menu again (Escape pause / return to menu). */
   show(): void {
     this.root.classList.remove("menu-hidden", "menu-fade-out");
+    this.startLive();
   }
 
   /** Hide the menu completely (opacity fade → visibility off). */
@@ -587,6 +615,7 @@ export class MenuOverlay {
     this.root.classList.remove("menu-fade-out");
     this.root.classList.add("menu-hidden");
     this.toggleSettings(false);
+    this.stopLive();
   }
 
   /** Fade the whole UI out (CLICK TO PLAY transition). */
@@ -632,10 +661,8 @@ export class MenuOverlay {
   }
 
   dispose(): void {
-    if (this.pingTimer !== null) {
-      window.clearInterval(this.pingTimer);
-      this.pingTimer = null;
-    }
+    this.disposed = true;
+    this.stopLive();
     for (const c of this.cleanups) c();
     this.cleanups.length = 0;
     this.adSlot.dispose();
