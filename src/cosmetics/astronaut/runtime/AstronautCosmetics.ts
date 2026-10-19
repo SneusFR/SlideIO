@@ -145,15 +145,32 @@ function readManifest(value: unknown): MaskManifest {
   return data;
 }
 
+/**
+ * PERF: the SHA-256 of a body geometry already found identical to a signature
+ * is not recomputed while its position / index data stay the same (same
+ * attribute + array objects, same versions). Every outfit application used
+ * to hash the whole body twice (tens of ms each: loading warm-up clones,
+ * menu preview, FP sleeves on every resume, remote avatars).
+ */
+const verifiedSources = new WeakMap<THREE.BufferGeometry, Map<SourceSignature, readonly unknown[]>>();
+
 function validateGeometry(geometry: THREE.BufferGeometry, signature: SourceSignature): void {
   const position = geometry.getAttribute('position');
   const index = geometry.index;
+  const stamp = position && index ? [position, position.array, (position as THREE.BufferAttribute).version, index, index.array, index.version] : null;
+  const known = stamp ? verifiedSources.get(geometry)?.get(signature) : undefined;
+  const unchanged = !!stamp && !!known && known.every((v, i) => v === stamp[i]);
   if (!position || !index || !(position instanceof THREE.BufferAttribute)
     || position.count !== signature.positionCount || position.itemSize !== 3
     || index.count !== signature.indexCount
-    || sha256(position.array) !== signature.positionSha256.toLowerCase()
-    || sha256(index.array) !== signature.indexSha256.toLowerCase()) {
+    || (!unchanged && (sha256(position.array) !== signature.positionSha256.toLowerCase()
+      || sha256(index.array) !== signature.indexSha256.toLowerCase()))) {
     throw new Error(`Astronaut: ${signature.meshName} geometry differs from the approved source; mask application cancelled.`);
+  }
+  if (stamp && !unchanged) {
+    let bySignature = verifiedSources.get(geometry);
+    if (!bySignature) verifiedSources.set(geometry, (bySignature = new Map()));
+    bySignature.set(signature, stamp);
   }
   if (geometry.drawRange.start !== 0 || (geometry.drawRange.count !== Infinity && geometry.drawRange.count !== index.count)) {
     throw new Error('Astronaut: a custom body drawRange requires a compatible mask contract.');

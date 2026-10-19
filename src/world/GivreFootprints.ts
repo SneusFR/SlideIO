@@ -79,19 +79,39 @@ export class GivreSnowGrid {
     meshes: readonly THREE.Mesh[],
     private readonly cell = 2,
   ) {
-    const coords: number[] = [];
-    const v = new THREE.Vector3();
+    // PERF (loading): straight into the float array (no JS array of every
+    // coordinate), same values: Vector3.applyMatrix4 then float32 storage.
+    let corners = 0;
+    for (const mesh of meshes) {
+      const index = mesh.geometry.getIndex();
+      corners += index ? index.count : mesh.geometry.getAttribute("position").count;
+    }
+    const t = new Float32Array(corners * 3);
+    let w = 0;
     for (const mesh of meshes) {
       mesh.updateWorldMatrix(true, false);
       const pos = mesh.geometry.getAttribute("position");
       const index = mesh.geometry.getIndex();
       const n = index ? index.count : pos.count;
+      const e = mesh.matrixWorld.elements;
+      // Plain float positions / index: read the arrays directly (getX would
+      // give the same numbers, one call per coordinate).
+      const plain =
+        !(pos as THREE.InterleavedBufferAttribute).isInterleavedBufferAttribute && !pos.normalized;
+      const pa = pos.array as ArrayLike<number>;
+      const stride = pos.itemSize;
+      const ia = index ? (index.array as ArrayLike<number>) : null;
       for (let i = 0; i < n; i++) {
-        v.fromBufferAttribute(pos, index ? index.getX(i) : i).applyMatrix4(mesh.matrixWorld);
-        coords.push(v.x, v.y, v.z);
+        const vi = ia ? ia[i] : i;
+        const x = plain ? pa[vi * stride] : pos.getX(vi);
+        const y = plain ? pa[vi * stride + 1] : pos.getY(vi);
+        const z = plain ? pa[vi * stride + 2] : pos.getZ(vi);
+        const iw = 1 / (e[3] * x + e[7] * y + e[11] * z + e[15]);
+        t[w++] = (e[0] * x + e[4] * y + e[8] * z + e[12]) * iw;
+        t[w++] = (e[1] * x + e[5] * y + e[9] * z + e[13]) * iw;
+        t[w++] = (e[2] * x + e[6] * y + e[10] * z + e[14]) * iw;
       }
     }
-    const t = new Float32Array(coords);
     const count = t.length / 9;
     let minX = Infinity;
     let minZ = Infinity;
@@ -113,20 +133,28 @@ export class GivreSnowGrid {
     this.nx = Math.max(1, Math.ceil((maxX - minX) / cell));
     this.nz = Math.max(1, Math.ceil((maxZ - minZ) / cell));
     const cells = this.nx * this.nz;
-    const visit = (k: number, fn: (c: number) => void) => {
+    // Cell range of every triangle (its XZ bounding box), computed once.
+    const range = new Int32Array(count * 4);
+    for (let k = 0; k < count; k++) {
       const o = k * 9;
-      const i0 = this.ix(Math.min(t[o], t[o + 3], t[o + 6]));
-      const i1 = this.ix(Math.max(t[o], t[o + 3], t[o + 6]));
-      const j0 = this.iz(Math.min(t[o + 2], t[o + 5], t[o + 8]));
-      const j1 = this.iz(Math.max(t[o + 2], t[o + 5], t[o + 8]));
-      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) fn(j * this.nx + i);
-    };
+      range[k * 4] = this.ix(Math.min(t[o], t[o + 3], t[o + 6]));
+      range[k * 4 + 1] = this.ix(Math.max(t[o], t[o + 3], t[o + 6]));
+      range[k * 4 + 2] = this.iz(Math.min(t[o + 2], t[o + 5], t[o + 8]));
+      range[k * 4 + 3] = this.iz(Math.max(t[o + 2], t[o + 5], t[o + 8]));
+    }
+    const nx = this.nx;
     const start = new Uint32Array(cells + 1);
-    for (let k = 0; k < count; k++) visit(k, (c) => start[c + 1]++);
+    for (let k = 0; k < count; k++) {
+      const i0 = range[k * 4], i1 = range[k * 4 + 1], j0 = range[k * 4 + 2], j1 = range[k * 4 + 3];
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) start[j * nx + i + 1]++;
+    }
     for (let c = 0; c < cells; c++) start[c + 1] += start[c];
     const items = new Uint32Array(start[cells]);
     const fill = start.slice(0, cells);
-    for (let k = 0; k < count; k++) visit(k, (c) => (items[fill[c]++] = k));
+    for (let k = 0; k < count; k++) {
+      const i0 = range[k * 4], i1 = range[k * 4 + 1], j0 = range[k * 4 + 2], j1 = range[k * 4 + 3];
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) items[fill[j * nx + i]++] = k;
+    }
     this.start = start;
     this.items = items;
   }

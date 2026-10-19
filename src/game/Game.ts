@@ -158,6 +158,8 @@ import type {
 import { getQualitySettings, webglRendererName } from "./GraphicsQuality";
 import { noteFrameEvent } from "../ui/frameEvents";
 import { installTexParamDedupe } from "../effects/TexParamDedupe";
+// Bit-identical, faster skinned bounding boxes / spheres (loading: character template).
+import "../effects/FastSkinnedBounds";
 import { GpuTimer, timeDraws, timePasses } from "../ui/GpuTimer";
 import { takePaintGpuMs } from "../ui/paint/PaintLayer";
 import { pinNewPrograms } from "../effects/ProgramPin";

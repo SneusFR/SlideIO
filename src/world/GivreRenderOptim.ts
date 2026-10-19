@@ -93,19 +93,9 @@ export function isClosedOutward(geometry: THREE.BufferGeometry, weldEpsilon = 1e
   const n = index ? index.count : pos.count;
   if (n < 12) return false; // a closed solid needs at least 4 triangles
 
-  const inv = 1 / weldEpsilon;
-  const weld = new Map<string, number>();
-  const ids = new Int32Array(pos.count);
-  for (let v = 0; v < pos.count; v++) {
-    const key = `${Math.round(pos.getX(v) * inv)}_${Math.round(pos.getY(v) * inv)}_${Math.round(pos.getZ(v) * inv)}`;
-    let id = weld.get(key);
-    if (id === undefined) {
-      id = weld.size;
-      weld.set(key, id);
-    }
-    ids[v] = id;
-  }
-  const count = weld.size;
+  const ids = weldPositions(pos, 1 / weldEpsilon);
+  let count = 0;
+  for (let v = 0; v < ids.length; v++) if (ids[v] >= count) count = ids[v] + 1;
 
   const directed = new Set<number>();
   const a = new THREE.Vector3();
@@ -137,6 +127,50 @@ export function isClosedOutward(geometry: THREE.BufferGeometry, weldEpsilon = 1e
   return volume6 > 0;
 }
 
+/**
+ * Weld ids of the positions (same rounded grid key as a `${x}_${y}_${z}`
+ * string map, ids in order of first appearance) — PERF: an open-addressing
+ * table on the three rounded integers instead of one string per vertex.
+ */
+function weldPositions(pos: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, inv: number): Int32Array {
+  const n = pos.count;
+  const ids = new Int32Array(n);
+  let cap = 16;
+  while (cap < n * 2) cap <<= 1;
+  const mask = cap - 1;
+  const slotId = new Int32Array(cap).fill(-1);
+  const keys = new Float64Array(n * 3); // rounded grid coordinates per id
+  let next = 0;
+  for (let v = 0; v < n; v++) {
+    const kx = Math.round(pos.getX(v) * inv);
+    const ky = Math.round(pos.getY(v) * inv);
+    const kz = Math.round(pos.getZ(v) * inv);
+    let h = (Math.imul(kx | 0, 0x9e3779b1) ^ Math.imul(ky | 0, 0x85ebca77) ^ Math.imul(kz | 0, 0xc2b2ae3d)) & mask;
+    for (;;) {
+      const id = slotId[h];
+      if (id < 0) {
+        slotId[h] = next;
+        keys[next * 3] = kx;
+        keys[next * 3 + 1] = ky;
+        keys[next * 3 + 2] = kz;
+        ids[v] = next++;
+        break;
+      }
+      if (same(keys[id * 3], kx) && same(keys[id * 3 + 1], ky) && same(keys[id * 3 + 2], kz)) {
+        ids[v] = id;
+        break;
+      }
+      h = (h + 1) & mask;
+    }
+  }
+  return ids;
+}
+
+/** Equal rounded coordinates, as their strings would be (NaN === NaN, −0 = 0). */
+function same(a: number, b: number): boolean {
+  return a === b || (a !== a && b !== b);
+}
+
 type TypedArrayCtor = new (length: number) => THREE.TypedArray;
 
 /**
@@ -155,7 +189,8 @@ export function splitByGrid(
   const vertexOf = (t: number, k: number): number => (index ? index.getX(t * 3 + k) : t * 3 + k);
 
   const cells = new Int32Array(tris);
-  const counts = new Map<number, number>();
+  const counts = new Int32Array(grid.cellsX * grid.cellsZ);
+  let used = 0;
   for (let t = 0; t < tris; t++) {
     let x = 0;
     let z = 0;
@@ -166,9 +201,9 @@ export function splitByGrid(
     }
     const cell = cellOf(grid, x / 3, z / 3);
     cells[t] = cell;
-    counts.set(cell, (counts.get(cell) ?? 0) + 1);
+    if (counts[cell]++ === 0) used++;
   }
-  if (counts.size <= 1) return [{ geometry, cell: -1 }];
+  if (used <= 1) return [{ geometry, cell: -1 }];
 
   // mergeGeometries outputs plain attributes; anything else is rejected.
   const sources: [string, THREE.BufferAttribute][] = [];
@@ -178,18 +213,35 @@ export function splitByGrid(
     sources.push([name, attr]);
   }
 
+  // PERF: triangles bucketed by cell once (ascending cell, then triangle
+  // order — the order the per-cell scans used to visit them), and each
+  // vertex remapped / copied only for the cells that use it: the former
+  // per-cell scans of every triangle and every vertex were O(cells × size).
+  const start = new Int32Array(counts.length + 1);
+  for (let c = 0; c < counts.length; c++) start[c + 1] = start[c] + counts[c];
+  const order = new Int32Array(tris);
+  const fill = start.slice(0, counts.length);
+  for (let t = 0; t < tris; t++) order[fill[cells[t]]++] = t;
+
   const remap = new Int32Array(pos.count);
+  const remapCell = new Int32Array(pos.count).fill(-1);
+  const verts = new Int32Array(pos.count); // part vertex → source vertex
   const out: { geometry: THREE.BufferGeometry; cell: number }[] = [];
-  for (const [cell, n] of [...counts].sort((p, q) => p[0] - q[0])) {
-    remap.fill(-1);
+  for (let cell = 0; cell < counts.length; cell++) {
+    const n = counts[cell];
+    if (n === 0) continue;
     const indices = new Uint32Array(n * 3);
     let vertexCount = 0;
     let w = 0;
-    for (let t = 0; t < tris; t++) {
-      if (cells[t] !== cell) continue;
+    for (let o = start[cell]; o < start[cell + 1]; o++) {
+      const t = order[o];
       for (let k = 0; k < 3; k++) {
         const v = vertexOf(t, k);
-        if (remap[v] < 0) remap[v] = vertexCount++;
+        if (remapCell[v] !== cell) {
+          remapCell[v] = cell;
+          remap[v] = vertexCount;
+          verts[vertexCount++] = v;
+        }
         indices[w++] = remap[v];
       }
     }
@@ -198,15 +250,92 @@ export function splitByGrid(
       const size = src.itemSize;
       const srcArray = src.array as THREE.TypedArray;
       const dst = new (srcArray.constructor as TypedArrayCtor)(vertexCount * size);
-      for (let v = 0; v < remap.length; v++) {
-        const r = remap[v];
-        if (r < 0) continue;
+      for (let r = 0; r < vertexCount; r++) {
+        const v = verts[r];
         for (let c = 0; c < size; c++) dst[r * size + c] = srcArray[v * size + c];
       }
       part.setAttribute(name, new THREE.BufferAttribute(dst, size, src.normalized));
     }
     part.setIndex(new THREE.BufferAttribute(vertexCount <= 65535 ? new Uint16Array(indices) : indices, 1));
     out.push({ geometry: part, cell });
+  }
+  return out;
+}
+
+/**
+ * World-space copy of a mesh geometry keeping only the `keep` attributes:
+ * EXACTLY `geometry.clone().applyMatrix4(matrix)` followed by deleting the
+ * other attributes (same float operations, same order, same attribute
+ * objects' settings) — PERF: without copying / transforming the attributes
+ * thrown away, nor recomputing bounds nobody reads (the bounding box is
+ * recomputed on demand, from the same positions). Returns null when the
+ * geometry is not plain (morph targets, interleaved / normalized / non-float
+ * position or normal): the caller then takes the generic path.
+ */
+export function worldSpaceCopy(
+  geometry: THREE.BufferGeometry,
+  matrix: THREE.Matrix4,
+  keep: ReadonlySet<string>,
+): THREE.BufferGeometry | null {
+  if (Object.keys(geometry.morphAttributes).length > 0) return null;
+  const plainFloat3 = (a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute | undefined) =>
+    !a ||
+    (!(a as THREE.InterleavedBufferAttribute).isInterleavedBufferAttribute &&
+      !a.normalized &&
+      a.itemSize === 3 &&
+      (a as THREE.BufferAttribute).array instanceof Float32Array);
+  const srcPos = geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
+  const srcNormal = geometry.getAttribute("normal") as THREE.BufferAttribute | undefined;
+  if (!plainFloat3(srcPos) || !plainFloat3(srcNormal)) return null;
+  for (const name of Object.keys(geometry.attributes)) {
+    if (keep.has(name) && (geometry.attributes[name] as THREE.InterleavedBufferAttribute).isInterleavedBufferAttribute) return null;
+  }
+
+  const out = new THREE.BufferGeometry();
+  out.name = geometry.name;
+  if (geometry.index) out.setIndex(geometry.index.clone());
+  for (const name of Object.keys(geometry.attributes)) {
+    if (keep.has(name)) out.setAttribute(name, (geometry.attributes[name] as THREE.BufferAttribute).clone());
+  }
+  for (const g of geometry.groups) out.addGroup(g.start, g.count, g.materialIndex);
+  out.drawRange.start = geometry.drawRange.start;
+  out.drawRange.count = geometry.drawRange.count;
+  out.userData = geometry.userData;
+
+  const e = matrix.elements;
+  const pos = out.getAttribute("position") as THREE.BufferAttribute | undefined;
+  if (pos) {
+    // Vector3.applyMatrix4 (perspective divide included), stored as float32.
+    const a = pos.array as Float32Array;
+    for (let i = 0; i < a.length; i += 3) {
+      const x = a[i];
+      const y = a[i + 1];
+      const z = a[i + 2];
+      const w = 1 / (e[3] * x + e[7] * y + e[11] * z + e[15]);
+      a[i] = (e[0] * x + e[4] * y + e[8] * z + e[12]) * w;
+      a[i + 1] = (e[1] * x + e[5] * y + e[9] * z + e[13]) * w;
+      a[i + 2] = (e[2] * x + e[6] * y + e[10] * z + e[14]) * w;
+    }
+    pos.needsUpdate = true;
+  }
+  const normal = out.getAttribute("normal") as THREE.BufferAttribute | undefined;
+  if (normal) {
+    // Vector3.applyNormalMatrix: applyMatrix3(normal matrix), then normalize.
+    const n = new THREE.Matrix3().getNormalMatrix(matrix).elements;
+    const a = normal.array as Float32Array;
+    for (let i = 0; i < a.length; i += 3) {
+      const x0 = a[i];
+      const y0 = a[i + 1];
+      const z0 = a[i + 2];
+      const x = n[0] * x0 + n[3] * y0 + n[6] * z0;
+      const y = n[1] * x0 + n[4] * y0 + n[7] * z0;
+      const z = n[2] * x0 + n[5] * y0 + n[8] * z0;
+      const inv = 1 / (Math.sqrt(x * x + y * y + z * z) || 1);
+      a[i] = x * inv;
+      a[i + 1] = y * inv;
+      a[i + 2] = z * inv;
+    }
+    normal.needsUpdate = true;
   }
   return out;
 }

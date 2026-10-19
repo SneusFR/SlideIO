@@ -9,6 +9,7 @@ import { getQualitySettings } from "../game/GraphicsQuality";
 import { givreData, type GivreColliderEntry, type GivreZone } from "./GivreData";
 import {
   buildLimitedMipmaps,
+  worldSpaceCopy,
   buildStaticBatches,
   toStandardMaterial,
   type StaticEntry,
@@ -444,9 +445,14 @@ function mergeStaticBatches(
     if (!mesh.isMesh || animated.has(mesh)) return;
     staticMeshes.push(mesh);
     const material = mesh.material as THREE.Material;
-    const geom = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
-    for (const name of Object.keys(geom.attributes)) {
-      if (!KEEP_ATTRIBUTES.has(name)) geom.deleteAttribute(name);
+    // PERF: plain geometries take the direct world-space copy (same values,
+    // a fraction of the cost); anything else the generic path.
+    let geom = worldSpaceCopy(mesh.geometry, mesh.matrixWorld, KEEP_ATTRIBUTES);
+    if (!geom) {
+      geom = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
+      for (const name of Object.keys(geom.attributes)) {
+        if (!KEEP_ATTRIBUTES.has(name)) geom.deleteAttribute(name);
+      }
     }
     // Mirrored object (negative scale): flip the winding, otherwise it would
     // be seen inside-out once merged (none in v3 — kept for future exports).
