@@ -165,6 +165,7 @@ import "../effects/FastSkinnedBounds";
 import { GpuTimer, timeDraws, timePasses } from "../ui/GpuTimer";
 import { takePaintGpuMs } from "../ui/paint/PaintLayer";
 import { pinNewPrograms } from "../effects/ProgramPin";
+import { inSkeletonFrame } from "../effects/SkeletonFrameDedupe";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { loadCharacterAsset, stripEnemyOutline } from "../characters/PotatoCharacter";
 
@@ -3182,13 +3183,15 @@ export class Game {
     if (this.fpOutline) {
       this.fpOutline.enabled = fpOn && this.isOutlineActive(this.outlineSettings);
     }
-    composer.render();
+    // Several renders per frame (world + shadows, outline pre-pass, FP
+    // overlay, FP outline): one bone update per skeleton (SkeletonFrameDedupe).
+    inSkeletonFrame(() => composer.render());
   }
 
   /** World frame through whichever path the map uses (composer on Givre). */
   private renderWorld(camera: THREE.PerspectiveCamera): void {
     if (this.composer) this.renderComposer(camera);
-    else this.renderer.render(this.scene, camera);
+    else inSkeletonFrame(() => this.renderer.render(this.scene, camera));
   }
 
   /**
@@ -3821,7 +3824,9 @@ export class Game {
       } else {
         const renderStart = performance.now();
         this.gpuTimer?.beginFrame("monde");
-        this.renderer.render(this.scene, cam);
+        // (live shadow pass inside: one bone update per skeleton — see
+        // SkeletonFrameDedupe)
+        inSkeletonFrame(() => this.renderer.render(this.scene, cam));
         // Debug HUD GPU stats: renderer.info is reset by every render() call,
         // so the WORLD pass numbers must be captured right here.
         this.hud.sampleRenderInfo(this.renderer);
@@ -3832,7 +3837,7 @@ export class Game {
         // above (no double draw — each weapon renders on exactly one path).
         this.viewmodelSystem.syncCamera(cam);
         this.gpuTimer?.setPass("bras");
-        this.viewmodelSystem.render(this.renderer);
+        inSkeletonFrame(() => this.viewmodelSystem.render(this.renderer));
         this.gpuTimer?.endFrame();
         this.hud.sampleCpu(renderStart - this.frameCpuStart, performance.now() - renderStart);
       }
