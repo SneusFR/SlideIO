@@ -10,6 +10,7 @@ import { loadDisplayName, parseJoinRoomId } from "./network/MultiplayerConfig";
 import { MatchEndController } from "./match/MatchEndController";
 import { measureDisplayFrames, warmUpHud } from "./ui/HudWarmup";
 import { warmUpPaint } from "./ui/paint/PaintLayer";
+import { bootMark, reportBoot } from "./ui/bootTimeline";
 import { startWeaponIcons } from "./menu/WeaponIconRenderer";
 import { buildMapBvhsWhenIdle, flushMapBvhs } from "./world/MapBvh";
 
@@ -22,7 +23,8 @@ import { buildMapBvhsWhenIdle, flushMapBvhs } from "./world/MapBvh";
  *     overlap instead of waiting for each other: every file is requested at
  *     its start, the shaders compile in the browser's GPU process while the
  *     weapons are parsed, the HUD warm-up runs during that compile (where
- *     the browser compiles in parallel).
+ *     the browser compiles in parallel). The console line `[BOOT]` gives the
+ *     time of each step (see ui/bootTimeline).
  *   → Main Menu revealed: the REAL map renders behind the UI with a slow
  *     cinematic orbit camera (same renderer/scene as gameplay — no
  *     duplicate scene, no second loading later)
@@ -42,6 +44,7 @@ async function main(): Promise<void> {
   const container = document.getElementById("app")!;
   const hud = document.getElementById("hud")!;
   const loading = document.getElementById("menu-loading")!;
+  bootMark("page");
   // The display's frame interval (the HUD warm-up's "drawn" tests rely on
   // it): measured now, while the loading screen mostly waits on downloads.
   void measureDisplayFrames();
@@ -61,7 +64,7 @@ async function main(): Promise<void> {
   // parallel, the HUD warm-up runs DURING the shader compile (see
   // Game.warmUpRendering, step 3a), otherwise right after the GPU warm-up.
   await game.warmUpRendering((gpuBusy) =>
-    warmUpHud(game.hudWarmupHooks(), gpuBusy),
+    warmUpHud(game.hudWarmupHooks(), gpuBusy).then(() => bootMark("HUD")),
   );
 
   // ---- Menu overlay over the live game renderer ----
@@ -86,6 +89,8 @@ async function main(): Promise<void> {
   game.startMenuPreview();
   menu.reveal();
   sounds.startMusic();
+  bootMark("menu");
+  reportBoot();
   // Loadout / customize icon snapshots: once the menu is up (they are queued
   // since the menus were built — see WeaponIconRenderer), or right away when
   // one of those menus opens first.

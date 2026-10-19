@@ -157,6 +157,7 @@ import type {
 } from "../../shared/combat/NetworkWeapons";
 import { getQualitySettings, webglRendererName } from "./GraphicsQuality";
 import { noteFrameEvent } from "../ui/frameEvents";
+import { bootMark } from "../ui/bootTimeline";
 import { flushMapBvhs } from "../world/MapBvh";
 import { installTexParamDedupe } from "../effects/TexParamDedupe";
 // Bit-identical, faster skinned bounding boxes / spheres (loading: character template).
@@ -1715,18 +1716,23 @@ export class Game {
     else JungleMap.preload();
     preloadGameAssets();
     const physics = await PhysicsWorld.create();
+    bootMark("physique");
     const map =
       mapId === MapId.YARD
         ? await YardMap.create(physics)
         : mapId === MapId.GIVRE
           ? await GivreMap.create(physics)
           : await JungleMap.create(physics);
+    bootMark("carte");
     // GIVRE v3: client-only effects (two small PNGs + snow grid) built
     // before the constructor so the scene is complete from the first frame.
     const givreEffects =
       map instanceof GivreMap ? await GivreEffects.create(map, loadSnowLevel()) : null;
+    if (givreEffects) bootMark("effets carte");
     console.info(`[MAP] ${mapId} loaded in ${Math.round(performance.now() - t0)} ms`);
-    return new Game(container, physics, map, mapId, givreEffects);
+    const game = new Game(container, physics, map, mapId, givreEffects);
+    bootMark("jeu");
+    return game;
   }
 
   get domElement(): HTMLElement {
@@ -1816,6 +1822,7 @@ export class Game {
       this.waterFamas.ready,
       this.frisbeeLauncher.ready,
     ]);
+    bootMark("armes");
 
     // 2. Transient visuals that never exist at rest: a shockwave ring +
     // particles + projectile pools, far below the map.
@@ -1950,6 +1957,7 @@ export class Game {
     this.particles.burst(far, 4, 1, 0.3, this.phaseColor, 0);
     this.shockwave.update(0.01);
     this.particles.update(0.01);
+    bootMark("préparation");
 
     // The weapon the player HOLDS at the first frame of play (applyLoadout on
     // PLAY hands it the FP arms) is mounted for the warm-up too — only the
@@ -1990,7 +1998,7 @@ export class Game {
     // extension the GPU process compiles one program after the other on its
     // main thread — the HUD warm-up then waits for the warm frames below
     // (it would only fight the compile for that thread).
-    const compiled = Promise.all([earlyCompile, this.precompileScenes()]);
+    const compiled = Promise.all([earlyCompile, this.precompileScenes()]).then(() => bootMark("compilation"));
     let hud: Promise<void> = Promise.resolve();
     if (alongside && this.renderer.extensions.has("KHR_parallel_shader_compile")) {
       hud = alongside(compiled);
@@ -2169,6 +2177,7 @@ export class Game {
       this.releaseFpPresentation();
       this.fpOwner = "NONE";
     }
+    bootMark("rendu");
     // HUD warm-up after the warm frames when the compile could not run
     // alongside it (see 3a).
     if (alongside) await alongside(Promise.resolve());
