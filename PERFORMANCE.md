@@ -311,11 +311,18 @@ c'est le GPU (ou le processus GPU du navigateur).
 - `Device:` : le GPU réellement utilisé par le navigateur. « SwiftShader »,
   « Basic Render Driver » ou « llvmpipe » = rendu logiciel (accélération matérielle
   désactivée) : aucune optimisation du jeu n'y changera rien.
-- `GPU:` (uniquement en `npm run dev`) : temps **d'exécution sur la carte graphique**
-  par frame, détaillé par passe (`monde`, `bras`, `sortie`, `FXAA`). Dans la console :
-  `perfDebug.gpu(true)` détaille par catégorie d'objets (carte, ciel, bots, neige…),
-  `perfDebug.gpu(false)` revient au détail par passe. `+ peinture HUD` = le temps GPU de
-  la peinture 3D de la plaque du Paintball / Poison (son propre contexte WebGL), par frame.
+- `GPU:` (en `npm run dev`, et **sur n'importe quel build avec `?gpu` dans l'adresse**, par
+  exemple `https://slide-io.vercel.app/?gpu` sur une machine sans environnement de dev) :
+  temps **d'exécution sur la carte graphique** par frame, détaillé par passe (`monde`,
+  `bras`, `sortie`, `FXAA`). `?gpu=draws` — ou `perfDebug.gpu(true)` dans la console en
+  dev — détaille par catégorie d'objets (carte, ciel, bots, neige…) ; `perfDebug.gpu(false)`
+  revient au détail par passe. `+ peinture HUD` = le temps GPU de la peinture 3D de la
+  plaque du Paintball / Poison (son propre contexte WebGL), par frame. C'est la seule ligne
+  qui sépare la carte graphique du reste : un `GPU:` proche du temps de frame = la puce est
+  pleine (réduire le travail par pixel de la catégorie la plus chère) ; nettement en dessous
+  alors que la ligne `Hitch` parle d'« attente GPU » = la frame attend autre chose (le
+  processus GPU de Chrome, qui traduit les appels WebGL pour DirectX sur le CPU, ou une
+  machine bridée par son mode d'alimentation).
 - `Browser:` : le travail du thread principal du navigateur **après** chaque frame du jeu
   (style, mise en page, peinture du HUD, envoi au compositeur, autres tâches), moyenne et
   pire valeur de la demi-seconde. `CPU` + `Browser` proches du temps de frame = le thread
@@ -325,7 +332,7 @@ c'est le GPU (ou le processus GPU du navigateur).
 - `Hitch:` s'affiche pendant 6 s après chaque frame d'au moins **trois frames normales**
   (médiane de la demi-seconde précédente), entre 12 et 30 ms : 30 ms à 60 Hz (deux images
   manquées), 12,5 ms à 240 Hz (les « -30 FPS » qu'un seuil fixe de 30 ms ne voyait pas). La
-  découpe : `jeu` = le CPU de la frame du jeu — suivi, en `npm run dev`, de ses
+  découpe : `jeu` = le CPU de la frame du jeu — suivi, en `npm run dev` ou avec `?gpu`, de ses
   sections les plus lourdes (`bots IA` = IA et A*, `armes bots` = tirs des bots et leurs kills,
   `physique`, `bots anim`, `bots vue`, `armes`, `effets`, `HUD`, `rendu`…), `navigateur` = le travail du thread
   principal du navigateur **après** la frame du jeu (style / mise en page / peinture /

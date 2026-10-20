@@ -35,6 +35,7 @@ import {
 import { loadOutlineSettings, type OutlineSettings } from "./OutlineSettings";
 import { DebugHUD } from "../ui/DebugHUD";
 import { FrameSections } from "../ui/FrameSections";
+import { perfDiag } from "../ui/perfDiag";
 
 import { BotsMenu } from "../ui/BotsMenu";
 import { MovementConfig as cfg } from "../player/MovementConfig";
@@ -246,7 +247,7 @@ export class Game {
   private worldOutline: GivreOutlinePass | null = null;
   private fpOverlayPass: RenderPass | null = null;
   private fpOutline: GivreOutlinePass | null = null;
-  /** DEV builds: GPU execution time per frame (debug HUD "GPU" line). */
+  /** DEV builds / `?gpu`: GPU execution time per frame (debug HUD "GPU" line). */
   private gpuTimer: GpuTimer | null = null;
   /** DEV builds: per-draw GPU categories (perfDebug.gpu(true)), uninstall. */
   private gpuDrawSplit: (() => void) | null = null;
@@ -506,8 +507,11 @@ export class Game {
   private nextFrameAt = 0;
   /** performance.now() at the start of the current processed frame (debug HUD CPU split). */
   private frameCpuStart = 0;
-  /** DEV builds: CPU split of each frame by section (debug HUD "Hitch" line). */
-  private readonly sections: FrameSections | null = import.meta.env.DEV ? new FrameSections() : null;
+  /** Performance diagnostics of this session (DEV, or `?gpu` in the address: ui/perfDiag.ts). */
+  private readonly diag = perfDiag();
+  /** DEV builds / `?gpu`: CPU split of each frame by section (debug HUD "Hitch" line). */
+  private readonly sections: FrameSections | null =
+    import.meta.env.DEV || this.diag !== "off" ? new FrameSections() : null;
   /**
    * LOW preset: STATIC shadows — the map's shadow map is baked once (map
    * and lights never move; characters don't cast on LOW) instead of being
@@ -826,9 +830,10 @@ export class Game {
     this.fpOutfit.setSelection(loadCharacterCosmetics());
     // GIVRE: cel-shading post-processing chain (needs the FP scene/camera).
     if (isGivre) this.buildGivreComposer();
-    // DEV builds: GPU timer on the debug HUD (after the composer: it times
-    // each of its passes).
-    if (import.meta.env.DEV) this.installGpuTimer();
+    // DEV builds / `?gpu`: GPU timer on the debug HUD (after the composer:
+    // it times each of its passes); `?gpu=draws`: per draw category.
+    if (this.diag !== "off") this.installGpuTimer();
+    if (this.diag === "draws") this.setGpuDrawSplit(true);
 
     // ---- Brick Maul (melee): grounded WHIRLWIND + airborne Ground Slam ----
     this.shockwave = new Shockwave(this.scene);
@@ -1512,9 +1517,10 @@ export class Game {
   }
 
   /**
-   * DEV builds: GPU execution time on the debug HUD ("GPU" line), split by
-   * pass — world, FP arms, sRGB output, FXAA on Givre; world + arms on the
-   * other maps. `perfDebug.gpu(true)` adds the per-draw categories (map,
+   * DEV builds, or `?gpu` on any build (ui/perfDiag.ts): GPU execution time
+   * on the debug HUD ("GPU" line), split by pass — world, FP arms, sRGB
+   * output, FXAA on Givre; world + arms on the other maps.
+   * `perfDebug.gpu(true)` / `?gpu=draws` split it per draw category (map,
    * sky, bots, snow…). Without EXT_disjoint_timer_query_webgl2 the line says
    * so: the CPU line then stays the only measure.
    */
