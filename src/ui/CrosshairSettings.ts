@@ -2,8 +2,10 @@
  * Crosshair customization — shape (STICKER default, classic DOT or CROSS), size, color,
  * high contrast and reduced motion.
  *
- * Same persistence pattern as GraphicsQuality: a tiny localStorage record,
- * defensively parsed (bad/missing data falls back to the defaults).
+ * Persisted in the game page's settings record (src/settings/SettingsStore), defensively
+ * parsed here (bad/missing data falls back to the defaults). This module stays free of
+ * storage: the HUD document (sandboxed iframe, no localStorage) imports it to APPLY the
+ * settings it receives by command.
  * The visual itself is 100% CSS: applyCrosshairSettings only toggles classes
  * and writes two CSS custom properties (--ch-scale / --ch-color) on the existing
  * #crosshair element (and --ch-scale on :root so the hitmarker follows the same size) —
@@ -23,8 +25,6 @@ export interface CrosshairSettings {
   /** No travelling motion: aim / fire / hit feedback become simple fades. */
   reducedMotion: boolean;
 }
-
-const STORAGE_KEY = "slideio.crosshair";
 
 /** The HUD's own look: cream dot + 4 radial ticks with ink outline and a turquoise tip. */
 export const DEFAULT_CROSSHAIR: CrosshairSettings = {
@@ -50,50 +50,38 @@ function systemPrefersReducedMotion(): boolean {
   }
 }
 
-function defaults(): CrosshairSettings {
+/** Defaults for a player who never customized the crosshair (OS reduced-motion respected). */
+export function defaultCrosshairSettings(): CrosshairSettings {
   return { ...DEFAULT_CROSSHAIR, reducedMotion: systemPrefersReducedMotion() };
 }
 
-/** Persisted settings, defensively validated field by field. */
-export function loadCrosshairSettings(): CrosshairSettings {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaults();
-    const parsed = JSON.parse(raw) as Partial<CrosshairSettings>;
-    // Legacy record still holding the OLD untouched defaults (white dot, 100 %): the player
-    // never customized anything → they get the new default look.
-    const legacyUntouched =
-      parsed.shape === "DOT" &&
-      parsed.scale === 1 &&
-      typeof parsed.color === "string" &&
-      parsed.color.toLowerCase() === "#ffffff" &&
-      parsed.highContrast === undefined;
-    if (legacyUntouched) return defaults();
-    return {
-      shape: parsed.shape === "CROSS" ? "CROSS" : parsed.shape === "DOT" ? "DOT" : "STICKER",
-      scale:
-        typeof parsed.scale === "number" && Number.isFinite(parsed.scale)
-          ? Math.min(CROSSHAIR_SCALE_MAX, Math.max(CROSSHAIR_SCALE_MIN, parsed.scale))
-          : DEFAULT_CROSSHAIR.scale,
-      color:
-        typeof parsed.color === "string" && HEX_COLOR.test(parsed.color)
-          ? parsed.color.toLowerCase()
-          : DEFAULT_CROSSHAIR.color,
-      highContrast: parsed.highContrast === true,
-      reducedMotion:
-        typeof parsed.reducedMotion === "boolean" ? parsed.reducedMotion : systemPrefersReducedMotion(),
-    };
-  } catch {
-    return defaults();
-  }
-}
-
-export function saveCrosshairSettings(settings: CrosshairSettings): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  } catch {
-    /* storage unavailable — the session keeps its live crosshair */
-  }
+/** Stored settings (untrusted), defensively validated field by field. */
+export function sanitizeCrosshairSettings(raw: unknown): CrosshairSettings {
+  if (!raw || typeof raw !== "object") return defaultCrosshairSettings();
+  const parsed = raw as Partial<CrosshairSettings>;
+  // Legacy record still holding the OLD untouched defaults (white dot, 100 %): the player
+  // never customized anything → they get the new default look.
+  const legacyUntouched =
+    parsed.shape === "DOT" &&
+    parsed.scale === 1 &&
+    typeof parsed.color === "string" &&
+    parsed.color.toLowerCase() === "#ffffff" &&
+    parsed.highContrast === undefined;
+  if (legacyUntouched) return defaultCrosshairSettings();
+  return {
+    shape: parsed.shape === "CROSS" ? "CROSS" : parsed.shape === "DOT" ? "DOT" : "STICKER",
+    scale:
+      typeof parsed.scale === "number" && Number.isFinite(parsed.scale)
+        ? Math.min(CROSSHAIR_SCALE_MAX, Math.max(CROSSHAIR_SCALE_MIN, parsed.scale))
+        : DEFAULT_CROSSHAIR.scale,
+    color:
+      typeof parsed.color === "string" && HEX_COLOR.test(parsed.color)
+        ? parsed.color.toLowerCase()
+        : DEFAULT_CROSSHAIR.color,
+    highContrast: parsed.highContrast === true,
+    reducedMotion:
+      typeof parsed.reducedMotion === "boolean" ? parsed.reducedMotion : systemPrefersReducedMotion(),
+  };
 }
 
 /** Push the settings onto the live #crosshair element (pure CSS driving). */

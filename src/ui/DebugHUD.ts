@@ -169,6 +169,12 @@ export class DebugHUD {
   private readonly rafDeltas: number[] = [];
   private readonly refreshHistory: number[] = [];
   private refreshMs = 0;
+  /**
+   * Settings page « Panneau de performances »: every line, the frame-rate
+   * lines only, or nothing (no text written at all: the panel costs nothing).
+   * The measurements go on either way (Hitch console lines, GPU timer).
+   */
+  private mode: "full" | "fps" | "off" = "full";
 
   constructor() {
     this.el = document.getElementById("debug")!;
@@ -242,6 +248,13 @@ export class DebugHUD {
   /** GPU name line (see GraphicsQuality.webglRendererName). */
   setDeviceName(name: string): void {
     this.deviceName = name;
+  }
+
+  /** Panel content: all lines, the frame-rate lines only, or hidden (CSS: body.perf-panel-off). */
+  setMode(mode: "full" | "fps" | "off"): void {
+    if (mode === this.mode) return;
+    this.mode = mode;
+    this.shownText = ""; // the next refresh rewrites the panel in its new form
   }
 
   /** Reset timing windows when gameplay starts (not on Escape/resume). */
@@ -378,6 +391,15 @@ export class DebugHUD {
     this.refreshTimer += rawDt;
     if (this.refreshTimer < 1 / 15) return;
     this.refreshTimer = 0;
+    if (this.mode === "off") return;
+    if (this.mode === "fps") {
+      this.setText(
+        `FPS:      ${this.fps}${this.refreshMs > 0 ? ` / ${Math.round(1000 / this.refreshMs)} Hz` : ""}\n` +
+          `Frame:    ${this.avgMs.toFixed(1)} ms (p95 ${this.p95Ms.toFixed(1)} / max ${this.maxMs.toFixed(1)})` +
+          (this.gpuText ? `\nGPU:      ${this.gpuText}` : ""),
+      );
+      return;
+    }
 
     const v = movement.velocity;
     const pd = movement.phaseDebug;

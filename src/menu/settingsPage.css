@@ -1,0 +1,844 @@
+/* ==========================================================================
+   SETTINGS PAGE (src/menu/SettingsPage.ts) — the menu's meadow-night panels,
+   Luckiest Guy titles, Baloo 2 text, leaf-green choices, gold for what needs
+   attention. The panel sits on the left; the live game stays visible on the
+   right (every change is seen and measured on the frame-budget card).
+   PERF: no backdrop-filter here — a blur over the live WebGL canvas would be
+   re-rendered every frame (and would skew the very numbers the card shows).
+   ========================================================================== */
+#settings-page {
+  --gs-bg: rgba(11, 19, 10, 0.965);
+  --gs-raised: rgba(20, 33, 18, 0.95);
+  --gs-well: rgba(5, 12, 6, 0.9);
+  --gs-line: rgba(74, 222, 128, 0.16);
+  --gs-line-strong: rgba(74, 222, 128, 0.42);
+  --gs-leaf: #4ade80;
+  --gs-leaf-deep: #16a34a;
+  --gs-gold: #facc15;
+  --gs-amber: #f59e0b;
+  --gs-text: #effdf3;
+  --gs-dim: #a9d4b3;
+  --gs-faint: #84b291;
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: stretch;
+  pointer-events: auto;
+  font-family: var(--mm-font-alt);
+  color: var(--gs-text);
+  /* Readability behind the panel, the live view stays clear on the right. */
+  background: linear-gradient(90deg, rgba(3, 9, 5, 0.6) 0%, rgba(3, 9, 5, 0.3) 52%, transparent 78%);
+}
+
+#settings-page.hidden {
+  display: none;
+}
+
+#settings-page :focus-visible {
+  outline: 2px solid var(--gs-gold);
+  outline-offset: 2px;
+}
+
+.gs-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: clamp(560px, 56vw, 820px);
+  max-width: calc(100vw - 32px);
+  margin: 16px;
+  background: var(--gs-bg);
+  border: 1px solid var(--gs-line-strong);
+  border-radius: 20px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(187, 247, 208, 0.06);
+  overflow: hidden;
+}
+
+/* ---- Header + tabs ---- */
+.gs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px 6px;
+}
+
+.gs-title {
+  font-family: var(--mm-font);
+  font-weight: 400;
+  font-size: 30px;
+  letter-spacing: 2px;
+  line-height: 1;
+  color: var(--mm-text-cream, #fff6e0);
+  text-shadow: 0 3px 0 rgba(20, 14, 6, 0.6);
+}
+
+.gs-back {
+  padding: 8px 16px;
+  cursor: pointer;
+  font-family: var(--mm-font-alt);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--gs-dim);
+  background: transparent;
+  border: 1px solid var(--gs-line-strong);
+  border-radius: 999px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.gs-back:hover {
+  color: var(--gs-text);
+  background: rgba(74, 222, 128, 0.12);
+}
+
+.gs-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 10px 22px 12px;
+  border-bottom: 1px solid var(--gs-line);
+}
+
+.gs-tab {
+  padding: 7px 15px;
+  cursor: pointer;
+  font-family: var(--mm-font-alt);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--gs-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.gs-tab:hover {
+  color: var(--gs-text);
+  background: rgba(74, 222, 128, 0.1);
+}
+
+.gs-tab.on {
+  color: #062012;
+  background: linear-gradient(180deg, #86efac, #22c55e);
+  border-color: rgba(240, 253, 244, 0.35);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.18);
+}
+
+/* ---- Body ---- */
+.gs-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 22px 22px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(74, 222, 128, 0.35) transparent;
+}
+
+.gs-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.gs-section {
+  padding-top: 18px;
+}
+
+.gs-section-title {
+  margin-bottom: 4px;
+  font-family: var(--mm-font);
+  font-weight: 400;
+  font-size: 17px;
+  letter-spacing: 1.2px;
+  color: #bbf7d0;
+}
+
+.gs-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 22px;
+  padding: 12px 0;
+  border-top: 1px solid var(--gs-line);
+}
+
+.gs-section-title + .gs-row {
+  border-top: 0;
+}
+
+.gs-row-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.gs-row-name {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.gs-row-desc {
+  margin-top: 3px;
+  max-width: 46ch;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--gs-faint);
+}
+
+.gs-row-desc:empty {
+  display: none;
+}
+
+.gs-row-control {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.gs-row-sub {
+  font-size: 12px;
+  color: var(--gs-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.gs-row.gs-locked,
+.gs-seg.gs-locked {
+  opacity: 0.45;
+}
+
+/* ---- Cost: 1 to 3 beans + the word (green = cheap, gold, amber = heavy) ---- */
+.gs-cost {
+  --bean: var(--gs-leaf);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 8px 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.gs-cost[data-cost="2"] {
+  --bean: var(--gs-gold);
+}
+
+.gs-cost[data-cost="3"] {
+  --bean: var(--gs-amber);
+}
+
+.gs-cost i {
+  display: block;
+  width: 7px;
+  height: 10px;
+  border-radius: 50% / 58%;
+  border: 1.5px solid var(--bean);
+  opacity: 0.55;
+  transform: rotate(24deg);
+}
+
+.gs-cost i.full {
+  background: var(--bean);
+  opacity: 1;
+}
+
+.gs-cost-word {
+  margin-left: 3px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--bean);
+}
+
+.gs-chip-reload,
+.gs-chip-note {
+  padding: 1px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.gs-chip-reload {
+  color: var(--gs-gold);
+  border: 1px solid rgba(250, 204, 21, 0.55);
+}
+
+.gs-chip-note {
+  color: var(--gs-dim);
+  border: 1px solid var(--gs-line-strong);
+}
+
+.gs-chip-reload.hidden,
+.gs-chip-note.hidden {
+  display: none;
+}
+
+/* ---- Segmented choices ---- */
+.gs-seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 3px;
+  padding: 3px;
+  background: var(--gs-well);
+  border: 1px solid var(--gs-line);
+  border-radius: 11px;
+}
+
+.gs-seg-btn {
+  padding: 6px 11px;
+  cursor: pointer;
+  font-family: var(--mm-font-alt);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: #cfe9d6;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.gs-seg-btn:hover {
+  background: rgba(74, 222, 128, 0.13);
+  color: var(--gs-text);
+}
+
+.gs-seg-btn.on {
+  color: #04140a;
+  font-weight: 700;
+  background: linear-gradient(180deg, #4ade80, var(--gs-leaf-deep));
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.2);
+}
+
+.gs-seg-btn.off-limits,
+.gs-seg-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.32;
+}
+
+.gs-seg-btn.off-limits:hover {
+  background: transparent;
+}
+
+.gs-seg.disabled {
+  opacity: 0.5;
+}
+
+.gs-seg-wide {
+  display: flex;
+  justify-content: stretch;
+  margin-top: 10px;
+}
+
+.gs-seg-wide .gs-seg-btn {
+  flex: 1;
+  padding: 9px 8px;
+  font-size: 15px;
+}
+
+.gs-seg-small .gs-seg-btn {
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.gs-seg-wrap {
+  max-width: 330px;
+}
+
+.gs-preset-hint {
+  margin-top: 8px;
+  font-size: 13.5px;
+  color: var(--gs-dim);
+}
+
+/* ---- Slider ---- */
+.gs-slider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.gs-range {
+  --fill: 50%;
+  width: 210px;
+  height: 22px;
+  margin: 0;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+}
+
+.gs-range::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--gs-line-strong);
+  background: linear-gradient(90deg, var(--gs-leaf-deep) 0 var(--fill), var(--gs-well) var(--fill) 100%);
+}
+
+.gs-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -6px;
+  border-radius: 50% / 58%;
+  background: linear-gradient(180deg, #bbf7d0, #22c55e);
+  border: 1.5px solid #06150b;
+  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.35);
+}
+
+.gs-range::-moz-range-track {
+  height: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--gs-line-strong);
+  background: var(--gs-well);
+}
+
+.gs-range::-moz-range-progress {
+  height: 8px;
+  border-radius: 6px;
+  background: var(--gs-leaf-deep);
+}
+
+.gs-range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50% / 58%;
+  background: linear-gradient(180deg, #bbf7d0, #22c55e);
+  border: 1.5px solid #06150b;
+}
+
+.gs-slider-value {
+  min-width: 58px;
+  text-align: right;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.gs-slider.disabled {
+  opacity: 0.45;
+}
+
+/* ---- Buttons ---- */
+.gs-btn {
+  padding: 9px 15px;
+  cursor: pointer;
+  font-family: var(--mm-font-alt);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--gs-text);
+  background: rgba(22, 163, 74, 0.22);
+  border: 1px solid rgba(74, 222, 128, 0.6);
+  border-radius: 11px;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.gs-btn:hover {
+  background: rgba(22, 163, 74, 0.38);
+}
+
+.gs-btn:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.gs-btn-small {
+  padding: 5px 10px;
+  font-size: 13px;
+}
+
+.gs-btn-gold {
+  font-family: var(--mm-font);
+  font-weight: 400;
+  font-size: 14px;
+  letter-spacing: 0.8px;
+  color: #241a02;
+  background: linear-gradient(180deg, #fde047, #eab308);
+  border-color: rgba(255, 247, 200, 0.6);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.2);
+}
+
+.gs-btn-gold:hover {
+  background: linear-gradient(180deg, #fef08a, #facc15);
+}
+
+/* ---- Automatic detection ---- */
+.gs-detect {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px 18px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: var(--gs-raised);
+  border: 1px solid var(--gs-line);
+  border-radius: 14px;
+}
+
+.gs-detect-text {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--gs-dim);
+}
+
+.gs-detect-progress {
+  height: 6px;
+  margin-top: 10px;
+  border-radius: 4px;
+  background: var(--gs-well);
+  overflow: hidden;
+}
+
+.gs-detect-progress.hidden {
+  display: none;
+}
+
+.gs-detect-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--gs-leaf-deep), var(--gs-leaf));
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform 0.3s ease;
+}
+
+.gs-detect-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.gs-detect-target-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gs-faint);
+}
+
+/* ---- Reload bar ---- */
+.gs-reload {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 22px;
+  background: rgba(250, 204, 21, 0.09);
+  border-top: 1px solid rgba(250, 204, 21, 0.45);
+}
+
+.gs-reload.hidden {
+  display: none;
+}
+
+.gs-reload-text {
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: #fef3c7;
+}
+
+.gs-reload-warn {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--gs-gold);
+}
+
+.gs-reload-warn.hidden {
+  display: none;
+}
+
+/* ---- Crosshair preview (the HUD's own crosshair is hidden in the menus) ---- */
+.gs-ch-preview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 10px 0 6px;
+}
+
+.gs-ch-cell {
+  position: relative;
+  height: 96px;
+  border-radius: 12px;
+  border: 1px solid var(--gs-line);
+  overflow: hidden;
+}
+
+.gs-ch-cell.light {
+  background: linear-gradient(160deg, #e8f1f8, #bccddd);
+}
+
+.gs-ch-cell.dark {
+  background: linear-gradient(160deg, #2a3a2c, #121b14);
+}
+
+.gs-ch {
+  --ch-color: #fbf1da;
+  --ch-scale: 1;
+  --o: 1.5px;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transform: scale(var(--ch-scale));
+}
+
+.gs-ch.contrast {
+  --o: 2.75px;
+}
+
+.gs-ch::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ch-color);
+  box-shadow: 0 0 0 var(--o) #0e0d12;
+}
+
+.gs-ch-tick {
+  position: absolute;
+  left: -1.5px;
+  bottom: 0;
+  width: 3px;
+  height: 8px;
+  border-radius: 2px;
+  transform-origin: 50% 100%;
+  transform: rotate(var(--r)) translateY(-8.5px);
+  background: linear-gradient(to top, var(--ch-color) 0 62%, #3ee0c5 62% 100%);
+  box-shadow: 0 0 0 var(--o) #0e0d12;
+}
+
+.gs-ch.contrast .gs-ch-tick {
+  transform: rotate(var(--r)) translateY(-10px);
+  height: 9px;
+}
+
+.gs-ch[data-shape="DOT"] .gs-ch-tick,
+.gs-ch[data-shape="CROSS"] .gs-ch-tick {
+  display: none;
+}
+
+.gs-ch[data-shape="DOT"]::before {
+  left: -2px;
+  top: -2px;
+  width: 4px;
+  height: 4px;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+}
+
+.gs-ch[data-shape="CROSS"]::before,
+.gs-ch[data-shape="CROSS"]::after {
+  content: "";
+  position: absolute;
+  border-radius: 0;
+  background: var(--ch-color);
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.7);
+}
+
+.gs-ch[data-shape="CROSS"]::before {
+  left: -7px;
+  top: -1px;
+  width: 14px;
+  height: 2px;
+}
+
+.gs-ch[data-shape="CROSS"]::after {
+  left: -1px;
+  top: -7px;
+  width: 2px;
+  height: 14px;
+}
+
+.gs-color {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gs-color-input {
+  width: 44px;
+  height: 32px;
+  padding: 2px;
+  cursor: pointer;
+  background: var(--gs-well);
+  border: 1px solid var(--gs-line-strong);
+  border-radius: 9px;
+}
+
+/* ---- Frame budget card (the live view's corner) ---- */
+.gs-meter {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  width: 290px;
+  padding: 14px 16px 12px;
+  background: var(--gs-bg);
+  border: 1px solid var(--gs-line-strong);
+  border-radius: 18px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
+}
+
+.gs-meter-top {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.gs-meter-num {
+  font-family: var(--mm-font);
+  font-size: 44px;
+  line-height: 1;
+  color: var(--mm-text-cream, #fff6e0);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 3px 0 rgba(20, 14, 6, 0.55);
+}
+
+.gs-meter.below .gs-meter-num {
+  color: var(--gs-amber);
+}
+
+.gs-meter-unit {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--gs-dim);
+}
+
+.gs-meter-target {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gs-faint);
+}
+
+.gs-meter-bar-label {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--gs-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.gs-meter-bar {
+  position: relative;
+  height: 10px;
+  margin-top: 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.gs-meter-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--gs-leaf);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform 0.25s ease, background 0.25s ease;
+}
+
+.gs-meter-bar[data-level="tight"] .gs-meter-fill {
+  background: var(--gs-gold);
+}
+
+.gs-meter-bar[data-level="over"] .gs-meter-fill {
+  background: #fb923c;
+}
+
+.gs-meter-mark {
+  position: absolute;
+  left: 80%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.gs-meter-rows {
+  display: grid;
+  gap: 3px;
+  margin-top: 10px;
+}
+
+.gs-meter-rows div {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.gs-meter-rows dt {
+  color: var(--gs-faint);
+}
+
+.gs-meter-rows dd {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.gs-meter-device {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--gs-line);
+  font-size: 11.5px;
+  color: var(--gs-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Narrow windows: the panel takes the width, the card goes under it ---- */
+@media (max-width: 980px) {
+  .gs-panel {
+    width: auto;
+    flex: 1;
+    margin-bottom: 150px;
+  }
+  .gs-meter {
+    left: 16px;
+    right: 16px;
+    bottom: 12px;
+    width: auto;
+  }
+  .gs-meter-rows {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+}
+
+@media (max-width: 640px) {
+  .gs-row {
+    grid-template-columns: 1fr;
+  }
+  .gs-row-control {
+    align-items: flex-start;
+  }
+  .gs-detect {
+    grid-template-columns: 1fr;
+  }
+  .gs-detect-side {
+    align-items: flex-start;
+  }
+}
+
+@media (max-height: 560px) {
+  .gs-meter {
+    display: none;
+  }
+  .gs-panel {
+    margin-bottom: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gs-meter-fill,
+  .gs-detect-fill {
+    transition: none;
+  }
+}

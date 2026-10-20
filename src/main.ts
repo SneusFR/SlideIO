@@ -8,11 +8,16 @@ import { LobbyController } from "./network/LobbyController";
 import { MultiplayerClient } from "./network/MultiplayerClient";
 import { loadDisplayName, parseJoinRoomId } from "./network/MultiplayerConfig";
 import { MatchEndController } from "./match/MatchEndController";
-import { measureDisplayFrames } from "./ui/displayFrames";
+import { displayFrameMs, measureDisplayFrames } from "./ui/displayFrames";
 import { bootMark, reportBoot } from "./ui/bootTimeline";
 import { hudHost } from "./hud/host/HudHost";
-import { startWeaponIcons } from "./menu/WeaponIconRenderer";
+import { startWeaponIcons, weaponIconsIdle } from "./menu/WeaponIconRenderer";
 import { buildMapBvhsWhenIdle, flushMapBvhs } from "./world/MapBvh";
+import { settingsStore } from "./settings/SettingsStore";
+import { GraphicsController } from "./settings/GraphicsController";
+import { snapRefreshRate, type AutoResult } from "./settings/GraphicsSettings";
+import { SettingsPage, REOPEN_KEY } from "./menu/SettingsPage";
+import { currentDisplayEnv, isWeakGpuName } from "./game/GraphicsQuality";
 
 /**
  * Boot flow — "the menu is just an overlay on top of the game":
@@ -98,6 +103,7 @@ async function main(): Promise<void> {
 
   // ---- Menu wiring ----
   menu.onLoadout = () => {
+    stopDetection(); // (defined below: these run on clicks, after main())
     startWeaponIcons();
     loadoutMenu.open();
   };
@@ -105,22 +111,11 @@ async function main(): Promise<void> {
   // selection is persisted; the game re-reads it in applyLoadout() (match
   // entry / respawn / solo resume) — a skin change never resets a weapon.
   menu.onCustomize = () => {
+    stopDetection(); // (defined below: these run on clicks, after main())
     startWeaponIcons();
     customizeMenu.open();
   };
   menu.onChangeLobby = () => browser.open();
-  // FPS LIMIT (settings popover): pure loop pacing — applies live.
-  menu.onFpsCapChange = (maxFps) => game.setFpsCap(maxFps);
-  // OUTLINE (settings popover, Givre only): cel-shading knobs — live.
-  if (game.hasOutline) {
-    menu.onOutlineChange = (settings) => game.applyOutlineSettings(settings);
-    menu.enableOutlineSettings();
-  }
-  // SNOW (settings popover, Givre only): falling-snow density — live.
-  if (game.hasSnow) {
-    menu.onSnowChange = (level) => game.setSnowLevel(level);
-    menu.enableSnowSettings();
-  }
 
   browser.onCreate = () => lobby.open();
   browser.onJoinByCode = () => lobby.open();
@@ -143,6 +138,78 @@ async function main(): Promise<void> {
   let inGame = false;
   let entering = false;
   let inMultiplayerGame = false;
+
+  // ---- SETTINGS PAGE (nav PARAMÈTRES, main menu and pause menu) ----
+  // One settings record (src/settings/SettingsStore); the controller applies
+  // every change to the game (live when possible) and runs the automatic
+  // detection; the page edits the record.
+  const store = settingsStore();
+  const refreshHz = (): number => snapRefreshRate(1000 / displayFrameMs());
+  const graphics = new GraphicsController(
+    store,
+    game,
+    currentDisplayEnv,
+    refreshHz,
+    (crosshair) => hudHost.api.applyCrosshairSettings(crosshair),
+    isWeakGpuName,
+  );
+  const settingsPage = new SettingsPage({
+    store,
+    controller: graphics,
+    game,
+    sounds,
+    isInMatch: () => inGame,
+    refreshHz,
+    env: currentDisplayEnv,
+  });
+  settingsPage.onOpenChange = (open) => menu.setSettingsOpen(open);
+  menu.onSettings = () => {
+    startWeaponIcons();
+    settingsPage.open();
+  };
+  // « Appliquer et recharger »: back on the page after the reload.
+  try {
+    if (sessionStorage.getItem(REOPEN_KEY)) {
+      sessionStorage.removeItem(REOPEN_KEY);
+      settingsPage.open("graphics");
+    }
+  } catch {
+    /* no session storage */
+  }
+  // FIRST LAUNCH of a player who never chose (or a new GPU): the automatic
+  // detection measures the menu's live map a few seconds after it appears —
+  // once the menu's own start-up work (icon snapshots in a second WebGL
+  // context) is over. PLAY, LOADOUT or CUSTOMIZE stop it (the player's
+  // previous settings come back; it runs again at the next launch).
+  graphics.subscribe((e) => {
+    if (e.kind === "start" && e.reason === "first") {
+      menu.showGraphicsToast("Réglage automatique des graphismes pour ce PC…", { busy: true });
+    } else if (e.kind === "done" && e.reason === "first") {
+      menu.showGraphicsToast(toastSummary(e.result), {
+        action: () => settingsPage.open("graphics"),
+        hideAfterMs: 10000,
+      });
+    } else if (e.kind === "cancelled") {
+      menu.hideGraphicsToast();
+    }
+  });
+  const stopDetection = (): void => {
+    if (graphics.detecting) graphics.cancelDetection();
+  };
+  if (graphics.needsFirstDetection()) {
+    void (async () => {
+      await new Promise((r) => window.setTimeout(r, 2500));
+      await weaponIconsIdle();
+      // A menu overlay over the map (3D preview, icons) or the match: try again a bit later.
+      for (let i = 0; i < 30; i++) {
+        if (inGame || entering) return;
+        if (!loadoutMenu.isOpen && !customizeMenu.isOpen) break;
+        await new Promise((r) => window.setTimeout(r, 1000));
+      }
+      if (inGame || entering || loadoutMenu.isOpen || customizeMenu.isOpen) return;
+      if (graphics.needsFirstDetection()) void graphics.runDetection("first");
+    })();
+  }
 
   /** `#hud.menu-active` (HUD document; mirrored on this page's <html>: #debug). */
   const setHudMenuActive = (on: boolean): void => hudHost.api.setDocClass("hud", "menu-active", on);
@@ -176,6 +243,9 @@ async function main(): Promise<void> {
    */
   const enterGameplay = async (withCameraFlight: boolean): Promise<void> => {
     inGame = true;
+    // A detection still measuring the menu stops (the player's settings come back).
+    stopDetection();
+    settingsPage.close();
     // Raycast BVHs not built yet (PLAY right after the menu appeared): now,
     // before the camera flight — never during it.
     flushMapBvhs();
@@ -290,6 +360,16 @@ async function main(): Promise<void> {
       showConnectionLost();
     }
   };
+}
+
+/** One line for the menu's toast after the first-launch detection. */
+function toastSummary(result: AutoResult): string {
+  if (result.limitedBy === "cpu") return "Graphismes réglés : c'est le processeur qui limite ce PC, le rendu reste beau.";
+  if (result.belowTarget) {
+    const fps = result.expectedFps !== null ? ` (environ ${result.expectedFps} i/s)` : "";
+    return `Graphismes réglés au plus léger encore joli${fps}.`;
+  }
+  return `Graphismes réglés pour tenir ${result.targetFps} i/s.`;
 }
 
 /**

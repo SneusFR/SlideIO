@@ -17,7 +17,6 @@ import { GivreConfig as givreCfg } from "../world/GivreConfig";
 import { GivreEffects } from "../world/GivreEffects";
 import { frontToBackOpaqueSort } from "../world/GivreRenderOptim";
 import type { GivreSnowLevel } from "../world/GivreSnow";
-import { loadSnowLevel } from "./GivreSnowSettings";
 import { loadMapSelection } from "../world/MapSelection";
 import { MapId, MAP_REGISTRY, type MapEnvelope } from "../../shared/map/MapRegistry";
 import { YARD_SPAWN_POINTS } from "../../shared/map/YardSpawns";
@@ -35,7 +34,24 @@ import {
   defaultOutlineExclude,
   defaultOutlineOccluder,
 } from "../effects/GivreOutlinePass";
-import { loadOutlineSettings, type OutlineSettings } from "./OutlineSettings";
+import type { OutlineSettings } from "./OutlineSettings";
+import { settingsStore } from "../settings/SettingsStore";
+import {
+  DEFAULT_CAPS,
+  SHADOW_QUALITIES,
+  effectiveAntialiasing,
+  floorRenderScale,
+  liveValues,
+  msaaSamples,
+  pixelRatioFor,
+  type AntiAliasing,
+  type GraphicsCaps,
+  type GraphicsValues,
+  type ShadowQuality,
+} from "../settings/GraphicsSettings";
+import { FrameMeter, type LiveStats } from "../settings/FrameMeter";
+import { DynamicResolutionController } from "../settings/DynamicResolution";
+import { Calibration, buildLadder, supersampleRung, type TuneOutcome } from "../settings/AutoTune";
 import { DebugHUD } from "../ui/DebugHUD";
 import { FrameSections } from "../ui/FrameSections";
 import { experimentValue, perfDiag, perfExperiments } from "../ui/perfDiag";
@@ -143,9 +159,8 @@ import type {
   HitConfirmedEvent,
   WeaponActionConfirmedEvent,
 } from "../../shared/combat/NetworkWeapons";
-import { getQualitySettings, webglRendererName } from "./GraphicsQuality";
+import { getGraphicsSession, getQualitySettings, isSoftwareGpuName, webglRendererName } from "./GraphicsQuality";
 import { noteFrameEvent } from "../ui/frameEvents";
-import { loadCrosshairSettings } from "../ui/CrosshairSettings";
 import { hudHost } from "../hud/host/HudHost";
 import type { HudApi } from "../hud/protocol";
 import { bootMark } from "../ui/bootTimeline";
@@ -254,8 +269,8 @@ export class Game {
   private gpuTimer: GpuTimer | null = null;
   /** DEV builds: per-draw GPU categories (perfDebug.gpu(true)), uninstall. */
   private gpuDrawSplit: (() => void) | null = null;
-  /** Live cel-shading settings (menu SETTINGS → OUTLINE). */
-  private outlineSettings: OutlineSettings = loadOutlineSettings();
+  /** Live cel-shading settings (settings page → contours). */
+  private outlineSettings: OutlineSettings = { ...settingsStore().get().outline, debugEdges: false };
   /**
    * Collider (magenta) / playerClip (cyan) wireframes — toggled with KeyH,
    * built on first use (see showColliderDebug).
@@ -535,6 +550,42 @@ export class Game {
    */
   private shadowCache: StaticShadowCache | null = null;
   private readonly shadowCacheSetup: (() => StaticShadowCache | null) | null;
+
+  // ---- Graphics settings (settings page — see the GRAPHICS SETTINGS section) ----
+  /** Values the session booted with: shadow mode, character shadows, effect lights, context MSAA stay these. */
+  private gfxBoot!: GraphicsValues;
+  /** The player's values, live part applied (reload-only fields = gfxBoot's). */
+  private gfxLive!: GraphicsValues;
+  /** What the GPU objects are set to right now (a detection probe or the dynamic resolution may differ). */
+  private gfxApplied: GraphicsValues | null = null;
+  private gfxCaps: GraphicsCaps | null = null;
+  /** devicePixelRatio the render scale was resolved with. */
+  private gfxDpr = 1;
+  private gfxGpuName = "";
+  /** Frame timings (CPU + GPU timer) for the detection, the dynamic resolution and the live readout. */
+  private gfxMeter: FrameMeter | null = null;
+  /** GIVRE output passes: the sRGB conversion, then FXAA (enabled with the FXAA anti-aliasing only). */
+  private outputPass: OutputPass | null = null;
+  private fxaaPass: FXAAPass | null = null;
+  /** `?diag=scaleNN`: the 3D at NN % of the settings' resolution (1 = off). */
+  private readonly diagScale = Math.min(1, (experimentValue(this.experiments, "scale") ?? 100) / 100);
+  /** The map's shadow sun, the tier its map size was built for, and that size. */
+  private shadowTuning: { light: THREE.DirectionalLight; builtTier: ShadowQuality; builtSize: THREE.Vector2 } | null = null;
+  /** Textures the anisotropic filtering applies to (Givre's baked lightmaps). */
+  private anisoTextures: THREE.Texture[] = [];
+  /** Shader uniforms that must follow the renderer's pixel ratio (Jungle star sizes). */
+  private pixelRatioUniforms: { value: number }[] = [];
+  /** Pooled effect lights created by FXLightPool (the max of the option). */
+  private effectLightPool = 0;
+  /** Particle burst density (0.5 = « Réduites »). */
+  private particleScale = 1;
+  /** Dynamic resolution controller (null = off) and its frame listener. */
+  private dynRes: DynamicResolutionController | null = null;
+  private dynResStop: (() => void) | null = null;
+  /** Running automatic detection. */
+  private tuning: { calib: Calibration; promise: Promise<TuneOutcome>; finish: () => void } | null = null;
+  /** Browser zoom / monitor change (the render scale is a % of native): set by the settings controller. */
+  onDisplayDensityChange: (() => void) | null = null;
   private readonly playerPos = new THREE.Vector3();
   private readonly rightDir = new THREE.Vector3();
   private readonly attackerPos = new THREE.Vector3();
@@ -562,13 +613,17 @@ export class Game {
     const isGivre = mapId === MapId.GIVRE;
     this.cameraFar = isGivre ? givreCfg.cameraFar : 400;
 
-    // Quality preset (auto-detected iGPU → LOW, override in the Escape
-    // menu): resolution cap, MSAA, shadow budget — see GraphicsQuality.
+    // Graphics settings of this session (settings page: preset, custom values
+    // or the automatic detection — see GraphicsQuality / src/settings):
+    // resolution, MSAA, shadow budget. Live changes: applyGraphicsSettings().
     const quality = getQualitySettings();
+    const gfx = getGraphicsSession();
+    this.gfxBoot = { ...gfx.values };
+    this.gfxLive = { ...gfx.values };
     this.renderer = new THREE.WebGLRenderer({
-      // GIVRE renders through the composer (its own 4× MSAA buffers on
-      // HIGH, FXAA on LOW): a multisampled DEFAULT framebuffer would only
-      // receive one fullscreen quad — pure cost (memory + per-frame resolve).
+      // GIVRE renders through the composer (its own MSAA buffers, or FXAA):
+      // a multisampled DEFAULT framebuffer would only receive one fullscreen
+      // quad — pure cost (memory + per-frame resolve).
       antialias: quality.antialias && !isGivre,
       powerPreference: "high-performance",
       // Enemy outline: the crisp red contour is a stencil-masked inverted
@@ -583,15 +638,19 @@ export class Game {
     // (four round trips to the GPU process each) only while developing.
     this.renderer.debug.checkShaderErrors = import.meta.env.DEV;
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    // (`?diag=scaleNN`: the 3D at NN % of its resolution — a what-if, never in play.)
-    const diagScale = Math.min(1, (experimentValue(this.experiments, "scale") ?? 100) / 100);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap) * diagScale);
-    this.renderer.shadowMap.enabled = true;
+    // Render scale = % of the native resolution (Bas: one pixel per CSS
+    // pixel, exactly the old LOW cap; Élevé: two at most, the old HIGH cap).
+    // (`?diag=scaleNN`: the 3D at NN % of that — a what-if, never in play.)
+    this.renderer.setPixelRatio(pixelRatioFor(gfx.values.renderScale, gfx.env.dpr) * this.diagScale);
+    this.gfxDpr = gfx.env.dpr;
+    // Shadows OFF: no shadow code in any shader (cheaper pixels) — fixed for
+    // the session (the settings page offers « Appliquer et recharger »).
+    this.renderer.shadowMap.enabled = gfx.values.shadows !== "off";
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    // LOW: the shadow map is BAKED (autoUpdate off) — the map and its
-    // single shadow light are fully static, so one render at load time
-    // (see warmUpRendering) serves every frame afterwards.
-    this.staticShadows = quality.staticShadows;
+    // STATIC shadows (Bas): the shadow map is BAKED (autoUpdate off) — the
+    // map and its single shadow light are fully static, so one render at
+    // load time (see warmUpRendering) serves every frame afterwards.
+    this.staticShadows = gfx.values.shadows !== "dynamic";
     if (this.staticShadows) this.renderer.shadowMap.autoUpdate = false;
     // LOW: cap rendered frames (see frameIntervalMs doc). HIGH: uncapped (0).
     this.frameIntervalMs = Number.isFinite(quality.maxFps)
@@ -612,6 +671,7 @@ export class Game {
     // light count is final from the first shader compile (adding a light
     // later would force three.js to recompile every lit material).
     fxLights.init(this.scene);
+    this.trimEffectLights(gfx.values.effectLights);
     // Per-map atmosphere: each map owns its clear color, distance haze,
     // exposure and sky backdrop (added straight to the scene — NOT
     // map.group — so it is never part of the beam-raycast hittables and
@@ -650,7 +710,7 @@ export class Game {
     this.scene.add(map.group);
     // HIGH: static-shadow cache, armed after the GPU warm-up (the map is
     // final then). Animated map nodes keep casting live.
-    this.shadowCacheSetup = quality.staticShadows
+    this.shadowCacheSetup = this.staticShadows
       ? null
       : () => {
           const setup =
@@ -717,16 +777,8 @@ export class Game {
     this.movement = new PlayerMovement(this.player, this.input, this.fpsCamera);
     this.hud = new DebugHUD();
     this.hud.setFrameSections(this.sections);
-    const shadow = quality.staticShadows ? "baked" : "live";
-    const aa = isGivre
-      ? quality.antialias
-        ? "composer MSAA 4x (color resolve)"
-        : "composer FXAA"
-      : quality.antialias
-        ? "MSAA 4x"
-        : "none";
-    this.hud.setRenderSetup(`${quality.level} · AA ${aa} · shadows ${shadow}`);
-    this.hud.setDeviceName(webglRendererName(this.renderer.getContext()));
+    this.gfxGpuName = webglRendererName(this.renderer.getContext());
+    this.hud.setDeviceName(this.gfxGpuName); // (the "Setup" line: applyBootGraphics, once the composer exists)
     this.hud.hudSummary = () => hudHost.describe();
     this.hud.experiments = [...this.experiments].join(", ");
 
@@ -739,13 +791,14 @@ export class Game {
       famasCapacity: famasCfg.capacity,
       frisbeeCageCapacity: frisbeeCfg.cageCapacity,
       interact: isYard,
-      crosshair: loadCrosshairSettings(),
+      crosshair: settingsStore().get().crosshair,
     });
     this.dashHud = this.hudApi.dash;
     this.combatHud = this.hudApi.combat;
 
     // ---- Weapon / targets / effects ----
     this.particles = new ParticleSystem(this.scene);
+    this.installParticleDensity();
     // YARD / GIVRE have NO training targets (the Jungle targets sit at
     // Jungle coordinates) — the manager still exists so weapon adapters
     // keep working against empty lists.
@@ -842,10 +895,15 @@ export class Game {
     this.fpOutfit.setSelection(loadCharacterCosmetics());
     // GIVRE: cel-shading post-processing chain (needs the FP scene/camera).
     if (isGivre) this.buildGivreComposer();
+    // Settings of this session that the map built without (shadow tiers it
+    // has no size for, halos / footprints, anisotropy targets, composer sizes).
+    this.applyBootGraphics(map, quality.level);
     // DEV builds / `?gpu`: GPU timer on the debug HUD (after the composer:
     // it times each of its passes); `?gpu=draws`: per draw category.
     if (this.diag !== "off") this.installGpuTimer();
     if (this.diag === "draws") this.setGpuDrawSplit(true);
+    // Settings page: frame timings (the debug GPU timer when there is one).
+    this.gfxMeter = new FrameMeter(this.renderer, this.gpuTimer, !isSoftwareGpuName(this.gfxGpuName));
 
     // ---- Brick Maul (melee): grounded WHIRLWIND + airborne Ground Slam ----
     this.shockwave = new Shockwave(this.scene);
@@ -1413,6 +1471,9 @@ export class Game {
       this.viewmodelSystem.setAspect(window.innerWidth / window.innerHeight);
       // GIVRE post chain: composer buffers + every pass follow the canvas.
       this.composer?.setSize(window.innerWidth, window.innerHeight);
+      // Browser zoom / another monitor: the render scale is a % of the
+      // NATIVE resolution, which just changed.
+      this.handleDisplayDensity();
     });
   }
 
@@ -1443,20 +1504,7 @@ export class Game {
    * own their depth texture. Only the colour is resolved now.
    */
   private buildGivreComposer(): void {
-    const quality = getQualitySettings();
-    const size = this.renderer.getSize(new THREE.Vector2());
-    const ratio = this.renderer.getPixelRatio();
-    const target = new THREE.WebGLRenderTarget(size.x * ratio, size.y * ratio, {
-      type: THREE.HalfFloatType,
-      depthBuffer: true,
-      stencilBuffer: true, // enemy outline = stencil-masked inverted hull
-      samples: quality.antialias ? 4 : 0,
-      // Colour-only MSAA resolve (see PERF above). Copied to the composer's
-      // second buffer by EffectComposer (RenderTarget.clone → copy).
-      resolveDepthBuffer: false,
-      resolveStencilBuffer: false,
-    });
-    target.texture.name = "GivreComposer.rt";
+    const target = this.createComposerTarget(this.composerSamples(this.gfxBoot.antialiasing));
     const composer = new EffectComposer(this.renderer, target);
 
     // One depth / stencil clear per frame: the far-plane sky writes every
@@ -1496,11 +1544,17 @@ export class Game {
     fpOutline.debugMode = "OVERLAY";
     composer.addPass(fpOutline);
 
-    // HIGH: MSAA buffers, then the output conversion. LOW: no MSAA — the
-    // output conversion, then FXAA. (Each one overwrites every pixel of its
-    // target: no clear before it — FullscreenPass.)
-    composer.addPass(asFullscreenPass(new OutputPass()));
-    if (!quality.antialias) composer.addPass(asFullscreenPass(new FXAAPass()));
+    // The output conversion, then FXAA when the anti-aliasing is FXAA (no
+    // MSAA buffers then). Both passes stay in the chain for the session: the
+    // settings page switches FXAA ⇄ MSAA live by toggling the FXAA pass and
+    // the targets' samples (the other configuration is compiled at load:
+    // warmAlternateOutput). Each one overwrites every pixel of its target: no
+    // clear before it (FullscreenPass).
+    this.outputPass = asFullscreenPass(new OutputPass());
+    this.fxaaPass = asFullscreenPass(new FXAAPass());
+    this.fxaaPass.enabled = this.gfxBoot.antialiasing === "fxaa";
+    composer.addPass(this.outputPass);
+    composer.addPass(this.fxaaPass);
 
     this.composer = composer;
     this.worldRenderPass = world;
@@ -1778,7 +1832,7 @@ export class Game {
    */
   private trackGivreFootprints(dt: number, playerAlive: boolean): void {
     const fp = this.givreEffects?.footprints;
-    if (!fp) return;
+    if (!fp || !this.gfxLive.footprints) return; // option off: no new prints (cleared when switched off)
     const now = this.givreEffects!.now;
     const feetDrop = cfg.standHalfHeight + cfg.capsuleRadius;
     const seen = this.footprintSeen;
@@ -1839,7 +1893,7 @@ export class Game {
     // GIVRE v3: client-only effects (two small PNGs + snow grid) built
     // before the constructor so the scene is complete from the first frame.
     const givreEffects =
-      map instanceof GivreMap ? await GivreEffects.create(map, loadSnowLevel()) : null;
+      map instanceof GivreMap ? await GivreEffects.create(map, getGraphicsSession().values.snow) : null;
     if (givreEffects) bootMark("effets carte");
     console.info(`[MAP] ${mapId} loaded in ${Math.round(performance.now() - t0)} ms`);
     const game = new Game(container, physics, map, mapId, givreEffects);
@@ -2143,6 +2197,9 @@ export class Game {
     // (GIVRE: the composer frames also compile the post chain — outline
     // normal pre-pass programs, composer targets.)
     for (let i = 0; i < 2; i++) warmWorld();
+    // GIVRE: the OTHER output pass too (FXAA ⇄ MSAA from the settings page:
+    // never a compile in the menus or in play).
+    this.warmAlternateOutput(warmWorld);
 
     // FP scene warm-up: force the arms + mounted weapon visible for a few
     // frames so their shaders compile and textures upload NOW — the first
@@ -3029,7 +3086,14 @@ export class Game {
     this.givreEffects?.update(dt, p.camera, this.renderer.domElement.height);
     this.givreEffects?.syncStandalone(); // puffs + halos (no frame() matrix pass here)
 
+    // Settings page: live readout + automatic detection measure these frames.
+    const meter = this.gfxMeter;
+    const tag = meter ? meter.begin() : 0;
     this.renderWorld(p.camera);
+    if (meter) {
+      meter.endGpu();
+      meter.record(now, performance.now() - now, tag);
+    }
     hudHost.flush(); // HUD commands of the menu (crosshair settings…)
   }
 
@@ -3230,9 +3294,469 @@ export class Game {
    * play transition and gameplay. Infinity/0 = uncapped.
    */
   setFpsCap(maxFps: number): void {
-    this.frameIntervalMs =
-      Number.isFinite(maxFps) && maxFps > 0 ? 1000 / maxFps : 0;
+    const interval = Number.isFinite(maxFps) && maxFps > 0 ? 1000 / maxFps : 0;
+    // A detection running measures uncapped frames: the cap applies at its end.
+    if (this.tuning) {
+      this.cappedIntervalMs = interval;
+      return;
+    }
+    this.frameIntervalMs = interval;
     this.nextFrameAt = 0; // re-anchor the deadline on the next tick
+  }
+
+  // ------------------------------------------------------------------
+  // GRAPHICS SETTINGS (settings page) — everything applied live, without
+  // a shader compile: render scale, Givre anti-aliasing (MSAA samples of the
+  // composer targets, FXAA ⇄ output pass, both compiled at load), shadow map
+  // size (re-bake), snow, halos, footprints, particles, anisotropy. The
+  // shadow mode, character shadows, effect lights and the context MSAA of
+  // the other maps are fixed for the session (reload).
+  // ------------------------------------------------------------------
+
+  /** Values the session booted with (copy). */
+  get graphicsBoot(): GraphicsValues {
+    return { ...this.gfxBoot };
+  }
+
+  /** The player's values as applied (reload-only fields = the boot ones). */
+  get graphicsLive(): GraphicsValues {
+    return { ...this.gfxLive };
+  }
+
+  /** What this map / GPU can do (the page greys out the rest). */
+  get graphicsCaps(): GraphicsCaps {
+    return this.gfxCaps ?? DEFAULT_CAPS;
+  }
+
+  /** GPU the renderer really uses ("Intel(R) Iris(R) Xe Graphics · D3D11"). */
+  get gpuName(): string {
+    return this.gfxGpuName;
+  }
+
+  /** Software rasterizer (SwiftShader, llvmpipe…): no setting makes it fast. */
+  get softwareRenderer(): boolean {
+    return isSoftwareGpuName(this.gfxGpuName);
+  }
+
+  /**
+   * The player's new values (settings page, preset, detection result).
+   * Reload-only fields are ignored here (kept at their boot value).
+   */
+  applyGraphicsSettings(next: GraphicsValues): void {
+    this.gfxLive = liveValues(this.gfxBoot, next, this.graphicsCaps);
+    // A detection owns the knobs while it runs: the player's values apply at its end.
+    if (this.tuning) return;
+    this.applyPlayerGraphics();
+    this.hud.setRenderSetup(this.describeRenderSetup());
+  }
+
+  /** The player's values on the GPU (the dynamic resolution keeps the scale it holds, under the player's). */
+  private applyPlayerGraphics(): void {
+    const target = { ...this.gfxLive };
+    if (this.dynRes) target.renderScale = this.dynRes.setBounds(floorRenderScale({ dpr: this.gfxDpr }), this.gfxLive.renderScale);
+    this.applyLiveValues(target);
+  }
+
+  /** Puts the GPU objects in the state of `v` (only what differs from now). */
+  private applyLiveValues(v: GraphicsValues): void {
+    const prev = this.gfxApplied;
+    if (!prev) return; // before the map is set up (applyBootGraphics)
+    if (Math.abs(prev.renderScale - v.renderScale) > 1e-6) this.applyRenderScale(v.renderScale);
+    if (prev.antialiasing !== v.antialiasing) this.applyComposerAntialiasing(v.antialiasing);
+    if (prev.shadowQuality !== v.shadowQuality) this.applyShadowQuality(v.shadowQuality);
+    if (prev.snow !== v.snow) this.givreEffects?.setSnowLevel(v.snow);
+    if (prev.halos !== v.halos) this.applyHalos(v.halos);
+    if (prev.footprints !== v.footprints && !v.footprints) this.givreEffects?.footprints?.clear();
+    if (prev.particles !== v.particles) this.particleScale = v.particles === "reduced" ? 0.5 : 1;
+    if (prev.anisotropy !== v.anisotropy) this.applyAnisotropy(v.anisotropy);
+    this.gfxApplied = { ...v };
+  }
+
+  /**
+   * The map was built from the session's legacy facade (GraphicsQuality): set
+   * what it has no notion of, and remember what the live changes act on.
+   */
+  private applyBootGraphics(map: JungleMap | YardMap | GivreMap, level: "LOW" | "HIGH"): void {
+    const v = this.gfxBoot;
+    // The shadow sun and the tier its map size was built for (Givre only
+    // knows the LOW / HIGH sizes: its "low" / "ultra" tiers are set here).
+    let sun: THREE.DirectionalLight | null = null;
+    map.group.traverse((o) => {
+      const l = o as THREE.DirectionalLight;
+      if (!sun && l.isDirectionalLight && l.castShadow) sun = l;
+    });
+    const maxTexture = this.renderer.capabilities.maxTextureSize;
+    let maxShadow: ShadowQuality = "medium";
+    if (sun) {
+      const light = sun as THREE.DirectionalLight;
+      const builtTier: ShadowQuality = map instanceof GivreMap ? (level === "HIGH" ? "high" : "medium") : v.shadowQuality;
+      this.shadowTuning = { light, builtTier, builtSize: light.shadow.mapSize.clone() };
+      for (const q of SHADOW_QUALITIES) {
+        const k = 2 ** (SHADOW_QUALITIES.indexOf(q) - SHADOW_QUALITIES.indexOf(builtTier));
+        if (Math.max(light.shadow.mapSize.x, light.shadow.mapSize.y) * k <= maxTexture) maxShadow = q;
+      }
+    }
+    // Anisotropic filtering: the textures GivreMap filters (baked emissive /
+    // AO lightmaps with their mip chain) — the other maps have none.
+    const textures = new Set<THREE.Texture>();
+    map.group.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        const std = m as THREE.MeshStandardMaterial;
+        for (const t of [std.emissiveMap, std.aoMap]) {
+          if (t && t.minFilter === THREE.LinearMipmapLinearFilter) textures.add(t);
+        }
+      }
+    });
+    this.anisoTextures = [...textures];
+    // Point sizes in pixels follow the renderer's pixel ratio (SpaceSky stars).
+    this.scene.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.ShaderMaterial | undefined;
+      const u = m && !Array.isArray(m) ? m.uniforms?.uPixelRatio : undefined;
+      if (u && typeof u.value === "number") this.pixelRatioUniforms.push(u);
+    });
+    // Composer passes sized from the CSS size (EffectComposer took the
+    // target's PIXEL size as its CSS size: passes got ratio² — harmless for
+    // the old presets' passes, wrong for FXAA at another render scale).
+    this.composer?.setSize(window.innerWidth, window.innerHeight);
+    this.gfxCaps = {
+      composer: this.composer !== null,
+      snow: !!this.givreEffects?.snow,
+      halos: (this.givreEffects?.halos?.objects.length ?? 0) > 0,
+      footprints: !!this.givreEffects?.footprints,
+      shadows: sun !== null,
+      maxSamples: this.renderer.capabilities.maxSamples,
+      maxTextureSize: maxTexture,
+      maxShadowQuality: maxShadow,
+      maxAnisotropy: this.renderer.capabilities.getMaxAnisotropy(),
+      anisotropicTextures: this.anisoTextures.length > 0,
+      effectLightPool: this.effectLightPool,
+    };
+    // Start from what the map built, then reach the session's values.
+    this.gfxApplied = {
+      ...v,
+      shadowQuality: this.shadowTuning?.builtTier ?? v.shadowQuality,
+      halos: true,
+      particles: "normal",
+    };
+    this.applyLiveValues({ ...v });
+    this.hud.setRenderSetup(this.describeRenderSetup());
+  }
+
+  /** Pool lights beyond the setting leave the scene for the session (light count = part of every lit program). */
+  private trimEffectLights(max: number): void {
+    // Right after fxLights.init the scene holds exactly the pool's lights.
+    const pool = this.scene.children.filter((o) => (o as THREE.PointLight).isPointLight);
+    this.effectLightPool = pool.length;
+    for (const light of pool.slice(Math.max(0, max))) this.scene.remove(light);
+  }
+
+  /** Burst counts follow the particle density (« Réduites » = half). */
+  private installParticleDensity(): void {
+    const ps = this.particles;
+    const burst = ps.burst.bind(ps);
+    const ring = ps.ring.bind(ps);
+    const scaled = (n: number): number => (this.particleScale >= 1 || n <= 1 ? n : Math.max(1, Math.round(n * this.particleScale)));
+    ps.burst = (pos, count, speed, life, color, gravity) => burst(pos, scaled(count), speed, life, color, gravity);
+    ps.ring = (pos, normal, count, radius, speed, life, color) => ring(pos, normal, scaled(count), radius, speed, life, color);
+  }
+
+  /** GIVRE composer target: HDR linear, depth + stencil, `samples` MSAA (colour-only resolve). */
+  private createComposerTarget(samples: number): THREE.WebGLRenderTarget {
+    const size = this.renderer.getSize(new THREE.Vector2());
+    const ratio = this.renderer.getPixelRatio();
+    const target = new THREE.WebGLRenderTarget(size.x * ratio, size.y * ratio, {
+      type: THREE.HalfFloatType,
+      depthBuffer: true,
+      stencilBuffer: true, // enemy outline = stencil-masked inverted hull
+      samples,
+      // Colour-only MSAA resolve (see PERF in buildGivreComposer). Copied to
+      // the composer's second buffer by EffectComposer (clone → copy).
+      resolveDepthBuffer: false,
+      resolveStencilBuffer: false,
+    });
+    target.texture.name = "GivreComposer.rt";
+    return target;
+  }
+
+  private composerSamples(aa: AntiAliasing): number {
+    return msaaSamples(aa, this.renderer.capabilities.maxSamples);
+  }
+
+  /** Render scale (% of native) → renderer + composer + pixel-sized passes / uniforms. */
+  private applyRenderScale(scale: number): void {
+    const ratio = pixelRatioFor(scale, this.gfxDpr) * this.diagScale;
+    if (Math.abs(this.renderer.getPixelRatio() - ratio) < 1e-6) return;
+    this.renderer.setPixelRatio(ratio);
+    if (this.composer) {
+      this.composer.setPixelRatio(ratio);
+      this.composer.setSize(window.innerWidth, window.innerHeight);
+    }
+    this.applyOutlineSettings(this.outlineSettings);
+    for (const u of this.pixelRatioUniforms) u.value = ratio;
+  }
+
+  /** GIVRE: MSAA samples of the composer targets + the FXAA pass on / off (no new program: see warmAlternateOutput). */
+  private applyComposerAntialiasing(aa: AntiAliasing): void {
+    const composer = this.composer;
+    if (!composer || !this.fxaaPass) return;
+    const samples = this.composerSamples(aa);
+    if (composer.renderTarget1.samples !== samples) {
+      composer.reset(this.createComposerTarget(samples));
+      composer.setSize(window.innerWidth, window.innerHeight);
+    }
+    this.fxaaPass.enabled = aa === "fxaa";
+  }
+
+  /**
+   * Load time (GPU warm-up): one composer frame in the OTHER output setup
+   * (FXAA ⇄ none: the sRGB output then renders to a target instead of the
+   * screen — another program variant), so a live switch never compiles.
+   */
+  private warmAlternateOutput(render: () => void): void {
+    const fxaa = this.fxaaPass;
+    if (!this.composer || !fxaa) return;
+    fxaa.enabled = !fxaa.enabled;
+    try {
+      render();
+    } finally {
+      fxaa.enabled = !fxaa.enabled;
+    }
+  }
+
+  /**
+   * Shadow map size tier, live: a new map (and a new static cache) at the
+   * new size — same shaders (the size is a uniform), one re-bake.
+   */
+  private applyShadowQuality(q: ShadowQuality): void {
+    const s = this.shadowTuning;
+    if (!s) return;
+    const k = 2 ** (SHADOW_QUALITIES.indexOf(q) - SHADOW_QUALITIES.indexOf(s.builtTier));
+    const max = this.renderer.capabilities.maxTextureSize;
+    const w = Math.max(64, Math.min(max, Math.round(s.builtSize.x * k)));
+    const h = Math.max(64, Math.min(max, Math.round(s.builtSize.y * k)));
+    const shadow = s.light.shadow;
+    if (shadow.mapSize.x === w && shadow.mapSize.y === h) return;
+    const cached = this.shadowCache !== null;
+    if (this.shadowCache) {
+      this.shadowCache.dispose(); // the static casters cast again until the new bake
+      this.shadowCache = null;
+    }
+    shadow.mapSize.set(w, h);
+    if (shadow.map) {
+      shadow.map.depthTexture?.dispose();
+      shadow.map.dispose();
+      shadow.map = null; // three allocates the new size at the next shadow pass
+    }
+    if (cached && this.shadowCacheSetup) this.shadowCache = this.shadowCacheSetup();
+    if (this.staticShadows) this.renderer.shadowMap.needsUpdate = true;
+  }
+
+  /**
+   * Anisotropic filtering, live: a texture PARAMETER — set on the GL textures
+   * already uploaded (three would re-upload every lightmap and its mip chain
+   * for a changed cache key: ~100 MB of uploads for one sampler setting).
+   * texture.anisotropy follows, so a later upload uses the same value.
+   */
+  private applyAnisotropy(a: number): void {
+    const renderer = this.renderer;
+    const ext = renderer.extensions.get("EXT_texture_filter_anisotropic") as { TEXTURE_MAX_ANISOTROPY_EXT: number } | null;
+    const gl = renderer.getContext();
+    const value = Math.min(a, renderer.capabilities.getMaxAnisotropy());
+    const done = new Set<WebGLTexture>();
+    for (const t of this.anisoTextures) {
+      t.anisotropy = a;
+      const props = renderer.properties.get(t) as { __webglTexture?: WebGLTexture; __currentAnisotropy?: number };
+      const glTexture = props.__webglTexture;
+      if (!ext || !glTexture) continue; // not uploaded yet: three applies texture.anisotropy at upload
+      props.__currentAnisotropy = a;
+      if (done.has(glTexture)) continue;
+      done.add(glTexture);
+      renderer.state.bindTexture(gl.TEXTURE_2D, glTexture);
+      gl.texParameterf(gl.TEXTURE_2D, ext.TEXTURE_MAX_ANISOTROPY_EXT, value);
+    }
+  }
+
+  private applyHalos(on: boolean): void {
+    for (const o of this.givreEffects?.halos?.objects ?? []) o.visible = on;
+  }
+
+  /** Window resize: a changed devicePixelRatio changes what "100 %" means. */
+  private handleDisplayDensity(): void {
+    const dpr = window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
+    if (Math.abs(dpr - this.gfxDpr) < 1e-6) return;
+    this.gfxDpr = dpr;
+    // Same % of the new native resolution…
+    if (this.gfxApplied) this.applyRenderScale(this.gfxApplied.renderScale);
+    // …then the presets re-resolved for this display (→ applyGraphicsSettings).
+    this.onDisplayDensityChange?.();
+  }
+
+  /** Debug panel "Setup" line. */
+  private describeRenderSetup(): string {
+    const v = this.gfxLive;
+    const aa = effectiveAntialiasing(v.antialiasing, { composer: this.composer !== null });
+    const aaText = this.composer
+      ? aa === "fxaa"
+        ? "composer FXAA"
+        : aa === "none"
+          ? "none"
+          : `composer MSAA ${this.composerSamples(aa)}x (color resolve)`
+      : aa === "none"
+        ? "none"
+        : "MSAA (context)";
+    const shadow = this.gfxBoot.shadows === "off" ? "off" : this.staticShadows ? "baked" : "live";
+    return `${getGraphicsSession().preset} · scale ${Math.round(v.renderScale)}% · AA ${aaText} · shadows ${shadow} ${v.shadowQuality}`;
+  }
+
+  /**
+   * Frame timings with GPU times (the settings page while open, the dynamic
+   * resolution): returns the release function.
+   */
+  acquireFrameMeter(): () => void {
+    const meter = this.gfxMeter;
+    if (!meter) return () => {};
+    meter.acquire();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      meter.release();
+    };
+  }
+
+  /** Live readout of the settings page: rendered FPS, frame / CPU / GPU ms, drawing buffer size. */
+  livePerf(): (LiveStats & { width: number; height: number; gpuTimer: boolean }) | null {
+    const stats = this.gfxMeter?.stats(performance.now());
+    if (!stats) return null;
+    const canvas = this.renderer.domElement;
+    return { ...stats, width: canvas.width, height: canvas.height, gpuTimer: this.gfxMeter?.gpuAvailable ?? false };
+  }
+
+  /**
+   * Dynamic resolution on / off (target frame rate). Holds the target by
+   * moving the render scale between the beauty floor and the player's scale.
+   */
+  setDynamicResolution(on: boolean, targetFps: number): void {
+    const budget = 1000 / Math.max(30, targetFps);
+    if (on && !this.dynRes) {
+      this.dynRes = new DynamicResolutionController(floorRenderScale({ dpr: this.gfxDpr }), this.gfxLive.renderScale, budget);
+      const release = this.acquireFrameMeter();
+      const removeListener = this.gfxMeter?.addListener({
+        gpu: (_tag, ms, at) => {
+          if (ms !== null) this.dynRes?.gpu(at, ms);
+        },
+      });
+      this.dynResStop = () => {
+        removeListener?.();
+        release();
+      };
+    } else if (!on && this.dynRes) {
+      this.dynRes = null;
+      this.dynResStop?.();
+      this.dynResStop = null;
+      if (!this.tuning) this.applyPlayerGraphics(); // back to the player's scale
+      return;
+    }
+    this.dynRes?.setBudget(budget);
+  }
+
+  private stepDynamicResolution(now: number, frameMs: number): void {
+    const dyn = this.dynRes;
+    if (!dyn || !this.gfxApplied) return;
+    const next = dyn.frame(now, frameMs);
+    if (next !== null) this.applyLiveValues({ ...this.gfxApplied, renderScale: next });
+  }
+
+  /** Frame interval of the player's cap while a detection runs uncapped. */
+  private cappedIntervalMs = 0;
+
+  /**
+   * AUTOMATIC DETECTION on the frames rendered from now on (main menu orbit,
+   * pause view): binary search over the ladder (see settings/AutoTune), live
+   * candidates, uncapped frames. Resolves with the chosen rung — applied on
+   * screen; the caller stores it (→ applyGraphicsSettings) or calls
+   * cancelAutoTune(true) to restore the player's values.
+   */
+  startAutoTune(targetFps: number, onProgress?: (p: Calibration["progress"]) => void): Promise<TuneOutcome> {
+    if (this.tuning) return this.tuning.promise;
+    const caps = this.graphicsCaps;
+    const ladder = buildLadder(this.gfxLive, { dpr: this.gfxDpr }, caps);
+    const budgetMs = 1000 / targetFps;
+    const meter = this.gfxMeter;
+    if (!meter || this.softwareRenderer || ladder.length === 0) {
+      // Software rendering: measuring 5 rungs at 2 FPS would take a minute and
+      // tell nothing new — the floor, straight away.
+      const values = ladder[ladder.length - 1] ?? this.gfxLive;
+      this.applyLiveValues(values);
+      const outcome: TuneOutcome = {
+        values,
+        index: ladder.length - 1,
+        verdict: null,
+        probes: 0,
+        complete: true,
+        limitedBy: "gpu",
+        belowTarget: true,
+        usedGpuTimer: false,
+      };
+      return Promise.resolve(outcome);
+    }
+    meter.acquire();
+    // Uncapped frames during the probes (the cap would hide the headroom).
+    this.cappedIntervalMs = this.frameIntervalMs;
+    this.frameIntervalMs = 0;
+    this.nextFrameAt = 0;
+    const calib = new Calibration(
+      { apply: (v) => this.applyLiveValues(v), gpuTimerAlive: () => meter.gpuAvailable },
+      ladder,
+      budgetMs,
+      supersampleRung(ladder[0]),
+    );
+    let resolve!: (o: TuneOutcome) => void;
+    const promise = new Promise<TuneOutcome>((r) => (resolve = r));
+    let removeListener: () => void = () => {};
+    const finish = (): void => {
+      if (!this.tuning) return;
+      removeListener();
+      meter.release();
+      this.tuning = null;
+      this.frameIntervalMs = this.cappedIntervalMs;
+      this.nextFrameAt = 0;
+      resolve(calib.outcome ?? calib.cancel());
+    };
+    removeListener = meter.addListener({
+      frame: (t, cpuMs, tag) => {
+        calib.onFrame(t, cpuMs, tag);
+        onProgress?.(calib.progress);
+        if (calib.done) finish();
+      },
+      gpu: (tag, ms) => calib.onGpu(tag, ms),
+    });
+    this.tuning = { calib, promise, finish };
+    calib.start(performance.now());
+    return promise;
+  }
+
+  /** Stops a running detection (best rung known so far); `restore` puts the player's values back. */
+  cancelAutoTune(restore: boolean): void {
+    const t = this.tuning;
+    if (t) {
+      t.calib.cancel();
+      t.finish();
+    }
+    if (restore) this.applyPlayerGraphics();
+  }
+
+  /** True while a detection runs. */
+  get autoTuning(): boolean {
+    return this.tuning !== null;
+  }
+
+  /** Settings page « Panneau de performances » (the debug panel of this page). */
+  setPerfPanel(mode: "full" | "fps" | "off"): void {
+    this.hud.setMode(mode);
+    document.body.classList.toggle("perf-panel-off", mode === "off");
   }
 
   /**
@@ -3925,6 +4449,8 @@ export class Game {
     // FRISBEE LAUNCHER (pack order): controller AFTER syncCamera, then the shared discs + thrown cages.
     this.frisbeeLauncher.postCameraUpdate(running ? dt : 0);
     sections?.lap("armes (vue)");
+    // GPU timer frame (debug line, settings page readout, detection, dynamic resolution).
+    const gfxTag = this.gfxMeter ? this.gfxMeter.begin() : 0;
     try {
       // LOW preset: the shadow map is STATIC (baked once at load — see
       // warmUpRendering). No per-frame refresh: the caster re-render was the
@@ -3939,16 +4465,14 @@ export class Game {
         // off on this path, so the HUD numbers cover EVERY pass of the frame.
         this.viewmodelSystem.syncCamera(cam);
         const renderStart = performance.now();
-        this.gpuTimer?.beginFrame("monde");
         this.renderComposer();
-        this.gpuTimer?.endFrame();
+        this.gfxMeter?.endGpu();
         this.hud.sampleCpu(renderStart - this.frameCpuStart, performance.now() - renderStart);
         this.hud.sampleRenderInfo(this.renderer);
       } else {
         const renderStart = performance.now();
         // (`?diag=nopost` on Givre: this direct path; autoReset is off there.)
         if (this.composer) this.renderer.info.reset();
-        this.gpuTimer?.beginFrame("monde");
         // (live shadow pass inside: one bone update per skeleton — see
         // SkeletonFrameDedupe)
         inSkeletonFrame(() => this.renderer.render(this.scene, cam));
@@ -3965,7 +4489,7 @@ export class Game {
         this.viewmodelSystem.syncCamera(cam);
         this.gpuTimer?.setPass("bras");
         inSkeletonFrame(() => this.viewmodelSystem.render(this.renderer));
-        this.gpuTimer?.endFrame();
+        this.gfxMeter?.endGpu();
         this.flushGpu();
         this.hud.sampleCpu(renderStart - this.frameCpuStart, performance.now() - renderStart);
       }
@@ -3991,6 +4515,9 @@ export class Game {
     // A program compiled this frame (first use of a variant) stays cached for
     // the session: never compiled twice (see ProgramPin). Free when none.
     pinNewPrograms(this.renderer);
+    this.gfxMeter?.record(now, performance.now() - now, gfxTag);
+    // Dynamic resolution: play frames only (not the pause / settings menus).
+    if (this.dynRes && this.input.pointerLocked && !this.tuning) this.stepDynamicResolution(now, rawDt * 1000);
     this.input.endFrame();
     sections?.commit();
     // This frame's HUD commands, as ONE message to the HUD document (frame

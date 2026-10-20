@@ -147,9 +147,28 @@ function getContext(): RenderContext {
 
 /** Drop the WebGL context once every queued snapshot is done. */
 function releaseContextIfIdle(): void {
+  if (pendingRenders === 0) for (const wake of idleWaiters.splice(0)) wake();
   if (pendingRenders > 0 || !ctx) return;
   ctx.renderer.dispose();
   ctx = null;
+}
+
+const idleWaiters: (() => void)[] = [];
+
+/**
+ * Resolves once no icon snapshot is queued (each one parses a GLB and draws
+ * in a second WebGL context: the automatic graphics detection waits for them,
+ * they would skew its measurements) — or after `timeoutMs` at the latest.
+ */
+export function weaponIconsIdle(timeoutMs = 8000): Promise<void> {
+  if (pendingRenders === 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    idleWaiters.push(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 }
 
 async function renderIcon(url: string, weaponId: string, skinId: string): Promise<string | null> {

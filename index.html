@@ -18,6 +18,7 @@
     <link rel="stylesheet" href="/src/hudWeapons.css" />
   <link rel="stylesheet" href="/src/hudLeaderboard.css" />
   <link rel="stylesheet" href="/src/crosshair.css" />
+    <link rel="stylesheet" href="/src/menu/settingsPage.css" />
   </head>
   <body>
     <div id="app"></div>
@@ -95,7 +96,7 @@
           </div>
         </div>
 
-        <!-- Right column: nav bar + settings popover + ad slot -->
+        <!-- Right column: nav bar + ad slot -->
         <div id="menu-right-col">
           <nav id="menu-nav">
             <button class="nav-btn" data-menu="inventory" type="button">
@@ -124,78 +125,9 @@
                   fill="currentColor"
                 />
               </svg>
-              <span>SETTINGS</span>
+              <span>PARAMÈTRES</span>
             </button>
           </nav>
-
-          <!-- SETTINGS popover (graphics quality + audio volumes) -->
-          <div id="menu-settings-pop" class="hidden">
-            <div class="settings-title">SETTINGS</div>
-            <button id="menu-quality-btn" type="button">GRAPHICS: AUTO</button>
-            <div class="settings-hint">Applying a new preset reloads the game</div>
-            <button id="menu-fps-btn" type="button">FPS LIMIT: AUTO</button>
-            <div class="settings-hint">60 fixes stutter on some laptops · OFF for 120/240 Hz</div>
-            <div class="settings-sep"></div>
-            <div class="settings-title">AUDIO</div>
-            <div class="settings-slider-row">
-              <label for="menu-vol-master">MAIN VOLUME</label>
-              <input id="menu-vol-master" type="range" min="0" max="100" step="1" data-volume-bus="master" />
-              <span class="settings-slider-value" id="menu-vol-master-value">100%</span>
-            </div>
-            <div class="settings-slider-row">
-              <label for="menu-vol-weapons">WEAPON VOLUME</label>
-              <input id="menu-vol-weapons" type="range" min="0" max="100" step="1" data-volume-bus="weapons" />
-              <span class="settings-slider-value" id="menu-vol-weapons-value">100%</span>
-            </div>
-            <div class="settings-slider-row">
-              <label for="menu-vol-music">MUSIC VOLUME</label>
-              <input id="menu-vol-music" type="range" min="0" max="100" step="1" data-volume-bus="music" />
-              <span class="settings-slider-value" id="menu-vol-music-value">100%</span>
-            </div>
-            <div class="settings-slider-row">
-              <label for="menu-vol-ambience">AMBIANCE VOLUME</label>
-              <input id="menu-vol-ambience" type="range" min="0" max="100" step="1" data-volume-bus="ambience" />
-              <span class="settings-slider-value" id="menu-vol-ambience-value">100%</span>
-            </div>
-            <div class="settings-sep"></div>
-            <div class="settings-title">CROSSHAIR</div>
-            <button id="menu-ch-shape-btn" type="button">SHAPE: STICKER</button>
-            <div class="settings-slider-row">
-              <label for="menu-ch-size">CROSSHAIR SIZE</label>
-              <input id="menu-ch-size" type="range" min="50" max="250" step="5" />
-              <span class="settings-slider-value" id="menu-ch-size-value">100%</span>
-            </div>
-            <div class="settings-color-row">
-              <label for="menu-ch-color">CROSSHAIR COLOR</label>
-              <input id="menu-ch-color" type="color" value="#fbf1da" />
-              <button id="menu-ch-color-reset" type="button" title="Back to the default cream">RESET</button>
-            </div>
-            <button id="menu-ch-contrast-btn" type="button">HIGH CONTRAST: OFF</button>
-            <button id="menu-ch-motion-btn" type="button">REDUCED MOTION: OFF</button>
-            <div id="menu-outline-section" class="hidden">
-              <div class="settings-sep"></div>
-              <div class="settings-title">OUTLINE (GIVRE)</div>
-              <button id="menu-outline-btn" type="button">CEL OUTLINE: ON</button>
-              <div class="settings-slider-row">
-                <label for="menu-outline-thickness">OUTLINE THICKNESS</label>
-                <input id="menu-outline-thickness" type="range" min="50" max="300" step="5" />
-                <span class="settings-slider-value" id="menu-outline-thickness-value">1.00 px</span>
-              </div>
-              <div class="settings-slider-row">
-                <label for="menu-outline-intensity">OUTLINE INTENSITY</label>
-                <input id="menu-outline-intensity" type="range" min="0" max="100" step="1" />
-                <span class="settings-slider-value" id="menu-outline-intensity-value">85%</span>
-              </div>
-              <button id="menu-outline-debug-btn" type="button">EDGE DEBUG: OFF</button>
-              <div class="settings-hint">Applies live · edge debug shows the detected edges only</div>
-            </div>
-            <div id="menu-snow-section" class="hidden">
-              <div class="settings-sep"></div>
-              <div class="settings-title">SNOW (GIVRE)</div>
-              <button id="menu-snow-btn" type="button">SNOW: NORMAL</button>
-              <div class="settings-hint">Applies live · OFF / LIGHT / NORMAL / DENSE</div>
-            </div>
-          </div>
 
           <!-- Web advertisement placement (AdSlot renders here) -->
           <div id="menu-ad-anchor"></div>
@@ -304,6 +236,11 @@
       <!-- Subtle green flash used by the PLAY transition -->
       <div id="menu-play-flash"></div>
     </div>
+
+    <!-- SETTINGS PAGE (src/menu/SettingsPage.ts builds it): graphics with the
+         automatic detection, crosshair, display, audio — from the main menu
+         and from the pause menu (nav PARAMÈTRES). -->
+    <div id="settings-page" class="hidden"></div>
 
     <!-- Minimal preload screen shown while menu assets stream in -->
     <div id="menu-loading">

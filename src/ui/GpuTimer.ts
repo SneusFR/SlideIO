@@ -37,10 +37,18 @@ export class GpuTimer {
 
   /** Label of the pass rendering now (prefix of the per-draw categories). */
   pass = "";
+  /**
+   * Every measured frame, once its results are read: its total GPU time
+   * (null when a disjoint event voided it) and the tag given to beginFrame —
+   * the settings' frame meter (automatic detection, dynamic resolution, live
+   * readout of the settings page) reads per-frame values through it.
+   */
+  onFrame: ((totalMs: number | null, tag: number) => void) | null = null;
   private readonly pool: WebGLQuery[] = [];
   /** Closed frames whose results are not read yet (oldest first). */
-  private readonly pending: Segment[][] = [];
+  private readonly pending: { segments: Segment[]; tag: number }[] = [];
   private frame: Segment[] | null = null;
+  private frameTag = 0;
   private active: Segment | null = null;
   private readonly sums = new Map<string, number>();
   private frames = 0;
@@ -55,11 +63,12 @@ export class GpuTimer {
     private readonly ext: TimerQueryExt,
   ) {}
 
-  /** Opens the frame (closes a frame left open by an early return). */
-  beginFrame(pass: string): void {
+  /** Opens the frame (closes a frame left open by an early return). `tag` comes back with onFrame. */
+  beginFrame(pass: string, tag = 0): void {
     if (this.frame) this.endFrame();
     if (this.dead) return;
     this.frame = [];
+    this.frameTag = tag;
     this.setPass(pass);
   }
 
@@ -89,32 +98,50 @@ export class GpuTimer {
   endFrame(): void {
     if (this.active) this.gl.endQuery(this.ext.TIME_ELAPSED_EXT);
     this.active = null;
-    if (this.frame && this.frame.length > 0) this.pending.push(this.frame);
+    if (this.frame && this.frame.length > 0) this.pending.push({ segments: this.frame, tag: this.frameTag });
     this.frame = null;
     this.collect();
+  }
+
+  /** Frees every query (the timer is unusable afterwards). */
+  dispose(): void {
+    const gl = this.gl;
+    if (this.active) gl.endQuery(this.ext.TIME_ELAPSED_EXT);
+    this.active = null;
+    for (const s of this.frame ?? []) gl.deleteQuery(s.query);
+    for (const { segments } of this.pending) for (const s of segments) gl.deleteQuery(s.query);
+    for (const query of this.pool) gl.deleteQuery(query);
+    this.frame = null;
+    this.pending.length = 0;
+    this.pool.length = 0;
+    this.onFrame = null;
+    this.dead = true;
   }
 
   private collect(): void {
     const gl = this.gl;
     while (this.pending.length > 0) {
-      const segments = this.pending[0];
+      const { segments, tag } = this.pending[0];
       if (!segments.every((s) => gl.getQueryParameter(s.query, gl.QUERY_RESULT_AVAILABLE))) break;
       this.pending.shift();
       // Disjoint flag: read once per frame, cleared by the read itself.
       const disjoint = gl.getParameter(this.ext.GPU_DISJOINT_EXT) as boolean;
+      let total = 0;
       if (!disjoint) {
         for (const s of segments) {
           const ms = (gl.getQueryParameter(s.query, gl.QUERY_RESULT) as number) / 1e6;
           this.sums.set(s.label, (this.sums.get(s.label) ?? 0) + ms);
+          total += ms;
         }
         this.frames++;
       }
       for (const s of segments) this.pool.push(s.query);
+      this.onFrame?.(disjoint ? null : total, tag);
     }
     // Results that never come (lost context, a driver that never exposes
     // them): stop measuring instead of piling up queries.
     if (this.pending.length > 30) {
-      for (const segments of this.pending) for (const s of segments) gl.deleteQuery(s.query);
+      for (const { segments } of this.pending) for (const s of segments) gl.deleteQuery(s.query);
       for (const query of this.pool) gl.deleteQuery(query);
       this.pending.length = 0;
       this.pool.length = 0;

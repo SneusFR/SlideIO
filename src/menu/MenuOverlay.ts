@@ -9,43 +9,11 @@ import {
   saveDisplayName,
 } from "../network/MultiplayerConfig";
 import {
-  detectQualityLevel,
-  loadQualityMode,
-  saveQualityMode,
-  QualityMode,
-  loadFpsCapMode,
-  saveFpsCapMode,
-  resolveMaxFps,
-  presetMaxFps,
-  FpsCapMode,
-} from "../game/GraphicsQuality";
-import { audio, type AudioBus } from "../audio/AudioManager";
-import {
-  loadCrosshairSettings,
-  saveCrosshairSettings,
-  DEFAULT_CROSSHAIR,
-  type CrosshairSettings,
-  type CrosshairShape,
-} from "../ui/CrosshairSettings";
-import { hudHost } from "../hud/host/HudHost";
-import {
   loadMapSelection,
   saveMapSelection,
   mapDisplayName,
   nextMapId,
 } from "../world/MapSelection";
-import {
-  loadOutlineSettings,
-  saveOutlineSettings,
-  type OutlineSettings,
-} from "../game/OutlineSettings";
-import {
-  SNOW_LEVELS,
-  loadSnowLevel,
-  saveSnowLevel,
-  snowLevelLabel,
-} from "../game/GivreSnowSettings";
-import type { GivreSnowLevel } from "../world/GivreSnow";
 
 /** Ping dot colour classes (exactly one is set). */
 const PING_TIERS = ["good", "ok", "bad", "off"] as const;
@@ -61,7 +29,7 @@ function setTextIfChanged(el: HTMLElement, text: string): void {
  *
  * Owns all menu widgets:
  *   - profile card (top-left): editable guest name + level / XP / coins
- *   - nav bar (top-right): INVENTORY / SHOP / SETTINGS
+ *   - nav bar (top-right): INVENTORY / SHOP / PARAMÈTRES (→ SettingsPage)
  *   - CLICK TO PLAY (center)
  *   - server panel (bottom-left): region / lobby / mode / live ping
  *   - LOADOUT + CUSTOMIZE (bottom-center)
@@ -85,12 +53,8 @@ export class MenuOverlay {
   onChangeLobby: (() => void) | null = null;
   /** LEAVE GAME (pause menu, multiplayer only). */
   onLeaveGame: (() => void) | null = null;
-  /** FPS LIMIT changed: effective maxFps (Infinity = uncapped) — live. */
-  onFpsCapChange: ((maxFps: number) => void) | null = null;
-  /** OUTLINE settings changed (Givre cel-shading) — live. */
-  onOutlineChange: ((settings: OutlineSettings) => void) | null = null;
-  /** SNOW density changed (Givre falling snow) — live. */
-  onSnowChange: ((level: GivreSnowLevel) => void) | null = null;
+  /** PARAMÈTRES (nav) → the settings page (main menu and pause menu alike). */
+  onSettings: (() => void) | null = null;
 
   /** Current display name (persisted guest identity). */
   playerName: string;
@@ -102,8 +66,10 @@ export class MenuOverlay {
   /** Pending "asleep" switch once the hide fade is over (see sleep()). */
   private sleepTimer: number | null = null;
   private disposed = false;
-  private settingsOpen = false;
   private readonly cleanups: (() => void)[] = [];
+  /** First-launch graphics detection status (bottom of the menu). */
+  private toast: HTMLElement | null = null;
+  private toastTimer: number | null = null;
 
   constructor(
     private readonly sounds: MenuAudio,
@@ -140,7 +106,6 @@ export class MenuOverlay {
 
     // ---- Buttons: sounds + actions ----
     this.wireButtons();
-    this.wireSettings();
     this.wireClickToPlay();
 
     // ---- Live ping + lobby state (5 s, cheap) ----
@@ -199,7 +164,7 @@ export class MenuOverlay {
             this.onLeaveGame?.();
             break;
           case "settings":
-            this.toggleSettings();
+            this.onSettings?.();
             break;
           case "shop":
             // No shop system exists yet — the button shows "SOON".
@@ -209,295 +174,6 @@ export class MenuOverlay {
       btn.addEventListener("click", onClick);
       this.cleanups.push(() => btn.removeEventListener("click", onClick));
     });
-  }
-
-  /** Small SETTINGS popover: the real graphics quality cycle. */
-  private wireSettings(): void {
-    const pop = document.getElementById("menu-settings-pop")!;
-    const qualityBtn = document.getElementById("menu-quality-btn") as HTMLButtonElement;
-
-    const label = (mode: QualityMode): string =>
-      mode === "AUTO"
-        ? `GRAPHICS: AUTO (${detectQualityLevel()})`
-        : `GRAPHICS: ${mode}`;
-    qualityBtn.textContent = label(loadQualityMode());
-
-    const onQuality = () => {
-      this.sounds.click();
-      const order: QualityMode[] = ["AUTO", "LOW", "HIGH"];
-      const next = order[(order.indexOf(loadQualityMode()) + 1) % order.length];
-      saveQualityMode(next);
-      qualityBtn.textContent = `${label(next)} — RELOADING…`;
-      // Renderer settings (MSAA) are fixed at context creation → reload.
-      setTimeout(() => window.location.reload(), 350);
-    };
-    qualityBtn.addEventListener("click", onQuality);
-    this.cleanups.push(() => qualityBtn.removeEventListener("click", onQuality));
-
-    // FPS LIMIT: pure loop pacing — applies LIVE (no reload), persisted.
-    // AUTO follows the preset (LOW → 60, HIGH → uncapped); 60 forces the
-    // cap (fixes unstable-rAF laptops); OFF uncaps 120/240 Hz displays.
-    const fpsBtn = document.getElementById("menu-fps-btn") as HTMLButtonElement;
-    const fpsLabel = (mode: FpsCapMode): string => {
-      if (mode === "AUTO") {
-        const auto = resolveMaxFps(presetMaxFps(), "AUTO");
-        return `FPS LIMIT: AUTO (${Number.isFinite(auto) ? auto : "OFF"})`;
-      }
-      return `FPS LIMIT: ${mode}`;
-    };
-    fpsBtn.textContent = fpsLabel(loadFpsCapMode());
-
-    const onFpsCap = () => {
-      this.sounds.click();
-      const order: FpsCapMode[] = ["AUTO", "60", "OFF"];
-      const next = order[(order.indexOf(loadFpsCapMode()) + 1) % order.length];
-      saveFpsCapMode(next);
-      fpsBtn.textContent = fpsLabel(next);
-      this.onFpsCapChange?.(resolveMaxFps(presetMaxFps(), next));
-    };
-    fpsBtn.addEventListener("click", onFpsCap);
-    this.cleanups.push(() => fpsBtn.removeEventListener("click", onFpsCap));
-
-    this.wireVolumeSliders(pop);
-    this.wireCrosshairSettings();
-
-    // Click outside closes the popover.
-    const onDocClick = (e: MouseEvent) => {
-      if (!this.settingsOpen) return;
-      const target = e.target as HTMLElement;
-      if (pop.contains(target) || target.closest('[data-menu="settings"]')) return;
-      this.toggleSettings(false);
-    };
-    document.addEventListener("click", onDocClick);
-    this.cleanups.push(() => document.removeEventListener("click", onDocClick));
-  }
-
-  /**
-   * AUDIO sliders (Main / Weapon / Music / Ambiance): each range input
-   * carries a data-volume-bus attribute mapping straight onto an
-   * AudioManager bus. Values apply live and persist via setUserVolume.
-   */
-  private wireVolumeSliders(pop: HTMLElement): void {
-    // Buses that follow a slider's primary bus: weapon IMPACT sounds
-    // (hammer hits, explosions…) live on the "impacts" bus but belong to
-    // the WEAPON VOLUME slider from the player's point of view.
-    const linkedBuses: Partial<Record<AudioBus, AudioBus[]>> = {
-      weapons: ["impacts"],
-    };
-
-    const sliders = pop.querySelectorAll<HTMLInputElement>("input[data-volume-bus]");
-    sliders.forEach((slider) => {
-      const bus = slider.dataset.volumeBus as AudioBus;
-      const valueEl = document.getElementById(`${slider.id}-value`);
-
-      const render = (v: number) => {
-        slider.value = String(Math.round(v * 100));
-        if (valueEl) valueEl.textContent = `${Math.round(v * 100)}%`;
-      };
-      render(audio.getUserVolume(bus));
-
-      const onInput = () => {
-        const v = Number(slider.value) / 100;
-        audio.setUserVolume(bus, v);
-        for (const linked of linkedBuses[bus] ?? []) audio.setUserVolume(linked, v);
-        if (valueEl) valueEl.textContent = `${slider.value}%`;
-      };
-      // A soft click on release gives instant audible feedback of the
-      // new level (skipped for buses no UI sound plays through).
-      const onChange = () => {
-        if (bus === "master" || bus === "ui") this.sounds.click();
-      };
-      slider.addEventListener("input", onInput);
-      slider.addEventListener("change", onChange);
-      this.cleanups.push(() => {
-        slider.removeEventListener("input", onInput);
-        slider.removeEventListener("change", onChange);
-      });
-    });
-  }
-
-  /**
-   * CROSSHAIR section: shape toggle (DOT ↔ CROSS), size slider (50–250%)
-   * and color picker (+ RESET to white). Applied LIVE on the #crosshair
-   * element (pure CSS variables — see CrosshairSettings.ts) and persisted
-   * to localStorage on every change.
-   */
-  private wireCrosshairSettings(): void {
-    const shapeBtn = document.getElementById("menu-ch-shape-btn") as HTMLButtonElement | null;
-    const sizeSlider = document.getElementById("menu-ch-size") as HTMLInputElement | null;
-    const sizeValue = document.getElementById("menu-ch-size-value");
-    const colorInput = document.getElementById("menu-ch-color") as HTMLInputElement | null;
-    const colorReset = document.getElementById("menu-ch-color-reset") as HTMLButtonElement | null;
-    const contrastBtn = document.getElementById("menu-ch-contrast-btn") as HTMLButtonElement | null;
-    const motionBtn = document.getElementById("menu-ch-motion-btn") as HTMLButtonElement | null;
-    if (!shapeBtn || !sizeSlider || !colorInput || !colorReset || !contrastBtn || !motionBtn) return;
-
-    let settings: CrosshairSettings = loadCrosshairSettings();
-
-    const render = () => {
-      shapeBtn.textContent = `SHAPE: ${settings.shape}`;
-      contrastBtn.textContent = `HIGH CONTRAST: ${settings.highContrast ? "ON" : "OFF"}`;
-      motionBtn.textContent = `REDUCED MOTION: ${settings.reducedMotion ? "ON" : "OFF"}`;
-      sizeSlider.value = String(Math.round(settings.scale * 100));
-      if (sizeValue) sizeValue.textContent = `${Math.round(settings.scale * 100)}%`;
-      colorInput.value = settings.color;
-    };
-    // Applied in the HUD's document (the iframe, or this page); stored here
-    // (localStorage: the sandboxed HUD document has none).
-    const commit = () => {
-      hudHost.api.applyCrosshairSettings(settings);
-      saveCrosshairSettings(settings);
-    };
-    render();
-    // Boot-time apply: the saved crosshair is live before the first match.
-    hudHost.api.applyCrosshairSettings(settings);
-
-    const onShape = () => {
-      this.sounds.click();
-      const next: CrosshairShape =
-        settings.shape === "STICKER" ? "DOT" : settings.shape === "DOT" ? "CROSS" : "STICKER";
-      settings = { ...settings, shape: next };
-      render();
-      commit();
-    };
-    const onContrast = () => {
-      this.sounds.click();
-      settings = { ...settings, highContrast: !settings.highContrast };
-      render();
-      commit();
-    };
-    const onMotion = () => {
-      this.sounds.click();
-      settings = { ...settings, reducedMotion: !settings.reducedMotion };
-      render();
-      commit();
-    };
-    const onSize = () => {
-      settings = { ...settings, scale: Number(sizeSlider.value) / 100 };
-      if (sizeValue) sizeValue.textContent = `${sizeSlider.value}%`;
-      commit();
-    };
-    const onColor = () => {
-      settings = { ...settings, color: colorInput.value };
-      commit();
-    };
-    const onReset = () => {
-      this.sounds.click();
-      settings = { ...settings, color: DEFAULT_CROSSHAIR.color };
-      render();
-      commit();
-    };
-
-    shapeBtn.addEventListener("click", onShape);
-    sizeSlider.addEventListener("input", onSize);
-    colorInput.addEventListener("input", onColor);
-    colorReset.addEventListener("click", onReset);
-    contrastBtn.addEventListener("click", onContrast);
-    motionBtn.addEventListener("click", onMotion);
-    this.cleanups.push(() => {
-      contrastBtn.removeEventListener("click", onContrast);
-      motionBtn.removeEventListener("click", onMotion);
-      shapeBtn.removeEventListener("click", onShape);
-      sizeSlider.removeEventListener("input", onSize);
-      colorInput.removeEventListener("input", onColor);
-      colorReset.removeEventListener("click", onReset);
-    });
-  }
-
-  /**
-   * OUTLINE section (Givre cel-shading): ON/OFF, thickness (0.5–3 px),
-   * intensity (0–100 %) and the session-only EDGE DEBUG view. Applied LIVE
-   * through onOutlineChange and persisted (debug excluded). The section is
-   * hidden until enableOutlineSettings() is called (Givre map only).
-   */
-  enableOutlineSettings(): void {
-    const section = document.getElementById("menu-outline-section");
-    const toggleBtn = document.getElementById("menu-outline-btn") as HTMLButtonElement | null;
-    const debugBtn = document.getElementById("menu-outline-debug-btn") as HTMLButtonElement | null;
-    const thickSlider = document.getElementById("menu-outline-thickness") as HTMLInputElement | null;
-    const thickValue = document.getElementById("menu-outline-thickness-value");
-    const intSlider = document.getElementById("menu-outline-intensity") as HTMLInputElement | null;
-    const intValue = document.getElementById("menu-outline-intensity-value");
-    if (!section || !toggleBtn || !debugBtn || !thickSlider || !intSlider) return;
-    section.classList.remove("hidden");
-
-    let settings: OutlineSettings = loadOutlineSettings();
-    const render = () => {
-      toggleBtn.textContent = `CEL OUTLINE: ${settings.enabled ? "ON" : "OFF"}`;
-      debugBtn.textContent = `EDGE DEBUG: ${settings.debugEdges ? "ON" : "OFF"}`;
-      thickSlider.value = String(Math.round(settings.thickness * 100));
-      if (thickValue) thickValue.textContent = `${settings.thickness.toFixed(2)} px`;
-      intSlider.value = String(Math.round(settings.intensity * 100));
-      if (intValue) intValue.textContent = `${Math.round(settings.intensity * 100)}%`;
-    };
-    const commit = () => {
-      render();
-      saveOutlineSettings(settings);
-      this.onOutlineChange?.(settings);
-    };
-    render();
-
-    const onToggle = () => {
-      this.sounds.click();
-      settings = { ...settings, enabled: !settings.enabled };
-      commit();
-    };
-    const onDebug = () => {
-      this.sounds.click();
-      settings = { ...settings, debugEdges: !settings.debugEdges };
-      commit();
-    };
-    const onThickness = () => {
-      settings = { ...settings, thickness: Number(thickSlider.value) / 100 };
-      commit();
-    };
-    const onIntensity = () => {
-      settings = { ...settings, intensity: Number(intSlider.value) / 100 };
-      commit();
-    };
-    toggleBtn.addEventListener("click", onToggle);
-    debugBtn.addEventListener("click", onDebug);
-    thickSlider.addEventListener("input", onThickness);
-    intSlider.addEventListener("input", onIntensity);
-    this.cleanups.push(() => {
-      toggleBtn.removeEventListener("click", onToggle);
-      debugBtn.removeEventListener("click", onDebug);
-      thickSlider.removeEventListener("input", onThickness);
-      intSlider.removeEventListener("input", onIntensity);
-    });
-  }
-
-  /**
-   * SNOW section (Givre falling snow): one button cycling OFF → LIGHT →
-   * NORMAL → DENSE. Applied LIVE through onSnowChange and persisted. Hidden
-   * until enableSnowSettings() is called (Givre map only).
-   */
-  enableSnowSettings(): void {
-    const section = document.getElementById("menu-snow-section");
-    const btn = document.getElementById("menu-snow-btn") as HTMLButtonElement | null;
-    if (!section || !btn) return;
-    section.classList.remove("hidden");
-
-    let level: GivreSnowLevel = loadSnowLevel();
-    const render = () => {
-      btn.textContent = `SNOW: ${snowLevelLabel(level)}`;
-    };
-    render();
-    const onClick = () => {
-      this.sounds.click();
-      level = SNOW_LEVELS[(SNOW_LEVELS.indexOf(level) + 1) % SNOW_LEVELS.length];
-      render();
-      saveSnowLevel(level);
-      this.onSnowChange?.(level);
-    };
-    btn.addEventListener("click", onClick);
-    this.cleanups.push(() => btn.removeEventListener("click", onClick));
-  }
-
-  private toggleSettings(force?: boolean): void {
-    const pop = document.getElementById("menu-settings-pop")!;
-    this.settingsOpen = force ?? !this.settingsOpen;
-    pop.classList.toggle("hidden", !this.settingsOpen);
   }
 
   /** Inline name editing: click the pencil → input → Enter/blur saves. */
@@ -620,9 +296,61 @@ export class MenuOverlay {
   hide(): void {
     this.root.classList.remove("menu-fade-out");
     this.root.classList.add("menu-hidden");
-    this.toggleSettings(false);
+    this.hideGraphicsToast();
     this.stopLive();
     this.sleep();
+  }
+
+  /**
+   * The settings page is up: the menu's own UI steps aside (the live map
+   * stays visible next to the page, to see each change as it happens).
+   */
+  setSettingsOpen(open: boolean): void {
+    this.root.parentElement?.classList.toggle("settings-open", open);
+  }
+
+  /**
+   * Status of the automatic graphics detection (first launch): a small line at
+   * the bottom of the menu. `action` turns it into a button (open the page);
+   * `hideAfterMs` fades it out by itself.
+   */
+  showGraphicsToast(text: string, opts: { busy?: boolean; action?: () => void; hideAfterMs?: number } = {}): void {
+    if (!this.toast) {
+      this.toast = document.createElement("div");
+      this.toast.id = "menu-gfx-toast";
+      this.toast.setAttribute("role", "status");
+      this.root.appendChild(this.toast);
+    }
+    const toast = this.toast;
+    toast.textContent = "";
+    const label = document.createElement("span");
+    label.className = "gfx-toast-text";
+    label.textContent = text;
+    toast.appendChild(label);
+    toast.classList.toggle("busy", opts.busy === true);
+    if (opts.action) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "gfx-toast-btn";
+      btn.textContent = "Voir les réglages";
+      const action = opts.action;
+      btn.addEventListener("click", () => {
+        this.sounds.click();
+        this.hideGraphicsToast();
+        action();
+      });
+      toast.appendChild(btn);
+    }
+    toast.classList.remove("hidden");
+    if (this.toastTimer !== null) window.clearTimeout(this.toastTimer);
+    this.toastTimer =
+      opts.hideAfterMs !== undefined ? window.setTimeout(() => this.hideGraphicsToast(), opts.hideAfterMs) : null;
+  }
+
+  hideGraphicsToast(): void {
+    if (this.toastTimer !== null) window.clearTimeout(this.toastTimer);
+    this.toastTimer = null;
+    this.toast?.classList.add("hidden");
   }
 
   /**
@@ -695,6 +423,7 @@ export class MenuOverlay {
 
   dispose(): void {
     this.disposed = true;
+    this.hideGraphicsToast();
     this.stopLive();
     if (this.sleepTimer !== null) window.clearTimeout(this.sleepTimer);
     for (const c of this.cleanups) c();

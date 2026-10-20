@@ -1,139 +1,157 @@
-/**
- * Graphics quality presets — the single knob for every GPU-bound cost.
- *
- * Modest machines (Intel iGPU laptops…) are FILL-RATE and LIGHT-COUNT
- * bound in this game: rendered pixels (devicePixelRatio), MSAA, the
- * shadow pass and the number of forward-lit point lights dominate the
- * frame time. Strong GPUs keep the full visuals; weak ones get a LOW
- * preset that trades imperceptible details for a stable 60 FPS.
- *
- * Resolution order (first match wins):
- *   1. Player override, persisted in localStorage ("LOW" / "HIGH").
- *   2. AUTO detection from the WebGL renderer string: integrated /
- *      mobile / software GPUs → LOW, everything else → HIGH.
- *
- * The renderer's `antialias` flag can only be set at context creation,
- * so changing the preset from the Escape menu reloads the page.
- */
-export type QualityLevel = "LOW" | "HIGH";
-export type QualityMode = "AUTO" | QualityLevel;
+import {
+  effectivePreset,
+  effectiveValues,
+  isMsaa,
+  pixelRatioFor,
+  resolveFpsCap,
+  shadowMapTierSize,
+  SHADOW_QUALITIES,
+  type DisplayEnv,
+  type GpuHint,
+  type GraphicsValues,
+  type PresetChoice,
+} from "../settings/GraphicsSettings";
+import { setLegacyAutoBase, settingsStore } from "../settings/SettingsStore";
 
+/**
+ * Graphics SESSION — the values this page load runs with, resolved ONCE at
+ * boot from the settings record (src/settings: presets, custom values, the
+ * last automatic detection). The map and character code read the legacy
+ * facade below (getQualitySettings) while they build; the Game reads the full
+ * session, then applies live changes itself (see Game.applyGraphicsSettings).
+ *
+ * Modest machines (Intel iGPU laptops…) are FILL-RATE bound in this game:
+ * rendered pixels, MSAA, the shadow pass and the forward-lit lights dominate
+ * the frame time — each is one setting of the page.
+ */
+export interface GraphicsSession {
+  /** Effective values at boot (shadow mode, character shadows, effect lights, context MSAA: fixed for the session). */
+  values: GraphicsValues;
+  /** Preset choice at boot ("auto", "bas"…, "custom"). */
+  preset: PresetChoice;
+  /** Display the presets were resolved for. */
+  env: DisplayEnv;
+  /** GPU hint used by "auto" (probe only made when the choice needs it). */
+  gpu: GpuHint;
+}
+
+/** Legacy shape read by the map / character code at construction. */
 export interface QualitySettings {
-  /** Resolved preset actually in effect this session. */
-  level: QualityLevel;
-  /** Renderer pixel-ratio ceiling (real DPR is clamped to this). */
+  /** Shadow size family of Givre (GivreConfig.shadowMapSize): "HIGH" from the "high" tier up. */
+  level: "LOW" | "HIGH";
+  /** The renderer's pixel ratio this session (SpaceSky star sizes). */
   pixelRatioCap: number;
-  /** MSAA at context creation (expensive on integrated GPUs). */
+  /** MSAA requested (the WebGL context's MSAA on maps without a post chain). */
   antialias: boolean;
-  /** Directional moonlight shadow map resolution (square). */
+  /** Shadow map side for the square maps (Jungle / Yard). */
   shadowMapSize: number;
   /**
-   * STATIC shadows: the map's shadow map is baked ONCE (map + lights never
-   * move) and characters stop casting shadows. Kills the biggest fixed GPU
-   * cost per frame (a full caster re-render of the whole map) AND the
-   * short/long frame cadence the old every-other-frame refresh created.
+   * Moving objects (characters, held weapons, drones) never cast shadows:
+   * static or no shadows, or dynamic shadows without character shadows. Their
+   * silhouette would otherwise be frozen into the baked map.
    */
   staticShadows: boolean;
-  /**
-   * Frame-rate cap (rendered frames per second; Infinity = uncapped).
-   * LOW defaults to 60 to reduce load; HIGH stays uncapped for high-refresh
-   * displays. This limits work, not the browser's presentation cadence.
-   * The previous ~2x callback count was reproduced as a duplicate animation
-   * chain at the menu/game handoff, not evidence of a driver/vsync issue.
-   */
+  /** Frame-rate cap at boot (Infinity = uncapped). */
   maxFps: number;
-  /** Max simultaneous violet force-field point lights (biggest walls win). */
-  maxFieldLights: number;
-  /** Multiplier on the force-field rising-particle density. */
-  fieldParticleScale: number;
-  /**
-   * Anisotropic filtering of the world textures (baked lightmaps / AO):
-   * sharp floors and walls at grazing angles. Clamped to the GPU maximum.
-   * Free on discrete GPUs, a texture-bandwidth cost on integrated ones.
-   */
+  /** Anisotropic filtering of the world textures (Givre lightmaps). */
   anisotropy: number;
 }
 
-const STORAGE_KEY = "beanzo.graphicsQuality";
-const FPS_CAP_KEY = "beanzo.fpsCap";
-
-/**
- * Player override for the frame-rate cap (Escape-menu FPS LIMIT button),
- * independent of the graphics preset:
- *   - "AUTO": follow the preset (LOW → 60, HIGH → uncapped).
- *   - "60":   force the 60 FPS cap to reduce CPU/GPU load.
- *   - "OFF":  force uncapped (120/240 Hz displays on the LOW preset).
- */
-export type FpsCapMode = "AUTO" | "60" | "OFF";
-
-const PRESETS: Record<QualityLevel, Omit<QualitySettings, "level">> = {
-  HIGH: {
-    pixelRatioCap: 2,
-    antialias: true,
-    shadowMapSize: 2048,
-    staticShadows: false,
-    maxFps: Infinity,
-    maxFieldLights: Infinity,
-    fieldParticleScale: 1,
-    anisotropy: 8,
-  },
-  LOW: {
-    pixelRatioCap: 1,
-    antialias: false,
-    shadowMapSize: 1024,
-    staticShadows: true,
-    maxFps: 60,
-    maxFieldLights: 4,
-    fieldParticleScale: 0.5,
-    anisotropy: 1,
-  },
-};
-
-/** GPU families that should default to the LOW preset. */
+/** GPU families that defaulted to the LOW preset (the "auto" choice before any detection). */
 const WEAK_GPU_PATTERN =
   /\bintel\b|\buhd\b|\biris\b|\bhd graphics\b|radeon\(tm\) graphics|\bvega (?:3|6|8|10|11)\b|\bmali\b|\badreno\b|\bpowervr\b|swiftshader|llvmpipe|software/i;
 
-/** Persisted player override (AUTO when never touched / invalid). */
-export function loadQualityMode(): QualityMode {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw === "LOW" || raw === "HIGH" || raw === "AUTO") return raw;
-  } catch {
-    /* storage unavailable — AUTO */
-  }
-  return "AUTO";
+/** Software rasterizers: no game-side setting can make them fast. */
+const SOFTWARE_GPU_PATTERN = /swiftshader|llvmpipe|softpipe|basic render|software/i;
+
+export function isWeakGpuName(name: string): boolean {
+  return WEAK_GPU_PATTERN.test(name);
 }
 
-export function saveQualityMode(mode: QualityMode): void {
+export function isSoftwareGpuName(name: string): boolean {
+  return SOFTWARE_GPU_PATTERN.test(name);
+}
+
+let probe: GpuHint | null = null;
+
+/**
+ * The GPU the browser renders with, read from a throwaway WebGL context (once
+ * per page) — same power preference as the game's renderer, so a dual-GPU
+ * laptop reports the GPU the game will really get. Any failure errs on the
+ * safe side: weak.
+ */
+export function probeGpu(): GpuHint {
+  if (probe) return probe;
   try {
-    localStorage.setItem(STORAGE_KEY, mode);
+    const canvas = document.createElement("canvas");
+    const attrs: WebGLContextAttributes = { powerPreference: "high-performance" };
+    const gl =
+      (canvas.getContext("webgl2", attrs) as WebGL2RenderingContext | null) ??
+      (canvas.getContext("webgl", attrs) as WebGLRenderingContext | null);
+    if (!gl) return (probe = { name: "", weak: true });
+    const name = webglRendererName(gl);
+    const info = gl.getExtension("WEBGL_debug_renderer_info");
+    const raw = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : "";
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+    // Masked string: assume a real GPU (as before).
+    probe = { name, weak: raw ? isWeakGpuName(raw) : false };
   } catch {
-    /* storage unavailable — the session keeps its current settings */
+    probe = { name: "", weak: true };
   }
+  return probe;
+}
+
+// The settings migration asks what the old AUTO picked on this GPU (an explicit
+// snow level kept as "Personnalisé" from that preset).
+setLegacyAutoBase(() => (probeGpu().weak ? "bas" : "eleve"));
+
+export function currentDisplayEnv(): DisplayEnv {
+  const dpr = typeof window !== "undefined" ? window.devicePixelRatio : 1;
+  return { dpr: Number.isFinite(dpr) && dpr > 0 ? dpr : 1 };
 }
 
 /**
- * AUTO detection: read the unmasked GPU renderer string from a throwaway
- * WebGL context. Integrated / mobile / software GPUs → LOW. Any failure
- * (blocked extension, no context) errs on the safe side → LOW.
+ * GPU hint of a choice: "auto" needs the real GPU (stored detection for THIS
+ * GPU, or the weak/strong heuristic); other choices never pay for the probe.
  */
-export function detectQualityLevel(): QualityLevel {
-  try {
-    const canvas = document.createElement("canvas");
-    const gl =
-      canvas.getContext("webgl2") ??
-      (canvas.getContext("webgl") as WebGLRenderingContext | null);
-    if (!gl) return "LOW";
-    const info = gl.getExtension("WEBGL_debug_renderer_info");
-    const renderer = info
-      ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL))
-      : "";
-    gl.getExtension("WEBGL_lose_context")?.loseContext();
-    if (!renderer) return "HIGH"; // masked string: assume a real GPU
-    return WEAK_GPU_PATTERN.test(renderer) ? "LOW" : "HIGH";
-  } catch {
-    return "LOW";
-  }
+export function gpuHintFor(preset: PresetChoice): GpuHint {
+  return preset === "auto" ? probeGpu() : { name: "", weak: false };
+}
+
+let session: GraphicsSession | null = null;
+
+/** The values this page load runs with (resolved once, then cached). */
+export function getGraphicsSession(): GraphicsSession {
+  if (session) return session;
+  const record = settingsStore().get();
+  const env = currentDisplayEnv();
+  const gpu = gpuHintFor(record.graphics.preset);
+  session = { values: effectiveValues(record.graphics, env, gpu), preset: record.graphics.preset, env, gpu };
+  return session;
+}
+
+/** The legacy shape of a set of values on a display (pure: tested against the old LOW / HIGH presets). */
+export function legacyQuality(v: GraphicsValues, env: DisplayEnv, maxFps: number): QualitySettings {
+  return {
+    level: SHADOW_QUALITIES.indexOf(v.shadowQuality) >= SHADOW_QUALITIES.indexOf("high") ? "HIGH" : "LOW",
+    pixelRatioCap: pixelRatioFor(v.renderScale, env.dpr),
+    antialias: isMsaa(v.antialiasing),
+    shadowMapSize: shadowMapTierSize(v.shadowQuality, false),
+    staticShadows: !(v.shadows === "dynamic" && v.characterShadows),
+    maxFps,
+    anisotropy: v.anisotropy,
+  };
+}
+
+let cached: QualitySettings | null = null;
+
+/** Legacy facade (map / character code), derived from the session. */
+export function getQualitySettings(): QualitySettings {
+  if (cached) return cached;
+  const s = getGraphicsSession();
+  const record = settingsStore().get();
+  cached = legacyQuality(s.values, s.env, resolveFpsCap(record.fpsCap, effectivePreset(record.graphics, s.gpu)));
+  return cached;
 }
 
 /**
@@ -159,50 +177,4 @@ export function webglRendererName(gl: WebGLRenderingContext | WebGL2RenderingCon
   } catch {
     return "";
   }
-}
-
-/** Persisted FPS-cap override (AUTO when never touched / invalid). */
-export function loadFpsCapMode(): FpsCapMode {
-  try {
-    const raw = localStorage.getItem(FPS_CAP_KEY);
-    if (raw === "AUTO" || raw === "60" || raw === "OFF") return raw;
-  } catch {
-    /* storage unavailable — AUTO */
-  }
-  return "AUTO";
-}
-
-export function saveFpsCapMode(mode: FpsCapMode): void {
-  try {
-    localStorage.setItem(FPS_CAP_KEY, mode);
-  } catch {
-    /* storage unavailable — the session keeps its current cap */
-  }
-}
-
-/** Effective maxFps for a cap mode, given the preset's own default. */
-export function resolveMaxFps(presetMaxFps: number, mode: FpsCapMode): number {
-  if (mode === "60") return 60;
-  if (mode === "OFF") return Infinity;
-  return presetMaxFps;
-}
-
-/** The preset's own maxFps default (what the AUTO cap mode resolves to). */
-export function presetMaxFps(): number {
-  const mode = loadQualityMode();
-  const level: QualityLevel = mode === "AUTO" ? detectQualityLevel() : mode;
-  return PRESETS[level].maxFps;
-}
-
-let cached: QualitySettings | null = null;
-
-/** Settings in effect for this session (resolved once, then cached). */
-export function getQualitySettings(): QualitySettings {
-  if (cached) return cached;
-  const mode = loadQualityMode();
-  const level: QualityLevel = mode === "AUTO" ? detectQualityLevel() : mode;
-  cached = { level, ...PRESETS[level] };
-  // Player FPS-cap override (FPS LIMIT button) beats the preset default.
-  cached.maxFps = resolveMaxFps(cached.maxFps, loadFpsCapMode());
-  return cached;
 }

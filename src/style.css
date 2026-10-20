@@ -98,7 +98,7 @@ body {
   mix-blend-mode: screen;
 }
 
-/* Customizable via the SETTINGS popover (CrosshairSettings.ts writes the
+/* Customizable on the settings page (CrosshairSettings.ts writes the
    two CSS variables + toggles .cross) — the hit feedback stays pure CSS. */
 #crosshair {
   --ch-scale: 1;
@@ -194,6 +194,12 @@ body > #debug {
 html.hud-menu-active body > #debug,
 body.game-paused > #debug {
   display: none;
+}
+
+/* Settings page → Affichage → « Panneau de performances : Masqué » (both HUD
+   modes: in the inline fallback the panel sits inside #hud, same document). */
+body.perf-panel-off #debug {
+  display: none !important;
 }
 
 
@@ -696,244 +702,80 @@ body.game-paused .mole-overlay {
   border-radius: 4px;
 }
 
-/* ---- SETTINGS popover ---- */
-#menu-settings-pop {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: 260px;
-  padding: 14px 16px;
-  background: linear-gradient(165deg, rgba(18, 26, 15, 0.94), rgba(9, 14, 8, 0.94));
-  border: 1px solid rgba(74, 222, 128, 0.35);
-  border-radius: 14px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(8px);
+/* ---- Settings page open (src/menu/settingsPage.css): the menu's own UI
+   steps aside, the live map stays visible next to the page ---- */
+#main-menu-root.settings-open > #main-menu {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.18s ease, visibility 0s linear 0.18s;
 }
 
-#menu-settings-pop.hidden {
+/* ---- First-launch graphics detection status (MenuOverlay.showGraphicsToast) ---- */
+#menu-gfx-toast {
+  position: absolute;
+  left: 50%;
+  bottom: calc(clamp(16px, 3vh, 34px) + 84px);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(640px, 92vw);
+  padding: 9px 10px 9px 16px;
+  pointer-events: auto;
+  font-family: var(--mm-font-alt);
+  font-size: 14px;
+  font-weight: 600;
+  color: #effdf3;
+  background: rgba(11, 19, 10, 0.92);
+  border: 1px solid rgba(74, 222, 128, 0.45);
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+#menu-gfx-toast.hidden {
   display: none;
 }
 
-.settings-title {
-  font-family: var(--mm-font);
+#menu-gfx-toast.busy::before {
+  content: "";
+  flex: none;
+  width: 9px;
+  height: 12px;
+  border-radius: 50% / 58%;
+  background: #4ade80;
+  transform: rotate(24deg);
+  animation: gfx-toast-bean 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes gfx-toast-bean {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.gfx-toast-btn {
+  flex: none;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-family: var(--mm-font-alt);
   font-size: 13px;
-  font-weight: 400;
-  letter-spacing: 3px;
-  color: #bbf7d0;
-}
-
-#menu-quality-btn,
-#menu-fps-btn {
-  padding: 10px 12px;
-  cursor: pointer;
-  font-family: var(--mm-font-alt);
-  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 1.5px;
-  color: #f0fdf4;
-  background: rgba(22, 163, 74, 0.18);
-  border: 1px solid rgba(74, 222, 128, 0.5);
-  border-radius: 10px;
-  transition: background 0.15s ease;
+  color: #04140a;
+  background: linear-gradient(180deg, #4ade80, #16a34a);
+  border: 0;
+  border-radius: 999px;
 }
 
-#menu-quality-btn:hover,
-#menu-fps-btn:hover {
-  background: rgba(22, 163, 74, 0.32);
+.gfx-toast-btn:hover {
+  background: linear-gradient(180deg, #86efac, #22c55e);
 }
 
-/* ---- CROSSHAIR settings (shape toggle + size slider + color picker) ---- */
-#menu-ch-shape-btn,
-#menu-ch-contrast-btn,
-#menu-ch-motion-btn {
-  padding: 10px 12px;
-  cursor: pointer;
-  font-family: var(--mm-font-alt);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
-  color: #f0fdf4;
-  background: rgba(22, 163, 74, 0.18);
-  border: 1px solid rgba(74, 222, 128, 0.5);
-  border-radius: 10px;
-  transition: background 0.15s ease;
-}
-
-#menu-ch-shape-btn:hover,
-#menu-ch-contrast-btn:hover,
-#menu-ch-motion-btn:hover {
-  background: rgba(22, 163, 74, 0.32);
-}
-
-/* ---- OUTLINE settings (Givre cel-shading — shown only on that map) ---- */
-#menu-outline-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-#menu-outline-section.hidden {
-  display: none;
-}
-
-#menu-outline-btn,
-#menu-outline-debug-btn {
-  padding: 10px 12px;
-  cursor: pointer;
-  font-family: var(--mm-font-alt);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
-  color: #f0fdf4;
-  background: rgba(22, 163, 74, 0.18);
-  border: 1px solid rgba(74, 222, 128, 0.5);
-  border-radius: 10px;
-  transition: background 0.15s ease;
-}
-
-#menu-outline-btn:hover,
-#menu-outline-debug-btn:hover {
-  background: rgba(22, 163, 74, 0.32);
-}
-
-.settings-color-row {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  align-items: center;
-  column-gap: 8px;
-}
-
-.settings-color-row label {
-  font-family: var(--mm-font-alt);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.8px;
-  color: #9fd3aa;
-}
-
-.settings-color-row input[type="color"] {
-  width: 34px;
-  height: 26px;
-  padding: 2px;
-  cursor: pointer;
-  background: rgba(22, 163, 74, 0.18);
-  border: 1px solid rgba(74, 222, 128, 0.5);
-  border-radius: 8px;
-}
-
-#menu-ch-color-reset {
-  padding: 5px 9px;
-  cursor: pointer;
-  font-family: var(--mm-font-alt);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.2px;
-  color: #dcfce7;
-  background: rgba(22, 163, 74, 0.18);
-  border: 1px solid rgba(74, 222, 128, 0.5);
-  border-radius: 8px;
-  transition: background 0.15s ease;
-}
-
-#menu-ch-color-reset:hover {
-  background: rgba(22, 163, 74, 0.32);
-}
-
-.settings-hint {
-  font-family: var(--mm-font-alt);
-  font-size: 10.5px;
-  color: #86bd94;
-  letter-spacing: 0.4px;
-}
-
-.settings-sep {
-  height: 1px;
-  margin: 4px 0 2px;
-  background: rgba(74, 222, 128, 0.2);
-}
-
-/* ---- AUDIO volume sliders (Main / Weapon / Music / Ambiance) ---- */
-.settings-slider-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  row-gap: 6px;
-}
-
-.settings-slider-row label {
-  font-family: var(--mm-font-alt);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.8px;
-  color: #9fd3aa;
-}
-
-.settings-slider-value {
-  font-family: var(--mm-font-alt);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.6px;
-  color: #dcfce7;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  min-width: 38px;
-}
-
-.settings-slider-row input[type="range"] {
-  grid-column: 1 / -1;
-  width: 100%;
-  height: 18px;
-  margin: 0;
-  cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-  background: transparent;
-}
-
-.settings-slider-row input[type="range"]::-webkit-slider-runnable-track {
-  height: 6px;
-  border-radius: 4px;
-  background: rgba(6, 14, 8, 0.85);
-  border: 1px solid rgba(74, 222, 128, 0.3);
-}
-
-.settings-slider-row input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  margin-top: -5px;
-  border-radius: 50%;
-  background: linear-gradient(180deg, #86efac, #16a34a);
-  border: 1px solid rgba(240, 253, 244, 0.6);
-  box-shadow: 0 0 8px rgba(74, 222, 128, 0.55);
-  transition: transform 0.12s ease;
-}
-
-.settings-slider-row input[type="range"]::-webkit-slider-thumb:hover {
-  transform: scale(1.15);
-}
-
-.settings-slider-row input[type="range"]::-moz-range-track {
-  height: 6px;
-  border-radius: 4px;
-  background: rgba(6, 14, 8, 0.85);
-  border: 1px solid rgba(74, 222, 128, 0.3);
-}
-
-.settings-slider-row input[type="range"]::-moz-range-progress {
-  height: 6px;
-  border-radius: 4px;
-  background: linear-gradient(90deg, #16a34a, #86efac);
-}
-
-.settings-slider-row input[type="range"]::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: linear-gradient(180deg, #86efac, #16a34a);
-  border: 1px solid rgba(240, 253, 244, 0.6);
-  box-shadow: 0 0 8px rgba(74, 222, 128, 0.55);
+.gfx-toast-btn:focus-visible {
+  outline: 2px solid #facc15;
+  outline-offset: 2px;
 }
 
 /* ---- AdSlot: neutral, clearly separated from the game UI ---- */
@@ -1693,6 +1535,7 @@ body.game-paused .mole-overlay {
 @media (min-width: 2200px) {
   #main-menu,
   #lobby-browser,
+  #settings-page,
   #loadout-menu,
   #mp-overlay {
     zoom: 1.35;
@@ -1702,6 +1545,7 @@ body.game-paused .mole-overlay {
 @media (min-width: 3200px) {
   #main-menu,
   #lobby-browser,
+  #settings-page,
   #loadout-menu,
   #mp-overlay {
     zoom: 2;
