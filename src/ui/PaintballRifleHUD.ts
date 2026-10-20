@@ -1,4 +1,4 @@
-import { PaintballRifleWeapon } from "../weapons/paintball/PaintballRifleWeapon";
+import type { AmmoView } from "../hud/protocol";
 import { createPips, setPips, WeaponPlate, RING_SPIN } from "./hudKit";
 
 const ACCENT = "#ff5fa2";
@@ -38,7 +38,7 @@ export class PaintballRifleHUD {
     this.plate.setVisible(visible);
   }
 
-  update(weapon: PaintballRifleWeapon): void {
+  update(weapon: AmmoView): void {
     if (this.lastVisible === false) return;
     const ammo = weapon.ammo;
     const reloading = weapon.isReloading;

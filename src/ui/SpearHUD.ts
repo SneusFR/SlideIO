@@ -1,5 +1,5 @@
-import { SpearWeapon } from "../weapons/SpearWeapon";
 import { SpearConfig as sc } from "../weapons/SpearConfig";
+import type { SpearView } from "../hud/protocol";
 import { AbilityChip } from "./hudKit";
 
 const ACCENT = "#facc15"; // bean-prairie gold (same as the menu --mm-gold)
@@ -25,7 +25,7 @@ export class SpearHUD {
     this.chip.setVisible(visible);
   }
 
-  update(spear: SpearWeapon): void {
+  update(spear: SpearView): void {
     if (!this.visible) return;
 
     const remaining = spear.rushCooldownRemaining;

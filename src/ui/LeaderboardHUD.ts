@@ -1,4 +1,4 @@
-import { PlayerMatchStats } from "../stats/MatchStatsManager";
+import type { LeaderboardRow } from "../hud/protocol";
 import { AnimHost } from "./leaderboard/leaderboardAnim";
 import { Crown, CrownMove } from "./leaderboard/leaderboardCrown";
 import { ParticlePool } from "./leaderboard/leaderboardFx";
@@ -81,7 +81,7 @@ export class LeaderboardHUD {
   }
 
   /** Re-render from the sorted stats (call when stats changed; harmless otherwise). */
-  refresh(sorted: PlayerMatchStats[]): void {
+  refresh(sorted: readonly LeaderboardRow[]): void {
     const next: LbEntry[] = sorted.map((s) => ({
       id: s.combatantId,
       name: s.displayName.toUpperCase(),

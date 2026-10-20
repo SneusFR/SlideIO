@@ -1,9 +1,8 @@
-import { Health } from "../combat/Combatant";
 import { CombatConfig as cc } from "../combat/CombatConfig";
+import type { HealthView } from "../hud/protocol";
 import { hudFeed } from "./HudFeed";
 import { BEAN_BUDDY_SVG } from "./hudIcons";
 import { replayAnim } from "./hudKit";
-import { noteFrameEvent } from "./frameEvents";
 
 /** Min seconds between two "hurt" punches (continuous beams hit at 60 Hz). */
 const HURT_PUNCH_INTERVAL = 0.14;
@@ -144,7 +143,6 @@ export class CombatHUD {
    *              or null when the source is unknown (environment).
    */
   notifyDamage(amount: number, angle: number | null = null): void {
-    if (amount > 0) noteFrameEvent("dégâts");
     // Continuous-friendly: opacity rises with damage, decays over time.
     this.vignetteOpacity = Math.min(
       cc.damageVignetteMax,
@@ -187,14 +185,12 @@ export class CombatHUD {
 
   /** Call when the player kills a bot → "BEANED!" sticker in the top feed. */
   notifyKill(): void {
-    noteFrameEvent("kill");
     hudFeed().push("kill", "BEANED!");
     replayAnim(this.buddy, "cheer"); // the bean does a little victory hop
   }
 
   /** Call when a medkit heal is actually applied. */
   notifyHeal(amount: number): void {
-    noteFrameEvent("soin");
     this.healTimer = cc.healFeedbackDuration;
     this.healFlashOpacity = 0.3;
     this.healFeedback.textContent = `+${Math.round(amount)}`;
@@ -205,7 +201,7 @@ export class CombatHUD {
     replayAnim(this.buddy.querySelector(".buddy-frame") ?? this.buddy, "heal");
   }
 
-  update(dt: number, health: Health, deathTimer: number): void {
+  update(dt: number, health: HealthView, deathTimer: number): void {
     this.clock += dt;
 
     // ---- HP tube + number + portrait mood ----
@@ -334,7 +330,6 @@ export class CombatHUD {
     // ---- Death screen ----
     const dead = !health.alive;
     if (dead !== this.lastDeadShown) {
-      if (this.lastDeadShown !== null) noteFrameEvent(dead ? "mort" : "réapparition");
       this.lastDeadShown = dead;
       this.deathScreen.classList.toggle("hidden", !dead);
       // The aim ticker has nothing to say while dead.

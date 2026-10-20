@@ -1,0 +1,17 @@
+/* ==========================================================================
+   HUD DOCUMENT ONLY (hud.html — the HUD's iframe laid over the game canvas).
+   It links the game page's own stylesheets (style.css for the reset, #hud,
+   the warm-up and pause rules, the damage numbers…; the HUD sheets), so the
+   HUD is styled exactly as in the page. Only what must differ in a document
+   drawn OVER the game lives here; nothing else of style.css matches in this
+   document (its menu / loading-screen elements do not exist here).
+   ========================================================================== */
+
+/* style.css paints the page #08130b: the HUD document must let the game show
+   through. Its color-scheme must stay the game page's (neither declares one:
+   "normal"; style.css is shared, keep any future one there) — a mismatch
+   makes Chrome paint an opaque backdrop behind the iframe's document. */
+html,
+body {
+  background: transparent !important;
+}

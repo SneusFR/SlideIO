@@ -1,4 +1,4 @@
-import { WaterFamasWeapon } from "../weapons/waterfamas/WaterFamasWeapon";
+import type { AmmoView } from "../hud/protocol";
 import { createGauge, createPips, setPips, WeaponPlate, RING_SPIN } from "./hudKit";
 
 const ACCENT = "#38c6ff";
@@ -37,7 +37,7 @@ export class WaterFamasHUD {
     this.plate.setVisible(visible);
   }
 
-  update(weapon: WaterFamasWeapon): void {
+  update(weapon: AmmoView): void {
     if (this.lastVisible === false) return;
     const ammo = weapon.ammo;
     const reloading = weapon.isReloading;
