@@ -203,9 +203,17 @@ const base = `http://127.0.0.1:${server.address().port}`;
 // differently from the page's (1-5 levels out of 255, same geometry and
 // colors) — a frame-vs-inline comparison then shows those edges.
 const SOFTWARE = flag("software");
+/**
+ * A device pixel ratio ≠ 1 comes from the browser itself, as on a machine
+ * (OS scaling, browser zoom: every frame of the page gets it). Playwright's
+ * deviceScaleFactor emulation only reaches the page: the out-of-process
+ * iframe would see 1 — and refuse to init (viewport guard), rightly.
+ */
+const BROWSER_DSF = DPR !== 1;
 const browser = await chromium.launch({
   headless: true,
   args: [
+    ...(BROWSER_DSF ? [`--force-device-scale-factor=${DPR}`, `--window-size=${W},${H}`] : []),
     "--site-per-process",
     "--enable-unsafe-swiftshader",
     "--use-angle=swiftshader",
@@ -219,7 +227,7 @@ const report = { size: `${W}x${H}@${DPR}`, raster: SOFTWARE ? "software" : "gpu"
 const dumps = {};
 
 async function newPage() {
-  const context = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: DPR });
+  const context = await browser.newContext(BROWSER_DSF ? { viewport: null } : { viewport: { width: W, height: H }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   page.setDefaultTimeout(120_000);
   const logs = [];
@@ -238,7 +246,7 @@ async function runMode(mode, tag = mode) {
   await page.waitForFunction(() => window.hh);
   await page.evaluate(() => window.hh.loaded());
   const ok = await page.evaluate((init) => window.hh.boot(init), scenario.init);
-  if (!ok) throw new Error(`${tag}: HUD refused to boot`);
+  if (!ok) throw new Error(`${tag}: HUD refused to boot: ${JSON.stringify(await page.evaluate(() => window.hh.errors))}`);
   await page.evaluate(([ms, lockstep]) => window.hh.warmUp(ms, lockstep), [scenario.frameMs, LOCKSTEP]);
   const hudDoc = () => (mode === "frame" ? page.frames().find((f) => f.url().includes("/hud.html")) : page.mainFrame());
   // Stacking-relevant structure: the HUD document's body children in order,
