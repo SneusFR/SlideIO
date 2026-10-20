@@ -213,6 +213,14 @@ export interface HudInit {
   interact: boolean;
   /** Crosshair settings at boot (the menu re-sends them on every change). */
   crosshair: CrosshairSettings;
+  /**
+   * The game page's viewport when init is sent (innerWidth / innerHeight /
+   * devicePixelRatio, browser zoom included). The HUD document must see the
+   * same one — otherwise the HUD would be drawn at another scale: the iframe
+   * then answers `{ t: "error" }` instead of `ready`, and the host falls back
+   * to the inline HUD. Tolerance: 1 CSS px, 0.01 DPR.
+   */
+  viewport: { width: number; height: number; dpr: number };
 }
 
 /** The HUD runtime: same code in the iframe (frame mode) and in the game page (inline mode). */
