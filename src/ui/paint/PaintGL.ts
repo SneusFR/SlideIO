@@ -4,6 +4,7 @@ import { PAINT_FRAG_MAIN } from "./paintShaderMain";
 import { PAINT_MAX_CLUSTERS, PAINT_MAX_NODES } from "./paintTypes";
 import type { PaintDripSim } from "./PaintDripSim";
 import { GpuTimer } from "../GpuTimer";
+import { perfDiag } from "../perfDiag";
 
 /**
  * MAX offscreen pixel density of the paint canvas (plate px → GL px). The
@@ -51,7 +52,8 @@ export class PaintGL {
     this.renderer.domElement.addEventListener("webglcontextrestored", () => {
       this.lost = false;
     });
-    this.timer = import.meta.env.DEV ? GpuTimer.create(this.renderer) : null;
+    // DEV, or `?gpu` (ui/perfDiag.ts): the debug HUD's "+ peinture HUD" term.
+    this.timer = perfDiag() !== "off" ? GpuTimer.create(this.renderer) : null;
     this.material = new THREE.ShaderMaterial({
       vertexShader: PAINT_VERT,
       fragmentShader: PAINT_FRAG_HEAD + PAINT_FRAG_MAIN,

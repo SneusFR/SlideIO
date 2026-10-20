@@ -2,6 +2,12 @@ import * as THREE from "three";
 import { GivreConfig as cfg } from "./GivreConfig";
 
 /**
+ * The dome's place in the opaque list: after every opaque object of the
+ * world (the highest other render order is 999, the ragdoll debug lines).
+ */
+export const GIVRE_SKY_RENDER_ORDER = 10000;
+
+/**
  * GIVRE 01 backdrop: the concept's flat alpine sky — one inverted sphere
  * with per-vertex colours following the export's gradient
  * (`lighting.skyBackground`: fac = clamp((dir.y + 0.02) / 0.82, 0, 1)).
@@ -18,6 +24,9 @@ export class GivreSky {
 
   constructor() {
     this.group.name = "givre_sky";
+    // (A Group's render order is its children's "group order", sorted before
+    // their own: the dome stays last whatever other groups use.)
+    this.group.renderOrder = GIVRE_SKY_RENDER_ORDER;
     // GivreOutlinePass: the sky never produces edges.
     this.group.userData.noOutline = true;
     this.buildDome();
@@ -49,9 +58,22 @@ export class GivreSky {
       depthWrite: false,
       fog: false,
     });
+    // PERF (GPU): drawn LAST among the opaques, on the far plane, with the
+    // depth test — the GPU only colours the sky pixels nothing hides
+    // (indoors: almost none). Drawn first, it filled the whole screen every
+    // frame before the walls covered it: 1.7 ms of a 15 ms frame on an Intel
+    // Iris Xe at 1920 × 928. Same image: every opaque writes depth (so the
+    // sky still lands only where nothing was drawn), and every material that
+    // does not is transparent — drawn after the sky, as before.
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader.replace(
+        "#include <project_vertex>",
+        "#include <project_vertex>\n\tgl_Position.z = gl_Position.w; // on the far plane: behind any depth written",
+      );
+    };
     this.disposables.push(geo, mat);
     const dome = new THREE.Mesh(geo, mat);
-    dome.renderOrder = -10; // behind everything
+    dome.renderOrder = GIVRE_SKY_RENDER_ORDER; // after every opaque, before the transparents
     dome.frustumCulled = false;
     dome.userData.noOutline = true;
     dome.raycast = () => {}; // purely visual

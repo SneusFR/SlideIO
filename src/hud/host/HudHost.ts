@@ -420,7 +420,11 @@ export class HudHost {
       return;
     }
     this.phase = "connecting";
-    this.frame = env.createFrame(choice.url, choice.sandboxed);
+    // `?gpu` (ui/perfDiag.ts) reaches the HUD document too: its plate paint
+    // context times itself for the debug HUD's GPU line.
+    const gpu = new URLSearchParams(env.search).get("gpu");
+    const url = gpu === null ? choice.url : `${choice.url}?gpu=${encodeURIComponent(gpu)}`;
+    this.frame = env.createFrame(url, choice.sandboxed);
     this.unlistenWindow = env.onWindowMessage((e) => this.onWindowMessage(e));
     this.helloTimer = this.deadline(HELLO_TIMEOUT_MS, () => {
       this.helloTimer = null;

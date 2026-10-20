@@ -194,3 +194,36 @@ export function timeDraws(renderer: THREE.WebGLRenderer, timer: GpuTimer): () =>
     renderer.renderBufferDirect = original;
   };
 }
+
+/** Readable names of the map's categories (debug HUD GPU line, `?gpu=draws`). */
+const CATEGORY_NAMES: Record<string, string> = {
+  givre_sky: "ciel",
+  givre_neige: "neige",
+  givre_halos: "halos",
+  givre_empreintes: "empreintes",
+  givre_snow_surfaces: "neige au sol",
+  givre_01_fond: "fond",
+  givre_01_animated: "décor animé",
+  givre_01_merged: "carte",
+  EnemyHealthBars: "barres de vie",
+};
+
+/**
+ * Short label of a timer segment for the debug HUD (the per-draw split must
+ * fit on a laptop screen): `monde:<category>` → the category's short name
+ * (the map's batches, whose names list their materials, are all "carte"),
+ * the other passes in one term each (`bras`, `sortie`, `FXAA`…), and the
+ * world pass before its first draw (clear, uploads) → "monde (début)".
+ */
+export function gpuLabel(label: string): string {
+  const colon = label.indexOf(":");
+  const pass = colon < 0 ? label : label.slice(0, colon);
+  if (colon < 0) return pass === "monde" ? "monde (début)" : pass;
+  if (pass !== "monde") return pass;
+  const base = label
+    .slice(colon + 1)
+    .replace(/\(.*$/s, "")
+    .replace(/_c\d+$/, "");
+  if (/uber$/.test(base)) return "carte";
+  return CATEGORY_NAMES[base] ?? base.replace(/^givre_/, "").slice(0, 16);
+}

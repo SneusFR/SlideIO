@@ -12,7 +12,7 @@ import { YardConfig as yardCfg } from "../world/YardConfig";
 import { SpaceSky } from "../world/SpaceSky";
 import { SpaceConfig as spaceCfg } from "../world/SpaceConfig";
 import { GivreMap } from "../world/GivreMap";
-import { GivreSky } from "../world/GivreSky";
+import { GIVRE_SKY_RENDER_ORDER, GivreSky } from "../world/GivreSky";
 import { GivreConfig as givreCfg } from "../world/GivreConfig";
 import { GivreEffects } from "../world/GivreEffects";
 import { frontToBackOpaqueSort } from "../world/GivreRenderOptim";
@@ -27,6 +27,7 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { FXAAPass } from "three/examples/jsm/postprocessing/FXAAPass.js";
+import { OutputFXAAPass } from "../effects/OutputFXAAPass";
 import {
   GivreOutlinePass,
   defaultOutlineExclude,
@@ -150,7 +151,7 @@ import { flushMapBvhs } from "../world/MapBvh";
 import { installTexParamDedupe } from "../effects/TexParamDedupe";
 // Bit-identical, faster skinned bounding boxes / spheres (loading: character template).
 import "../effects/FastSkinnedBounds";
-import { GpuTimer, timeDraws, timePasses } from "../ui/GpuTimer";
+import { GpuTimer, gpuLabel, timeDraws, timePasses } from "../ui/GpuTimer";
 import { pinNewPrograms } from "../effects/ProgramPin";
 import { inSkeletonFrame } from "../effects/SkeletonFrameDedupe";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -1412,9 +1413,10 @@ export class Game {
    *   3. RenderPass(FP scene) overlay → arms + weapon, ONE depth clear (same
    *                                     contract as ViewmodelSystem.render)
    *   4. GivreOutlinePass(FP scene)   → the weapon gets its rim too (reference)
-   *   5. OutputPass                   → sRGB conversion AFTER the outlines
-   *   6. FXAAPass (LOW only)          → the composer path has no MSAA; HIGH
-   *                                     uses 4× MSAA buffers instead.
+   *   5. OutputPass (HIGH)            → sRGB conversion AFTER the outlines;
+   *      OutputFXAAPass (LOW)         → the same conversion + FXAA in one
+   *                                     pass (no MSAA on LOW; HIGH uses 4×
+   *                                     MSAA buffers instead).
    * renderer.info.autoReset is turned off so the debug HUD counts every pass
    * of the frame (reset manually once per frame in frame()).
    *
@@ -1472,8 +1474,9 @@ export class Game {
     fpOutline.debugMode = "OVERLAY";
     composer.addPass(fpOutline);
 
-    composer.addPass(new OutputPass());
-    if (!quality.antialias) composer.addPass(new FXAAPass());
+    // HIGH: MSAA buffers, then the output conversion. LOW: no MSAA — the
+    // output conversion and FXAA in ONE fullscreen pass (OutputFXAAPass).
+    composer.addPass(quality.antialias ? new OutputPass() : new OutputFXAAPass());
 
     this.composer = composer;
     this.worldRenderPass = world;
@@ -1498,6 +1501,8 @@ export class Game {
     //   givreDebug.perf.msaaDepthResolve(true)   (A/B: the old slow resolve)
     //   givreDebug.perf.sort(false)              (A/B: three's default sort)
     //   givreDebug.perf.pixelRatio(0.75)         (A/B: render resolution)
+    //   givreDebug.perf.skyFirst(true)           (A/B: the old sky, drawn first)
+    //   givreDebug.perf.separateFxaa(true)       (A/B: sRGB output, then FXAA)
     if (import.meta.env.DEV) {
       (window as unknown as Record<string, unknown>).givreDebug = {
         world: worldOutline,
@@ -1540,19 +1545,56 @@ export class Game {
       ]);
       timePasses(this.composer.passes, timer, (pass) =>
         labels.get(pass) ??
-        (pass instanceof OutputPass ? "sortie" : pass instanceof FXAAPass ? "FXAA" : pass.constructor.name),
+        (pass instanceof OutputPass
+          ? "sortie"
+          : pass instanceof OutputFXAAPass
+            ? "sortie+FXAA"
+            : pass instanceof FXAAPass
+              ? "FXAA"
+              : pass.constructor.name),
       );
     }
+    // Per-draw split: the WHOLE list also goes to the console every 5 s, as
+    // text (the debug line only shows the 8 largest terms).
+    let report = new Map<string, number>();
+    let reportFrames = 0;
+    let reportPaint = 0;
+    let reportAt = performance.now();
     this.hud.gpuSummary = () => {
       // The Paintball / Poison plate paint draws in ITS OWN WebGL context:
       // measured apart and shown as a separate term (per game frame) — by
       // the HUD document (iframe) or here (HUD in the page).
       const paintMs = hudHost.takePaintGpuMs();
       if (timer.dead) return "n/a (no timer query results)";
-      const r = timer.take(this.gpuDrawSplit !== null);
+      const detail = this.gpuDrawSplit !== null;
+      const r = timer.take(detail);
       if (!r) return null;
-      const parts = r.split.slice(0, this.gpuDrawSplit ? 8 : 5).map(([k, ms]) => `${k} ${ms.toFixed(1)}`);
-      const paint = paintMs !== null && paintMs > 0 ? ` + peinture HUD ${(paintMs / r.frames).toFixed(1)}` : "";
+      const merged = new Map<string, number>();
+      for (const [label, ms] of r.split) {
+        const key = detail ? gpuLabel(label) : label;
+        merged.set(key, (merged.get(key) ?? 0) + ms);
+      }
+      const split = [...merged].sort((a, b) => b[1] - a[1]);
+      const paintPerFrame = paintMs !== null && paintMs > 0 ? paintMs / r.frames : 0;
+      if (detail) {
+        for (const [key, ms] of split) report.set(key, (report.get(key) ?? 0) + ms * r.frames);
+        reportFrames += r.frames;
+        reportPaint += paintPerFrame * r.frames;
+        const now = performance.now();
+        if (now - reportAt >= 5000) {
+          const per = (sum: number): string => (sum / reportFrames).toFixed(2);
+          const total = [...report.values()].reduce((a, b) => a + b, 0);
+          const terms = [...report].sort((a, b) => b[1] - a[1]).map(([key, sum]) => `${key} ${per(sum)}`);
+          if (reportPaint > 0) terms.push(`+ peinture HUD ${per(reportPaint)}`);
+          console.info(`[GPU] ${per(total)} ms par image (${reportFrames} images) — ${terms.join(" · ")}`);
+          report = new Map();
+          reportFrames = 0;
+          reportPaint = 0;
+          reportAt = now;
+        }
+      }
+      const parts = split.slice(0, detail ? 8 : 5).map(([k, ms]) => `${k} ${ms.toFixed(1)}`);
+      const paint = paintPerFrame > 0 ? ` + peinture HUD ${paintPerFrame.toFixed(1)}` : "";
       return `${r.total.toFixed(1)} ms (${parts.join(" · ")})${paint}`;
     };
   }
@@ -1581,6 +1623,8 @@ export class Game {
     msaaDepthResolve(on: boolean): string;
     sort(frontToBack: boolean): string;
     pixelRatio(ratio: number): number[];
+    skyFirst(on: boolean): string;
+    separateFxaa(on: boolean): string;
   } {
     const composer = this.composer!;
     const setVisible = (pred: (o: THREE.Object3D) => boolean, on: boolean): number => {
@@ -1621,6 +1665,32 @@ export class Game {
         composer.setSize(window.innerWidth, window.innerHeight);
         this.applyOutlineSettings(this.outlineSettings);
         return this.renderer.getDrawingBufferSize(new THREE.Vector2()).toArray();
+      },
+      skyFirst: (on: boolean) => {
+        // Old order: the dome first, over the whole screen (the far-plane
+        // shader keeps it behind everything either way).
+        const group = this.scene.getObjectByName("givre_sky");
+        if (!group) return "no Givre sky";
+        const order = on ? 0 : GIVRE_SKY_RENDER_ORDER;
+        group.renderOrder = order;
+        for (const dome of group.children) dome.renderOrder = on ? -10 : order;
+        return on ? "sky drawn FIRST (old)" : "sky drawn after the opaques";
+      },
+      separateFxaa: (on: boolean) => {
+        const last = composer.passes[composer.passes.length - 1];
+        if (!(last instanceof FXAAPass)) return "no FXAA on this preset";
+        composer.removePass(last);
+        if (on) {
+          const output = composer.passes[composer.passes.length - 1];
+          if (output instanceof OutputPass) composer.removePass(output);
+          composer.addPass(new OutputPass());
+          composer.addPass(new FXAAPass());
+        } else {
+          const output = composer.passes[composer.passes.length - 1];
+          if (output instanceof OutputPass) composer.removePass(output);
+          composer.addPass(new OutputFXAAPass());
+        }
+        return on ? "sRGB output pass, then FXAA (old)" : "output + FXAA in one pass";
       },
     };
   }

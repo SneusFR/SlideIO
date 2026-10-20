@@ -625,6 +625,15 @@ try {
     assert.equal(b.warns.length, 0);
   });
 
+  await test("?gpu reaches the HUD document (its plate paint times itself for the GPU line)", async () => {
+    for (const [search, url] of [["?gpu=draws", "/hud.html?gpu=draws"], ["?gpu", "/hud.html?gpu="], ["?join=1", "/hud.html"]]) {
+      const b = browser({ search });
+      const host = new H.HudHost();
+      host.start(b.env);
+      assert.equal(b.frame!.url, url, search);
+    }
+  });
+
   await test("one batch per flush, in call order; nothing posted for an empty frame; inline-only work stays off the port", async () => {
     const b = browser();
     const host = new H.HudHost();
