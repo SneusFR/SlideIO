@@ -422,9 +422,20 @@ let holdDeadline = Infinity;
  * shaders were then compiled at the first kill anyway.
  */
 function holdUntilDrawn(maxMs = 600): Promise<void> {
+  return untilDrawn(Math.min(maxMs, Math.max(0, holdDeadline - performance.now())));
+}
+
+/**
+ * Resolves once what this document shows NOW has really been drawn (see
+ * holdUntilDrawn: at least 3 frames, two in a row on time), or after
+ * `maxMs` at most (+0.1 s without any frame). The HUD iframe waits for it
+ * after the warm-up: its frames reach the screen apart from the game
+ * page's, and the page must not drop its loading screen over a warm-up
+ * state still on screen.
+ */
+export function untilDrawn(maxMs: number): Promise<void> {
   return new Promise((resolve) => {
     const start = performance.now();
-    maxMs = Math.min(maxMs, Math.max(0, holdDeadline - start));
     let last = -1;
     let count = 0;
     let onTime = 0;

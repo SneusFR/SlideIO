@@ -22,6 +22,7 @@
  * origin has none).
  */
 import { measureDisplayFrames } from "../../ui/displayFrames";
+import { untilDrawn } from "../../ui/HudWarmup";
 import {
   HUD_CONNECT,
   HUD_HELLO,
@@ -35,6 +36,8 @@ import { createHudRuntime } from "./HudRuntime";
 const STATS_MS = 500;
 /** A font server that never answers must not hold the HUD back. */
 const FONT_WAIT_MS = 3000;
+/** After the warm-up, the restored HUD's first frames: never longer than this (+0.1 s). */
+const RESTORED_DRAWN_MS = 400;
 /** The faces the HUD draws with (hud.html's Google Fonts families). */
 const HUD_FONTS = ['16px "Luckiest Guy"', ...[400, 500, 600, 700].map((w) => `${w} 16px "Baloo 2"`)];
 /** Viewport tolerance (src/hud/protocol.ts, HudInit.viewport). */
@@ -238,7 +241,13 @@ function onWarmup(): void {
   if (warming) return;
   warming = true;
   const t0 = performance.now();
-  const done = (): void => send({ t: "warmup-done", ms: performance.now() - t0 });
+  // `warmup-done` lets the game page drop its loading screen. This document
+  // reaches the screen apart from it: under a busy GPU process its last
+  // frame on screen could still be a warm-up state (a KILL medal, a combo
+  // tag over the menu) — so the restored HUD is drawn first (short cap).
+  const done = (): void => {
+    void untilDrawn(RESTORED_DRAWN_MS).then(() => send({ t: "warmup-done", ms: performance.now() - t0 }));
+  };
   runtime.warmUp(gpuIdle).then(done, (err: unknown) => {
     reportError(err);
     done();
