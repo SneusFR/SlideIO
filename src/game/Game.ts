@@ -28,6 +28,7 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { FXAAPass } from "three/examples/jsm/postprocessing/FXAAPass.js";
 import { OutputFXAAPass } from "../effects/OutputFXAAPass";
+import { FlushPass } from "../effects/FlushPass";
 import {
   GivreOutlinePass,
   defaultOutlineExclude,
@@ -36,7 +37,7 @@ import {
 import { loadOutlineSettings, type OutlineSettings } from "./OutlineSettings";
 import { DebugHUD } from "../ui/DebugHUD";
 import { FrameSections } from "../ui/FrameSections";
-import { perfDiag } from "../ui/perfDiag";
+import { experimentValue, perfDiag, perfExperiments } from "../ui/perfDiag";
 
 import { BotsMenu } from "../ui/BotsMenu";
 import { MovementConfig as cfg } from "../player/MovementConfig";
@@ -510,6 +511,12 @@ export class Game {
   private frameCpuStart = 0;
   /** Performance diagnostics of this session (DEV, or `?gpu` in the address: ui/perfDiag.ts). */
   private readonly diag = perfDiag();
+  /** `?diag=` what-if experiments (ui/perfDiag.ts) — none in normal play. */
+  private readonly experiments = perfExperiments();
+  /** `?diag=cpuNN`: extra CPU ms at the end of each game frame (0 = off). */
+  private readonly extraCpuMs = experimentValue(this.experiments, "cpu") ?? 0;
+  /** GPU work handed over at each pass boundary (see flushGpu); `?diag=noflush` = A/B without. */
+  private readonly gpuFlush = !this.experiments.has("noflush");
   /** DEV builds / `?gpu`: CPU split of each frame by section (debug HUD "Hitch" line). */
   private readonly sections: FrameSections | null =
     import.meta.env.DEV || this.diag !== "off" ? new FrameSections() : null;
@@ -575,7 +582,9 @@ export class Game {
     // (four round trips to the GPU process each) only while developing.
     this.renderer.debug.checkShaderErrors = import.meta.env.DEV;
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
+    // (`?diag=scaleNN`: the 3D at NN % of its resolution — a what-if, never in play.)
+    const diagScale = Math.min(1, (experimentValue(this.experiments, "scale") ?? 100) / 100);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap) * diagScale);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     // LOW: the shadow map is BAKED (autoUpdate off) — the map and its
@@ -718,6 +727,7 @@ export class Game {
     this.hud.setRenderSetup(`${quality.level} · AA ${aa} · shadows ${shadow}`);
     this.hud.setDeviceName(webglRendererName(this.renderer.getContext()));
     this.hud.hudSummary = () => hudHost.describe();
+    this.hud.experiments = [...this.experiments].join(", ");
 
     // The HUD widgets are built by the HUD runtime, in the order this
     // constructor used to build them (DOM order = stacking order), from the
@@ -1448,7 +1458,15 @@ export class Game {
     const composer = new EffectComposer(this.renderer, target);
 
     const world = new RenderPass(this.scene, this.fpsCamera.camera);
+    // PERF (GPU): a Color background already clears the target — three
+    // forces that clear (colour + depth + stencil) even with autoClear off.
+    // RenderPass's own clear came first: a second full clear of the
+    // HalfFloat target every frame, for the same image.
+    world.clear = !(this.scene.background instanceof THREE.Color);
     composer.addPass(world);
+    // The world is most of the frame's GPU work: the GPU starts on it while
+    // the CPU records the overlay and output passes (see flushGpu).
+    if (this.gpuFlush) composer.addPass(new FlushPass());
 
     const o = givreCfg.outline;
     const worldOutline = new GivreOutlinePass(this.scene, this.fpsCamera.camera, o);
@@ -1543,16 +1561,17 @@ export class Game {
         [this.fpOverlayPass, "bras"],
         [this.fpOutline, "contours bras"],
       ]);
-      timePasses(this.composer.passes, timer, (pass) =>
-        labels.get(pass) ??
-        (pass instanceof OutputPass
-          ? "sortie"
-          : pass instanceof OutputFXAAPass
-            ? "sortie+FXAA"
-            : pass instanceof FXAAPass
-              ? "FXAA"
-              : pass.constructor.name),
-      );
+      const otherLabel = (pass: object): string =>
+        pass instanceof FlushPass
+          ? "monde" // draws nothing: its time stays with the world pass
+          : pass instanceof OutputPass
+            ? "sortie"
+            : pass instanceof OutputFXAAPass
+              ? "sortie+FXAA"
+              : pass instanceof FXAAPass
+                ? "FXAA"
+                : pass.constructor.name;
+      timePasses(this.composer.passes, timer, (pass) => labels.get(pass) ?? otherLabel(pass));
     }
     // Per-draw split: the WHOLE list also goes to the console every 5 s, as
     // text (the debug line only shows the 8 largest terms).
@@ -3241,12 +3260,36 @@ export class Game {
     // Several renders per frame (world + shadows, outline pre-pass, FP
     // overlay, FP outline): one bone update per skeleton (SkeletonFrameDedupe).
     inSkeletonFrame(() => composer.render());
+    this.flushGpu();
   }
 
   /** World frame through whichever path the map uses (composer on Givre). */
   private renderWorld(camera: THREE.PerspectiveCamera): void {
     if (this.composer) this.renderComposer(camera);
-    else inSkeletonFrame(() => this.renderer.render(this.scene, camera));
+    else {
+      inSkeletonFrame(() => this.renderer.render(this.scene, camera));
+      this.flushGpu();
+    }
+  }
+
+  /**
+   * PERF (GPU) — the cause of the 36-44 FPS on an Intel Iris Xe laptop
+   * (Givre, 1920 × 928, LOW), measured in a real browser on that GPU: hand
+   * the GPU the work recorded so far.
+   *
+   * WebGL calls only queue commands. Chrome passes them to its GPU process,
+   * which records them for the driver (ANGLE → Direct3D 11 on Windows) — and
+   * nothing told the driver to start: the frame's GPU work began late, in
+   * one block, and every other frame missed the screen refresh while the
+   * GPU had sat idle for part of it (on a laptop, idle also means lower GPU
+   * clocks). A flush after the world pass and one at the end of the frame:
+   * 36 → 60 FPS on that machine, and +12-15 % FPS when the GPU is the limit
+   * (2560 × 1238: 42 → 48 FPS, for a GPU frame of 19 ms = 52 FPS at best).
+   * Same image; ~0.04 ms of CPU per flush. More flushes (every few draws)
+   * measured worse. `?diag=noflush` turns them off (A/B on any machine).
+   */
+  private flushGpu(): void {
+    if (this.gpuFlush) this.renderer.getContext().flush();
   }
 
   /**
@@ -3874,7 +3917,10 @@ export class Game {
       // warmUpRendering). No per-frame refresh: the caster re-render was the
       // single most expensive fixed pass AND its every-other-frame cadence
       // created the short/long frame judder that felt like 30 FPS.
-      if (this.composer) {
+      if (this.experiments.has("empty")) {
+        // `?diag=empty`: no 3D at all — what is left is the page's own cost.
+        this.hud.sampleCpu(performance.now() - this.frameCpuStart, 0);
+      } else if (this.composer && !this.experiments.has("nopost")) {
         // GIVRE: world + outline + FP overlay + FP outline + sRGB output in
         // ONE composer render (see buildGivreComposer). info.autoReset is
         // off on this path, so the HUD numbers cover EVERY pass of the frame.
@@ -3887,10 +3933,14 @@ export class Game {
         this.hud.sampleRenderInfo(this.renderer);
       } else {
         const renderStart = performance.now();
+        // (`?diag=nopost` on Givre: this direct path; autoReset is off there.)
+        if (this.composer) this.renderer.info.reset();
         this.gpuTimer?.beginFrame("monde");
         // (live shadow pass inside: one bone update per skeleton — see
         // SkeletonFrameDedupe)
         inSkeletonFrame(() => this.renderer.render(this.scene, cam));
+        // The GPU starts on the world while the FP pass is recorded (flushGpu).
+        this.flushGpu();
         // Debug HUD GPU stats: renderer.info is reset by every render() call,
         // so the WORLD pass numbers must be captured right here.
         this.hud.sampleRenderInfo(this.renderer);
@@ -3903,6 +3953,7 @@ export class Game {
         this.gpuTimer?.setPass("bras");
         inSkeletonFrame(() => this.viewmodelSystem.render(this.renderer));
         this.gpuTimer?.endFrame();
+        this.flushGpu();
         this.hud.sampleCpu(renderStart - this.frameCpuStart, performance.now() - renderStart);
       }
     } finally {
@@ -3916,6 +3967,14 @@ export class Game {
       }
     }
     sections?.lap("rendu");
+    if (this.extraCpuMs > 0) {
+      // `?diag=cpuNN`: extra CPU work. FPS unchanged = the CPU and the GPU
+      // work in parallel; FPS dropping by as much = they wait for each other.
+      const end = performance.now() + this.extraCpuMs;
+      while (performance.now() < end) {
+        // busy: the point is to keep this thread busy
+      }
+    }
     // A program compiled this frame (first use of a variant) stays cached for
     // the session: never compiled twice (see ProgramPin). Free when none.
     pinNewPrograms(this.renderer);

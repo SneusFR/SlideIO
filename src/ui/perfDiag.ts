@@ -21,3 +21,44 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
   if (value === "draws") return "draws";
   return value === "off" || value === "0" ? "off" : "passes";
 }
+
+/**
+ * `?diag=a,b,…` — what-if experiments that locate where a machine's frame
+ * time goes, on any build (production included; nothing changes without the
+ * parameter). Each one removes or adds ONE cost; compare the debug HUD's FPS
+ * / Frame / CPU / Browser / GPU lines with and without it:
+ *
+ *   empty    no 3D render at all (simulation, HUD, audio… still run): what
+ *            is left is the page's own cost (HUD, browser, compositing)
+ *   nopost   Givre: the world drawn straight to the canvas — no HDR target,
+ *            no output / FXAA pass
+ *   scaleNN  the 3D rendered at NN % of its resolution (scale50: a quarter
+ *            of the pixels): FPS almost doubling = the frame is fill-bound
+ *   cpuNN    NN ms of extra CPU work at the end of each game frame: FPS
+ *            unchanged = the CPU and the GPU work in parallel; FPS dropping
+ *            by as much = they wait for each other (something serializes)
+ *   noflush  no gl.flush() at the pass boundaries (Game.flushGpu): the old
+ *            submission, to compare
+ *
+ * Several at once: `?diag=noflush,scale50`. Never for normal play.
+ */
+export function perfExperiments(search: string = typeof location === "undefined" ? "" : location.search): ReadonlySet<string> {
+  const value = new URLSearchParams(search).get("diag");
+  if (!value) return new Set();
+  return new Set(
+    value
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+/** The number of a numbered experiment (`scale50` → 50), or null when absent / invalid. */
+export function experimentValue(experiments: ReadonlySet<string>, prefix: string): number | null {
+  for (const e of experiments) {
+    if (!e.startsWith(prefix)) continue;
+    const n = Number(e.slice(prefix.length));
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}

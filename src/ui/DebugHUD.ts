@@ -92,6 +92,8 @@ export class DebugHUD {
    * thread) or this page — pulled with the frame stats. Null = no line.
    */
   hudSummary: (() => string | null) | null = null;
+  /** Active `?diag=` experiments (ui/perfDiag.ts), shown on their own line ("" = none). */
+  experiments = "";
   private hudText = "";
   /**
    * Main-thread CPU per frame (ms), averaged + worst over the stats window:
@@ -396,6 +398,7 @@ export class DebugHUD {
       (this.renderSetup ? `Setup:    ${this.renderSetup}\n` : "") +
       (this.deviceName ? `Device:   ${this.deviceName}\n` : "") +
       (this.hitchText && performance.now() < this.hitchUntil ? `Hitch:    ${this.hitchText}\n` : "") +
+      (this.experiments ? `Diag:     ${this.experiments}\n` : "") +
       `Lights:   ${this.lightsTotal} (${this.lightsActive} lit)\n` +
       `\n` +
       `Dash:     ${movement.dashReady ? "READY" : "COOLDOWN"}\n` +
