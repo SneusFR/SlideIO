@@ -1,3 +1,4 @@
+import type { PopcornView } from "../hud/protocol";
 import { POPCORN_PIP_SVG } from "./hudIcons";
 import { createPips, setPips, WeaponPlate, RING_SPIN } from "./hudKit";
 
@@ -6,14 +7,13 @@ const ACCENT = "#ff5f6d";
 /** Golden popcorn grain of the rail. */
 const GRAIN = "#f7d27e";
 
-/** What the plate reads from the shotgun (PopcornShotgunWeapon satisfies it; the HUD preview fakes it). */
-export interface PopcornHudSource {
-  /** Real loads left in the tank. */
-  readonly ammo: number;
-  readonly isReloading: boolean;
-  /** Bumped once per shot ACTUALLY fired (a refused dry-fire click never bumps it). */
-  readonly shotSerial: number;
-}
+/**
+ * What the plate reads from the shotgun: real loads left, reload state, and
+ * `shotSerial`, bumped once per shot ACTUALLY fired (a refused dry-fire click
+ * never bumps it). The game's facade copies it from PopcornShotgunWeapon; the
+ * HUD preview fakes it.
+ */
+export type PopcornHudSource = PopcornView;
 
 /**
  * Popcorn Shotgun plate — built exactly like the Paintball plate (same

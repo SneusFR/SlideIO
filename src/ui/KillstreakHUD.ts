@@ -1,5 +1,6 @@
-import { KillstreakManager, KILLSTREAK_SLOT_LABELS } from "../killstreaks/KillstreakManager";
+import { KILLSTREAK_SLOT_LABELS } from "../killstreaks/KillstreakManager";
 import { KillstreakState } from "../killstreaks/KillstreakState";
+import type { KillstreakView } from "../hud/protocol";
 import { killstreakIconSvg } from "./hudIcons";
 import { replayAnim } from "./hudKit";
 
@@ -30,17 +31,19 @@ interface Capsule {
  *                  its colours back, and the real activation key cap shows.
  *
  * Display only: progress, availability, death resets, consumption and
- * equipment all come from the KillstreakManager (Game wires onChanged →
- * render and onReady → notifyReady). The DOM is built once; render only
- * touches text / classes when something changed. Drawn in the 1816px
- * reference space and scaled with the window like the leaderboard (--ks-s).
+ * equipment all come from the game's KillstreakManager (Game wires onChanged
+ * → render and onReady → notifyReady); `view.slots` is its slots as of the
+ * last render (the HUD runtime swaps in each copy the game sends). The DOM is
+ * built once; render only touches text / classes when something changed.
+ * Drawn in the 1816px reference space and scaled with the window like the
+ * leaderboard (--ks-s).
  */
 export class KillstreakHUD {
   private readonly root: HTMLElement;
   private readonly caps: Capsule[] = [];
   private readonly onResize = (): void => this.syncScale();
 
-  constructor(private readonly manager: KillstreakManager) {
+  constructor(private readonly manager: KillstreakView) {
     this.root = document.createElement("div");
     this.root.id = "killstreak-hud";
 

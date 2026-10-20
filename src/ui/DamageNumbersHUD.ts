@@ -1,17 +1,20 @@
 import * as THREE from "three";
 import { HitZone } from "../combat/HitZone";
-import { Combatant } from "../combat/Combatant";
 import { HitFeedbackConfig as hfc } from "../combat/HitFeedbackConfig";
+import type { FollowTarget } from "../hud/protocol";
 import { frameStamp } from "./framePulse";
 
 /** One live floating number (pooled — never re-created per hit). */
 interface DamageEntry {
   el: HTMLDivElement;
   inner: HTMLSpanElement;
-  /** Merge key: the Combatant in solo, the sessionId string in multiplayer. */
+  /**
+   * Merge key: one per target — the game sends `"#c<id>"` for a combatant
+   * (solo), the sessionId string in multiplayer (src/hud/protocol.ts).
+   */
   key: unknown;
   /** Live target to follow (solo bots) — null = frozen anchor (network). */
-  target: Combatant | null;
+  target: FollowTarget | null;
   anchor: THREE.Vector3;
   total: number;
   /** Seconds since the LAST merged hit (drives merge window + lifetime). */
@@ -72,7 +75,7 @@ export class DamageNumbersHUD {
     damage: number,
     zone: HitZone,
     anchor: THREE.Vector3,
-    target: Combatant | null = null,
+    target: FollowTarget | null = null,
     isKill = false,
   ): void {
     if (damage <= 0) return;

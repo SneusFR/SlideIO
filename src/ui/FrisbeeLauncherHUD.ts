@@ -1,18 +1,17 @@
+import type { FrisbeeView } from "../hud/protocol";
 import { createPips, setPips, WeaponPlate, RING_SPIN } from "./hudKit";
 import { FrisbeeMechanism } from "./frisbee/FrisbeeMechanism";
 
 const ACCENT = "#ff8a3d";
 
-/** What the plate reads from the launcher (FrisbeeLauncherWeapon satisfies it; the HUD preview fakes it). */
-export interface FrisbeeHudSource {
-  readonly deckLoaded: boolean;
-  readonly cageCount: number;
-  /** A disc taken from the cage for the re-cock, not on the deck yet (still on the weapon). */
-  readonly discInHand: boolean;
-  readonly isReloading: boolean;
-  /** Bumped once per disc ACTUALLY thrown. */
-  readonly shotSerial: number;
-}
+/**
+ * What the plate reads from the launcher: deck / cage state, `discInHand` (a
+ * disc taken from the cage for the re-cock, not on the deck yet — still on
+ * the weapon), reload state, and `shotSerial`, bumped once per disc ACTUALLY
+ * thrown. The game's facade copies it from FrisbeeLauncherWeapon; the HUD
+ * preview fakes it.
+ */
+export type FrisbeeHudSource = FrisbeeView;
 
 /**
  * Frisbee Launcher plate — same family as the Paintball plate (charcoal face,

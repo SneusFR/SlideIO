@@ -1,5 +1,5 @@
-import { PlayerMovement } from "../player/PlayerMovement";
 import { MovementConfig as cfg } from "../player/MovementConfig";
+import type { DashView } from "../hud/protocol";
 import { replayAnim } from "./hudKit";
 
 /** Label shown in the dash pill while the dash is available. */
@@ -29,7 +29,7 @@ export class DashHUD {
     this.statusEl = document.getElementById("dash-status")!;
   }
 
-  update(_dt: number, movement: PlayerMovement): void {
+  update(_dt: number, movement: DashView): void {
     const remaining = movement.dashCooldownRemaining;
     const ready = remaining <= 0;
 

@@ -1,4 +1,4 @@
-import { ComboManager } from "../combo/ComboManager";
+import type { ComboView } from "../hud/protocol";
 import { replayAnim } from "./hudKit";
 
 /**
@@ -25,7 +25,7 @@ export class ComboHUD {
   }
 
   /** Observe the combo state every frame (display only, no gameplay). */
-  update(combo: ComboManager): void {
+  update(combo: ComboView): void {
     if (!combo.active) {
       if (this.shown) {
         this.shown = false;
