@@ -20,11 +20,23 @@ import * as THREE from "three";
  * the Game right before rendering) assigns the highest-priority requests
  * to the physical lights and zeroes the rest. No acquire/release
  * lifecycle → nothing can leak or go stale; an unserved request simply
- * means the two brightest effects won this frame.
+ * means the brightest effects won this frame.
+ *
+ * PERF (GPU): the pool is EMPTY today — no effect calls request() any more,
+ * so its lights only ever shone at intensity 0. They still cost the full
+ * per-pixel price: three.js evaluates every scene light in every lit
+ * fragment (MeshStandardMaterial r185: GGX + multiscatter BRDF with two
+ * DFG-LUT texture lookups per light), and the world scene had 2 dead point
+ * lights next to the sun — 2 of the 3 direct-light evaluations of every
+ * map, bot, weapon and loot pixel, on every map and preset. Removing them
+ * is exact (they added 0 to every pixel): see PERFORMANCE.md for the
+ * measurements. An effect that needs real light again: set POOL_SIZE back
+ * to the number of lights it needs — the count is still fixed at load
+ * (init), so the programs are compiled once with it, never in play.
  */
 
 /** Physical lights in the world scene — the per-pixel loop length. */
-const POOL_SIZE = 2;
+const POOL_SIZE = 0;
 /** Pre-allocated request slots (grown on demand, never per-frame). */
 const INITIAL_SLOTS = 8;
 

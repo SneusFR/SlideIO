@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { SpaceConfig as cfg } from "./SpaceConfig";
 import { getQualitySettings } from "../game/GraphicsQuality";
+import { drawDomeLast } from "./skyDome";
 
 /**
  * In-game deep-space backdrop: "futuristic purple deep space".
@@ -45,7 +46,8 @@ export class SpaceSky {
   constructor() {
     this.group.add(this.rotor);
 
-    // Sky renders behind everything and never writes depth.
+    // Sky renders behind everything and never writes depth (the dome is
+    // drawn after the opaques, on the far plane: skyDome.ts).
     this.buildDome();
     this.rotor.add(this.buildStars());
     this.buildNebula();
@@ -96,9 +98,10 @@ export class SpaceSky {
     });
     this.disposables.push(geo, mat);
     const dome = new THREE.Mesh(geo, mat);
-    dome.renderOrder = -100; // first of the opaque pass
     dome.frustumCulled = false;
-    this.group.add(dome);
+    // After every opaque (the moon and the planet included), on the far
+    // plane (skyDome.ts) — no longer drawn first over the whole screen.
+    this.group.add(drawDomeLast(dome));
   }
 
   /**

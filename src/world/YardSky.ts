@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { YardConfig as cfg } from "./YardConfig";
+import { drawDomeLast } from "./skyDome";
 
 /**
  * YARD 01 backdrop: "clear industrial early afternoon (~14h)" — the map's
@@ -16,6 +17,7 @@ import { YardConfig as cfg } from "./YardConfig";
  *  - A handful of additive sprites + one dome mesh — tiny draw-call cost.
  *  - The whole group follows the camera each frame so the sky reads as
  *    infinitely far and can never feel "glued" to the map.
+ *  - The dome is drawn after the opaques, on the far plane (skyDome.ts).
  *  - No fog on any sky material (the haze only melts real map geometry).
  *
  * Purely visual: nothing here is raycastable, collidable or gameplay-affecting.
@@ -61,9 +63,10 @@ export class YardSky {
     });
     this.disposables.push(geo, mat);
     const dome = new THREE.Mesh(geo, mat);
-    dome.renderOrder = -10; // behind everything
     dome.frustumCulled = false;
-    this.group.add(dome);
+    // After every opaque, on the far plane (skyDome.ts) — no longer drawn
+    // first over the whole screen.
+    this.group.add(drawDomeLast(dome));
   }
 
   /** High midday sun: one bright additive sprite matching the light direction. */

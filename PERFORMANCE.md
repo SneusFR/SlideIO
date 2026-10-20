@@ -54,6 +54,7 @@ opérations de skinning par rayon).
 | Chargement (8ᵉ passe : 6 s, parfois 17 s) | **Les étapes du chargement se recouvrent au lieu de s'attendre.** Les ~90 programmes GPU étaient compilés **un par un**, au premier rendu de warm-up qui s'en servait : le thread principal attendait chaque compilation — sous D3D11, 10 à 300 ms par programme quand le cache de shaders de Chrome est froid (après une mise à jour de Chrome ou du pilote, ou un déploiement qui change un shader), d'où les chargements de 17 s. Ils partent maintenant au processus GPU dès que la scène existe (`renderer.compile` ; sous Windows, Chrome les compile **en parallèle** sur plusieurs threads), pendant que le jeu analyse les armes ; le chargement attend qu'ils soient liés par une requête de statut qui n'attend jamais (`programsLinked`), et le warm-up du HUD tourne pendant cette compilation (il attendait la fin du warm-up GPU). Tous les fichiers (carte, personnage, tenues, skins, armes TP) sont demandés **au début** du chargement, la carte pendant l'initialisation de Rapier ; la lance (13 Mo : 128 k triangles, trois JPEG 2048²) n'est plus analysée et téléversée qu'**une** fois pour la vue FP et la vue TP. **Ce qui ne sert ni au menu ni à la première frame de jeu sort de l'écran de chargement** : BVH de tir de la carte (construits un par un dans les temps morts du menu, au plus tard au clic sur JOUER), 2ᵉ contexte WebGL de l'aperçu de personnalisation (créé à l'ouverture de ce menu), icônes des armes (dans les temps morts, ou à l'ouverture du menu d'équipement), wireframes de collision (à leur première activation). **Calculs du chargement accélérés, résultats identiques au bit près** (tests d'équivalence contre l'ancien code) : découpage, soudure et copie en espace monde des lots de Givre, grille de neige, boîtes englobantes des maillages skinnés (la matrice de chaque os calculée une fois au lieu d'une fois par influence de chaque sommet), empreinte SHA-256 des tenues mise en cache. **Grille de navigation des bots en cache** (localStorage) sous une signature de tous les colliders statiques, des bornes, du code de construction et de la version de Rapier : elle n'est recalculée que si l'un d'eux change. En production, three.js ne relit plus le journal de compilation de chaque shader (`checkShaderErrors`, gardé en `npm run dev`). Nouvelle ligne `[BOOT]` dans la console (voir « Vérifier sur une machine »). Image identique (0 pixel de différence sur le menu). | `game/Game.ts`, `main.ts`, `ui/bootTimeline.ts`, `ui/HudWarmup.ts`, `world/MapBvh.ts`, `world/GivreMap.ts`, `world/JungleMap.ts`, `world/YardMap.ts`, `world/GivreRenderOptim.ts`, `world/GivreFootprints.ts`, `effects/FastSkinnedBounds.ts`, `navigation/NavGrid.ts`, `weapons/LanceModel.ts`, `weapons/SpearViewmodel.ts`, `network/remote/RemoteWeaponController.ts`, `menu/CustomizePreview.ts`, `menu/WeaponIconRenderer.ts`, `cosmetics/astronaut/runtime/AstronautCosmetics.ts` |
 | 240 Hz (9ᵉ passe : tir à la tête en dash, 240 → 175 FPS) | **Ni la 3D ni le ragdoll : la somme jeu + navigateur sur un seul thread.** À 244 Hz, une frame dure 4,1 ms, et tout passe par le thread principal : le JS du jeu (~3 ms au repos sur le PC gamer) **puis** le travail du navigateur (~1 ms : style, mise en page, peinture du HUD, envoi au compositeur). Au kill, le JS du jeu ne monte que de 0,2-0,35 ms ; c'est le HUD qui fait passer `Browser` à 2,5 ms de moyenne (8,3 ms sur la frame du kill) : 3,3 + 2,5 = 5,8 ms → 175 FPS. Corrigé : (1) **Classement** : il relisait l'état dessiné de ses lignes (`getComputedStyle`, `getBoundingClientRect`) entre ses propres écritures — à chaque kill (bots compris), 5 recalculs de style + 4 mises en page forcés au milieu du JS du jeu ; les lectures sont regroupées avant la première écriture, et il n'y en a plus quand rien n'anime. (2) **Médaille** : la couleur d'accent `--md`, héritée, et `#medal-display.hidden *` restylaient tout le badge (~58 éléments, dessins SVG compris) à chaque apparition et disparition ; `--md` n'est plus héritée (`@property`), elle est posée sur les 13 éléments qui la peignent, et le masquage vise la liste des parties animées : 57 → 40 éléments restylés à l'apparition, 57 → 18 à la disparition. (3) **Menu caché en jeu** : endormi (`content-visibility: hidden`) une fois son fondu fini — ses deux boucles infinies étaient recalculées à chaque frame de la partie ; sa sonde de ping (requête HTTP + réécriture du ping et du salon toutes les 5 s) ne tourne plus que menu affiché. (4) **Panneau de debug** : une ligne = un nœud texte, réécrite seulement si elle change (il réécrivait tout 15 fois par seconde : le panneau qui sert à mesurer coûtait lui-même). (5) **Cadavre** : le clone du personnage (SkeletonUtils, ~50-70 nœuds) est préparé pendant la protection d'apparition du bot et seulement remis à l'état courant au kill (même objet ; repli sur le clonage si le corps a changé de forme). (6) **Rendu** : une seule mise à jour des os par squelette et par frame (three.js recalculait deux fois chaque personnage qui projette une ombre) ; fusil à popcorn FP sans re-sélection de 4 programmes par frame. **Ce qui restait** : la somme elle-même — réglée à la 10ᵉ passe (« Le HUD dans son propre processus » plus bas). | `ui/LeaderboardHUD.ts`, `ui/leaderboard/*`, `hud.css`, `ui/MedalHUD.ts`, `ui/HudWarmup.ts`, `menu/MenuOverlay.ts`, `style.css`, `ui/DebugHUD.ts`, `ragdoll/CorpseCloneSpare.ts`, `bots/Bot.ts`, `bots/BotModel.ts`, `effects/SkeletonFrameDedupe.ts`, `effects/TwoPassTransparentSplit.ts`, `weapons/popcorn/PopcornShotgunWeapon.ts`, `game/Game.ts` |
 | 240 Hz (10ᵉ passe : le HUD dans son propre processus) | **Le HUD ne passe plus par le thread du jeu.** Mesuré d'abord sur le PC gamer avec le prototype (`/perf/prototype-240hz.html`, Edge 155, RTX 2080 Super, 238 Hz, zoom 90 %) — même charge 3D et même HUD simulé dans trois architectures : tout sur le thread principal (comme le jeu jusqu'ici) **239 FPS au calme, 158 pendant les kills** (50 % de frames en retard, pire frame 20,8 ms) ; 3D dans un worker 240 / 237 ; **HUD dans une iframe isolée 240 / 240** (0 % de frames en retard, pire frame 4,4 ms ; l'iframe tourne bien dans son propre processus). C'est cette dernière qui est en place : le HUD vit dans `hud.html`, chargé dans une iframe `sandbox="allow-scripts"` posée sur le canvas (sans pointeur, jamais de focus). Son origine est opaque, donc Chrome / Edge (isolation des sites) la font tourner **dans un autre processus** : son style, sa mise en page, sa peinture et ses animations se font en parallèle du jeu, plus après lui. Le jeu ne touche plus au DOM du HUD : il appelle `hudHost.api` (les mêmes méthodes que les anciens widgets), qui copie à l'appel l'état utile en données simples (« vues ») et l'envoie en **une liste de commandes par frame** (`postMessage`). Dans l'iframe, le runtime du HUD construit les mêmes widgets, dans le même ordre, avec le même balisage et les mêmes CSS, applique les commandes dans l'ordre et rejoue le warm-up du HUD dans son propre document. **Repli automatique** sur le HUD dans la page (le même runtime, chaque commande appliquée à l'appel : le comportement d'avant) si l'iframe ne répond pas en 8 s, ne tourne pas dans son propre processus (vérifié au chargement), ne voit pas la même taille ni le même zoom que la page, ou cesse de répondre avant la fin de son warm-up ; **et pendant la partie**, si son processus plante ou se fige (aucune nouvelle depuis 3 s alors que la page du jeu, elle, dessine : l'iframe — que Chrome remplacerait par un rectangle gris sur tout le jeu — est retirée et le HUD reconstruit dans la page avec son dernier état) ou si elle ne voit plus la même taille ou le même zoom que la page. En `npm run dev`, le HUD reste dans la page par défaut (`?hud=frame` pour l'iframe) ; `?hud=inline` force l'ancien chemin partout. Ligne `HUD:` du panneau de debug. Rendu : identique au pixel dans la page ; dans l'iframe, seul l'anticrénelage de quelques bords d'éléments animés diffère (≤ 22 niveaux sur 255, sur ≤ 1,2 % des pixels). | `hud.html`, `src/hud/protocol.ts`, `src/hud/host/*`, `src/hud/runtime/*`, `src/hud/hudMarkup.html`, `src/hud/hudFrame.css`, `index.html`, `style.css`, `ui/*HUD.ts` (types), `ui/displayFrames.ts`, `game/Game.ts`, `main.ts`, `combat/HitFeedbackManager.ts`, `killstreaks/mole/MoleStrikeVFX.ts`, `menu/MenuOverlay.ts`, `ui/DebugHUD.ts`, `vite.config.ts`, `vercel.json` |
+| GPU du portable (11ᵉ passe : mesurée sur la vraie carte graphique) | **La cause des 30-40 FPS du portable : le travail GPU de chaque image partait trop tard, et des passes / clears plein écran inutiles le gonflaient.** Mesuré dans un vrai navigateur sur l'Intel Iris Xe (Givre LOW, 1920 × 928 ; détails dans « La cause racine » plus bas). (1) `gl.flush()` après la passe monde et en fin d'image : sans lui, le GPU attendait une partie de l'image puis recevait tout d'un bloc — 36 → 60 FPS sur la même machine, +14 % quand le GPU est la limite. (2) Un seul clear profondeur + stencil de la cible HDR du monde au lieu de deux clears complets (le dôme du ciel, au plan lointain, écrit tous les pixels libres) : à 2560 × 1238, 49 → 57 FPS. (3) Ciel dessiné après les opaques au lieu de remplir tout l'écran en premier (Givre, Jungle, Yard). (4) Plus aucun clear avant les passes plein écran (sortie sRGB, FXAA), qui réécrivent chaque pixel de leur cible. (5) Les 2 lumières ponctuelles du pool FX, toujours éteintes (intensité 0) mais calculées dans chaque pixel éclairé, retirées. Même image, au bit près (vérifié au banc). `?diag=noflush` pour comparer. | `effects/FlushPass.ts`, `effects/SkyCoveredRenderPass.ts`, `effects/FullscreenPass.ts`, `effects/FXLightPool.ts`, `world/GivreSky.ts`, `world/skyDome.ts`, `world/SpaceSky.ts`, `world/YardSky.ts`, `game/Game.ts`, `ui/perfDiag.ts` |
 | Qualité HIGH | Filtrage anisotrope ×8 sur les lightmaps (sols et murs nets en incidence rasante). | `game/GraphicsQuality.ts`, `world/GivreMap.ts` |
 
 ### Bugs corrigés au passage
@@ -288,6 +289,70 @@ cœur du jeu (l'autre est pris par SwiftShader) : chaque envoi devient un change
 temps CPU du jeu par frame gonfle (4,7 → 7,5 ms) et le gain disparaît dans le bruit — une limite du
 banc, pas de l'architecture.
 
+## La cause racine, mesurée sur la vraie carte graphique (11ᵉ passe)
+
+Jusqu'ici, tout se mesurait au banc headless (SwiftShader : pas de vrai GPU). Cette passe a été
+mesurée **sur le portable lui-même** (Intel Iris Xe, Windows, Direct3D 11 via ANGLE, moteur
+Chrome 152) : le navigateur intégré de l'app Claude, piloté à distance sur la page de production,
+Givre en LOW à 1920 × 928 (la taille du jeu à 80 % de zoom), avec une sonde WebGL injectée dans la
+page (timer queries par image et par draw, compteurs d'appels, bascules A/B). Au départ : **36 à
+44 FPS**, comme dans Chrome sur la même machine.
+
+**1. Le travail GPU partait trop tard (la vraie cause des 30-40 FPS).** WebGL ne fait que mettre des
+commandes en file ; rien ne demandait au pilote de les lancer avant la présentation de la page. Le
+GPU restait inactif une partie de l'image, recevait tout d'un bloc, et une image sur deux ratait le
+rafraîchissement de l'écran (sur un portable, l'inactivité baisse aussi les fréquences du GPU). Un
+`gl.flush()` après la passe monde et un en fin d'image (`Game.flushGpu`, `FlushPass`) :
+
+| Givre LOW, Iris Xe | sans flush | avec |
+|---|---|---|
+| 1920 × 928, fenêtre en arrière-plan | 36,1 FPS (image médiane 33 ms) | **60,1 FPS** (verrouillé sur l'écran) |
+| 2560 × 1238, limité par le GPU (19 ms de GPU par image = 52 FPS au mieux) | 42,5 FPS | **48,6 FPS** |
+
+Flusher plus souvent (tous les 3 ou 6 draws) mesure moins bien (47-49 FPS, plus de CPU).
+`?diag=noflush` remet l'ancienne soumission, pour comparer sur n'importe quelle machine.
+
+**2. Des « clears » plein écran très chers sur Intel.** Temps GPU par opération (1920 × 928) :
+la cible HDR du monde (RGBA16F) était vidée **deux fois** par image (RenderPass, puis le fond
+`Color` de la scène que three force) : ~0,7 ms chacune — la couleur du ciel n'est pas une valeur
+0 / 1, le pilote écrit donc tous les octets ; puis la cible de la passe de sortie (0,67 ms) et le
+canvas (0,43 ms). A/B à 2560 × 1238 avec le flush : sans les deux clears couleur du monde
+49 → **57 FPS** ; sans celui de la cible de sortie 49,5 → 54 ; sans celui du canvas 50 → 51,7 ;
+tous ensemble 50 → **60 FPS** (plafond de l'écran). Désormais : un seul clear profondeur + stencil
+(`SkyCoveredRenderPass` : le dôme du ciel, dessiné au plan lointain après les opaques, écrit tous
+les pixels que la carte laisse libres), et les passes plein écran (sortie sRGB, FXAA) n'effacent
+plus leur cible, qu'elles recouvrent entièrement (`FullscreenPass`).
+
+**3. Le reste, mesuré par A/B (temps GPU médian d'une image, 1920 × 928) :**
+
+| Bascule | Effet |
+|---|---|
+| Ciel dessiné en premier (plein écran) → en dernier | 1,45 ms par image pour ce seul draw (`GivreSky` : dessiné en dernier) |
+| Passe de sortie sRGB (dans une 2ᵉ cible HDR, avant le FXAA) | 1,2 ms — gardée : la fusionner avec le FXAA changeait l'anticrénelage de 6 à 9 % des pixels (le FXAA filtrait alors en linéaire, jusqu'à 174 niveaux d'écart sur un pixel de bord) ; seul son clear est parti |
+| 2 lumières ponctuelles du pool FX, toujours à l'intensité 0 | −0,33 ms (retirées : `FXLightPool`, même image) |
+| Ombres (échantillonnage de la shadow map) | −0,24 ms (gardées) |
+| Lumière hémisphérique, AO map + emissive map, faces doubles → simples | dans le bruit (< 0,1 ms) |
+| Tous les viewports à 1 × 1 (plus aucun pixel à dessiner) | 11,8 → 6,9 ms : le reste = clears + sommets + attente |
+
+**Tout ensemble**, même portable, page de production, ancien chemin contre nouveau en alternance
+(soumission + clears + ciel + lumières FX, reproduits dans la page ; temps GPU médian d'une image) :
+
+| Givre LOW, Iris Xe | avant | après |
+|---|---|---|
+| 1920 × 928 (fenêtre au premier plan ; 36-44 FPS en arrière-plan, voir 1.) | 60 FPS | 60 FPS, avec ~40 % de GPU en moins (mesuré aux tailles au-dessous) : de la marge |
+| 2560 × 1238 | 41 FPS · 17,4 ms de GPU | **60 FPS** (plafond de l'écran) · **10,5 ms** |
+| 3200 × 1546 | 29 FPS · 27,4 ms | **56 FPS** · **16,2 ms** |
+
+Le shading de la carte elle-même n'est donc **pas** le problème : le jeu payait surtout des
+passes et des clears plein écran qui ne changent aucun pixel, et un GPU démarré trop tard.
+Krunker dessine directement dans le canvas (pas de cible HDR, pas de post-traitement) : pas de
+clear supplémentaire, et un travail GPU assez petit pour tenir dans l'image même soumis tard.
+
+Les dômes de ciel de Jungle et Yard sont aussi dessinés en dernier (`skyDome.ts`). Vérifié au
+banc (`givreDebug.perf.skyFirst / clears / deadLights / passClears` : l'ancien chemin, bascule par
+bascule) : mêmes pixels RGBA, au bit près, avant / après — chaque changement seul et tous ensemble,
+sur Givre LOW et HIGH, Jungle et Yard.
+
 ## Vérifier sur une machine
 
 HUD de debug (déjà présent) : lignes `World: N draws` et `CPU`. Repères sur Givre
@@ -308,6 +373,13 @@ c'est le GPU (ou le processus GPU du navigateur).
   long dont l'essentiel tombe sur `compilation` / `rendu` = cache de shaders de Chrome froid
   (première fois après une mise à jour de Chrome ou du pilote, ou d'un shader du jeu) : les
   chargements suivants doivent être nettement plus courts.
+- `?diag=…` (n'importe quel build, plusieurs séparés par des virgules ; ligne `Diag:` du
+  panneau) : des expériences « et si » pour situer le temps d'une image. `noflush` = l'ancienne
+  soumission du travail GPU (11ᵉ passe) ; `scale50` = la 3D à 50 % de sa résolution (FPS presque
+  doublés = l'image est limitée par les pixels) ; `cpu5` = 5 ms de CPU en plus par image (FPS
+  inchangés = CPU et GPU travaillent en parallèle) ; `nopost` = Givre dessiné directement dans
+  le canvas, sans cible HDR ni passe de sortie ; `empty` = plus aucun rendu 3D (ce qui reste =
+  le coût propre de la page). Jamais pour jouer.
 - `Device:` : le GPU réellement utilisé par le navigateur. « SwiftShader »,
   « Basic Render Driver » ou « llvmpipe » = rendu logiciel (accélération matérielle
   désactivée) : aucune optimisation du jeu n'y changera rien.

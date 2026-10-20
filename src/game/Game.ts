@@ -27,8 +27,9 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { FXAAPass } from "three/examples/jsm/postprocessing/FXAAPass.js";
-import { OutputFXAAPass } from "../effects/OutputFXAAPass";
 import { FlushPass } from "../effects/FlushPass";
+import { SkyCoveredRenderPass } from "../effects/SkyCoveredRenderPass";
+import { asFullscreenPass, fullscreenPassDebug } from "../effects/FullscreenPass";
 import {
   GivreOutlinePass,
   defaultOutlineExclude,
@@ -1423,10 +1424,11 @@ export class Game {
    *   3. RenderPass(FP scene) overlay → arms + weapon, ONE depth clear (same
    *                                     contract as ViewmodelSystem.render)
    *   4. GivreOutlinePass(FP scene)   → the weapon gets its rim too (reference)
-   *   5. OutputPass (HIGH)            → sRGB conversion AFTER the outlines;
-   *      OutputFXAAPass (LOW)         → the same conversion + FXAA in one
-   *                                     pass (no MSAA on LOW; HIGH uses 4×
-   *                                     MSAA buffers instead).
+   *   5. OutputPass                   → sRGB conversion AFTER the outlines;
+   *      then FXAA (LOW)              → no MSAA on LOW (HIGH uses 4× MSAA
+   *                                     buffers instead).
+   *   Both fullscreen passes overwrite every pixel: no clear before them
+   *   (FullscreenPass).
    * renderer.info.autoReset is turned off so the debug HUD counts every pass
    * of the frame (reset manually once per frame in frame()).
    *
@@ -1457,12 +1459,14 @@ export class Game {
     target.texture.name = "GivreComposer.rt";
     const composer = new EffectComposer(this.renderer, target);
 
-    const world = new RenderPass(this.scene, this.fpsCamera.camera);
-    // PERF (GPU): a Color background already clears the target — three
-    // forces that clear (colour + depth + stencil) even with autoClear off.
-    // RenderPass's own clear came first: a second full clear of the
-    // HalfFloat target every frame, for the same image.
-    world.clear = !(this.scene.background instanceof THREE.Color);
+    // One depth / stencil clear per frame: the far-plane sky writes every
+    // pixel the opaques leave (SkyCoveredRenderPass).
+    const sky = this.spaceSky;
+    const world = new SkyCoveredRenderPass(
+      this.scene,
+      this.fpsCamera.camera,
+      () => sky instanceof GivreSky && sky.coversEveryPixel(this.scene),
+    );
     composer.addPass(world);
     // The world is most of the frame's GPU work: the GPU starts on it while
     // the CPU records the overlay and output passes (see flushGpu).
@@ -1493,8 +1497,10 @@ export class Game {
     composer.addPass(fpOutline);
 
     // HIGH: MSAA buffers, then the output conversion. LOW: no MSAA — the
-    // output conversion and FXAA in ONE fullscreen pass (OutputFXAAPass).
-    composer.addPass(quality.antialias ? new OutputPass() : new OutputFXAAPass());
+    // output conversion, then FXAA. (Each one overwrites every pixel of its
+    // target: no clear before it — FullscreenPass.)
+    composer.addPass(asFullscreenPass(new OutputPass()));
+    if (!quality.antialias) composer.addPass(asFullscreenPass(new FXAAPass()));
 
     this.composer = composer;
     this.worldRenderPass = world;
@@ -1520,7 +1526,9 @@ export class Game {
     //   givreDebug.perf.sort(false)              (A/B: three's default sort)
     //   givreDebug.perf.pixelRatio(0.75)         (A/B: render resolution)
     //   givreDebug.perf.skyFirst(true)           (A/B: the old sky, drawn first)
-    //   givreDebug.perf.separateFxaa(true)       (A/B: sRGB output, then FXAA)
+    //   givreDebug.perf.passClears(true)         (A/B: clears before the fullscreen passes)
+    //   givreDebug.perf.clears(true)             (A/B: the old two full clears)
+    //   givreDebug.perf.deadLights(true)         (A/B: the 2 unlit FX pool lights)
     if (import.meta.env.DEV) {
       (window as unknown as Record<string, unknown>).givreDebug = {
         world: worldOutline,
@@ -1566,11 +1574,9 @@ export class Game {
           ? "monde" // draws nothing: its time stays with the world pass
           : pass instanceof OutputPass
             ? "sortie"
-            : pass instanceof OutputFXAAPass
-              ? "sortie+FXAA"
-              : pass instanceof FXAAPass
-                ? "FXAA"
-                : pass.constructor.name;
+            : pass instanceof FXAAPass
+              ? "FXAA"
+              : pass.constructor.name;
       timePasses(this.composer.passes, timer, (pass) => labels.get(pass) ?? otherLabel(pass));
     }
     // Per-draw split: the WHOLE list also goes to the console every 5 s, as
@@ -1643,9 +1649,12 @@ export class Game {
     sort(frontToBack: boolean): string;
     pixelRatio(ratio: number): number[];
     skyFirst(on: boolean): string;
-    separateFxaa(on: boolean): string;
+    passClears(legacy: boolean): string;
+    clears(legacy: boolean): string;
+    deadLights(on: boolean): string;
   } {
     const composer = this.composer!;
+    let deadLights: THREE.PointLight[] | null = null;
     const setVisible = (pred: (o: THREE.Object3D) => boolean, on: boolean): number => {
       let n = 0;
       this.scene.traverse((o) => {
@@ -1695,21 +1704,25 @@ export class Game {
         for (const dome of group.children) dome.renderOrder = on ? -10 : order;
         return on ? "sky drawn FIRST (old)" : "sky drawn after the opaques";
       },
-      separateFxaa: (on: boolean) => {
-        const last = composer.passes[composer.passes.length - 1];
-        if (!(last instanceof FXAAPass)) return "no FXAA on this preset";
-        composer.removePass(last);
-        if (on) {
-          const output = composer.passes[composer.passes.length - 1];
-          if (output instanceof OutputPass) composer.removePass(output);
-          composer.addPass(new OutputPass());
-          composer.addPass(new FXAAPass());
-        } else {
-          const output = composer.passes[composer.passes.length - 1];
-          if (output instanceof OutputPass) composer.removePass(output);
-          composer.addPass(new OutputFXAAPass());
+      passClears: (legacy: boolean) => {
+        fullscreenPassDebug.legacy = legacy;
+        return legacy ? "clear + depth test before the output / FXAA passes (old)" : "no clear before them";
+      },
+      clears: (legacy: boolean) => {
+        const world = this.worldRenderPass;
+        if (!(world instanceof SkyCoveredRenderPass)) return "no world pass";
+        world.legacyClears = legacy;
+        return legacy ? "two full clears (old)" : "one depth/stencil clear (sky covers the colour)";
+      },
+      deadLights: (on: boolean) => {
+        // The old FX pool: 2 point lights at intensity 0 in the world scene
+        // (every lit program recompiles on the first switch — DEV only).
+        deadLights ??= [0, 1].map(() => new THREE.PointLight(0xffffff, 0, 1, 2));
+        for (const light of deadLights) {
+          if (on) this.scene.add(light);
+          else this.scene.remove(light);
         }
-        return on ? "sRGB output pass, then FXAA (old)" : "output + FXAA in one pass";
+        return on ? "2 dead point lights in the scene (old)" : "no dead light";
       },
     };
   }
@@ -3863,8 +3876,8 @@ export class Game {
     this.netAttackerAge += dt; // network damage-direction memory decays
 
     // FX light pool: assign this frame's light requests (weapon flashes,
-    // impacts, explosions…) to the 2 physical pooled lights — MUST run
-    // after every VFX update and before the render.
+    // impacts, explosions…) to the pooled lights (none today — see
+    // FXLightPool) — MUST run after every VFX update and before the render.
     fxLights.commit();
     sections?.lap("réseau");
 

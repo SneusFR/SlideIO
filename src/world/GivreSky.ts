@@ -21,6 +21,7 @@ export class GivreSky {
   readonly group = new THREE.Group();
 
   private readonly disposables: { dispose(): void }[] = [];
+  private dome: THREE.Mesh | null = null;
 
   constructor() {
     this.group.name = "givre_sky";
@@ -78,6 +79,18 @@ export class GivreSky {
     dome.userData.noOutline = true;
     dome.raycast = () => {}; // purely visual
     this.group.add(dome);
+    this.dome = dome;
+  }
+
+  /**
+   * True while the dome is drawn in `scene`: a closed sphere around the
+   * camera on the far plane, depth-tested after the opaques — every pixel
+   * the opaques leave free (every view direction) gets the sky colour. The
+   * world pass then skips its colour clear (SkyCoveredRenderPass).
+   */
+  coversEveryPixel(scene: THREE.Scene): boolean {
+    const dome = this.dome;
+    return dome !== null && dome.visible && this.group.visible && this.group.parent === scene;
   }
 
   /**

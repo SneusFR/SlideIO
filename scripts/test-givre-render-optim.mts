@@ -7,7 +7,11 @@
 //      per-material merge, single-sided only on closed outward thin solids,
 //      FrontSide clones keep name / colour / maps, GIV_Feu never cloned;
 //   4. toStandardMaterial keeps every value the map uses;
-//   5. frontToBackOpaqueSort: renderOrder first, then near → far.
+//   5. frontToBackOpaqueSort: renderOrder first, then near → far;
+//   6. SkyCoveredRenderPass: one depth / stencil clear while the sky covers
+//      every pixel (GivreSky.coversEveryPixel), one full clear otherwise
+//      (never two); the renderer's autoClear flags are restored;
+//   7. the FX light pool adds no (dead) light to the world scene.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import * as THREE from "three";
@@ -24,6 +28,9 @@ import {
   type ChunkGrid,
   type StaticEntry,
 } from "../src/world/GivreRenderOptim.ts";
+import { SkyCoveredRenderPass } from "../src/effects/SkyCoveredRenderPass.ts";
+import { GivreSky } from "../src/world/GivreSky.ts";
+import { fxLights } from "../src/effects/FXLightPool.ts";
 
 let passed = 0;
 const ok = (label: string) => {
@@ -236,6 +243,77 @@ console.log(`INFO buildStaticBatches load-time cost: ${(performance.now() - t0).
   list.sort(frontToBackOpaqueSort);
   assert.deepEqual(list.map((i) => i.id), [2, 3, 1, 4], "near → far, renderOrder first");
   ok("frontToBackOpaqueSort: renderOrder first, then near → far");
+}
+
+// ---------------------------------------------------------------- 6. clears
+{
+  // Stand-in renderer: records every clear; render() behaves like three's
+  // WebGLBackground with a Color background (clears with the autoClear*
+  // flags whatever `autoClear` says — "forceClear").
+  type Clear = [boolean, boolean, boolean];
+  const clears: Clear[] = [];
+  const renderer = {
+    autoClear: true,
+    autoClearColor: true,
+    autoClearDepth: true,
+    autoClearStencil: true,
+    target: undefined as unknown,
+    getContext: () => ({}), // no WebGL 2 in Node: no invalidateFramebuffer
+    setRenderTarget(t: unknown) {
+      this.target = t;
+    },
+    clear(color = true, depth = true, stencil = true) {
+      if (color || depth || stencil) clears.push([color, depth, stencil]); // three skips gl.clear(0)
+    },
+    render(scene: THREE.Scene) {
+      assert.equal(this.target, readBuffer, "renders into the read buffer");
+      if ((scene.background as THREE.Color | null)?.isColor) this.clear(this.autoClearColor, this.autoClearDepth, this.autoClearStencil);
+    },
+  };
+  const readBuffer = { name: "read" };
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x336699);
+  const sky = new GivreSky();
+  scene.add(sky.group);
+  const pass = new SkyCoveredRenderPass(scene, new THREE.PerspectiveCamera(), () => sky.coversEveryPixel(scene));
+  const run = (): Clear[] => {
+    clears.length = 0;
+    pass.render(renderer as unknown as THREE.WebGLRenderer, null as never, readBuffer as never, 0, false);
+    assert.deepEqual(
+      [renderer.autoClear, renderer.autoClearColor, renderer.autoClearDepth, renderer.autoClearStencil],
+      [true, true, true, true],
+      "autoClear flags restored",
+    );
+    return [...clears];
+  };
+  assert.equal(sky.coversEveryPixel(scene), true);
+  assert.deepEqual(run(), [[false, true, true]], "sky covers: one depth + stencil clear");
+  pass.legacyClears = true;
+  assert.deepEqual(run(), [[true, true, true], [true, true, true]], "A/B: three's two full clears");
+  pass.legacyClears = false;
+  sky.group.visible = false;
+  assert.equal(sky.coversEveryPixel(scene), false);
+  assert.deepEqual(run(), [[true, true, true]], "hidden sky: one full clear (the Color background's)");
+  sky.group.visible = true;
+  scene.remove(sky.group);
+  assert.equal(sky.coversEveryPixel(scene), false, "sky outside the scene");
+  assert.deepEqual(run(), [[true, true, true]], "no sky: one full clear");
+  sky.dispose();
+  ok("SkyCoveredRenderPass: depth + stencil only while the sky covers, one full clear otherwise");
+}
+
+// ---------------------------------------------------------------- 7. lights
+{
+  const scene = new THREE.Scene();
+  fxLights.init(scene);
+  let lights = 0;
+  scene.traverse((o) => {
+    if ((o as THREE.Light).isLight) lights++;
+  });
+  assert.equal(lights, 0, "no dead FX light in the world scene");
+  fxLights.request(0xffffff, 5, 4, 2, new THREE.Vector3()); // still a valid call
+  fxLights.commit();
+  ok("FX light pool: no light added to the scene (nothing requests one)");
 }
 
 console.log(`\nAll ${passed} GIVRE render-optim checks passed.`);
