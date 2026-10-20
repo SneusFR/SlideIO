@@ -99,6 +99,8 @@ export class MenuOverlay {
   private readonly adSlot: AdSlot;
   /** Live ping + lobby refresh timer — running only while the menu shows. */
   private pingTimer: number | null = null;
+  /** Pending "asleep" switch once the hide fade is over (see sleep()). */
+  private sleepTimer: number | null = null;
   private disposed = false;
   private settingsOpen = false;
   private readonly cleanups: (() => void)[] = [];
@@ -600,22 +602,51 @@ export class MenuOverlay {
   // ------------------------------------------------------------ states
 
   reveal(): void {
+    this.wake();
     this.root.classList.remove("menu-hidden");
     this.startLive();
   }
 
   /** Show the menu again (Escape pause / return to menu). */
   show(): void {
+    this.wake();
     this.root.classList.remove("menu-hidden", "menu-fade-out");
     this.startLive();
   }
 
-  /** Hide the menu completely (opacity fade → visibility off). */
+  /** Hide the menu completely (opacity fade → visibility off → asleep). */
   hide(): void {
     this.root.classList.remove("menu-fade-out");
     this.root.classList.add("menu-hidden");
     this.toggleSettings(false);
     this.stopLive();
+    this.sleep();
+  }
+
+  /**
+   * Once the hide fade is over (0.35 s), the whole menu layer goes ASLEEP
+   * (CSS #main-menu-root.menu-asleep: content-visibility hidden): invisible
+   * already, it kept costing in game — its logo bob and CTA glow loops
+   * restyled every frame, its content styled and laid out at every change.
+   * Its rendering state is kept: woken up, it renders exactly as before.
+   */
+  private sleep(): void {
+    if (this.sleepTimer !== null) window.clearTimeout(this.sleepTimer);
+    this.sleepTimer = window.setTimeout(() => {
+      this.sleepTimer = null;
+      // Still hidden (a menu shown again in between is never put to sleep).
+      if (this.root.classList.contains("menu-hidden")) {
+        this.root.parentElement?.classList.add("menu-asleep");
+      }
+    }, 400);
+  }
+
+  private wake(): void {
+    if (this.sleepTimer !== null) {
+      window.clearTimeout(this.sleepTimer);
+      this.sleepTimer = null;
+    }
+    this.root.parentElement?.classList.remove("menu-asleep");
   }
 
   /** Fade the whole UI out (CLICK TO PLAY transition). */
@@ -663,6 +694,7 @@ export class MenuOverlay {
   dispose(): void {
     this.disposed = true;
     this.stopLive();
+    if (this.sleepTimer !== null) window.clearTimeout(this.sleepTimer);
     for (const c of this.cleanups) c();
     this.cleanups.length = 0;
     this.adSlot.dispose();

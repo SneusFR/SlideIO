@@ -290,6 +290,15 @@ body.game-paused .mole-overlay {
   pointer-events: none; /* re-enabled per interactive element */
 }
 
+/* Hidden in game, once its fade is over (MenuOverlay.hide → sleep): the
+   menu layer's rendering is skipped — no style / layout / paint of the
+   subtree, its loops (logo bob, CTA glow) no longer restyled every frame.
+   (Its own empty full-screen layer stays.) Its rendering state is kept for
+   the next show. */
+#main-menu-root.menu-asleep {
+  content-visibility: hidden;
+}
+
 #main-menu {
   position: absolute;
   inset: 0;
