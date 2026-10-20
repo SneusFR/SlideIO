@@ -114,7 +114,7 @@ import { MedalManager } from "../medals/MedalManager";
 import { MatchStatsManager } from "../stats/MatchStatsManager";
 import { MatchResultsTracker, type MatchResults } from "../../shared/match/MatchResultsTracker";
 import { MATCH_DURATION_SECONDS } from "../../shared/match/MatchRules";
-import { measureDisplayFrames } from "../ui/HudWarmup";
+import { measureDisplayFrames } from "../ui/displayFrames";
 import { NetworkDebugHUD } from "../ui/NetworkDebugHUD";
 import { MultiplayerGameController } from "../network/MultiplayerGameController";
 import type { MultiplayerClient } from "../network/MultiplayerClient";

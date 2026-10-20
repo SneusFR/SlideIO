@@ -8,7 +8,7 @@ import { LobbyController } from "./network/LobbyController";
 import { MultiplayerClient } from "./network/MultiplayerClient";
 import { loadDisplayName, parseJoinRoomId } from "./network/MultiplayerConfig";
 import { MatchEndController } from "./match/MatchEndController";
-import { measureDisplayFrames } from "./ui/HudWarmup";
+import { measureDisplayFrames } from "./ui/displayFrames";
 import { bootMark, reportBoot } from "./ui/bootTimeline";
 import { hudHost } from "./hud/host/HudHost";
 import { startWeaponIcons } from "./menu/WeaponIconRenderer";
