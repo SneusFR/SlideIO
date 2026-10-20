@@ -728,6 +728,9 @@ try {
     host.init(INIT);
     host.api.clock.set(300);
     await settle();
+    assert.equal(host.mode, null, "a first miss is measured again");
+    await b.advance(H.ISOLATION_RETRY_MS);
+    assert.deepEqual(b.downTypes(), ["ping", "ping", "ping", "ping"]);
     assert.equal(b.frame!.removed, true);
     assert.equal(b.port.closed, true);
     assert.equal(host.mode, "inline");
@@ -736,6 +739,28 @@ try {
     host.api.combat.notifyKill();
     assert.deepEqual(b.runtime.calls.at(-1), ["combat.kill"], "inline: applied synchronously at the call");
     assert.equal(host.describe(), "dans la page (iframe non isolée (0 frame pendant 80 ms bloquées))");
+  });
+
+  await test("one stalled measure (compositor busy while the game loads), then a normal one: the iframe is kept", async () => {
+    const b = browser();
+    const host = new H.HudHost();
+    host.start(b.env);
+    host.init(INIT);
+    b.port.autoPong = false;
+    b.hello();
+    await settle();
+    b.up({ t: "pong", frames: 10 });
+    await settle();
+    b.up({ t: "pong", frames: 11 }); // its frames stalled during the block
+    await settle();
+    assert.equal(host.mode, null);
+    b.port.autoPong = true;
+    await b.advance(H.ISOLATION_RETRY_MS);
+    assert.ok(b.downTypes().includes("init"), "second measure: isolated");
+    b.up({ t: "ready" });
+    assert.equal(host.mode, "frame");
+    assert.equal(host.describe(), "iframe isolée");
+    assert.equal(b.warns.length, 0);
   });
 
   await test("no hello within 8 s: HUD in the page; a late hello is ignored", async () => {
@@ -862,7 +887,13 @@ try {
     await settle();
     b.up({ t: "pong", frames: 30 }); // nothing drawn while this thread was blocked
     await settle();
-    assert.equal(host.mode, "inline", "the valid measure decides");
+    assert.equal(host.mode, null, "a valid miss, confirmed by a second measure");
+    await b.advance(H.ISOLATION_RETRY_MS);
+    b.up({ t: "pong", frames: 31 });
+    await settle();
+    b.up({ t: "pong", frames: 31 });
+    await settle();
+    assert.equal(host.mode, "inline", "two valid misses decide");
   });
 
   console.log("Host — inline mode:");

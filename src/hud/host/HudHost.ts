@@ -41,6 +41,12 @@ export const READY_TIMEOUT_MS = 8000;
 export const ISOLATION_BLOCK_MS = 80;
 /** …and an iframe in its own process keeps drawing meanwhile (≥ this many rAF). */
 export const ISOLATION_MIN_FRAMES = 3;
+/**
+ * A measure that says "not isolated" is confirmed by a second one, this long
+ * after: a transient stall (the compositor busy with the game's loading) must
+ * not cost the isolated HUD for the whole session.
+ */
+export const ISOLATION_RETRY_MS = 250;
 /** A ping unanswered this long: the iframe is not usable. */
 export const PING_TIMEOUT_MS = 8000;
 /**
@@ -263,6 +269,8 @@ export class HudHost {
   /** The frame is accepted (isolated or forced): init may be sent. */
   private accepted = false;
   private checking = false;
+  /** Isolation measures that said "not isolated" (the 2nd one decides). */
+  private isolationMisses = 0;
   private pongWaiter: ((frames: number | null) => void) | null = null;
   private warmupWaiter: ((done: boolean) => void) | null = null;
   private warnedError = false;
@@ -499,7 +507,8 @@ export class HudHost {
    * main thread (another process). Runs once, during the loading screen.
    */
   private async checkIsolation(): Promise<void> {
-    if (this.checking || this.accepted || this.phase !== "connecting") return;
+    // (Hidden: the visibility listener runs it once the page is shown.)
+    if (this.checking || this.accepted || this.phase !== "connecting" || this.env!.hidden()) return;
     this.checking = true;
     let again = false;
     try {
@@ -534,6 +543,8 @@ export class HudHost {
     if (frames >= ISOLATION_MIN_FRAMES) {
       this.isolated = true;
       this.accept();
+    } else if (++this.isolationMisses < 2) {
+      this.env!.setTimeout(() => void this.checkIsolation(), ISOLATION_RETRY_MS);
     } else {
       this.fallBack(`iframe non isolée (${frames} frame${frames > 1 ? "s" : ""} pendant ${ISOLATION_BLOCK_MS} ms bloquées)`);
     }
