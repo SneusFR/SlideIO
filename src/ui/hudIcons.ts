@@ -354,7 +354,7 @@ export function ribbonTailSvg(side: "l" | "r"): string {
 
 /** Tier star above the medal disc (KILL = 1, DOUBLE = 2, TRIPLE = 3…). */
 export const MEDAL_STAR_SVG = `
-<svg viewBox="0 0 24 24" aria-hidden="true">
+<svg class="md-star" viewBox="0 0 24 24" aria-hidden="true">
   <path d="M12 2l3 6.5 7 .8-5.2 4.8 1.5 7L12 17.6 5.7 21.1l1.5-7L2 9.3l7-.8z" fill="#facc15" ${o(2.2)}/>
 </svg>`;
 

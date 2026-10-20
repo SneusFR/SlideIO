@@ -1401,8 +1401,15 @@
    top-centre stack and the crosshair clear zone.
    One-shot anims restart via replayAnim "pop" on .md-body (pop-a / pop-b).
    ========================================================================== */
+/* PERF: the accent colour is NOT inherited. MedalHUD writes it on the few
+   elements that paint with it (MEDAL_ACCENT_PARTS: rays, disc, ribbon plank
+   and tails, confetti) — an inherited `--md` changed on the badge restyled
+   all ~60 of its elements at every medal of another colour. */
+@property --md {
+  syntax: "*";
+  inherits: false;
+}
 #medal-display {
-  --md: var(--gold);
   --md-size: clamp(76px, 11vh, 116px);
   position: absolute;
   left: 50%;
@@ -1422,8 +1429,19 @@
 /* Hidden: every animation stops (the endless loops would keep the compositor
    animating an invisible badge every frame) and all of them restart from 0
    at the next pop (MedalHUD.show removes `.hidden` and swaps pop-a / pop-b
-   in the same frame) — exactly what `display: none` did. */
-#medal-display.hidden * { animation: none; }
+   in the same frame) — exactly what `display: none` did.
+   PERF: the list of the ANIMATED parts, not `.hidden *`: a universal
+   selector under a toggled class restyles the whole badge (~60 elements,
+   SVG art included) at every show and every hide; a new animated part must
+   be added here. */
+#medal-display.hidden .md-body,
+#medal-display.hidden .md-star,
+#medal-display.hidden .md-medallion,
+#medal-display.hidden .md-rays,
+#medal-display.hidden .md-rays-art,
+#medal-display.hidden .md-art,
+#medal-display.hidden .md-ribbon,
+#medal-display.hidden .md-confetti i { animation: none; }
 
 .md-body {
   display: flex;
@@ -1455,14 +1473,17 @@
      #medal-display): no layer tree rebuild, no re-raster at each pop. */
   will-change: transform, opacity;
 }
-#medal-display.stars-1 .md-stars svg:nth-child(1),
-#medal-display.stars-2 .md-stars svg:nth-child(-n + 2),
-#medal-display.stars-3 .md-stars svg:nth-child(-n + 3) { display: block; }
+/* Rules behind a toggled class (stars-N, pop-a / pop-b) name the stars by
+   their class: an `svg` type selector there restyled every SVG of the badge
+   (the 9 arts, the rays, the ribbon tails) at each toggle. */
+#medal-display.stars-1 .md-star:nth-child(1),
+#medal-display.stars-2 .md-star:nth-child(-n + 2),
+#medal-display.stars-3 .md-star:nth-child(-n + 3) { display: block; }
 .md-stars svg:nth-child(1) { transform: rotate(-14deg); }
 .md-stars svg:nth-child(2) { transform: translateY(-5px) scale(1.18); }
 .md-stars svg:nth-child(3) { transform: rotate(14deg); }
-.md-body.pop-a .md-stars svg { animation: md-star-a 0.45s var(--pop) both; }
-.md-body.pop-b .md-stars svg { animation: md-star-b 0.45s var(--pop) both; }
+.md-body.pop-a .md-star { animation: md-star-a 0.45s var(--pop) both; }
+.md-body.pop-b .md-star { animation: md-star-b 0.45s var(--pop) both; }
 .md-body .md-stars svg:nth-child(2) { animation-delay: 0.08s; }
 .md-body .md-stars svg:nth-child(3) { animation-delay: 0.16s; }
 
@@ -1494,15 +1515,24 @@
   opacity: 0.6;
   will-change: transform, opacity;
 }
+/* The parts painted with the accent (see @property --md): gold until the
+   first medal, then the colour MedalHUD writes on each of them. The SVG
+   fills are set on the PATHS, not on their <svg>: `fill` is inherited, a
+   new colour on the <svg> restyled every node of its defs. */
+.md-rays-art path,
+.md-disc,
+.md-plank,
+.md-tail path,
+.md-confetti i { --md: var(--gold); }
 .md-rays-art {
   display: block;
   width: 100%;
   height: 100%;
   overflow: visible;
-  fill: color-mix(in srgb, var(--md) 55%, #fff6e0);
   animation: rays-spin 8s linear infinite;
   will-change: transform;
 }
+.md-rays-art path { fill: color-mix(in srgb, var(--md) 55%, #fff6e0); }
 .md-body.pop-a .md-rays { animation: md-rays-a 0.6s ease-out; }
 .md-body.pop-b .md-rays { animation: md-rays-b 0.6s ease-out; }
 /* The spin starts once the pop is over, as before. One rule for pop-a and
@@ -1603,9 +1633,9 @@
   height: calc(100% - 6px);
   z-index: 0;
   overflow: visible;
-  fill: color-mix(in srgb, var(--md) 62%, #3a2814);
   filter: drop-shadow(0 3px 0 rgba(40, 27, 12, 0.85));
 }
+.md-tail path { fill: color-mix(in srgb, var(--md) 62%, #3a2814); }
 .md-tail-l { left: -16px; }
 .md-tail-r { right: -16px; }
 .md-body.pop-a .md-ribbon { animation: md-ribbon-a 0.5s var(--pop) 0.05s both; }

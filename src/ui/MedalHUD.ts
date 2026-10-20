@@ -8,6 +8,14 @@ import { replayAnim } from "./hudKit";
 const HYPE_CHAIN = 2;
 
 /**
+ * The parts painted with the medal's accent colour (`--md`, a NON-inherited
+ * custom property — hud.css): the colour is written on each of them, not
+ * inherited from the badge, so a medal of another colour restyles these
+ * 13 elements instead of the whole badge. Shared with HudWarmup.
+ */
+export const MEDAL_ACCENT_PARTS = ".md-rays-art path, .md-disc, .md-plank, .md-tail path, .md-confetti i";
+
+/**
  * Medal display — a "Bean Sticker Arcade" badge (same family as the
  * killstreak medallions): round parchment disc with the medal art, gold
  * tier stars on top, a notched ribbon with the name, sunburst rays and a
@@ -27,6 +35,7 @@ export class MedalHUD implements MedalDisplay {
   private readonly body: HTMLDivElement;
   private readonly label: HTMLSpanElement;
   private readonly arts = new Map<MedalType, SVGElement>();
+  private readonly accents: (HTMLElement | SVGElement)[];
 
   private current: MedalType | null = null;
   private lastStars = -1;
@@ -56,6 +65,7 @@ export class MedalHUD implements MedalDisplay {
 
     this.body = this.root.querySelector(".md-body")!;
     this.label = this.root.querySelector(".md-label")!;
+    this.accents = [...this.root.querySelectorAll<HTMLElement | SVGElement>(MEDAL_ACCENT_PARTS)];
     for (const svg of this.root.querySelectorAll<SVGElement>(".md-icon")) {
       this.arts.set(svg.dataset.medal as MedalType, svg);
     }
@@ -69,7 +79,7 @@ export class MedalHUD implements MedalDisplay {
       this.arts.get(medal)?.classList.add("on");
       this.current = medal;
       this.label.textContent = style.label;
-      this.root.style.setProperty("--md", style.color);
+      for (const el of this.accents) el.style.setProperty("--md", style.color);
     }
 
     if (style.stars !== this.lastStars) {

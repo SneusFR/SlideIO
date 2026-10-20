@@ -1,6 +1,7 @@
 import { MedalStyles } from "../medals/MedalConfig";
 import { MedalType } from "../medals/MedalType";
 import { hudFeed } from "./HudFeed";
+import { MEDAL_ACCENT_PARTS } from "./MedalHUD";
 
 /** A HUD part with STATE (leaderboard…) warmed through its own API. */
 export interface HudWarmupHook {
@@ -170,7 +171,7 @@ function killLook(p: DomPatch): void {
   const medal = byId("medal-display");
   p.remove(medal, "hidden");
   p.add(medal, `stars-${kill.stars}`);
-  p.style(medal, "--md", kill.color);
+  medalAccent(p, medal, kill.color);
   p.add(medal?.querySelector(".md-body"), "pop-a");
   p.add(medal?.querySelector(`.md-icon[data-medal="${MedalType.KILL}"]`), "on");
   p.text(medal?.querySelector(".md-label"), kill.label);
@@ -263,7 +264,7 @@ function rareLooks(p: DomPatch): void {
   const medal = byId("medal-display");
   p.remove(medal, "hidden");
   p.add(medal, "stars-3", "hype");
-  p.style(medal, "--md", triple.color);
+  medalAccent(p, medal, triple.color);
   p.add(medal?.querySelector(".md-body"), "pop-a");
   medal?.querySelectorAll(".md-icon").forEach((el) => p.add(el, "on"));
   p.text(medal?.querySelector(".md-label"), triple.label);
@@ -315,6 +316,11 @@ function deadLook(p: DomPatch): void {
   const buddy = byId("bean-buddy");
   p.remove(buddy, "mood-happy");
   p.add(buddy, "mood-dead");
+}
+
+/** The medal's accent colour, written where MedalHUD.show writes it. */
+function medalAccent(p: DomPatch, medal: HTMLElement | null, color: string): void {
+  medal?.querySelectorAll<HTMLElement | SVGElement>(MEDAL_ACCENT_PARTS).forEach((el) => p.style(el, "--md", color));
 }
 
 /** A temporary damage number (removed by the patch). */
@@ -504,7 +510,7 @@ class DomPatch {
     }
   }
 
-  style(el: HTMLElement | null | undefined, prop: string, value: string): void {
+  style(el: HTMLElement | SVGElement | null | undefined, prop: string, value: string): void {
     if (!el) return;
     const prev = el.style.getPropertyValue(prop);
     const priority = el.style.getPropertyPriority(prop);
