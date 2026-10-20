@@ -1,8 +1,8 @@
 /**
  * HUD ↔ game protocol — the in-match DOM HUD in its own document.
  *
- * WHY (PERFORMANCE.md, « Le plafond à 240 Hz ») — at 244 Hz a frame is
- * 4.1 ms, and the game's JS (~3 ms) and the browser's work for the HUD
+ * WHY (PERFORMANCE.md, « Le HUD dans son propre processus ») — at 244 Hz a
+ * frame is 4.1 ms, and the game's JS (~3 ms) and the browser's work for the HUD
  * (style, layout, paint: ~1 ms at rest, 2.5 ms on average and 8 ms at worst
  * right after a kill) ran one AFTER the other on the page's main thread.
  * The HUD now lives in its own document: a sandboxed iframe laid over the
