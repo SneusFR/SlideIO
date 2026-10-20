@@ -1,7 +1,11 @@
 import { MedalStyles } from "../medals/MedalConfig";
 import { MedalType } from "../medals/MedalType";
+import { displayFrameMs, measureDisplayFrames } from "./displayFrames";
 import { hudFeed } from "./HudFeed";
 import { MEDAL_ACCENT_PARTS } from "./MedalHUD";
+
+// Kept importable from here (the measurement itself lives in displayFrames.ts).
+export { measureDisplayFrames };
 
 /** A HUD part with STATE (leaderboard…) warmed through its own API. */
 export interface HudWarmupHook {
@@ -401,62 +405,12 @@ function byId(id: string): HTMLElement | null {
   return document.getElementById(id);
 }
 
-/** Frame interval of this display (ms) — see measureDisplayFrames. */
-let frameMs = 1000 / 60;
 /**
  * Past this point (a very slow machine: every frame late), the remaining
  * states are only held a frame each — the loading screen never waits more.
  */
 const WARM_BUDGET_MS = 8000;
 let holdDeadline = Infinity;
-
-let frameMeasure: Promise<void> | null = null;
-
-/**
- * The display's frame interval, measured ONCE. main.ts starts it with the
- * boot, while the loading screen mostly waits on downloads; warmUpHud and
- * the GPU warm-up wait for it. Measured later — during the shader compile
- * the HUD warm-up runs alongside (Game.warmUpRendering, step 3a), whose
- * polling delays some frames — it could read 2× too long at 240 Hz, and
- * every "on time" test of holdUntilDrawn would then pass too easily.
- */
-export function measureDisplayFrames(): Promise<void> {
-  frameMeasure ??= measureFrameInterval();
-  return frameMeasure;
-}
-
-/**
- * The display's interval (60 Hz → 16.7 ms, 240 Hz → 4.2 ms): the second
- * shortest of a dozen frame gaps. A frame comes late when the thread is busy
- * (a multiple of the interval), never early: the shortest gaps are the
- * display's own — the second one ignores a lone outlier.
- */
-function measureFrameInterval(): Promise<void> {
-  return new Promise((resolve) => {
-    const stamps: number[] = [];
-    let done = false;
-    const finish = (): void => {
-      if (done) return;
-      done = true;
-      const gaps = stamps.slice(1).map((t, i) => t - stamps[i]).sort((a, b) => a - b);
-      if (gaps.length >= 2) frameMs = Math.min(50, Math.max(4, gaps[1]));
-      resolve();
-    };
-    // Hidden tab (no frames) or a thread busy for 2 s: the 60 Hz default.
-    const timer = window.setTimeout(finish, 2000);
-    const step = (now: number): void => {
-      if (done) return;
-      stamps.push(now);
-      if (stamps.length < 13) {
-        requestAnimationFrame(step);
-        return;
-      }
-      window.clearTimeout(timer);
-      finish();
-    };
-    requestAnimationFrame(step);
-  });
-}
 
 /**
  * Keeps the current HUD state on screen until the browser has really drawn
@@ -468,13 +422,25 @@ function measureFrameInterval(): Promise<void> {
  * shaders were then compiled at the first kill anyway.
  */
 function holdUntilDrawn(maxMs = 600): Promise<void> {
+  return untilDrawn(Math.min(maxMs, Math.max(0, holdDeadline - performance.now())));
+}
+
+/**
+ * Resolves once what this document shows NOW has really been drawn (see
+ * holdUntilDrawn: at least 3 frames, two in a row on time), or after
+ * `maxMs` at most (+0.1 s without any frame). The HUD iframe waits for it
+ * after the warm-up: its frames reach the screen apart from the game
+ * page's, and the page must not drop its loading screen over a warm-up
+ * state still on screen.
+ */
+export function untilDrawn(maxMs: number): Promise<void> {
   return new Promise((resolve) => {
     const start = performance.now();
-    maxMs = Math.min(maxMs, Math.max(0, holdDeadline - start));
     let last = -1;
     let count = 0;
     let onTime = 0;
     const timer = window.setTimeout(resolve, maxMs + 100);
+    const frameMs = displayFrameMs();
     const step = (now: number): void => {
       if (last >= 0) onTime = now - last <= frameMs * 1.6 ? onTime + 1 : 0;
       last = now;
