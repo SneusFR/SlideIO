@@ -277,9 +277,18 @@ export type HudUpMessage =
   /**
    * Every 500 ms: the HUD document's own frame rate, main-thread work per
    * frame (command application, then the browser's style / layout / paint),
-   * and the DEV paint GPU time.
+   * the DEV paint GPU time, and the viewport it sees (the game page checks it
+   * still matches its own — same tolerance as at init).
+   * Their silence during the match tells the game page the iframe is gone.
    */
-  | { t: "stats"; fps: number; applyMs: number; renderMs: number; paintGpuMs: number | null }
+  | {
+      t: "stats";
+      fps: number;
+      applyMs: number;
+      renderMs: number;
+      paintGpuMs: number | null;
+      viewport?: HudInit["viewport"];
+    }
   | { t: "error"; message: string };
 
 // ---------------------------------------------------------------------------

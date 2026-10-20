@@ -1,7 +1,7 @@
 /**
  * HUD host (game page) — where the in-match HUD runs, and the only way the
- * game talks to it (see ../protocol.ts and PERFORMANCE.md, « Le plafond à
- * 240 Hz »).
+ * game talks to it (see ../protocol.ts and PERFORMANCE.md, « Le HUD dans
+ * son propre processus »).
  *
  * FRAME mode (production): the HUD lives in its own document, a sandboxed
  * iframe laid over the canvas that Chrome runs in ANOTHER renderer process —
@@ -20,11 +20,16 @@
  * forced), reports an error before it is ready (viewport mismatch…), or
  * stops answering before its warm-up is over. Commands emitted before the
  * mode is final are kept and replayed in order.
+ * During the match, the HUD is rebuilt in the page from its last state
+ * (`STATE_KEY`) when the iframe stops answering while this page keeps
+ * drawing (its process crashed — Chrome then shows its grey "sad frame" over
+ * the game — or hangs), or when it no longer sees this page's viewport.
  */
 import type {
   CreateHudRuntime,
   HudApi,
   HudCommand,
+  HudCommandName,
   HudDownMessage,
   HudInit,
   HudRuntime,
@@ -62,8 +67,99 @@ export const WARMUP_TIMEOUT_MS = 20000;
  * own).
  */
 export const IDLE_FLUSH_MS = 100;
-/** Commands kept for a late fallback (until the warm-up is over), at most. */
-const JOURNAL_MAX = 20000;
+/**
+ * Frame mode, once its warm-up is over: no message from the iframe (its
+ * `stats` come every 500 ms, from a timer) for this long, while this page
+ * keeps drawing → its process crashed or its main thread hangs: HUD rebuilt
+ * in the page from its last state.
+ */
+export const SILENCE_MS = 3000;
+/**
+ * After the HUD is shown or hidden as a whole (`doc.class`: the menu, the
+ * pause), the silence is not judged for this long: showing it is its largest
+ * frame of the session (everything styled, laid out and painted again,
+ * seconds on a starved machine — 5 s measured on the 2-core software bench).
+ */
+export const SHOW_GRACE_MS = 10000;
+/**
+ * Two of this page's frames further apart than this: it was blocked (long
+ * task) or not drawing (hidden) — the iframe's messages may still wait in its
+ * queue, so the silence is measured again from there.
+ */
+export const SILENCE_GAP_MS = 500;
+/**
+ * The iframe's viewport (in its `stats`) differs from this page's in this
+ * many stats in a row, this page's own staying the same meanwhile: HUD in the
+ * page (it would be drawn at another scale).
+ */
+export const VIEWPORT_MISSES = 2;
+/** Commands kept for a late fallback (until the warm-up is over) or until the mode is final, at most. */
+export const JOURNAL_MAX = 20000;
+
+/**
+ * What a command leaves on screen, for a fallback DURING the match (the
+ * iframe gone with everything it was showing): the last command of each key
+ * is replayed to the HUD rebuilt in the page. A number = the command is state,
+ * keyed by its name and that many leading arguments (`plate.visible` per
+ * plate…); null = an event (a hit, a kill, a medal, a damage number…), gone
+ * with the iframe. Every command must be classified (a new one too).
+ */
+const STATE_KEY: Record<HudCommandName, 0 | 1 | 2 | null> = {
+  "combat.update": 0,
+  "combat.knockdown": 0,
+  "combat.damage": null,
+  "combat.heal": null,
+  "combat.kill": null,
+  "combat.name": 0,
+  "dash.update": 0,
+  "spear.visible": 0,
+  "spear.update": 0,
+  "plate.visible": 1,
+  "plate.popcorn": 0,
+  "plate.paintball": 0,
+  "plate.famas": 0,
+  "plate.frisbee": 0,
+  "combo.kill": null,
+  "combo.update": 0,
+  "medal.show": null,
+  "medal.exit": null,
+  "medal.hide": null,
+  "killstreak.render": 0,
+  "killstreak.ready": null,
+  "leaderboard.refresh": 0,
+  "clock.set": 0,
+  "interact.prompt": 0,
+  "phase.opacity": 0,
+  "mole.opacity": 0,
+  "crosshair.fire": null,
+  "crosshair.aim": 0,
+  "crosshair.flush": null,
+  "crosshair.settings": 0,
+  "hitmarker.show": null,
+  "hitmarker.flush": null,
+  "damage.hit": null,
+  "damage.orphan": null,
+  "damage.follow": null,
+  "damage.update": null,
+  "doc.class": 2,
+};
+
+/** The state key of `cmd`, or null for an event (see STATE_KEY). */
+export function stateKey(cmd: HudCommand): string | null {
+  const n = STATE_KEY[cmd[0]];
+  if (n === null) return null;
+  if (n === 0) return cmd[0];
+  return n === 1 ? `${cmd[0]}|${String(cmd[1])}` : `${cmd[0]}|${String(cmd[1])}|${String(cmd[2])}`;
+}
+
+/** Same viewport within the init check's tolerance (1 CSS px, 0.01 DPR — protocol.ts). */
+function sameViewport(a: HudInit["viewport"], b: HudInit["viewport"]): boolean {
+  return Math.abs(a.width - b.width) <= 1 && Math.abs(a.height - b.height) <= 1 && Math.abs(a.dpr - b.dpr) <= 0.01;
+}
+
+function viewportText(v: HudInit["viewport"]): string {
+  return `${v.width}×${v.height} @${Math.round(v.dpr * 100) / 100}`;
+}
 /**
  * A deadline fires this long after its delay, once more: the loading screen
  * runs long tasks (map, shaders…), and an answer that arrived meanwhile is
@@ -248,8 +344,22 @@ export class HudHost {
    * that a late fallback can rebuild the HUD in the page (null = committed).
    */
   private journal: HudCommand[] | null = [];
+  /** The HUD's state: the last command of each state key, in the order those came (see STATE_KEY). */
+  private readonly state = new Map<string, HudCommand>();
   private lastFlushAt = 0;
   private idleFlushArmed = false;
+
+  // ---- Frame mode, during the match: is the iframe still there? ----
+  /** Since when no message came from the iframe (restarted after a gap of this page's frames). */
+  private quietSince = 0;
+  /** The previous silence check (one per frame of this page). */
+  private lastWatchAt = Number.NEGATIVE_INFINITY;
+  /** No silence judged before this (SHOW_GRACE_MS after a `doc.class`). */
+  private graceUntil = Number.NEGATIVE_INFINITY;
+  /** Stats in a row whose viewport differs from this page's. */
+  private viewportMisses = 0;
+  /** This page's viewport at the previous stats. */
+  private lastPageViewport: HudInit["viewport"] | null = null;
 
   // ---- Init / runtime ----
   private initArgs: Omit<HudInit, "viewport"> | null = null;
@@ -386,7 +496,13 @@ export class HudHost {
    * (already applied) and while deciding (kept for the replay).
    */
   flush(): void {
-    if (this.phase !== "frame" || this.batch.length === 0) return;
+    if (this.phase !== "frame") return;
+    if (this.journal === null) {
+      // Warm-up over: the iframe must keep answering (its process can crash).
+      this.watch();
+      if (this.phase !== "frame") return; // fell back: this frame's commands went to the page's HUD
+    }
+    if (this.batch.length === 0) return;
     const cmds = this.batch;
     this.batch = [];
     this.lastFlushAt = this.env!.now();
@@ -428,28 +544,52 @@ export class HudHost {
   // ------------------------------------------------------------------
 
   private emit(cmd: HudCommand): void {
-    switch (this.phase) {
-      case "inline":
-        // Synchronous, at the call: exactly the old direct widget call.
-        this.runtime!.run(cmd);
-        return;
-      case "frame":
-        if (this.batch.length === 0 && !this.idleFlushArmed && this.env!.now() - this.lastFlushAt > IDLE_FLUSH_MS) {
-          // Nothing flushes right now (loading, menus without a frame
-          // loop…): the next display frame posts it.
-          this.idleFlushArmed = true;
-          this.env!.requestAnimationFrame(() => {
-            this.idleFlushArmed = false;
-            this.flush();
-          });
-        }
-        this.batch.push(cmd);
-        return;
-      case "dead":
-        return;
-      default:
-        this.buffer.push(cmd);
+    if (this.phase === "inline") {
+      // Synchronous, at the call: exactly the old direct widget call.
+      this.runtime!.run(cmd);
+      return;
     }
+    if (this.phase === "dead") return;
+    // The HUD's state, for a fallback during the match: the last command of
+    // each key, in the order they came (each value replayed after the ones
+    // set before it).
+    const key = stateKey(cmd);
+    if (key !== null) {
+      this.state.delete(key);
+      this.state.set(key, cmd);
+    }
+    if (this.phase === "frame") {
+      // The HUD shown / hidden as a whole: its next frame is its heaviest.
+      if (cmd[0] === "doc.class") this.graceUntil = this.env!.now() + SHOW_GRACE_MS;
+      if (this.batch.length === 0 && !this.idleFlushArmed && this.env!.now() - this.lastFlushAt > IDLE_FLUSH_MS) {
+        // Nothing flushes right now (loading, menus without a frame
+        // loop…): the next display frame posts it.
+        this.idleFlushArmed = true;
+        this.env!.requestAnimationFrame(() => {
+          this.idleFlushArmed = false;
+          this.flush();
+        });
+      }
+      this.batch.push(cmd);
+      return;
+    }
+    this.buffer.push(cmd);
+    // A mode slow to settle (the runtime chunk on a slow network…): the
+    // state replaces the history — events that old are moot.
+    if (this.buffer.length > JOURNAL_MAX) this.buffer = [...this.state.values()];
+  }
+
+  /**
+   * Frame mode after the warm-up, once per frame of this page: falls back to
+   * the HUD in the page when the iframe has been silent for SILENCE_MS while
+   * this page kept drawing (see SILENCE_GAP_MS).
+   */
+  private watch(): void {
+    const now = this.env!.now();
+    if (now - this.lastWatchAt > SILENCE_GAP_MS || now < this.graceUntil) this.quietSince = now;
+    this.lastWatchAt = now;
+    const quiet = now - this.quietSince;
+    if (quiet > SILENCE_MS) this.fallBack(`l'iframe ne répond plus depuis ${(quiet / 1000).toFixed(1)} s`);
   }
 
   private post(message: HudDownMessage): void {
@@ -465,7 +605,11 @@ export class HudHost {
     }
   }
 
-  /** Warm-up over (or skipped): no fallback from now on, nothing kept. */
+  /**
+   * Warm-up over (or skipped): the commands are no longer kept — a fallback
+   * from now on rebuilds the HUD from its state only — and the iframe's
+   * silence is watched (flush).
+   */
   private commit(): void {
     this.journal = null;
   }
@@ -586,6 +730,7 @@ export class HudHost {
   }
 
   private onUp(msg: HudUpMessage): void {
+    this.quietSince = this.env!.now();
     switch (msg.t) {
       case "pong": {
         const waiter = this.pongWaiter;
@@ -615,6 +760,7 @@ export class HudHost {
       case "stats":
         this.stats = msg;
         if (msg.paintGpuMs !== null) this.paintGpuMs = (this.paintGpuMs ?? 0) + msg.paintGpuMs;
+        if (msg.viewport && this.phase === "frame") this.checkViewport(msg.viewport);
         return;
       case "error":
         if (this.phase === "connecting") {
@@ -631,6 +777,25 @@ export class HudHost {
     }
   }
 
+  /**
+   * The iframe's viewport (its last stats) against this page's: a HUD drawn
+   * at another scale falls back to the page. Judged only while this page's
+   * viewport stays the same from one stats to the next (a window being
+   * resized reaches the two documents a frame apart).
+   */
+  private checkViewport(frame: HudInit["viewport"]): void {
+    const page = this.env!.viewport();
+    const settled = this.lastPageViewport !== null && sameViewport(page, this.lastPageViewport);
+    this.lastPageViewport = page;
+    if (!settled || sameViewport(page, frame)) {
+      this.viewportMisses = 0;
+      return;
+    }
+    if (++this.viewportMisses >= VIEWPORT_MISSES) {
+      this.fallBack(`viewport différent de la page : page ${viewportText(page)}, iframe ${viewportText(frame)}`);
+    }
+  }
+
   private settleWarmup(done: boolean): void {
     const waiter = this.warmupWaiter;
     if (!waiter) return;
@@ -642,11 +807,12 @@ export class HudHost {
 
   /**
    * The frame attempt is over: the iframe goes away and the HUD runs in this
-   * page, rebuilt from every command emitted so far. Only before the mode is
-   * final, or until the warm-up is over (the commands are kept until then).
+   * page — rebuilt from every command emitted so far until the warm-up is
+   * over (they are kept until then), from the HUD's state after it (the
+   * iframe's ongoing animations, medal, damage numbers… are gone with it).
    */
   private fallBack(reason: string): void {
-    const lateFallback = this.phase === "frame" && this.journal !== null;
+    const lateFallback = this.phase === "frame";
     if (this.phase !== "connecting" && !lateFallback) return;
     const env = this.env!;
     env.warn(`[HUD] iframe abandonnée (${reason}) : HUD dans la page.`);
@@ -667,9 +833,11 @@ export class HudHost {
     this.pongWaiter = null;
     waiter?.(null);
     // Already posted (late fallback), then not posted yet, in order.
-    if (lateFallback) this.buffer = [...this.journal!, ...this.batch, ...this.buffer];
+    if (lateFallback) this.buffer = [...(this.journal ?? this.state.values()), ...this.batch, ...this.buffer];
     this.batch = [];
     this.journal = [];
+    this.viewportMisses = 0;
+    this.lastPageViewport = null;
     this.goInline(reason);
     this.settleWarmup(false);
   }

@@ -452,6 +452,7 @@ try {
     let clock = 0;
     let nextId = 1;
     let hidden = opts.hidden ?? false;
+    let viewport = { width: 2844, height: 1600, dpr: 0.9 };
     let rafFrames = 100; // the HUD document's rAF counter
     const timers: { id: number; at: number; fn: () => void }[] = [];
     const rafs: (() => void)[] = [];
@@ -518,7 +519,7 @@ try {
         return () => windowListeners.delete(fn);
       },
       createChannel: () => ({ port1: port, port2: { name: "port2" } }),
-      viewport: () => ({ width: 2844, height: 1600, dpr: 0.9 }),
+      viewport: () => ({ ...viewport }),
       setRootClass: (name: string, on: boolean) => root.push(`${on ? "+" : "-"}${name}`),
       importRuntime: () => {
         imports++;
@@ -561,6 +562,10 @@ try {
         hidden = h;
         for (const fn of [...visibility]) fn();
       },
+      /** This page's viewport from now on (window resized, browser zoom…). */
+      setViewport(v: { width: number; height: number; dpr: number }) {
+        viewport = { ...v };
+      },
       downTypes() { return port.sent.map((m) => m.t); },
       batches() { return port.sent.filter((m) => m.t === "batch").map((m) => m.cmds as Cmd[]); },
     };
@@ -577,6 +582,18 @@ try {
     b.up({ t: "ready" });
     await settle();
     assert.equal(host.mode, "frame");
+  }
+  /** Frame mode with its warm-up over: a match (the iframe's silence is watched). */
+  async function matchFrame(b: ReturnType<typeof browser>, host: InstanceType<typeof H.HudHost>) {
+    await readyFrame(b, host);
+    const warm = host.warmUp(Promise.resolve());
+    await settle();
+    b.up({ t: "warmup-done", ms: 900 });
+    await warm;
+  }
+  /** The iframe's 500 ms stats (with the viewport it sees). */
+  function stats(b: ReturnType<typeof browser>, viewport = VIEWPORT) {
+    b.up({ t: "stats", fps: 240, applyMs: 0.1, renderMs: 1, paintGpuMs: null, viewport });
   }
 
   console.log("Host — frame mode:");
@@ -833,14 +850,10 @@ try {
     assert.deepEqual(b.root, ["+hud-warm", "-hud-warm"]);
   });
 
-  await test("after a completed warm-up the iframe is final (no more fallback, nothing kept)", async () => {
+  await test("after a completed warm-up: the iframe stays while this page draws no frame (nothing to judge its silence by)", async () => {
     const b = browser();
     const host = new H.HudHost();
-    await readyFrame(b, host);
-    const warm = host.warmUp(Promise.resolve());
-    await settle();
-    b.up({ t: "warmup-done", ms: 900 });
-    await warm;
+    await matchFrame(b, host);
     for (let i = 0; i < 3; i++) {
       host.api.clock.set(i);
       host.flush();
@@ -894,6 +907,186 @@ try {
     b.up({ t: "pong", frames: 31 });
     await settle();
     assert.equal(host.mode, "inline", "two valid misses decide");
+  });
+
+  console.log("Host — during the match (iframe crashed, hung, or at another scale):");
+
+  await test("stateKey: state per name / per plate / per class; events (kills, hits, medals, damage numbers) are not state", () => {
+    assert.equal(H.stateKey(["clock.set", 3]), "clock.set");
+    assert.equal(H.stateKey(["combat.update", 0.016, { current: 1, max: 1, ratio: 1, alive: true }, 0]), "combat.update");
+    assert.equal(H.stateKey(["plate.visible", "popcorn", true]), "plate.visible|popcorn");
+    assert.equal(H.stateKey(["doc.class", "body", "game-paused", true]), "doc.class|body|game-paused");
+    for (const event of [["combat.kill"], ["combat.damage", 5, null], ["medal.show", "DOUBLE_KILL", 2], ["hitmarker.show", "HEAD", null, true], ["damage.update", 0.016, []], ["crosshair.fire", "medium"], ["killstreak.ready", 0]]) {
+      assert.equal(H.stateKey(event as Cmd as never), null, String(event[0]));
+    }
+  });
+
+  await test("iframe silent while this page draws (crashed / hung): after 3 s, iframe removed, HUD rebuilt in the page from its LAST state", async () => {
+    const b = browser();
+    const host = new H.HudHost();
+    host.api.setDocClass("hud", "menu-active", true); // before start
+    host.api.combat.setPlayerName("A");
+    await matchFrame(b, host);
+    host.api.setDocClass("hud", "menu-active", false); // play: the HUD shown
+    host.api.popcorn.setVisible(true);
+    host.flush();
+    // The match goes on past the grace of the show, the iframe answering.
+    for (let t = 0; t <= H.SHOW_GRACE_MS; t += 16) {
+      await b.advance(16);
+      if (t % 480 === 0) stats(b);
+      host.flush();
+    }
+    const h = new Health(100);
+    for (let i = 0; i < 3; i++) {
+      await b.advance(16);
+      stats(b);
+      h.current = 100 - 10 * i;
+      host.api.combat.update(0.016, h, 0);
+      host.api.clock.set(90 - i);
+      if (i === 1) {
+        host.api.combat.notifyKill();
+        host.api.hitmarker.show(HitZone.HEAD);
+        host.api.medal.show("DOUBLE_KILL", 2);
+      }
+      host.flush();
+    }
+    const lastStatsAt = b.env.now();
+    let frames = 0;
+    while (host.mode === "frame" && frames < 1000) {
+      await b.advance(16);
+      host.api.combat.update(0.016, h, 0);
+      host.flush();
+      frames++;
+    }
+    const silent = b.env.now() - lastStatsAt;
+    assert.ok(silent > H.SILENCE_MS && silent <= H.SILENCE_MS + 16, `fell back after ${silent} ms of silence`);
+    assert.equal(b.frame!.removed, true, "the iframe (a crashed one shows the grey sad frame) is removed");
+    assert.equal(b.port.closed, true);
+    assert.deepEqual(b.warns, ["[HUD] iframe abandonnée (l'iframe ne répond plus depuis 3.0 s) : HUD dans la page."]);
+    await settle();
+    assert.equal(host.mode, "inline");
+    const view = { current: 80, max: 100, ratio: 0.8, alive: true };
+    assert.deepEqual(b.runtime.calls, [
+      ["init", { ...INIT, viewport: VIEWPORT }],
+      // the state, last value of each key, in the order those values came…
+      ["combat.name", "A"],
+      ["doc.class", "hud", "menu-active", false],
+      ["plate.visible", "popcorn", true],
+      ["clock.set", 88],
+      ["combat.update", 0.016, view, 0],
+      // …then this frame's own commands (not posted)
+      ["combat.update", 0.016, view, 0],
+    ]);
+    assert.equal(host.describe(), "dans la page (l'iframe ne répond plus depuis 3.0 s)");
+    const posted = b.port.sent.length;
+    host.api.combat.notifyKill();
+    assert.deepEqual(b.runtime.calls.at(-1), ["combat.kill"], "then synchronously, as inline");
+    host.flush();
+    assert.equal(b.port.sent.length, posted, "nothing more posted to the dead port");
+  });
+
+  await test("this page blocked (long task) or hidden: the silence restarts — the iframe's stats were waiting in the queue", async () => {
+    const b = browser();
+    const host = new H.HudHost();
+    await matchFrame(b, host);
+    for (let i = 0; i < 40; i++) {
+      await b.advance(16);
+      if (i % 30 === 0) stats(b);
+      host.flush();
+    }
+    await b.advance(4000); // a 4 s long task: no frame, the stats queued meanwhile are handled after the next frame
+    host.flush();
+    for (let i = 0; i < 8; i++) stats(b);
+    for (let i = 0; i < 200; i++) {
+      await b.advance(16);
+      if (i % 30 === 0) stats(b);
+      host.flush();
+    }
+    b.setHidden(true);
+    await b.advance(30_000);
+    b.setHidden(false);
+    host.flush();
+    stats(b);
+    // Drawing less than twice a second: never judged.
+    for (let i = 0; i < 20; i++) {
+      await b.advance(H.SILENCE_GAP_MS + 1);
+      host.flush();
+    }
+    assert.equal(host.mode, "frame");
+    assert.equal(b.warns.length, 0);
+    // A real silence at a normal frame rate still falls back.
+    for (let i = 0; i < 300 && host.mode === "frame"; i++) {
+      await b.advance(16);
+      host.flush();
+    }
+    assert.equal(b.frame!.removed, true);
+  });
+
+  await test("the HUD shown or hidden as a whole (menu, pause): its silence is not judged for 10 s — its heaviest frame", async () => {
+    const b = browser();
+    const host = new H.HudHost();
+    await matchFrame(b, host);
+    for (let i = 0; i < 10; i++) {
+      await b.advance(16);
+      host.flush();
+    }
+    stats(b);
+    host.api.setDocClass("body", "game-paused", false); // back from the pause: the HUD shown again
+    const shownAt = b.env.now();
+    let frames = 0;
+    while (host.mode === "frame" && frames < 2000) {
+      await b.advance(16);
+      host.flush();
+      frames++;
+    }
+    const after = b.env.now() - shownAt;
+    assert.ok(after > H.SHOW_GRACE_MS + H.SILENCE_MS - 32 && after <= H.SHOW_GRACE_MS + H.SILENCE_MS + 32, `fell back ${after} ms after the show`);
+  });
+
+  await test("viewport seen by the iframe ≠ this page's, twice in a row with this page's unchanged: HUD in the page; a resize never counts", async () => {
+    const b = browser();
+    const host = new H.HudHost();
+    await matchFrame(b, host);
+    const zoomed = { width: 2560, height: 1440, dpr: 1 };
+    stats(b, VIEWPORT);
+    stats(b, zoomed); // one miss…
+    stats(b, VIEWPORT); // …forgiven
+    // The window is resized: the iframe follows a stats later.
+    b.setViewport(zoomed);
+    stats(b, VIEWPORT);
+    stats(b, zoomed);
+    b.setViewport(VIEWPORT);
+    stats(b, zoomed);
+    stats(b, VIEWPORT);
+    assert.equal(host.mode, "frame");
+    assert.equal(b.warns.length, 0);
+    stats(b, { width: 3160, height: 1778, dpr: 0.81 });
+    assert.equal(host.mode, "frame");
+    stats(b, { width: 3160, height: 1778, dpr: 0.81 });
+    assert.equal(b.frame!.removed, true);
+    assert.deepEqual(b.warns, ["[HUD] iframe abandonnée (viewport différent de la page : page 2844×1600 @0.9, iframe 3160×1778 @0.81) : HUD dans la page."]);
+    await settle();
+    assert.equal(host.mode, "inline");
+    assert.deepEqual(b.runtime.calls[0], ["init", { ...INIT, viewport: VIEWPORT }]);
+  });
+
+  await test("a mode slow to settle: the commands kept are compacted to the HUD's state past the cap", async () => {
+    const b = browser();
+    const host = new H.HudHost();
+    host.start(b.env);
+    b.hello();
+    host.init(INIT);
+    await settle();
+    host.api.combat.setPlayerName("A");
+    host.api.combat.notifyKill();
+    for (let i = 0; i <= H.JOURNAL_MAX; i++) host.api.clock.set(i);
+    host.api.combat.notifyKill();
+    b.up({ t: "ready" });
+    const first = b.batches()[0];
+    assert.ok(first.length < 10, `${first.length} commands kept`);
+    assert.deepEqual(first[0], ["combat.name", "A"], "the state first (the first kill, an event, is gone)");
+    assert.deepEqual(first.slice(-2), [["clock.set", H.JOURNAL_MAX], ["combat.kill"]], "then what came after the compaction");
+    assert.ok(first.slice(1, -1).every((c: Cmd) => c[0] === "clock.set"));
   });
 
   console.log("Host — inline mode:");

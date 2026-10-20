@@ -15,9 +15,13 @@
  *   the game's isolation check (does it keep growing while the game page's
  *   thread is blocked?).
  * - Every 500 ms: `stats` (this document's frame rate, command application
- *   and rendering time per frame). Errors are reported, never fatal; before
- *   `ready` only those that block the HUD (an error then makes the game fall
- *   back to the HUD in its page), the others once `ready` is sent.
+ *   and rendering time per frame, the viewport it sees). They are also how
+ *   the game page knows this document is still there: their silence during
+ *   the match (a crashed or hung process) or a viewport that no longer
+ *   matches its own makes it rebuild the HUD in its page. Errors are
+ *   reported, never fatal; before `ready` only those that block the HUD (an
+ *   error then makes the game fall back to the HUD in its page), the others
+ *   once `ready` is sent.
  * The HUD never takes input: no focus, no keyboard, no storage (an opaque
  * origin has none).
  */
@@ -104,11 +108,14 @@ function onFrame(): void {
   requestAnimationFrame(onFrame);
   frames++;
   windowFrames++;
-  const now = performance.now();
-  afterFrame.port2.postMessage(now);
-  if (now - windowStart >= STATS_MS) postStats(now);
+  afterFrame.port2.postMessage(performance.now());
 }
 requestAnimationFrame(onFrame);
+// The stats are also this document's heartbeat (the game page reads their
+// silence as "crashed or hung"): sent by a timer, not by a frame — frames
+// that are merely slow (raster, a busy GPU process) are no reason to fall
+// back, a main thread that no longer runs is.
+window.setInterval(() => postStats(performance.now()), STATS_MS);
 
 function postStats(now: number): void {
   const elapsed = now - windowStart;
@@ -119,6 +126,7 @@ function postStats(now: number): void {
       applyMs: applySum / Math.max(1, windowFrames),
       renderMs: renderCount > 0 ? renderSum / renderCount : 0,
       paintGpuMs: runtime.takePaintGpuMs(),
+      viewport: { width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio },
     });
   }
   windowStart = now;
