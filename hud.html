@@ -1,0 +1,30 @@
+<!doctype html>
+<!--
+  The in-match HUD's own document: a sandboxed iframe laid over the game
+  canvas (src/hud/host), which Chrome runs in its own renderer process — the
+  HUD's style / layout / paint no longer add to the game's frame. The runtime
+  (src/hud/runtime) injects the HUD markup (src/hud/hudMarkup.html) and
+  builds the widgets; same fonts and stylesheets as index.html, plus the HUD
+  document's few overrides (hudFrame.css).
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Beanzo.io HUD</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Luckiest+Guy&family=Baloo+2:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/style.css" />
+    <link rel="stylesheet" href="/src/hud.css" />
+    <link rel="stylesheet" href="/src/hudWeapons.css" />
+    <link rel="stylesheet" href="/src/hudLeaderboard.css" />
+    <link rel="stylesheet" href="/src/crosshair.css" />
+    <link rel="stylesheet" href="/src/hud/hudFrame.css" />
+    <script type="module" src="/src/hud/runtime/frameEntry.ts"></script>
+  </head>
+  <body></body>
+</html>
