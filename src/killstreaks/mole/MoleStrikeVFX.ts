@@ -2,10 +2,13 @@ import * as THREE from "three";
 import { ParticleSystem } from "../../effects/ParticleSystem";
 import { Shockwave } from "../../effects/Shockwave";
 import { MoleStrikeConfig as cfg } from "./MoleStrikeConfig";
+import type { HudApi } from "../../hud/protocol";
 
 /**
  * All MOLE STRIKE visuals: dirt bursts, the burrow trail, the emergence
- * blast and a fullscreen brown "underground" vignette overlay.
+ * blast and a fullscreen brown "underground" vignette overlay (drawn by the
+ * HUD — hud/runtime/MoleOverlay.ts — between the HUD and the damage
+ * numbers, like before).
  * Pure presentation — reuses the shared pooled ParticleSystem / Shockwave
  * and never touches gameplay state.
  */
@@ -18,18 +21,11 @@ export class MoleStrikeVFX {
   private readonly tmpVel = new THREE.Vector3();
   private readonly tmpPos = new THREE.Vector3();
 
-  private readonly overlayEl: HTMLElement;
-  private lastOverlayOpacity = -1;
-
   constructor(
     private readonly particles: ParticleSystem,
     private readonly shockwave: Shockwave,
-  ) {
-    injectOverlayStyles();
-    this.overlayEl = document.createElement("div");
-    this.overlayEl.className = "mole-overlay";
-    document.body.appendChild(this.overlayEl);
-  }
+    private readonly hud: Pick<HudApi, "setMoleOpacity">,
+  ) {}
 
   /** Dive-in: dirt explodes outward + a small ground ring at the feet. */
   enterBurst(feetPos: THREE.Vector3): void {
@@ -65,35 +61,8 @@ export class MoleStrikeVFX {
     this.particles.ring(feetPos, this.up, 26, 0.8, 6, 0.5, this.blast);
   }
 
-  /** Fullscreen brown vignette while burrowed (0..1, throttled DOM write). */
+  /** Fullscreen brown vignette while burrowed (0..1, sent when the rounded value changes). */
   setOverlayOpacity(opacity: number): void {
-    const o = Math.round(opacity * 100) / 100;
-    if (o === this.lastOverlayOpacity) return;
-    this.lastOverlayOpacity = o;
-    this.overlayEl.style.opacity = String(o);
+    this.hud.setMoleOpacity(Math.round(opacity * 100) / 100);
   }
-}
-
-let overlayStylesInjected = false;
-
-function injectOverlayStyles(): void {
-  if (overlayStylesInjected) return;
-  overlayStylesInjected = true;
-  const style = document.createElement("style");
-  style.textContent = `
-    .mole-overlay {
-      position: fixed;
-      inset: 0;
-      z-index: 14;
-      pointer-events: none;
-      opacity: 0;
-      background:
-        radial-gradient(ellipse at center,
-          rgba(60, 38, 16, 0.25) 0%,
-          rgba(46, 28, 10, 0.65) 60%,
-          rgba(30, 17, 5, 0.92) 100%);
-      transition: opacity 0.05s linear;
-    }
-  `;
-  document.head.appendChild(style);
 }

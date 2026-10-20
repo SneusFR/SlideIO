@@ -87,6 +87,13 @@ export class DebugHUD {
   gpuSummary: (() => string | null) | null = null;
   private gpuText = "";
   /**
+   * Where the in-match HUD runs — its own document (isolated iframe: its
+   * frame rate, command application and rendering per frame, on ITS main
+   * thread) or this page — pulled with the frame stats. Null = no line.
+   */
+  hudSummary: (() => string | null) | null = null;
+  private hudText = "";
+  /**
    * Main-thread CPU per frame (ms), averaged + worst over the stats window:
    * `sim` = everything before the render call (AI, physics, weapons, HUD),
    * `render` = three.js render submission (scene traversal, uniforms,
@@ -340,6 +347,7 @@ export class DebugHUD {
       }
       this.postSum = this.postCount = this.postWorst = 0;
       if (this.gpuSummary) this.gpuText = this.gpuSummary() ?? this.gpuText;
+      if (this.hudSummary) this.hudText = this.hudSummary() ?? this.hudText;
 
       // Light census: three.js forward lighting shades EVERY scene light
       // per pixel — lit or not — so the TOTAL is what costs GPU time.
@@ -381,6 +389,7 @@ export class DebugHUD {
       `Frame:    ${this.avgMs.toFixed(1)} ms (p95 ${this.p95Ms.toFixed(1)} / max ${this.maxMs.toFixed(1)})\n` +
       `CPU:      ${(this.cpuSimMs + this.cpuRenderMs).toFixed(1)} ms (sim ${this.cpuSimMs.toFixed(1)} / render ${this.cpuRenderMs.toFixed(1)} / max ${this.cpuWorstMs.toFixed(1)})\n` +
       `Browser:  ${this.postAvgMs.toFixed(1)} ms (max ${this.postWorstMs.toFixed(1)})\n` +
+      (this.hudText ? `HUD:      ${this.hudText}\n` : "") +
       (this.gpuText ? `GPU:      ${this.gpuText}\n` : "") +
       `World:    ${this.drawCalls} draws / ${(this.triangles / 1000).toFixed(0)}k tris\n` +
       `Render:   ${this.bufferW}x${this.bufferH} (ratio ${this.pixelRatio.toFixed(2)} / DPR ${this.devicePixelRatio.toFixed(2)})\n` +

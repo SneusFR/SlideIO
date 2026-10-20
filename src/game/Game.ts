@@ -33,12 +33,9 @@ import {
   defaultOutlineOccluder,
 } from "../effects/GivreOutlinePass";
 import { loadOutlineSettings, type OutlineSettings } from "./OutlineSettings";
-import { InteractHUD } from "../ui/InteractHUD";
 import { DebugHUD } from "../ui/DebugHUD";
 import { FrameSections } from "../ui/FrameSections";
 
-import { DashHUD } from "../ui/DashHUD";
-import { CombatHUD } from "../ui/CombatHUD";
 import { BotsMenu } from "../ui/BotsMenu";
 import { MovementConfig as cfg } from "../player/MovementConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
@@ -55,7 +52,6 @@ import { sampleBrickMaulWhirlwindYaw } from "../weapons/brickmaul/BrickMaulWhirl
 import { SpearWeapon } from "../weapons/SpearWeapon";
 import { SpearViewmodel } from "../weapons/SpearViewmodel";
 import { SpearConfig as spearCfg } from "../weapons/SpearConfig";
-import { SpearHUD } from "../ui/SpearHUD";
 import { loadLoadout, MeleeWeaponId, PrimaryWeaponId, PRIMARY_WEAPON_IDS } from "../loadout/Loadout";
 import { loadWeaponSkin, loadCharacterCosmetics } from "../loadout/Cosmetics";
 import {
@@ -74,38 +70,30 @@ import { GoofyBasketWeapon } from "../weapons/goofybasket/GoofyBasketWeapon";
 import { instantiateGoofyBasket, loadGoofyBasketGltf } from "../weapons/goofybasket/GoofyBasketModel";
 import { GOOFY_BALL } from "../weapons/goofybasket/GoofyBasketProfile";
 import { PopcornShotgunWeapon, findFloorBelow } from "../weapons/popcorn/PopcornShotgunWeapon";
-import { PopcornShotgunHUD } from "../ui/PopcornShotgunHUD";
 import {
   PopcornShotgunConfig as popcornCfg,
   popcornPelletDirections,
   popcornRayVsPlayer,
 } from "../../shared/combat/PopcornShotgunRules";
 import { PaintballRifleWeapon } from "../weapons/paintball/PaintballRifleWeapon";
-import { PaintballRifleHUD } from "../ui/PaintballRifleHUD";
 import { PaintballRifleConfig as paintballCfg, paintballBallDirection } from "../../shared/combat/PaintballRifleRules";
 import type { PaintHit } from "../weapons/paintball/PaintballProjectiles";
 import { WaterFamasWeapon } from "../weapons/waterfamas/WaterFamasWeapon";
-import { WaterFamasHUD } from "../ui/WaterFamasHUD";
 import { WaterFamasConfig as famasCfg } from "../../shared/combat/WaterFamasRules";
 import type { WaterJetHit } from "../weapons/waterfamas/WaterJets";
 import { FrisbeeLauncherWeapon } from "../weapons/frisbee/FrisbeeLauncherWeapon";
-import { FrisbeeLauncherHUD } from "../ui/FrisbeeLauncherHUD";
 import { FrisbeeLauncherConfig as frisbeeCfg } from "../../shared/combat/FrisbeeLauncherRules";
 import { ViewmodelSystem } from "../weapons/viewmodel/ViewmodelSystem";
 
 import { KillstreakManager, KILLSTREAK_SLOT_CODES } from "../killstreaks/KillstreakManager";
 import { MoleStrike } from "../killstreaks/mole/MoleStrike";
 import { MoleStrikeVFX } from "../killstreaks/mole/MoleStrikeVFX";
-import { KillstreakHUD } from "../ui/KillstreakHUD";
 import { TargetManager } from "../targets/TargetManager";
 import { Combatant } from "../combat/Combatant";
 import { PlayerCombatant } from "../combat/PlayerCombatant";
 import { HitZone } from "../combat/HitZone";
 import { HitFeedbackManager } from "../combat/HitFeedbackManager";
 import { HitFeedbackConfig as hitFeedbackCfg } from "../combat/HitFeedbackConfig";
-import { HitmarkerHUD } from "../ui/HitmarkerHUD";
-import { CrosshairHUD } from "../ui/CrosshairHUD";
-import { DamageNumbersHUD } from "../ui/DamageNumbersHUD";
 import { SpawnManager } from "../combat/SpawnManager";
 import { NavGrid } from "../navigation/NavGrid";
 import { BotManager } from "../bots/BotManager";
@@ -123,14 +111,10 @@ import { PickupManager } from "../pickups/PickupManager";
 
 import { ComboManager } from "../combo/ComboManager";
 import { MedalManager } from "../medals/MedalManager";
-import { MedalHUD } from "../ui/MedalHUD";
-import { ComboHUD } from "../ui/ComboHUD";
-import { MatchStatsManager, type PlayerMatchStats } from "../stats/MatchStatsManager";
+import { MatchStatsManager } from "../stats/MatchStatsManager";
 import { MatchResultsTracker, type MatchResults } from "../../shared/match/MatchResultsTracker";
 import { MATCH_DURATION_SECONDS } from "../../shared/match/MatchRules";
-import { MatchClockHUD } from "../match/MatchClockHUD";
-import { LeaderboardHUD } from "../ui/LeaderboardHUD";
-import { measureDisplayFrames, type HudWarmupHook } from "../ui/HudWarmup";
+import { measureDisplayFrames } from "../ui/HudWarmup";
 import { NetworkDebugHUD } from "../ui/NetworkDebugHUD";
 import { MultiplayerGameController } from "../network/MultiplayerGameController";
 import type { MultiplayerClient } from "../network/MultiplayerClient";
@@ -157,13 +141,15 @@ import type {
 } from "../../shared/combat/NetworkWeapons";
 import { getQualitySettings, webglRendererName } from "./GraphicsQuality";
 import { noteFrameEvent } from "../ui/frameEvents";
+import { loadCrosshairSettings } from "../ui/CrosshairSettings";
+import { hudHost } from "../hud/host/HudHost";
+import type { HudApi } from "../hud/protocol";
 import { bootMark } from "../ui/bootTimeline";
 import { flushMapBvhs } from "../world/MapBvh";
 import { installTexParamDedupe } from "../effects/TexParamDedupe";
 // Bit-identical, faster skinned bounding boxes / spheres (loading: character template).
 import "../effects/FastSkinnedBounds";
 import { GpuTimer, timeDraws, timePasses } from "../ui/GpuTimer";
-import { takePaintGpuMs } from "../ui/paint/PaintLayer";
 import { pinNewPrograms } from "../effects/ProgramPin";
 import { inSkeletonFrame } from "../effects/SkeletonFrameDedupe";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -231,9 +217,15 @@ export class Game {
   private player: PlayerController;
   private movement: PlayerMovement;
   private hud: DebugHUD;
+  /**
+   * The in-match HUD: facades of the HUD runtime (its own document — an
+   * isolated iframe — or this page; see hud/host/HudHost). Every `*Hud`
+   * field below is one of its widgets.
+   */
+  private readonly hudApi: HudApi = hudHost.api;
 
-  private dashHud: DashHUD;
-  private combatHud: CombatHUD;
+  private dashHud: HudApi["dash"];
+  private combatHud: HudApi["combat"];
   private botsMenu: BotsMenu;
 
   private particles: ParticleSystem;
@@ -285,7 +277,7 @@ export class Game {
   readonly mapId: MapId;
   /** Acid + animations + terminals (ONE instance per loaded Yard map). */
   private yardEffects: YardEffects | null = null;
-  private interactHud: InteractHUD | null = null;
+  private interactHud: HudApi["interact"] | null = null;
   /**
    * True while a Yard interactable is in range THIS frame: F then belongs
    * to the terminal (interaction) — the weapon inspect (also F) yields.
@@ -327,7 +319,7 @@ export class Game {
   // ---- Astral Lance melee (equipped via the Loadout menu) ----
   private spear: SpearWeapon;
   private spearViewmodel: SpearViewmodel;
-  private spearHud: SpearHUD;
+  private spearHud: HudApi["spear"];
   /** Which melee weapon is equipped (read from the persisted loadout). */
   private meleeWeapon: MeleeWeaponId;
   /** Tap-vs-hold detection: press time accumulated while the key is held. */
@@ -346,7 +338,7 @@ export class Game {
 
   // ---- POPCORN SHOTGUN (2-load popcorn pump shotgun — shared FP arms) ----
   private popcornShotgun: PopcornShotgunWeapon;
-  private popcornHud: PopcornShotgunHUD;
+  private popcornHud: HudApi["popcorn"];
   /** Remote popcorn replay scratch (12 pellets, allocated once). */
   private readonly popcornDirs = Array.from({ length: popcornCfg.pellets }, () => new THREE.Vector3());
   private readonly popcornTo = Array.from({ length: popcornCfg.pellets }, () => new THREE.Vector3());
@@ -360,7 +352,7 @@ export class Game {
 
   // ---- PAINTBALL RIFLE (32-ball automatic hitscan — shared FP arms) ----
   private paintballRifle: PaintballRifleWeapon;
-  private paintballHud: PaintballRifleHUD;
+  private paintballHud: HudApi["paintball"];
   /** Remote paintball replay scratch (allocated once). */
   private readonly paintballRay = new THREE.Raycaster();
   private readonly paintballDir = new THREE.Vector3();
@@ -373,7 +365,7 @@ export class Game {
 
   // ---- WATER FAMAS (9-jet one-handed water burst gun, hitscan per jet — shared FP arms) ----
   private waterFamas: WaterFamasWeapon;
-  private famasHud: WaterFamasHUD;
+  private famasHud: HudApi["famas"];
   /** Remote FAMAS jet replay scratch (allocated once). */
   private readonly famasRay = new THREE.Raycaster();
   private readonly famasDir = new THREE.Vector3();
@@ -383,7 +375,7 @@ export class Game {
 
   // ---- FRISBEE LAUNCHER (6-disc two-hand crossbow, REAL bouncing projectile — shared FP arms) ----
   private frisbeeLauncher: FrisbeeLauncherWeapon;
-  private frisbeeHud: FrisbeeLauncherHUD;
+  private frisbeeHud: HudApi["frisbee"];
   /** Remote / server disc replay scratch (allocated once). */
   private readonly frisbeeVec = new THREE.Vector3();
   private readonly frisbeeVec2 = new THREE.Vector3();
@@ -406,12 +398,12 @@ export class Game {
   // ---- Kill combo + medals (local player only — pure observers) ----
   private combo: ComboManager;
   private medals: MedalManager;
-  private medalHud: MedalHUD;
-  private comboHud: ComboHUD;
+  private medalHud: HudApi["medal"];
+  private comboHud: HudApi["combo"];
 
   // ---- FFA match stats (ALL combatants) + live leaderboard HUD ----
   private matchStats: MatchStatsManager;
-  private leaderboardHud: LeaderboardHUD;
+  private leaderboardHud: HudApi["leaderboard"];
   /**
    * SOLO: a stats change (kill, death, assist, roster) only flags the
    * leaderboard; the refresh runs at the START of the next frame (see
@@ -426,7 +418,7 @@ export class Game {
   // ---- Match clock (5 min FFA) + end-of-match results ----
   /** SOLO end-screen stats (feed / damage / accuracy). MP: server-owned. */
   private readonly soloResults = new MatchResultsTracker();
-  private readonly matchClockHud = new MatchClockHUD();
+  private readonly matchClockHud = hudHost.api.clock;
   /** SOLO: played match seconds (advances only while the game runs). */
   private soloMatchTime = 0;
   /** Simulation frame counter (merges multi-victim hits of one shot). */
@@ -442,7 +434,7 @@ export class Game {
   // ---- Killstreaks: 3 equippable slots (keys W/X/C), reset on death ----
   private killstreaks: KillstreakManager;
   private moleStrike: MoleStrike;
-  private killstreakHud: KillstreakHUD;
+  private killstreakHud: HudApi["killstreak"];
 
   private nav: NavGrid;
   private spawner: SpawnManager;
@@ -458,10 +450,10 @@ export class Game {
   /** The raw client, kept for weapon equip/action sends (Phase 5). */
   private multiplayerClient: MultiplayerClient | null = null;
   private playerCombatant: PlayerCombatant;
-  private hitmarkerHud: HitmarkerHUD;
+  private hitmarkerHud: HudApi["hitmarker"];
   /** Crosshair animation layers (aim spacing + fire kick) — driven by REAL shots / aim state. */
-  private crosshairHud: CrosshairHUD;
-  private damageNumbersHud: DamageNumbersHUD;
+  private crosshairHud: HudApi["crosshair"];
+  private damageNumbersHud: HudApi["damageNumbers"];
   private hitFeedback: HitFeedbackManager;
   private readonly combatants: Combatant[] = [];
   private playerDeathTimer = 0;
@@ -537,11 +529,9 @@ export class Game {
   private readonly fwdDir = new THREE.Vector3();
 
   // Phase dash VFX
-  private readonly phaseOverlayEl: HTMLElement;
   private readonly phaseColor = new THREE.Color(0xa855f7);
   private readonly phaseColorBright = new THREE.Color(0xd8b4fe);
   private readonly phaseNormal = new THREE.Vector3();
-  private lastOverlayOpacity = -1;
 
   private constructor(
     container: HTMLElement,
@@ -722,10 +712,21 @@ export class Game {
         : "none";
     this.hud.setRenderSetup(`${quality.level} · AA ${aa} · shadows ${shadow}`);
     this.hud.setDeviceName(webglRendererName(this.renderer.getContext()));
+    this.hud.hudSummary = () => hudHost.describe();
 
-    this.dashHud = new DashHUD();
-    this.combatHud = new CombatHUD();
-    this.phaseOverlayEl = document.getElementById("phase-overlay")!;
+    // The HUD widgets are built by the HUD runtime, in the order this
+    // constructor used to build them (DOM order = stacking order), from the
+    // same configs: here in the page (inline) or in the HUD document (frame).
+    hudHost.init({
+      popcornShots: popcornCfg.shots,
+      paintballCapacity: paintballCfg.capacity,
+      famasCapacity: famasCfg.capacity,
+      frisbeeCageCapacity: frisbeeCfg.cageCapacity,
+      interact: isYard,
+      crosshair: loadCrosshairSettings(),
+    });
+    this.dashHud = this.hudApi.dash;
+    this.combatHud = this.hudApi.combat;
 
     // ---- Weapon / targets / effects ----
     this.particles = new ParticleSystem(this.scene);
@@ -738,7 +739,7 @@ export class Game {
     // ---- YARD: animations + acid + terminals (ONE instance per map) ----
     if (isYard && map instanceof YardMap) {
       this.yardEffects = new YardEffects(map, this.physics);
-      this.interactHud = new InteractHUD();
+      this.interactHud = this.hudApi.interact;
       // Acid pool (solo/local): falling in kills through the normal death
       // flow (respawn timer + feedback). In MULTIPLAYER the server's
       // authoritative acid tick decides — the local hook only provides
@@ -780,11 +781,11 @@ export class Game {
 
     // Hit-confirmation feedback (hitmarker + sound + victim reaction) —
     // LOCAL PLAYER only; weapons report every applied damage tick to it.
-    // The HitmarkerHUD is kept as a field: in multiplayer the SERVER's
+    // The hitmarker is kept as a field: in multiplayer the SERVER's
     // HIT_CONFIRMED events drive it directly (source of truth).
-    this.hitmarkerHud = new HitmarkerHUD();
-    this.crosshairHud = new CrosshairHUD();
-    this.damageNumbersHud = new DamageNumbersHUD();
+    this.hitmarkerHud = this.hudApi.hitmarker;
+    this.crosshairHud = this.hudApi.crosshair;
+    this.damageNumbersHud = this.hudApi.damageNumbers;
     this.hitFeedback = new HitFeedbackManager(
       this.hitmarkerHud,
       this.particles,
@@ -797,7 +798,7 @@ export class Game {
     // The HUD is a pure observer and only re-renders when stats actually
     // change (kill / death / assist / bot added / removed) — never per frame.
     this.matchStats = new MatchStatsManager();
-    this.leaderboardHud = new LeaderboardHUD();
+    this.leaderboardHud = this.hudApi.leaderboard;
     this.matchStats.onStatsChanged = () => {
       this.leaderboardDirty = true;
     };
@@ -861,7 +862,7 @@ export class Game {
       this.spear.onRushEnded("HIT");
       this.gameAudio.slamImpact(1); // heavy piercing energy impact
     };
-    this.spearHud = new SpearHUD();
+    this.spearHud = this.hudApi.spear;
 
     // ---- HEX SNIPER (primary alternative — equipped from the Loadout
     // menu): LMB projects the creature's tongue (no max range — first
@@ -915,7 +916,7 @@ export class Game {
     this.popcornShotgun.owner = this.playerCombatant;
     this.popcornShotgun.feedback = this.hitFeedback;
     this.popcornShotgun.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
-    this.popcornHud = new PopcornShotgunHUD(popcornCfg.shots);
+    this.popcornHud = this.hudApi.popcorn;
     this.popcornRay.firstHitOnly = true;
 
     // ---- PAINTBALL RIFLE (primary alternative — equipped from the Loadout
@@ -928,7 +929,7 @@ export class Game {
     this.paintballRifle.owner = this.playerCombatant;
     this.paintballRifle.feedback = this.hitFeedback;
     this.paintballRifle.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
-    this.paintballHud = new PaintballRifleHUD(paintballCfg.capacity);
+    this.paintballHud = this.hudApi.paintball;
     this.paintballRay.firstHitOnly = true;
     this.paintballGroundRay.firstHitOnly = true;
 
@@ -942,7 +943,7 @@ export class Game {
     this.waterFamas = new WaterFamasWeapon(this.fpsCamera.camera, this.scene, this.viewmodelSystem);
     this.waterFamas.owner = this.playerCombatant;
     this.waterFamas.feedback = this.hitFeedback;
-    this.famasHud = new WaterFamasHUD(famasCfg.capacity);
+    this.famasHud = this.hudApi.famas;
     this.famasRay.firstHitOnly = true;
 
     // ---- FRISBEE LAUNCHER (primary alternative — equipped from the Loadout menu):
@@ -955,7 +956,7 @@ export class Game {
     this.frisbeeLauncher.owner = this.playerCombatant;
     this.frisbeeLauncher.feedback = this.hitFeedback;
     this.frisbeeLauncher.onCameraShake = (amount) => this.fpsCamera.addShake(amount);
-    this.frisbeeHud = new FrisbeeLauncherHUD(frisbeeCfg.cageCapacity);
+    this.frisbeeHud = this.hudApi.frisbee;
     // SOLO targets: every alive bot + the local player (bot discs can hit him).
     this.frisbeeLauncher.setTargets(this.soloProjectileTargets(this.frisbeeCenter));
 
@@ -1065,9 +1066,9 @@ export class Game {
     };
     // ---- Kill combo + medal presentation (observes kills, changes nothing) ----
     this.combo = new ComboManager();
-    this.medalHud = new MedalHUD(); // preloads the 5 medal images now
+    this.medalHud = this.hudApi.medal;
     this.medals = new MedalManager(this.medalHud);
-    this.comboHud = new ComboHUD();
+    this.comboHud = this.hudApi.combo;
     this.medals.onMedalPop = (pitch) => this.gameAudio.medalPop(pitch);
     // Combo over (timeout or death) → the pitch chain restarts at base.
     this.combo.onComboEnd = () => this.medals.resetChain();
@@ -1075,7 +1076,8 @@ export class Game {
     // ---- Killstreaks: pure state machine + HUD + the MOLE STRIKE ability.
     // Kills feed the slots, death resets everything, keys W/X/C activate.
     this.killstreaks = new KillstreakManager();
-    this.killstreakHud = new KillstreakHUD(this.killstreaks);
+    this.killstreakHud = this.hudApi.killstreak;
+    this.killstreakHud.bind(this.killstreaks);
     this.killstreaks.onChanged = () => this.killstreakHud.render();
     this.killstreaks.onReady = (slotIndex) => {
       this.killstreakHud.notifyReady(slotIndex);
@@ -1087,7 +1089,7 @@ export class Game {
       this.playerCombatant,
       this.fpsCamera,
       this.combatants,
-      new MoleStrikeVFX(this.particles, this.shockwave),
+      new MoleStrikeVFX(this.particles, this.shockwave, this.hudApi),
       this.gameAudio,
     );
     this.killstreaks.setEquipped(loadLoadout().killstreaks);
@@ -1537,8 +1539,9 @@ export class Game {
     }
     this.hud.gpuSummary = () => {
       // The Paintball / Poison plate paint draws in ITS OWN WebGL context:
-      // measured apart and shown as a separate term (per game frame).
-      const paintMs = takePaintGpuMs();
+      // measured apart and shown as a separate term (per game frame) — by
+      // the HUD document (iframe) or here (HUD in the page).
+      const paintMs = hudHost.takePaintGpuMs();
       if (timer.dead) return "n/a (no timer query results)";
       const r = timer.take(this.gpuDrawSplit !== null);
       if (!r) return null;
@@ -1757,34 +1760,6 @@ export class Game {
       this.sendNetworkOutfit(outfit);
     }
     this.input.requestPointerLock();
-  }
-
-  /**
-   * HUD warm-up hooks (main.ts → warmUpHud, behind the loading screen): the
-   * leaderboard runs ONE real update — two rows, the local player takes the
-   * lead (row flight, score pop, "+1", crown flight, landing dots) — so its
-   * code is compiled and its effects drawn before the first kill, then it is
-   * emptied again: the first real snapshot rebuilds it exactly as before.
-   */
-  hudWarmupHooks(): HudWarmupHook[] {
-    const lb = this.leaderboardHud;
-    const row = (id: number, name: string, kills: number, local: boolean): PlayerMatchStats => ({
-      combatantId: id,
-      displayName: name,
-      isLocalPlayer: local,
-      kills,
-      deaths: 0,
-      assists: 0,
-    });
-    return [
-      {
-        show: () => {
-          lb.refresh([row(-2, "BOT", 0, false), row(-1, "PLAYER", 0, true)]);
-          lb.refresh([row(-1, "PLAYER", 1, true), row(-2, "BOT", 0, false)]);
-        },
-        hide: () => lb.refresh([]),
-      },
-    ];
   }
 
   /**
@@ -2947,6 +2922,7 @@ export class Game {
     this.givreEffects?.syncStandalone(); // puffs + halos (no frame() matrix pass here)
 
     this.renderWorld(p.camera);
+    hudHost.flush(); // HUD commands of the menu (crosshair settings…)
   }
 
   /**
@@ -2993,6 +2969,7 @@ export class Game {
         p.camera.fov = startFov + (targetFov - startFov) * e;
         p.camera.updateProjectionMatrix();
         this.renderWorld(p.camera);
+        hudHost.flush();
         if (t >= 1) {
           // Three r185 queues the next rAF AFTER this callback returns,
           // even if setAnimationLoop(null) was called inside it. Stopping
@@ -3064,6 +3041,7 @@ export class Game {
     this.matchOver = true;
     this.matchClockHud.set(0);
     document.body.classList.add("match-over");
+    this.hudApi.setDocClass("body", "match-over", true);
     this.abortSlotTransition();
     this.meleeHoldPending = false;
     this.moleStrike.abort();
@@ -3114,6 +3092,7 @@ export class Game {
     if (this.multiplayer) return;
     this.matchOver = false;
     document.body.classList.remove("match-over");
+    this.hudApi.setDocClass("body", "match-over", false);
     this.soloMatchTime = 0;
     this.soloResults.reset();
     this.matchStats.resetAll();
@@ -3280,15 +3259,23 @@ export class Game {
     // Count ALL callbacks (including capped ticks), but never simulate or
     // render twice for one rAF timestamp. The HUD exposes duplicates rather
     // than allowing them to masquerade as extra FPS.
-    if (!this.hud.sampleAnimationFrame(timestamp)) return;
+    if (!this.hud.sampleAnimationFrame(timestamp)) {
+      hudHost.flush(); // HUD commands of network callbacks since the last frame
+      return;
+    }
 
     // FRAME-RATE CAP (LOW preset — see frameIntervalMs): skip rAF ticks
     // ahead of the render deadline. Nothing is lost on a skipped tick:
     // lastTime is NOT advanced (the next processed frame's dt covers the
     // skipped time), mouse deltas keep accumulating in the InputManager,
     // and edge inputs (wasPressed…) stay pending until input.endFrame() —
-    // which only runs on processed frames.
-    if (this.frameCapSkip(now)) return;
+    // which only runs on processed frames. The HUD commands of network
+    // callbacks since the last frame still go now (same display frame as
+    // when the HUD was in this page).
+    if (this.frameCapSkip(now)) {
+      hudHost.flush();
+      return;
+    }
     const sections = this.sections;
     sections?.begin(now);
 
@@ -3333,6 +3320,7 @@ export class Game {
         if (this.soloMatchTime >= MATCH_DURATION_SECONDS) {
           this.finishSoloMatch();
           this.input.endFrame();
+          hudHost.flush();
           return;
         }
       }
@@ -3857,6 +3845,9 @@ export class Game {
     pinNewPrograms(this.renderer);
     this.input.endFrame();
     sections?.commit();
+    // This frame's HUD commands, as ONE message to the HUD document (frame
+    // mode; already applied when the HUD runs in this page).
+    hudHost.flush();
     // Debug HUD "Hitch": times the browser's own work that follows this frame.
     this.hud.markFrameEnd();
   }
@@ -4059,12 +4050,9 @@ export class Game {
       this.particles.burst(ev.exitPoint, 14, 3.5, 0.35, this.phaseColorBright);
     }
 
-    // Violet energy vignette driven by the phase timer (1 → 0).
-    const opacity = Math.round(this.movement.phaseIntensity * 100) / 100;
-    if (opacity !== this.lastOverlayOpacity) {
-      this.lastOverlayOpacity = opacity;
-      this.phaseOverlayEl.style.opacity = String(opacity);
-    }
+    // Violet energy vignette driven by the phase timer (1 → 0): sent to the
+    // HUD only when the rounded value changes.
+    this.hudApi.setPhaseOpacity(Math.round(this.movement.phaseIntensity * 100) / 100);
   }
 
   /**

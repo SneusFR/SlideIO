@@ -3,8 +3,7 @@ import { Combatant } from "./Combatant";
 import { HitZone } from "./HitZone";
 import { KillMethod } from "./KillMethod";
 import { HitFeedbackConfig as hfc } from "./HitFeedbackConfig";
-import { HitmarkerHUD } from "../ui/HitmarkerHUD";
-import { DamageNumbersHUD } from "../ui/DamageNumbersHUD";
+import type { HudApi } from "../hud/protocol";
 import { ParticleSystem } from "../effects/ParticleSystem";
 
 /** One confirmed damage application, reported by a weapon. */
@@ -44,7 +43,7 @@ export class HitFeedbackManager {
   /** Paintball Rifle hit sound (wet paint splat) — replaces the generic tick for that weapon. */
   onPaintballHitSound: ((head: boolean) => void) | null = null;
   /** Floating damage numbers next to the victim (wired by Game, optional). */
-  damageNumbers: DamageNumbersHUD | null = null;
+  damageNumbers: HudApi["damageNumbers"] | null = null;
 
   /** Internal pause-safe clock (advanced by Game only while running). */
   private clock = 0;
@@ -58,7 +57,8 @@ export class HitFeedbackManager {
   private readonly headColorB = new THREE.Color(0xa855f7);
 
   constructor(
-    private readonly hud: HitmarkerHUD,
+    /** The HUD's hitmarker (only `show` is used: the game flushes it once per frame). */
+    private readonly hud: Pick<HudApi["hitmarker"], "show">,
     private readonly particles: ParticleSystem,
     private readonly localPlayer: Combatant,
   ) {}

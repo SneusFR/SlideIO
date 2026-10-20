@@ -21,13 +21,13 @@ import {
 } from "../game/GraphicsQuality";
 import { audio, type AudioBus } from "../audio/AudioManager";
 import {
-  applyCrosshairSettings,
   loadCrosshairSettings,
   saveCrosshairSettings,
   DEFAULT_CROSSHAIR,
   type CrosshairSettings,
   type CrosshairShape,
 } from "../ui/CrosshairSettings";
+import { hudHost } from "../hud/host/HudHost";
 import {
   loadMapSelection,
   saveMapSelection,
@@ -342,13 +342,15 @@ export class MenuOverlay {
       if (sizeValue) sizeValue.textContent = `${Math.round(settings.scale * 100)}%`;
       colorInput.value = settings.color;
     };
+    // Applied in the HUD's document (the iframe, or this page); stored here
+    // (localStorage: the sandboxed HUD document has none).
     const commit = () => {
-      applyCrosshairSettings(settings);
+      hudHost.api.applyCrosshairSettings(settings);
       saveCrosshairSettings(settings);
     };
     render();
     // Boot-time apply: the saved crosshair is live before the first match.
-    applyCrosshairSettings(settings);
+    hudHost.api.applyCrosshairSettings(settings);
 
     const onShape = () => {
       this.sounds.click();

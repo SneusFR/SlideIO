@@ -8,9 +8,9 @@ import { LobbyController } from "./network/LobbyController";
 import { MultiplayerClient } from "./network/MultiplayerClient";
 import { loadDisplayName, parseJoinRoomId } from "./network/MultiplayerConfig";
 import { MatchEndController } from "./match/MatchEndController";
-import { measureDisplayFrames, warmUpHud } from "./ui/HudWarmup";
-import { warmUpPaint } from "./ui/paint/PaintLayer";
+import { measureDisplayFrames } from "./ui/HudWarmup";
 import { bootMark, reportBoot } from "./ui/bootTimeline";
+import { hudHost } from "./hud/host/HudHost";
 import { startWeaponIcons } from "./menu/WeaponIconRenderer";
 import { buildMapBvhsWhenIdle, flushMapBvhs } from "./world/MapBvh";
 
@@ -24,7 +24,9 @@ import { buildMapBvhsWhenIdle, flushMapBvhs } from "./world/MapBvh";
  *     its start, the shaders compile in the browser's GPU process while the
  *     weapons are parsed, the HUD warm-up runs during that compile (where
  *     the browser compiles in parallel). The console line `[BOOT]` gives the
- *     time of each step (see ui/bootTimeline).
+ *     time of each step (see ui/bootTimeline). The in-match HUD loads in
+ *     its own document meanwhile (hud/host/HudHost: an isolated iframe, or
+ *     this page as the fallback).
  *   → Main Menu revealed: the REAL map renders behind the UI with a slow
  *     cinematic orbit camera (same renderer/scene as gameplay — no
  *     duplicate scene, no second loading later)
@@ -41,8 +43,9 @@ import { buildMapBvhsWhenIdle, flushMapBvhs } from "./world/MapBvh";
  * client enters the match (assets are already warm → near-instant).
  */
 async function main(): Promise<void> {
+  // The HUD document (iframe) starts loading now, alongside the game's assets.
+  hudHost.start();
   const container = document.getElementById("app")!;
-  const hud = document.getElementById("hud")!;
   const loading = document.getElementById("menu-loading")!;
   bootMark("page");
   // The display's frame interval (the HUD warm-up's "drawn" tests rely on
@@ -53,19 +56,14 @@ async function main(): Promise<void> {
   // The map, physics, nav grid, every weapon GLB and every shader are
   // ready before the menu appears — CLICK TO PLAY is then instant.
   const game = await Game.create(container);
-  // The weapon plates' paint (own WebGL context): its shader compiles in the
-  // background, alongside the game's (never awaited: the first plate shown,
-  // after the menu, at worst waits for the rest of that compile).
-  warmUpPaint();
   // GPU warm-up + HUD warm-up: the rare HUD effects (kill medal, combo,
   // vignettes, death card…) are drawn once, invisibly, before the loading
   // screen goes away — the first kill / hit / death never pays their
   // first-draw cost in game. Where the browser compiles shaders in
   // parallel, the HUD warm-up runs DURING the shader compile (see
   // Game.warmUpRendering, step 3a), otherwise right after the GPU warm-up.
-  await game.warmUpRendering((gpuBusy) =>
-    warmUpHud(game.hudWarmupHooks(), gpuBusy).then(() => bootMark("HUD")),
-  );
+  // (The weapon plates' paint shader is compiled by the HUD runtime itself.)
+  await game.warmUpRendering((gpuBusy) => hudHost.warmUp(gpuBusy).then(() => bootMark("HUD")));
 
   // ---- Menu overlay over the live game renderer ----
   const sounds = new MenuAudio();
@@ -146,16 +144,24 @@ async function main(): Promise<void> {
   let entering = false;
   let inMultiplayerGame = false;
 
+  /** `#hud.menu-active` (HUD document; mirrored on this page's <html>: #debug). */
+  const setHudMenuActive = (on: boolean): void => hudHost.api.setDocClass("hud", "menu-active", on);
+  /** `body.game-paused`: this page's own rules (#debug, #network-debug-hud) and the HUD document's. */
+  const setGamePaused = (on: boolean): void => {
+    document.body.classList.toggle("game-paused", on);
+    hudHost.api.setDocClass("body", "game-paused", on);
+  };
+
   // ---- END OF MATCH (5-minute FFA clock): end screen + next-map vote ----
   // While it is up, the pause menu never reopens and the HUD is hidden
   // (the end screen covers the frozen world).
   const matchEnd = new MatchEndController(game, multiplayer);
   matchEnd.onShown = () => {
     menu.hide();
-    document.body.classList.remove("game-paused");
-    hud.classList.add("menu-active");
+    setGamePaused(false);
+    setHudMenuActive(true);
   };
-  matchEnd.onSoloReplay = () => hud.classList.remove("menu-active");
+  matchEnd.onSoloReplay = () => setHudMenuActive(false);
 
   // Player card name tag: the persisted name (the lobby / menu rename save
   // it) — refreshed on every entry / resume, the HUD change-detects it.
@@ -188,7 +194,7 @@ async function main(): Promise<void> {
     menu.hide();
     // Gameplay HUD becomes visible.
     syncPlayerName();
-    hud.classList.remove("menu-active");
+    setHudMenuActive(false);
 
     game.start();
 
@@ -219,12 +225,12 @@ async function main(): Promise<void> {
       menu.hide();
       syncPlayerName(); // a rename in the pause menu shows on the card
       // Back in the fight: reveal the gameplay HUD again.
-      document.body.classList.remove("game-paused");
+      setGamePaused(false);
     } else if (document.hasFocus()) {
       menu.setPauseMode(true, inMultiplayerGame);
       menu.show();
       // Pause: EVERY in-game HUD element is hidden (CSS body.game-paused).
-      document.body.classList.add("game-paused");
+      setGamePaused(true);
     }
     // Focus-loss unlock (Alt-Tab): nothing appears — clicking the game
     // view re-locks directly (handler below).
