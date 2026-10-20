@@ -11,14 +11,17 @@
  *   per game frame) is applied the moment it arrives, in order — the browser
  *   draws it at this document's next frame; `warmup` runs the HUD warm-up
  *   behind the loading screen (`gpu-idle`: the game's shader compile is over).
- * - `ping` → `pong` with the frames counted since load: the game's isolation
- *   check (do they keep coming while the game page's thread is blocked?).
+ * - `ping` → `pong` with a counter that runs on this document's own thread:
+ *   the game's isolation check (does it keep growing while the game page's
+ *   thread is blocked?).
  * - Every 500 ms: `stats` (this document's frame rate, command application
- *   and rendering time per frame). Errors are reported, never fatal.
+ *   and rendering time per frame). Errors are reported, never fatal; before
+ *   `ready` only those that block the HUD (an error then makes the game fall
+ *   back to the HUD in its page), the others once `ready` is sent.
  * The HUD never takes input: no focus, no keyboard, no storage (an opaque
  * origin has none).
  */
-import { measureDisplayFrames } from "../../ui/HudWarmup";
+import { measureDisplayFrames } from "../../ui/displayFrames";
 import {
   HUD_CONNECT,
   HUD_HELLO,
@@ -41,8 +44,9 @@ const VIEWPORT_DPR = 0.01;
 const runtime = createHudRuntime();
 let port: MessagePort | null = null;
 let initialized = false;
-/** init refused (viewport mismatch): the host falls back; later traffic is moot. */
+/** init refused (viewport mismatch, init failure): the host falls back; later traffic is moot. */
 let refused = false;
+let readySent = false;
 let warming = false;
 
 // The warm-up's frame-interval measurement starts at load, while the game
@@ -65,6 +69,18 @@ const gpuIdle = new Promise<void>((resolve) => {
 // ---------------------------------------------------------------------------
 
 let frames = 0;
+/**
+ * The isolation check (src/hud/host) pings, blocks the game page's thread
+ * for 80 ms, pings again and wants the counter up by 3 or more. It runs
+ * while the game loads, when the GPU process may be too busy (shader
+ * compiles, uploads) to give this document frames even though it has its own
+ * thread: rAF alone would then read "not isolated" and keep the HUD in the
+ * page for the whole session. Until `init`, a 4 ms timer counts too — ~20
+ * ticks in 80 ms on a thread of its own, whatever the GPU's load, none on the
+ * game page's thread while it is blocked.
+ */
+let ticks = 0;
+let tickTimer: number | null = window.setInterval(() => ticks++, 4);
 let windowStart = performance.now();
 let windowFrames = 0;
 let applySum = 0;
@@ -121,7 +137,6 @@ function onWindowMessage(e: MessageEvent): void {
   window.removeEventListener("message", onWindowMessage);
   port = p;
   port.onmessage = onPortMessage; // (starts the port)
-  for (const message of pendingErrors.splice(0)) send({ t: "error", message });
 }
 window.addEventListener("message", onWindowMessage);
 
@@ -134,7 +149,7 @@ function onPortMessage(e: MessageEvent<HudDownMessage>): void {
   try {
     switch (msg.t) {
       case "ping":
-        send({ t: "pong", frames });
+        send({ t: "pong", frames: frames + ticks });
         return;
       case "init":
         onInit(msg.init);
@@ -157,6 +172,10 @@ function onPortMessage(e: MessageEvent<HudDownMessage>): void {
 }
 
 function onInit(init: HudInit): void {
+  if (tickTimer !== null) {
+    window.clearInterval(tickTimer);
+    tickTimer = null;
+  }
   if (initialized || refused) return;
   // The HUD must be drawn at the game page's scale: same CSS viewport, same
   // device pixel ratio (browser zoom included). Anything else — the host
@@ -176,12 +195,23 @@ function onInit(init: HudInit): void {
     send({ t: "error", message: `viewport mismatch: page ${page}, HUD frame ${width}×${height} @${dpr}` });
     return;
   }
-  runtime.init(init);
+  try {
+    runtime.init(init);
+  } catch (err) {
+    // A half-built HUD: the game keeps it in its page instead.
+    refused = true;
+    reportError(err, true);
+    return;
+  }
   initialized = true;
   // Hidden behind the menu, the HUD lays out no text yet: nothing would ask
   // for its faces before the warm-up. Asked now, so the warm-up (and the
   // match) draw with them — this document shares no font cache with the page.
-  void hudFontsLoaded().then(() => send({ t: "ready" }));
+  void hudFontsLoaded().then(() => {
+    send({ t: "ready" });
+    readySent = true;
+    for (const message of deferredErrors.splice(0)) send({ t: "error", message });
+  });
 }
 
 function onBatch(cmds: HudCommand[]): void {
@@ -232,15 +262,17 @@ async function hudFontsLoaded(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 const reported = new Set<string>();
-const pendingErrors: string[] = [];
+/** Reported once `ready` is sent (an error before it makes the game fall back). */
+const deferredErrors: string[] = [];
 
-function reportError(err: unknown): void {
+/** `blocker`: the HUD cannot run here (sent at once, even before `ready`). */
+function reportError(err: unknown, blocker = false): void {
   const message = err instanceof Error ? err.message : String(err);
   if (reported.has(message) || reported.size >= 32) return;
   reported.add(message);
   console.error("[hud]", err);
-  if (port) send({ t: "error", message });
-  else pendingErrors.push(message);
+  if (port && (readySent || blocker)) send({ t: "error", message });
+  else deferredErrors.push(message);
 }
 
 window.addEventListener("error", (e) => reportError(e.error ?? e.message));
