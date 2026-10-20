@@ -131,7 +131,7 @@ self.createHud = function createHud(doc, P) {
   requestAnimationFrame(loop);
   addEventListener("message", (e) => {
     const m = e.data || {};
-    if (m.type === "start") { hud = self.createHud(document, m.params); running = true; parent.postMessage({ type: "hudready" }, "*"); }
+    if (m.type === "start") { hud = self.createHud(document, m.params); running = true; parent.postMessage({ type: "hudready", dpr: window.devicePixelRatio, w: innerWidth, h: innerHeight }, "*"); }
     else if (m.type === "kill") { if (hud) hud.kill(m.abs); }
     else if (m.type === "stop") { running = false; flush(true); }
     else if (m.type === "ping") parent.postMessage({ type: "pong", n }, "*");
@@ -599,7 +599,11 @@ async function runPhase(mode, vsync, onLive) {
       iso = await isolationCheck(ifr, vsync);
       onFrameMsg = (e) => { if (e.source === ifr.contentWindow && e.data && e.data.type === "hudframes") { for (const v of e.data.data) framesHud.push(v); for (const v of e.data.browser) hudBrowser.push(v); } };
       addEventListener("message", onFrameMsg);
-      const ready = waitFrameMsg(ifr, "hudready"); ifr.contentWindow.postMessage({ type: "start", params: P }, "*"); await withTimeout(ready, 3000, "iframe du HUD");
+      const ready = waitFrameMsg(ifr, "hudready"); ifr.contentWindow.postMessage({ type: "start", params: P }, "*");
+      // The HUD must see the same viewport as the page (browser zoom included): another devicePixelRatio
+      // or size would draw it at another scale.
+      const hello = await withTimeout(ready, 3000, "iframe du HUD");
+      iso.viewport = { dpr: hello.dpr, w: hello.w, h: hello.h };
     } else { hudEl.style.display = ""; hud = hudMain; }
     // chauffe (compilation des shaders, premières frames) avant le chronomètre
     const warmEnd = absNow() + 1500;
@@ -674,7 +678,7 @@ function report(cal, results) {
     const br = mean(r.browser);
     const label = MODES[r.mode];
     rows.push({ label, c3, k3, ch, kh, cm, km, br, r });
-    lines.push(`${label} : 3D ${f0(c3.fps)} FPS au calme / ${f0(k3.fps)} pendant les kills (pire frame ${f1(Math.max(c3.worst, k3.worst))} ms, ${pct(k3.late)} de frames en retard pendant les kills) · CPU 3D ${f1(c3.busy)} / ${f1(k3.busy)} ms · HUD ${f0(ch.fps)} / ${f0(kh.fps)} FPS · thread principal ${f1(cm.busy)} / ${f1(km.busy)} ms + navigateur ${f1(br)} ms${r.iso ? ` · iframe dans son propre processus : ${r.iso.isolated ? "oui" : "NON"} (${f0(r.iso.ratio * 100)} %)` : ""}`);
+    lines.push(`${label} : 3D ${f0(c3.fps)} FPS au calme / ${f0(k3.fps)} pendant les kills (pire frame ${f1(Math.max(c3.worst, k3.worst))} ms, ${pct(k3.late)} de frames en retard pendant les kills) · CPU 3D ${f1(c3.busy)} / ${f1(k3.busy)} ms · HUD ${f0(ch.fps)} / ${f0(kh.fps)} FPS · thread principal ${f1(cm.busy)} / ${f1(km.busy)} ms + navigateur ${f1(br)} ms${r.iso ? ` · iframe dans son propre processus : ${r.iso.isolated ? "oui" : "NON"} (${f0(r.iso.ratio * 100)} %) · iframe DPR ${r.iso.viewport ? r.iso.viewport.dpr.toFixed(2) : "?"} ${r.iso.viewport ? r.iso.viewport.w + "×" + r.iso.viewport.h : ""} (page : DPR ${(window.devicePixelRatio || 1).toFixed(2)} ${innerWidth}×${innerHeight})` : ""}`);
   }
   const good = (fps) => (fps >= hz * 0.95 ? "good" : "bad");
   let html = `<table><tr><th></th><th>3D au calme</th><th>3D pendant les kills</th><th>pire frame 3D</th><th>frames 3D en retard (kills)</th><th>HUD au calme / kills</th><th>CPU 3D / frame</th><th>thread principal / frame</th></tr>`;
