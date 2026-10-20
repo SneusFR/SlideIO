@@ -1,5 +1,5 @@
 ﻿// Builds a static HUD preview (tools/hud-preview/preview.html) from the real
-// index.html HUD markup + the stylesheets index.html links, with the
+// HUD markup (src/hud/hudMarkup.html) + the stylesheets index.html links, with the
 // dynamic parts (weapon plate, killstreak medallion, leaderboard rows) mocked
 // with the same DOM the *HUD classes produce. Screenshot with headless Chrome:
 //   node tools/hud-preview/build.mjs
@@ -13,7 +13,8 @@ const root = resolve(here, "../..");
 const read = (p) => readFileSync(resolve(root, p), "utf8");
 
 const html = read("index.html");
-let hud = html.slice(html.indexOf('<div id="hud"'), html.indexOf('<script type="module"'));
+// The HUD markup (src/hud/hudMarkup.html, injected by the HUD runtime); its stylesheets are still index.html's.
+let hud = read("src/hud/hudMarkup.html");
 hud = hud.replace('class="menu-active"', "");
 
 // Portrait (extract the BEAN_BUDDY_SVG template, resolve ${INK}).

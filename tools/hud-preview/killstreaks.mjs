@@ -24,7 +24,8 @@ const bundle = buildSync({
 const js = bundle.outputFiles[0].text.replaceAll("</script", "<\\/script");
 
 const html = read("index.html");
-let hud = html.slice(html.indexOf('<div id="hud"'), html.indexOf('<script type="module"'));
+// The HUD markup (src/hud/hudMarkup.html, injected by the HUD runtime); its stylesheets are still index.html's.
+let hud = read("src/hud/hudMarkup.html");
 hud = hud.replace('class="menu-active"', "");
 
 const sheets = [...html.matchAll(/<link rel="stylesheet" href="\/(src\/[^"]+\.css)"/g)].map((m) => m[1]);
