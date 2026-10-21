@@ -15,6 +15,7 @@ import {
   type StaticEntry,
 } from "./GivreRenderOptim";
 import { applyUberMaterial, batchAnimatedMeshes, freezeStaticTransforms } from "./MapBatching";
+import { diagSwitch, perfExperiments } from "../ui/perfDiag";
 import mapModelUrl from "../assets/MAP/Givre/givre_01.glb?url";
 import backdropModelUrl from "../assets/MAP/Givre/givre_01_fond.glb?url";
 
@@ -529,6 +530,9 @@ function mergeStaticBatches(
     },
     chunkMinTriangles: b.chunkMinTriangles,
     singleSidedMaxThickness: b.singleSidedMaxThickness,
+    // `?diag=percomponent`: the single-sided rule per connected component
+    // (NOT the same image — see GivreConfig.staticBatching.singleSidedPerComponent).
+    singleSidedPerComponent: diagSwitch(perfExperiments(), "percomponent", b.singleSidedPerComponent),
     keepMaterials,
   });
   entries.forEach((e) => e.geometry.dispose());

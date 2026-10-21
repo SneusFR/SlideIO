@@ -39,7 +39,14 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *            by as much = they wait for each other (something serializes)
  *   noflush  no gl.flush() at the pass boundaries (Game.flushGpu): the old
  *            submission, to compare
+ *   percomponent  Givre: the single-sided rule of the static map (closed,
+ *            outward, ≤ 2 m thin solids drawn FrontSide) applied per
+ *            connected component of a mesh, not only per whole mesh
+ *            (GivreRenderOptim.closedOutwardThinTriangles) — NOT the same
+ *            image to the bit (a few pixels per view): an experiment
  *
+ * (Session switches — percomponent: `?diag=<name>` on, `?diag=no<name>`
+ * off, see diagSwitch; read once at load.)
  * Several at once: `?diag=noflush,scale50`. Never for normal play.
  */
 export function perfExperiments(search: string = typeof location === "undefined" ? "" : location.search): ReadonlySet<string> {
@@ -51,6 +58,16 @@ export function perfExperiments(search: string = typeof location === "undefined"
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean),
   );
+}
+
+/**
+ * An optimisation with a session switch: `?diag=<name>` turns it on,
+ * `?diag=no<name>` off (wins), otherwise `defaultOn`.
+ */
+export function diagSwitch(experiments: ReadonlySet<string>, name: string, defaultOn: boolean): boolean {
+  if (experiments.has(`no${name}`)) return false;
+  if (experiments.has(name)) return true;
+  return defaultOn;
 }
 
 /** The number of a numbered experiment (`scale50` → 50), or null when absent / invalid. */

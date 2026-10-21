@@ -58,6 +58,14 @@ export interface StaticBatchOptions {
    * (m) are drawn single-sided. ≤ 0 disables the optimisation.
    */
   singleSidedMaxThickness: number;
+  /**
+   * Also apply that rule to each connected component of the meshes it
+   * refuses as a whole (closedOutwardThinTriangles): their closed outward
+   * thin solids go to the FrontSide batch, the rest stays DoubleSide.
+   */
+  singleSidedPerComponent?: boolean;
+  /** Weld tolerance (m) of that per-component test — 0 = exact positions only (default). */
+  singleSidedComponentWeld?: number;
   /** Material names that must never be cloned (mutated at runtime). */
   keepMaterials?: ReadonlySet<string>;
 }
@@ -162,6 +170,25 @@ function weldPositions(pos: THREE.BufferAttribute | THREE.InterleavedBufferAttri
       }
       h = (h + 1) & mask;
     }
+  }
+  return ids;
+}
+
+/** Weld ids of the positions on EXACT float equality (−0 and +0 kept apart). */
+function weldExact(pos: THREE.BufferAttribute | THREE.InterleavedBufferAttribute): Int32Array {
+  const n = pos.count;
+  const ids = new Int32Array(n);
+  const map = new Map<string, number>();
+  const f = new Float32Array(3);
+  const u = new Uint32Array(f.buffer);
+  for (let v = 0; v < n; v++) {
+    f[0] = pos.getX(v);
+    f[1] = pos.getY(v);
+    f[2] = pos.getZ(v);
+    const key = `${u[0]},${u[1]},${u[2]}`;
+    let id = map.get(key);
+    if (id === undefined) map.set(key, (id = map.size));
+    ids[v] = id;
   }
   return ids;
 }
@@ -361,6 +388,158 @@ export function canBeSingleSided(
 }
 
 /**
+ * The canBeSingleSided rule applied to each CONNECTED COMPONENT (triangles
+ * sharing a welded position) instead of the whole mesh: a glTF mesh often
+ * groups several disconnected solids — roof slabs spread over the whole map,
+ * a rack of crates, a row of trees — whose common bounding box is far
+ * thicker than any of them, or one open part that refuses them all. A
+ * component qualifies when it is a closed 2-manifold with consistent,
+ * OUTWARD winding (positive signed volume of its own) and its own smallest
+ * bounding-box side is ≤ maxThickness: the very criterion of
+ * isClosedOutward + canBeSingleSided, per solid. `weldEpsilon` (m): positions
+ * closer than that are one vertex (the whole-mesh rule welds at 1 mm); 0, the
+ * default, = bit-identical positions only. Returns a per-triangle mask (1 =
+ * in a qualifying component), or null when none qualifies.
+ */
+export function closedOutwardThinTriangles(
+  geometry: THREE.BufferGeometry,
+  maxThickness: number,
+  weldEpsilon = 0,
+): Uint8Array | null {
+  const pos = geometry.getAttribute("position");
+  const index = geometry.index;
+  const n = Math.floor((index ? index.count : pos.count) / 3);
+  if (maxThickness <= 0 || n < 4) return null;
+  const vertexOf = (t: number, k: number): number => (index ? index.getX(t * 3 + k) : t * 3 + k);
+  // weldEpsilon 0 = EXACT: only bit-identical positions are one vertex — a
+  // "closed" solid is then watertight for the rasteriser too (no sub-mm
+  // crack through which DoubleSide showed its inside).
+  const ids = weldEpsilon > 0 ? weldPositions(pos, 1 / weldEpsilon) : weldExact(pos);
+  let count = 0;
+  for (let v = 0; v < ids.length; v++) if (ids[v] >= count) count = ids[v] + 1;
+  // Union-find of the welded vertices of each triangle → components.
+  const parent = new Int32Array(count);
+  for (let i = 0; i < count; i++) parent[i] = i;
+  const find = (a: number): number => {
+    while (parent[a] !== a) a = parent[a] = parent[parent[a]];
+    return a;
+  };
+  for (let t = 0; t < n; t++) {
+    const a = find(ids[vertexOf(t, 0)]);
+    const b = find(ids[vertexOf(t, 1)]);
+    if (a !== b) parent[b] = a;
+    const c = find(ids[vertexOf(t, 2)]);
+    const r = find(a);
+    if (c !== r) parent[c] = r;
+  }
+  const byRoot = new Map<number, number[]>();
+  for (let t = 0; t < n; t++) {
+    const r = find(ids[vertexOf(t, 0)]);
+    let list = byRoot.get(r);
+    if (!list) byRoot.set(r, (list = []));
+    list.push(t);
+  }
+  const mask = new Uint8Array(n);
+  let any = false;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const box = new THREE.Box3();
+  for (const tris of byRoot.values()) {
+    if (tris.length < 4) continue; // a closed solid needs at least 4 triangles
+    const directed = new Set<number>();
+    let volume6 = 0;
+    let ok = true;
+    box.makeEmpty();
+    for (const t of tris) {
+      const va = vertexOf(t, 0);
+      const vb = vertexOf(t, 1);
+      const vc = vertexOf(t, 2);
+      const ia = ids[va];
+      const ib = ids[vb];
+      const ic = ids[vc];
+      if (ia === ib || ib === ic || ia === ic) {
+        ok = false; // degenerate
+        break;
+      }
+      for (const key of [ia * count + ib, ib * count + ic, ic * count + ia]) {
+        if (directed.has(key)) ok = false; // non-manifold or inconsistent winding
+        directed.add(key);
+      }
+      if (!ok) break;
+      a.fromBufferAttribute(pos, va);
+      b.fromBufferAttribute(pos, vb);
+      c.fromBufferAttribute(pos, vc);
+      box.expandByPoint(a).expandByPoint(b).expandByPoint(c);
+      volume6 += a.dot(b.cross(c)); // (b is overwritten: its corner is in the box already)
+    }
+    if (!ok || !(volume6 > 0)) continue;
+    for (const key of directed) {
+      const u = Math.floor(key / count);
+      const v = key - u * count;
+      if (!directed.has(v * count + u)) {
+        ok = false; // open edge
+        break;
+      }
+    }
+    if (!ok) continue;
+    const size = box.getSize(a);
+    if (Math.min(size.x, size.y, size.z) > maxThickness) continue; // could contain the camera
+    for (const t of tris) mask[t] = 1;
+    any = true;
+  }
+  return any ? mask : null;
+}
+
+/**
+ * Copy of the triangles of `geometry` whose mask equals `value` (every
+ * attribute copied verbatim — raw array values; indexed iff the source is).
+ * Null when none, or when an attribute is not a plain BufferAttribute.
+ */
+export function subsetTriangles(geometry: THREE.BufferGeometry, mask: Uint8Array, value: number): THREE.BufferGeometry | null {
+  const index = geometry.index;
+  const pos = geometry.getAttribute("position");
+  const sources: [string, THREE.BufferAttribute][] = [];
+  for (const name of Object.keys(geometry.attributes)) {
+    const attr = geometry.getAttribute(name);
+    if (!(attr instanceof THREE.BufferAttribute)) return null;
+    sources.push([name, attr]);
+  }
+  const remap = new Int32Array(pos.count).fill(-1);
+  const verts: number[] = [];
+  const indices: number[] = [];
+  for (let t = 0; t < mask.length; t++) {
+    if (mask[t] !== value) continue;
+    for (let k = 0; k < 3; k++) {
+      const v = index ? index.getX(t * 3 + k) : t * 3 + k;
+      if (!index) {
+        verts.push(v); // non-indexed stays non-indexed: one vertex per corner
+        continue;
+      }
+      if (remap[v] < 0) {
+        remap[v] = verts.length;
+        verts.push(v);
+      }
+      indices.push(remap[v]);
+    }
+  }
+  if (verts.length === 0) return null;
+  const part = new THREE.BufferGeometry();
+  for (const [name, src] of sources) {
+    const size = src.itemSize;
+    const srcArray = src.array as THREE.TypedArray;
+    const dst = new (srcArray.constructor as TypedArrayCtor)(verts.length * size);
+    for (let r = 0; r < verts.length; r++) {
+      const v = verts[r];
+      for (let k = 0; k < size; k++) dst[r * size + k] = srcArray[v * size + k];
+    }
+    part.setAttribute(name, new THREE.BufferAttribute(dst, size, src.normalized));
+  }
+  if (index) part.setIndex(new THREE.BufferAttribute(verts.length <= 65535 ? new Uint16Array(indices) : new Uint32Array(indices), 1));
+  return part;
+}
+
+/**
  * Builds the static draw batches: entries grouped by (material, side),
  * merged, then split on the grid when large enough. The FrontSide variant of
  * a material is a CLONE (same name, same textures / colours — only `side`
@@ -374,26 +553,56 @@ export function buildStaticBatches(
   const keep = options.keepMaterials ?? new Set<string>();
   const groups = new Map<THREE.Material, { singleSided: boolean; geometries: THREE.BufferGeometry[] }>();
   const frontClones = new Map<THREE.Material, THREE.Material>();
+  const frontClone = (material: THREE.Material): THREE.Material => {
+    let clone = frontClones.get(material);
+    if (!clone) {
+      clone = material.clone();
+      clone.name = material.name;
+      clone.side = THREE.FrontSide;
+      // Shadow caster: the faces turned toward the sun are the nearest to
+      // the light on a closed solid → FrontSide writes exactly the depth
+      // DoubleSide wrote (three's default would cast with BackSide here).
+      clone.shadowSide = THREE.FrontSide;
+      frontClones.set(material, clone);
+    }
+    return clone;
+  };
+  const add = (geometry: THREE.BufferGeometry, material: THREE.Material, singleSided: boolean): void => {
+    const group = groups.get(material) ?? { singleSided, geometries: [] };
+    group.geometries.push(geometry);
+    groups.set(material, group);
+  };
   for (const entry of entries) {
     const single = canBeSingleSided(entry, options.singleSidedMaxThickness, keep);
-    let material = entry.material;
     if (single) {
-      let clone = frontClones.get(material);
-      if (!clone) {
-        clone = material.clone();
-        clone.name = material.name;
-        clone.side = THREE.FrontSide;
-        // Shadow caster: the faces turned toward the sun are the nearest to
-        // the light on a closed solid → FrontSide writes exactly the depth
-        // DoubleSide wrote (three's default would cast with BackSide here).
-        clone.shadowSide = THREE.FrontSide;
-        frontClones.set(material, clone);
-      }
-      material = clone;
+      add(entry.geometry, frontClone(entry.material), true);
+      continue;
     }
-    const group = groups.get(material) ?? { singleSided: single, geometries: [] };
-    group.geometries.push(entry.geometry);
-    groups.set(material, group);
+    // Per connected component: the closed outward thin solids of a mesh the
+    // whole-mesh rule refuses (spread out, or next to open parts).
+    const m = entry.material;
+    const g = entry.geometry;
+    if (
+      options.singleSidedPerComponent &&
+      options.singleSidedMaxThickness > 0 &&
+      m.side === THREE.DoubleSide &&
+      !m.transparent &&
+      !keep.has(m.name) &&
+      g.groups.length === 0 &&
+      Object.keys(g.morphAttributes).length === 0
+    ) {
+      const mask = closedOutwardThinTriangles(g, options.singleSidedMaxThickness, options.singleSidedComponentWeld ?? 0);
+      const solids = mask ? subsetTriangles(g, mask, 1) : null;
+      if (mask && solids) {
+        const rest = subsetTriangles(g, mask, 0);
+        if (rest || mask.every((v) => v === 1)) {
+          add(solids, frontClone(m), true);
+          if (rest) add(rest, m, false);
+          continue;
+        }
+      }
+    }
+    add(g, m, false);
   }
 
   const out: StaticBatch[] = [];

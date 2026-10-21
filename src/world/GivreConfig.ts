@@ -109,6 +109,15 @@ export const GivreConfig = {
      */
     singleSidedMaxThickness: 2,
     /**
+     * EXPERIMENT, off: the same rule per CONNECTED COMPONENT of the meshes
+     * it refuses as a whole (several solids in one mesh: roof slabs over the
+     * whole map, a rack of crates, trees… — GivreRenderOptim.
+     * closedOutwardThinTriangles): fewer rasterised back faces, but NOT the
+     * same image to the bit — a few pixels per view change (bench, see
+     * PERFORMANCE.md « L'overdraw de la carte »). `?diag=percomponent`.
+     */
+    singleSidedPerComponent: false as boolean,
+    /**
      * PERF: every lightmapped flat-colour material shares ONE material
      * (constants moved to vertex attributes — MapBatching
      * applyUberMaterial): ~70 static batches → ~14, same image.
