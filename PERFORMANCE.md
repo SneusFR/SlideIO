@@ -103,7 +103,7 @@ opérations de skinning par rayon).
 34. **Mesurer le HUD** : la ligne `HUD:` donne où il tourne (`iframe isolée` ou `dans la page (raison)`), ses FPS et son travail par frame (JS des commandes, rendu du navigateur) ; `Browser:` est maintenant celui de la page du jeu seule. `?hud=inline` compare avec l'ancien chemin. `tools/hud-preview/runtime-harness.mjs` compare l'iframe, la page et l'ancien HUD pixel par pixel.
 35. **Nouvelle option graphique** (page SETTINGS) : sa valeur dans `GraphicsValues` (`settings/GraphicsSettings.ts` : presets, validation, libellé dans `settings/labels.ts`), son application dans `Game.applyLiveValues` — **en direct seulement si elle ne change aucun programme** (taille, échantillons, visibilité, paramètre de texture, uniform) ; sinon elle va dans `reloadChanges` (« Apply & reload »). Une option qui active / coupe une passe ou une variante (FXAA ⇄ MSAA) : les deux variantes compilées au chargement (`warmAlternateOutput`), vérifié par `tools/perf/settings-page-check.mjs` (aucun programme compilé par un changement en direct). Low et High restent **exactement** les anciens LOW et HIGH (`scripts/test-graphics-settings.mts`). L'interface du jeu est en anglais : libellés dans `settings/labels.ts`, en casse normale (les majuscules viennent du CSS).
 36. **Détection automatique** : elle juge sur les **intervalles entre images** sous charge (+30 % de pixels, **+50 % sur les puces intégrées** : `AUTO_TUNE.integratedMarginPixels`), jamais sur des requêtes de chronométrage GPU (elles comptent les temps morts du GPU et font flusher Chrome : elles changent ce qu'elles mesurent). Une option ne rejoint l'échelle (`settings/AutoTune.ts`) que si elle s'applique en direct, à sa place dans l'ordre « le moins visible d'abord », et jamais sous le plancher (l'ancien LOW). Changer la logique de la détection = incrémenter `AUTO_TUNE_VERSION` (chaque joueur « Auto » est mesuré à nouveau, une fois).
-38. **Garde « Auto » en partie** (`settings/AutoGuard.ts`) : tous ses seuils sont dans `AUTO_GUARD`, chacun avec sa raison ; il ne juge que le **jeu au premier plan** (pointeur verrouillé, page visible, partie en cours, pas de détection) et ne fait **jamais remonter** l'image tout seul (seule une nouvelle détection le peut) — ne pas ajouter de « remontée quand ça va mieux » : c'est l'oscillation assurée. Comme il change l'échelle **en pleine partie**, chaque barreau de l'échelle doit rester applicable sans compiler de programme (règle 35) et sans trou d'image (le pas est appliqué entre deux images : `GraphicsController.defer`, comme `Game.pendingProbe` pour la détection). Jamais pour un préréglage choisi (Low, High, Custom…).
+38. **Garde « Auto » en partie** (`settings/AutoGuard.ts`) : tous ses seuils sont dans `AUTO_GUARD`, chacun avec sa raison ; il ne juge que le **jeu au premier plan** (pointeur verrouillé, page visible, partie en cours, pas de détection) et ne fait **jamais remonter l'image au cours d'une session** — ne pas ajouter de « remontée quand ça va mieux » en pleine partie : les images d'un barreau plus bas ne disent rien du barreau au-dessus (un écran vsync montre 60 FPS à 10 ms comme à 16 ms), c'est l'oscillation assurée. La seule remontée : **un** barreau, au **début** d'une session suivante, à partir du lendemain (puis attente doublée après chaque essai raté), jamais au-dessus de la réponse de la détection, gardé après une partie entière à 60 FPS. Comme il change l'échelle **en pleine partie**, chaque barreau de l'échelle doit rester applicable sans compiler de programme (règle 35) et sans trou d'image (le pas est appliqué entre deux images : `GraphicsController.defer`, comme `Game.pendingProbe` pour la détection). Jamais pour un préréglage choisi (Low, High, Custom…).
 37. **Anciennes clés** `beanzo.graphicsQuality` / `beanzo.fpsCap` : toujours lues et écrites (pont avec un build plus ancien et avec les scripts de banc) — une valeur écrite par quelqu'un d'autre depuis le dernier passage du jeu est reprise au chargement suivant (`adoptLegacyChanges`). Les réglages du joueur vivent dans **un** enregistrement, `slideio.settings`.
 
 ## Mesures (banc headless, avant → après)
@@ -408,7 +408,7 @@ principal sans IA ni physique — et garde sa réponse pour toujours. Une partie
 effets et le HUD, occupe le processeur (sur ces puces processeur et GPU partagent **une** enveloppe de
 puissance), et après une à trois minutes la puce revient à sa puissance soutenue (encore moins sur
 batterie ou avec un plan d'alimentation d'entreprise). Sur un écran 60 Hz, 10 % au-dessus des 16,7 ms
-d'une image coûtent déjà ≈ 5 FPS. Deux changements :
+d'une image coûtent déjà ≈ 5 FPS. Deux changements, et ce que la détection ne peut pas voir :
 
 1. **Puces intégrées : chaque barreau au-dessus du plancher est mesuré avec +50 % de pixels** au lieu de
    +30 % (`AUTO_TUNE.integratedMarginPixels` ; `AUTO_TUNE_VERSION` 2 : chaque joueur « Auto » est mesuré
@@ -430,9 +430,22 @@ d'une image coûtent déjà ≈ 5 FPS. Deux changements :
    d'images du navigateur — l'économiseur d'énergie de Chrome bloque à 30 —, processeur, processus GPU de
    Chrome), le garde s'arrête pour la session et ce cran n'est **pas** enregistré. Les images que le
    **processeur** a mises en retard (thread principal ≥ 90 % du budget) ne comptent pas : baisser les
-   graphismes ne les rendrait pas. Jamais de remontée (seule une nouvelle détection relève l'image), jamais
-   sous le plancher, jamais pour un préréglage choisi. Tous les seuils sont dans `AUTO_GUARD`, avec leur
-   raison.
+   graphismes ne les rendrait pas. Jamais de remontée **au cours d'une session** ; au début d'une session
+   suivante, à partir du lendemain, **un** barreau au-dessus est essayé (vers la réponse de la détection,
+   jamais au-delà) : gardé après une partie entière (4 min de jeu) sans cran, sinon le garde redescend
+   (comme avant, enregistré tel quel) et l'essai suivant attend deux fois plus (20 h, 40 h, 80 h… un mois
+   au plus) — les conditions changent entre deux sessions (chargeur branché, pièce plus fraîche, HUD plus
+   léger après une mise à jour). Jamais sous le plancher, jamais pour un préréglage choisi. Tous les seuils
+   sont dans `AUTO_GUARD`, avec leur raison.
+3. **Ce que la détection ne voit pas : le HUD.** Elle mesure au menu (`#hud.menu-active`) ou en pause
+   (`body.game-paused`) : le HUD de la partie est caché, sa rastérisation et sa composition (processus GPU de
+   Chrome, même puce) n'entrent dans aucune mesure. Mesuré sur le portable (vraie carte) : en partie, au natif,
+   45-46 FPS avec l'iframe du HUD visible contre 59,9 FPS sans, pour le même temps WebGL (~12 ms) et le même
+   CPU (6-8 ms) — l'animation de repos du Bean Buddy re-rastérisée à chaque image (corrigée côté HUD). Le
+   garde voit ces images-là : elles sont en retard sans que le thread principal en soit la cause, il les
+   compte ; baisser la 3D libère la puce partagée (sur ce portable : 90 % tenait une partie entière, ≈ 9 images
+   en retard en 5 min ; 100 % tombait à 45-48 FPS) — le cran 100 → 90 % est donc gardé, et l'essai d'un
+   barreau au-dessus, le lendemain, le rend quand le HUD a été allégé.
 
 Machines simulées (parties de 5 min, combats et chauffe — `scripts/test-graphics-autotune.mts`) : le
 portable du travail sur batterie (puce 32 % plus lente après 1-3 min) passait **42 %** du temps sous
@@ -443,7 +456,10 @@ secteur, le PC RTX 2080 Super, une machine limitée par le processeur, une machi
 processus GPU) : aucun cran. Une GTX 1050 qui garde High au menu passe en MSAA 2× dans une partie lourde.
 L'économiseur d'énergie (30 FPS) : un cran jugé inutile, non enregistré, garde arrêté. Sur un écran
 60 Hz, le garde se déclenche à partir de ≈ 17,6 ms de GPU par image (≈ 55-56 FPS livrés) ; 17,0 ms
-(58 FPS) ne coûtent jamais un cran.
+(58 FPS) ne coûtent jamais un cran. Le cas du HUD (6 ms de travail GPU par image que la 3D ne réduit pas,
+jamais vu au menu) sur une réponse à 100 % : un cran à 13 s de partie (100 → 90 %), gardé ; le lendemain,
+HUD allégé, la session suivante essaie 100 % et le garde après une partie entière ; HUD toujours lourd :
+l'essai redescend à 90 % après ~13 s de jeu, et le suivant attend 40 h.
 
 ## Vérifier sur une machine
 
