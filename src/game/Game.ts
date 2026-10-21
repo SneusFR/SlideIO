@@ -30,6 +30,17 @@ import { FlushPass } from "../effects/FlushPass";
 import { SkyCoveredRenderPass } from "../effects/SkyCoveredRenderPass";
 import { asFullscreenPass, fullscreenPassDebug } from "../effects/FullscreenPass";
 import {
+  GIVRE_POST_REFERENCE,
+  GivreOutputChain,
+  abPostChains,
+  abSetups,
+  createWorldTarget,
+  describePostSetup,
+  givrePostSetup,
+  isValidPostSetup,
+  type GivrePostSetup,
+} from "../effects/GivrePostChain";
+import {
   GivreOutlinePass,
   defaultOutlineExclude,
   defaultOutlineOccluder,
@@ -567,6 +578,9 @@ export class Game {
   /** GIVRE output passes: the sRGB conversion, then FXAA (enabled with the FXAA anti-aliasing only). */
   private outputPass: OutputPass | null = null;
   private fxaaPass: FXAAPass | null = null;
+  /** GIVRE post chain: world target format + output → FXAA hand-over (`?diag=` — effects/GivrePostChain). */
+  private postSetup: GivrePostSetup = { ...GIVRE_POST_REFERENCE };
+  private outputChain: GivreOutputChain | null = null;
   /** `?diag=scaleNN`: the 3D at NN % of the settings' resolution (1 = off). */
   private readonly diagScale = Math.min(1, (experimentValue(this.experiments, "scale") ?? 100) / 100);
   /** The map's shadow sun, the tier its map size was built for, and that size. */
@@ -1499,6 +1513,10 @@ export class Game {
    *                                     buffers instead).
    *   Both fullscreen passes overwrite every pixel: no clear before them
    *   (FullscreenPass).
+   *   `?diag=out8 / fused / fused8 / world11 / worldsrgb / direct`: the world
+   *   target's format and the output → FXAA hand-over (memory traffic of an
+   *   iGPU — effects/GivrePostChain); the reference chain by default.
+   *   `?diag=postab`: `givrePost.ab()` compares them on the real GPU.
    * renderer.info.autoReset is turned off so the debug HUD counts every pass
    * of the frame (reset manually once per frame in frame()).
    *
@@ -1513,6 +1531,8 @@ export class Game {
    * own their depth texture. Only the colour is resolved now.
    */
   private buildGivreComposer(): void {
+    // (The outline passes compose a LINEAR rim colour: no `direct` world with them.)
+    this.postSetup = givrePostSetup(this.experiments, { outlines: givreCfg.outline.enabled });
     const target = this.createComposerTarget(this.composerSamples(this.gfxBoot.antialiasing));
     const composer = new EffectComposer(this.renderer, target);
 
@@ -1562,6 +1582,8 @@ export class Game {
     this.outputPass = asFullscreenPass(new OutputPass());
     this.fxaaPass = asFullscreenPass(new FXAAPass());
     this.fxaaPass.enabled = this.gfxBoot.antialiasing === "fxaa";
+    // How the converted image reaches FXAA (before addPass: it sizes its target).
+    this.outputChain = new GivreOutputChain(this.outputPass, this.fxaaPass, this.postSetup.output);
     composer.addPass(this.outputPass);
     composer.addPass(this.fxaaPass);
 
@@ -1592,6 +1614,7 @@ export class Game {
     //   givreDebug.perf.passClears(true)         (A/B: clears before the fullscreen passes)
     //   givreDebug.perf.clears(true)             (A/B: the old two full clears)
     //   givreDebug.perf.deadLights(true)         (A/B: the 2 unlit FX pool lights)
+    //   givreDebug.perf.post({ output: "rgba8" }) (A/B: the post chain, `?diag=` live)
     if (import.meta.env.DEV) {
       (window as unknown as Record<string, unknown>).givreDebug = {
         world: worldOutline,
@@ -1606,6 +1629,30 @@ export class Game {
         loopTime: () => this.givreEffects?.loopTime ?? null,
         effects: () => this.givreEffects,
         perf: this.createGivrePerfToggles(target.samples),
+      };
+    }
+    // `?diag=postab` (any build) / DEV: the post chains compared pixel by
+    // pixel on THIS GPU, at the current view — `givrePost.ab()` in the
+    // console (`givrePost.ab(true)`: with `direct`, which compiles every
+    // program's sRGB variant once). Never used by gameplay code.
+    if (import.meta.env.DEV || this.experiments.has("postab")) {
+      const chain = {
+        current: () => this.postSetup,
+        set: (setup: GivrePostSetup) => this.setPostSetup(setup),
+        render: () => this.renderComposer(),
+      };
+      (window as unknown as Record<string, unknown>).givrePost = {
+        setup: () => describePostSetup(this.postSetup),
+        set: (setup: Partial<GivrePostSetup>) => {
+          this.setPostSetup({ ...this.postSetup, ...setup });
+          return describePostSetup(this.postSetup);
+        },
+        ab: (withDirect = false) => {
+          const gl = this.renderer.getContext() as WebGL2RenderingContext;
+          const result = abPostChains(chain, gl, abSetups(withDirect && !givreCfg.outline.enabled));
+          console.table(result);
+          return result;
+        },
       };
     }
   }
@@ -1715,6 +1762,7 @@ export class Game {
     passClears(legacy: boolean): string;
     clears(legacy: boolean): string;
     deadLights(on: boolean): string;
+    post(setup?: Partial<GivrePostSetup>): string;
   } {
     const composer = this.composer!;
     let deadLights: THREE.PointLight[] | null = null;
@@ -1787,7 +1835,29 @@ export class Game {
         }
         return on ? "2 dead point lights in the scene (old)" : "no dead light";
       },
+      post: (setup?: Partial<GivrePostSetup>) => {
+        // (A new world format = new targets; `direct` also compiles the
+        // sRGB variant of every program on its first frame — DEV only.)
+        if (setup) this.setPostSetup({ ...this.postSetup, ...setup });
+        return describePostSetup(this.postSetup);
+      },
     };
+  }
+
+  /**
+   * Another post chain, live (DEV `givreDebug.perf.post`, `?diag=postab`):
+   * new composer targets when the world format changes. Never in play.
+   */
+  private setPostSetup(setup: GivrePostSetup): void {
+    if (!isValidPostSetup(setup)) throw new Error(`post chain: ${describePostSetup(setup)} is not a valid pair`);
+    const worldChanged = setup.world !== this.postSetup.world;
+    this.postSetup = { ...setup };
+    if (this.outputChain) this.outputChain.route = setup.output;
+    const composer = this.composer;
+    if (worldChanged && composer) {
+      composer.reset(this.createComposerTarget(composer.renderTarget1.samples));
+      composer.setSize(window.innerWidth, window.innerHeight);
+    }
   }
 
   /**
@@ -3453,12 +3523,15 @@ export class Game {
     this.applyLiveValues({ ...v });
   }
 
-  /** GIVRE composer target: HDR linear, depth + stencil, `samples` MSAA (colour-only resolve). */
+  /**
+   * GIVRE composer target: HDR linear (RGBA16F — or the `?diag=` world
+   * format: effects/GivrePostChain), depth + stencil, `samples` MSAA
+   * (colour-only resolve).
+   */
   private createComposerTarget(samples: number): THREE.WebGLRenderTarget {
     const size = this.renderer.getSize(new THREE.Vector2());
     const ratio = this.renderer.getPixelRatio();
-    const target = new THREE.WebGLRenderTarget(size.x * ratio, size.y * ratio, {
-      type: THREE.HalfFloatType,
+    const target = createWorldTarget(size.x * ratio, size.y * ratio, this.postSetup.world, {
       depthBuffer: true,
       stencilBuffer: true, // enemy outline = stencil-masked inverted hull
       samples,
