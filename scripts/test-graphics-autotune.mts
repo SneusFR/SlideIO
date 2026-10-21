@@ -696,4 +696,763 @@ await test("detection target: the display's rate; an EXPLICIT cap lowers it, the
   assert.equal(ctl.detectionTarget(), 60);
 });
 
+// ------------------------------------------------------------------ integrated GPUs
+
+console.log("integrated GPUs: the larger margin");
+
+await test("integrated GPUs: every rung above the floor measured with +50 % pixels, discrete GPUs keep +30 %, ?diag=tunemarginNN overrides; never above 100 % of native", () => {
+  const igpu = A.tuneConfigFor({ integrated: true });
+  assert.equal(igpu.marginPixels, 1.5);
+  assert.equal(igpu.keepMarginPixels, 1.25);
+  assert.equal(A.tuneConfigFor({ integrated: false }), A.AUTO_TUNE);
+  const old = A.tuneConfigFor({ integrated: true }, 30);
+  assert.ok(Math.abs(old.marginPixels - 1.3) < 1e-9 && Math.abs(old.keepMarginPixels - 1.15) < 1e-9);
+  assert.equal(A.tuneConfigFor({ integrated: false }, 0).marginPixels, 1);
+  // Whatever the margin, the answer is a ladder rung: never above 100 % of native (the probes alone draw more).
+  for (const dpr of [1, 1.25, 1.5, 2]) {
+    for (const boot of [G.presetValues("bas", { dpr }), G.presetValues("eleve", { dpr })]) {
+      for (const v of A.buildLadder(boot, { dpr }, G.DEFAULT_CAPS)) assert.ok(v.renderScale <= 100);
+    }
+  }
+});
+
+/**
+ * The owner's personal laptop CALIBRATED ON THE FIELD REPORT (Iris Xe, 1920 × 928 CSS at 125 %, 60 Hz):
+ * with the old rule (+30 % pixels) the detection picks 90 % of native (2160 × 1044), FXAA, static shadows
+ * high, light snow — what it picked on the real laptop. That rung's MENU view costs 12.4 ms here; the
+ * field measured 9.4 ms at the spawn view (the menu's orbit sees the whole arena: heavier than a spawn
+ * view — the play scenes below are relative to the menu's view). 3 ms of a frame do not scale with pixels.
+ */
+function irisXeField(opts: Partial<Machine> = {}): Machine {
+  const k = 4.1 / 3.0;
+  const perMpx: Record<string, number> = { none: 2.6 * k, fxaa: 3.0 * k, msaa2: 4.4 * k, msaa4: 5.75 * k };
+  return {
+    name: "Iris Xe (field-calibrated)",
+    hz: 60,
+    css: [1920, 928],
+    dpr: 1.25,
+    cpuMs: 4, // the menu: nothing simulated
+    jitter: 0.6,
+    caps: { ...G.DEFAULT_CAPS },
+    gpu: (v, mpx) =>
+      3 +
+      mpx * (perMpx[v.antialiasing] + ANISO_COST[v.anisotropy] * k) +
+      SNOW_COST[v.snow] +
+      (v.shadows === "dynamic" ? SHADOW_TEXELS[v.shadowQuality] * 0.6 : 0),
+    ...opts,
+  };
+}
+
+await test("field check: the old rule picks what the real laptop picked (90 % of native, FXAA, light snow); +50 % on integrated GPUs picks 85 %", () => {
+  const m = irisXeField();
+  const boot = G.presetValues("bas", { dpr: m.dpr });
+  const old = calibrate(m, boot, { look: boot }).outcome!;
+  assert.equal(old.values.renderScale, 90);
+  assert.equal(old.values.antialiasing, "fxaa");
+  assert.equal(old.values.snow, "legere");
+  assert.equal(old.values.shadowQuality, "high");
+  // Its menu view: 12.4 ms (the field's spawn view at this rung: 9.4 ms).
+  assert.ok(Math.abs(m.gpu(old.values, megapixels(m, old.values)) - 12.4) < 0.15);
+  const neu = calibrate(m, boot, { look: boot, cfg: A.tuneConfigFor({ integrated: true }) }).outcome!;
+  assert.equal(neu.mode, "target");
+  assert.equal(neu.values.renderScale, 85);
+  assert.equal(neu.marginPixels, 1.5);
+  assert.match(A.summarize(neu, { targetFps: 60, caps: m.caps, software: false }), /with 50% extra pixels as headroom for fights: 85% resolution/);
+});
+
+// ------------------------------------------------------------------ in-match guard
+
+const GD = await import("../src/settings/AutoGuard.ts");
+const L = await import("../src/settings/labels.ts");
+
+console.log("in-match guard (AutoGuard)");
+
+const P60 = 1000 / 60;
+
+type Verdicts = { at: number; v: import("../src/settings/AutoGuard.ts").GuardVerdict }[];
+
+/** A frame for a guard: [ms since the previous frame started, THIS frame's main-thread ms, focused play]. */
+type Frame = [number, number, boolean];
+
+/** Feeds a guard a fixed frame list; a step is applied at once (as the host does between two frames). Verdicts at their focused time (s). */
+function drive(guard: InstanceType<typeof GD.AutoGuard>, frames: Iterable<Frame>): Verdicts {
+  const verdicts: Verdicts = [];
+  let t = 1000;
+  let focused = 0;
+  for (const [dt, cpu, play] of frames) {
+    t += dt;
+    if (play) focused += dt;
+    const v = guard.onFrame(t, cpu, play);
+    if (v) {
+      verdicts.push({ at: focused / 1000, v });
+      if (v.action === "step" || v.action === "keep-step") guard.applied();
+    }
+  }
+  return verdicts;
+}
+
+/**
+ * `seconds` of frames on a 60 Hz screen (or a browser cap), as Chrome paces them: the next frame starts
+ * at the first refresh after the main thread is done AND the GPU finished the frame before (one frame in
+ * flight) — a GPU frame of 18 ms → ≈ 55 FPS. `gpuMs(steps, s)`: the GPU time after the guard's `steps`.
+ */
+function simulate(
+  guard: InstanceType<typeof GD.AutoGuard>,
+  seconds: number,
+  gpuMs: (steps: number, s: number) => number,
+  opts: { cpu?: (s: number) => number; play?: (s: number) => boolean; capHz?: number; seed?: number } = {},
+): Verdicts {
+  const random = rng(opts.seed ?? 3);
+  const period = 1000 / (opts.capHz ?? 60);
+  const verdicts: Verdicts = [];
+  let t = 0;
+  let gpuEnd = 0;
+  let focused = 0;
+  let prevPlay: number | null = null;
+  while (t < seconds * 1000) {
+    const s = t / 1000;
+    const play = opts.play ? opts.play(s) : true;
+    const cpu = opts.cpu ? opts.cpu(s) : 6;
+    if (play && prevPlay !== null) focused += t - prevPlay;
+    prevPlay = play ? t : null;
+    const v = guard.onFrame(1000 + t, cpu, play);
+    if (v) {
+      verdicts.push({ at: focused / 1000, v });
+      if (v.action === "step" || v.action === "keep-step") guard.applied();
+    }
+    const g = gpuMs(guard.steps, s) + (random() * 2 - 1) * 0.4;
+    const prevEnd = gpuEnd;
+    gpuEnd = Math.max(t + cpu, gpuEnd) + g;
+    t = Math.max(Math.ceil(Math.max(t + cpu, prevEnd) / period - 1e-9) * period, t + period);
+  }
+  return verdicts;
+}
+
+await test("stretch: trimmed frame rate (lone hitches out), processor-late intervals apart, sliding over the span", () => {
+  const s = new GD.FrameStretch();
+  for (let i = 0; i < 600; i++) s.push(P60, false, 10_000);
+  assert.ok(Math.abs(s.trimmedFps(GD.AUTO_GUARD.trimShare) - 60) < 0.01);
+  assert.ok(Math.abs(s.durationMs - 10_000) < P60 + 1e-6);
+  // 8 hitches of 100 ms in 10 s: trimmed away (1.5 % = 9 intervals).
+  s.clear();
+  for (let i = 0; i < 600; i++) s.push(i % 75 === 0 ? 100 : P60, false, 10_000);
+  assert.ok(s.trimmedFps(GD.AUTO_GUARD.trimShare) > 59.5);
+  // A GPU 10 % over budget is not a hitch: one interval in ten doubled → ≈ 55 FPS.
+  s.clear();
+  for (let i = 0; i < 600; i++) s.push(i % 10 === 0 ? 2 * P60 : P60, false, 10_000);
+  const f = s.trimmedFps(GD.AUTO_GUARD.trimShare);
+  assert.ok(f > 54 && f < 56.5, `${f}`);
+  // Processor-late intervals are counted apart (not in the frame rate).
+  s.clear();
+  for (let i = 0; i < 600; i++) s.push(i % 4 === 0 ? 40 : P60, i % 4 === 0, 10_000);
+  assert.ok(Math.abs(s.trimmedFps(0) - 60) < 0.01);
+  assert.ok(s.cpuShare > 0.2 && s.cpuShare < 0.3);
+  // Sliding: 30 s pushed, the stretch covers the last 10 s.
+  s.clear();
+  for (let i = 0; i < 1800; i++) s.push(P60, false, 10_000);
+  assert.ok(s.frames <= 601 && s.durationMs < 10_000 + P60 + 1e-6);
+  // Seconds: 8 at 60 FPS then 2 at 30 → ~20 % of them under 57 (a burst, not a sustained shortfall).
+  s.clear();
+  for (let sec = 0; sec < 10; sec++) for (let i = 0; i < (sec < 8 ? 60 : 30); i++) s.push(sec < 8 ? P60 : 1000 / 30, false, 10_000);
+  const low = s.shareBelow(10, 57)!;
+  assert.ok(low >= 0.1 && low <= 0.3, `${low}`);
+  assert.ok(s.trimmedFps(GD.AUTO_GUARD.trimShare) < 57); // …while its average is under the line
+  // Seconds the processor made late are not judged: none left → no share at all.
+  s.clear();
+  for (let i = 0; i < 600; i++) s.push(40, true, 10_000);
+  assert.equal(s.shareBelow(10, 57), null);
+});
+
+await test("guard: a burst (2 s at 30 FPS in every 10 s — an explosion, a pile-up of bots) averages ≈ 54 FPS but is not sustained: no step", () => {
+  assert.equal(simulate(new GD.AutoGuard(60), 300, (n, s) => (s % 10 < 2 ? 33 : 12)).length, 0);
+  // The same 30 FPS for 7 s of every 10: sustained → a step.
+  const v = simulate(new GD.AutoGuard(60), 60, (n, s) => (n === 0 && s % 10 < 7 ? 33 : 12));
+  assert.ok(v.length >= 1 && v[0].v.action === "step", JSON.stringify(v.map((x) => x.v.action)));
+});
+
+await test("guard: holds 60 → never a verdict; a GPU short of 60 for a sustained stretch → ONE step, after ≥ 10 s of focused play", () => {
+  assert.equal(simulate(new GD.AutoGuard(60), 300, () => 15.6).length, 0);
+  // 17.0 ms per frame (≈ 58.8 FPS): borderline — no step for 1-2 FPS.
+  assert.equal(simulate(new GD.AutoGuard(60), 300, () => 17.0).length, 0);
+  // 18.5 ms (≈ 54 FPS), never better: a step after the first 3 s of settling + 10 s of stretch, not before.
+  const v = simulate(new GD.AutoGuard(60), 60, () => 18.5);
+  assert.ok(v.length >= 1 && v[0].v.action === "step", JSON.stringify(v.map((x) => x.v.action)));
+  assert.ok(v[0].at >= 13 && v[0].at < 14, `${v[0].at}`);
+  assert.ok(v[0].v.fps > 52 && v[0].v.fps < 56.5, `${v[0].v.fps}`);
+  // A 50 Hz screen: the promise is 50 (the goal), not 60.
+  assert.equal(simulate(new GD.AutoGuard(50), 120, () => 18.5, { capHz: 50 }).length, 0);
+});
+
+await test("guard: where it triggers on a 60 Hz screen (GPU ms per frame → delivered FPS → step?) — from ≈ 17.8 ms (≈ 56 FPS)", () => {
+  const rows: string[] = [];
+  let firstStep: number | null = null;
+  for (const ms of [16.0, 16.5, 17.0, 17.3, 17.6, 17.8, 18.0, 18.5, 19.0, 20.0]) {
+    const v = simulate(new GD.AutoGuard(60), 40, () => ms, { seed: 9 });
+    const step = v.find((x) => x.v.action === "step");
+    // Delivered FPS of the same frames (untrimmed): what the player gets.
+    const g = new GD.FrameStretch();
+    let t = 0;
+    let gpuEnd = 0;
+    const random = rng(9);
+    while (t < 20_000) {
+      const prevEnd = gpuEnd;
+      gpuEnd = Math.max(t + 6, gpuEnd) + ms + (random() * 2 - 1) * 0.4;
+      const next = Math.max(Math.ceil(Math.max(t + 6, prevEnd) / P60 - 1e-9) * P60, t + P60);
+      g.push(next - t, false, 20_000);
+      t = next;
+    }
+    rows.push(`${ms.toFixed(1)} ms → ${g.trimmedFps(0).toFixed(1)} FPS → ${step ? `step after ${step.at.toFixed(1)} s (judged ${step.v.fps.toFixed(1)})` : "no step"}`);
+    if (step && firstStep === null) firstStep = ms;
+  }
+  console.log(`      ${rows.join("\n      ")}`);
+  assert.ok(firstStep !== null && firstStep >= 17.3 && firstStep <= 18.5, `first step at ${firstStep} ms`);
+});
+
+await test("guard: only FOCUSED play counts (menu, pause, Alt-Tab): the sustained stretch is 10 s of play, not of wall-clock time", () => {
+  // Bad frames, but the window loses the focus 2 s out of every 10 (each return settles 3 s).
+  const v = simulate(new GD.AutoGuard(60), 120, () => 18.5, { play: (s) => s % 10 < 8 });
+  assert.ok(v.length >= 1);
+  assert.ok(v[0].at > 15, `${v[0].at}`); // 10 s judged + a settle after each return
+  // Never a verdict without play frames.
+  assert.equal(simulate(new GD.AutoGuard(60), 120, () => 25, { play: () => false }).length, 0);
+});
+
+await test("guard: lone hitches (kills: the processor's long frames; the browser's GPU process) never cost a step", () => {
+  const frames: Frame[] = [];
+  const random = rng(11);
+  for (let i = 0; i < 60 * 300; i++) {
+    // Every ~3 s a kill: one frame of 45 ms of main thread (+ its long interval); every ~2 s a GPU-process hitch.
+    if (i % 180 === 90) frames.push([P60, 45, true], [3 * P60, 6, true]);
+    else if (i % 120 === 7) frames.push([P60 + 25, 6, true]);
+    else frames.push([P60 + (random() - 0.5) * 0.5, 6, true]);
+  }
+  assert.equal(drive(new GD.AutoGuard(60), frames).length, 0);
+});
+
+await test("guard: a processor-limited stretch (most frames late because of the main thread) gets no verdict — lowering the graphics would not help", () => {
+  // 20 ms of main thread per frame: every interval follows a processor-late frame.
+  assert.equal(simulate(new GD.AutoGuard(60), 120, () => 10, { cpu: () => 20 }).length, 0);
+});
+
+await test("guard: a step is judged on the stretch after it — kept when it restores 60, kept + one more when it helps, useless (guard off) when it changes nothing", () => {
+  // Restores 60: keep, then watching again.
+  const g1 = new GD.AutoGuard(60);
+  const v1 = simulate(g1, 60, (n) => (n === 0 ? 18.5 : 15));
+  assert.deepEqual(v1.map((x) => x.v.action), ["step", "keep"]);
+  assert.ok(v1[1].at - v1[0].at >= 8 && v1[1].at - v1[0].at < 9, `${v1[1].at - v1[0].at}`); // 2 s settle + 6 s
+  assert.equal(g1.phase, "watch");
+  assert.equal(g1.steps, 1);
+  // Helps (54 → 56 FPS) but not enough: keep it and step once more; the second restores 60.
+  const g2 = new GD.AutoGuard(60);
+  const v2 = simulate(g2, 60, (n) => (n === 0 ? 18.5 : n === 1 ? 17.9 : 15));
+  assert.deepEqual(v2.map((x) => x.v.action), ["step", "keep-step", "keep"]);
+  assert.ok(v2[1].v.before! < v2[1].v.fps);
+  assert.equal(g2.steps, 2);
+  // Changes nothing (a browser frame cap at 30 FPS): useless, and the guard stops for the session.
+  const g3 = new GD.AutoGuard(60);
+  const v3 = simulate(g3, 120, () => 10, { capHz: 30 });
+  assert.deepEqual(v3.map((x) => x.v.action), ["step", "useless"]);
+  assert.equal(g3.active, false);
+  assert.equal(g3.steps, 1);
+  // Never two steps without a judged stretch in between (no cascade).
+  for (const g of [g1, g2, g3]) assert.ok(g.steps <= 2);
+});
+
+await test("guard step: the next rung that really moves the frame time (resolution, anti-aliasing, a live shadow map), the fine knobs above it taken along; the floor → nothing", () => {
+  const dpr = 1.25;
+  const ladder = A.buildLadder(G.presetValues("bas", { dpr }), { dpr }, G.DEFAULT_CAPS);
+  const at = (i: number) => GD.guardStepIndex(ladder, ladder[i]);
+  const last = ladder.length - 1;
+  // r4 (FXAA, 4× filtering, normal snow, 100 %) → 90 %, with 1× filtering and light snow on the way.
+  assert.equal(ladder[4].antialiasing, "fxaa");
+  assert.equal(ladder[at(4)!].renderScale, 90);
+  assert.equal(ladder[at(4)!].anisotropy, 1);
+  assert.equal(ladder[at(4)!].snow, "legere");
+  // Resolution rungs: one at a time (90 → 85 → 80), the floor last; nothing below the floor.
+  const r90 = ladder.findIndex((v) => v.renderScale === 90);
+  assert.equal(ladder[at(r90)!].renderScale, 85);
+  assert.equal(at(r90 + 1), last);
+  assert.equal(at(last), null);
+  // MSAA 4× → 2× is a step of its own.
+  assert.equal(ladder[at(0)!].antialiasing, "msaa2");
+  // DPR 1 (the floor IS native): only fine knobs below FXAA → the floor at once.
+  const l1 = A.buildLadder(G.presetValues("bas", { dpr: 1 }), { dpr: 1 }, G.DEFAULT_CAPS);
+  const fx = l1.findIndex((v) => v.antialiasing === "fxaa");
+  assert.equal(GD.guardStepIndex(l1, l1[fx]), l1.length - 1);
+  // High (live shadows): MSAA 4× → 2×, then the smaller live shadow map, then FXAA.
+  const eleve = G.presetValues("eleve", { dpr: 1 });
+  const lh = A.buildLadder(eleve, { dpr: 1 }, G.DEFAULT_CAPS);
+  const s1 = lh[GD.guardStepIndex(lh, eleve)!];
+  assert.equal(s1.antialiasing, "msaa2");
+  const s2 = lh[GD.guardStepIndex(lh, s1)!];
+  assert.equal(s2.shadowQuality, "medium");
+  const s3 = lh[GD.guardStepIndex(lh, s2)!];
+  assert.equal(s3.antialiasing, "fxaa");
+  // Every step: live (no reload), never costlier in any knob.
+  for (let i = 0; i < ladder.length; i++) {
+    const j = GD.guardStepIndex(ladder, ladder[i]);
+    if (j === null) continue;
+    assert.ok(j > i && A.noCostlier(ladder[j], ladder[i]));
+    assert.equal(G.reloadChanges(ladder[i], ladder[j], G.DEFAULT_CAPS).length, 0);
+  }
+});
+
+await test("guard texts: a short English notice of what changed, and the page's summary", () => {
+  const caps = G.DEFAULT_CAPS;
+  const dpr = 1.25;
+  const ladder = A.buildLadder(G.presetValues("bas", { dpr }), { dpr }, caps);
+  const r90 = ladder.findIndex((v) => v.renderScale === 90);
+  assert.equal(L.guardNoticeText(ladder[r90], ladder[r90 + 1], 60, caps), "Graphics lowered to hold 60 FPS (resolution 90% → 85%)");
+  const fx = ladder.findIndex((v) => v.antialiasing === "fxaa");
+  assert.equal(
+    L.guardNoticeText(ladder[fx - 1], ladder[fx], 60, caps),
+    "Graphics lowered to hold 60 FPS (MSAA 2× → FXAA)",
+  );
+  assert.equal(L.describeChange(ladder[fx], ladder[r90], caps), "resolution 100% → 90%, 4× → 1× filtering, light snow");
+  const sum = L.guardSummaryText(ladder[r90 + 1], 1, 53.6, 60, caps);
+  assert.match(sum, /^In a match this PC fell to about 54 FPS, so Auto lowered the graphics one step to hold 60 FPS: 85% resolution, FXAA/);
+  assert.match(L.guardSummaryText(ladder[r90 + 1], 2, 50, 60, caps), /2 steps/);
+  for (const text of [sum, L.guardNoticeText(ladder[0], ladder[1], 60, caps)]) assert.doesNotMatch(text, /[àâçéèêëîïôûùüœ«»]/i);
+});
+
+// ------------------------------------------------------------------ Auto in matches (simulated)
+
+console.log("Auto in matches: simulated machines (detection in the menu, then 5-minute matches)");
+
+/** A match, relative to the MENU view the detection measured. */
+interface Scene {
+  /** GPU time of the view at second s, relative to the menu's (calm spawn views < 1, fights > 1). */
+  load: (s: number) => number;
+  /** Sustained clocks: GPU time factor at second s (1 = the detection's cool chip in its turbo window). */
+  throttle?: (s: number) => number;
+  /** Main-thread ms of a frame (AI, physics, the HUD's commands). */
+  cpu?: (s: number, random: () => number) => number;
+  /** Extra delay before the next frame (the browser's own hitch), ms. */
+  hitch?: (s: number, random: () => number) => number;
+  focused?: (s: number) => boolean;
+  /** Browser frame cap (Hz) from this second on — Chrome's energy saver: 30. */
+  cap?: { hz: number; from: number };
+}
+
+/** Engagements: calm stretches (spawn views, ≈ 0.78 of the menu's view — the field's 9.4 vs 12.4 ms) and fights up to `peak`. */
+function fights(seed: number, peak: number): (s: number) => number {
+  const random = rng(seed);
+  const segs: { end: number; f: number }[] = [];
+  let s = 0;
+  let fight = false;
+  while (s < 3600) {
+    const len = fight ? 6 + random() * 14 : 4 + random() * 8;
+    const f = fight ? 0.95 + (peak - 0.95) * (0.5 + 0.5 * random()) : 0.74 + 0.08 * random();
+    s += len;
+    segs.push({ end: s, f });
+    fight = !fight;
+  }
+  let k = 0;
+  return (x) => {
+    if (k > 0 && x < segs[k - 1].end) k = 0;
+    while (k < segs.length - 1 && x >= segs[k].end) k++;
+    return segs[k].f;
+  };
+}
+
+/** Sustained clocks: GPU time × `factor` reached between `from` and `to` seconds (smooth). */
+function throttling(factor: number, from: number, to: number): (s: number) => number {
+  return (s) => {
+    const x = Math.min(1, Math.max(0, (s - from) / (to - from)));
+    return 1 + (factor - 1) * x * x * (3 - 2 * x);
+  };
+}
+
+interface MatchStats {
+  /** Delivered FPS of each 5 s block of focused play. */
+  blocks: number[];
+  /** Share of those blocks under 57 FPS (the promise not kept). */
+  below: number;
+  worst: number;
+  fps: number;
+  /** Match time (s) of each guard step's notice. */
+  steps: number[];
+}
+
+/** The Game, simulated: renders the machine's frames, feeds the controller's frame listener, applies what the controller asks. */
+class SimGame {
+  values: Values;
+  listener: ((t: number, cpu: number, play: boolean) => void) | null = null;
+  readonly queue: (() => void)[] = [];
+  readonly notices: { at: number; text: string }[] = [];
+  detectConfig: typeof A.AUTO_TUNE | null = null;
+  inFrame = false;
+  applyInFrame = 0;
+  private clock = 1000;
+  private matchT = 0;
+  readonly host;
+
+  constructor(
+    readonly m: Machine & { gpuName: string },
+    readonly boot: Values,
+  ) {
+    this.values = boot;
+    const self = this;
+    this.host = {
+      graphicsBoot: boot,
+      graphicsCaps: m.caps,
+      gpuName: m.gpuName,
+      mapId: "GIVRE",
+      softwareRenderer: false,
+      onDisplayDensityChange: null as (() => void) | null,
+      applyGraphicsSettings(v: Values) {
+        if (self.inFrame) self.applyInFrame++;
+        self.values = G.liveValues(boot, v, m.caps);
+      },
+      setFpsCap() {},
+      applyOutlineSettings() {},
+      setPerfPanel() {},
+      startAutoTune(target: number, opts: { defaultLook?: Values; config?: typeof A.AUTO_TUNE }) {
+        return Promise.resolve(self.detect(target, opts));
+      },
+      cancelAutoTune() {},
+      addFrameListener(l: (t: number, cpu: number, play: boolean) => void) {
+        self.listener = l;
+        return () => void (self.listener = null);
+      },
+      showGraphicsNotice(text: string) {
+        self.notices.push({ at: self.matchT / 1000, text });
+      },
+    };
+  }
+
+  /** The menu's detection (as Game.startAutoTune: the session's ladder, the menu view, uncapped vsync frames). */
+  private detect(target: number, opts: { defaultLook?: Values; config?: typeof A.AUTO_TUNE }) {
+    const m = this.m;
+    const ladder = A.buildLadder(this.boot, { dpr: m.dpr }, m.caps);
+    const goals = A.tuneGoals(target, A.defaultRungIndex(ladder, opts.defaultLook ?? ladder[ladder.length - 1]));
+    this.detectConfig = opts.config ?? null;
+    const calib = new A.Calibration({ apply: (v) => void (this.values = v) }, ladder, goals, opts.config);
+    const random = rng(17);
+    const period = 1000 / m.hz;
+    calib.start(this.clock);
+    while (!calib.done) {
+      const cpu = m.cpuMs + (random() * 2 - 1) * m.jitter;
+      const gpu = m.gpu(this.values, megapixels(m, this.values)) + (random() * 2 - 1) * m.jitter;
+      calib.onFrame(this.clock, cpu, true);
+      this.clock += Math.max(1, Math.ceil(Math.max(cpu, gpu) / period - 1e-9)) * period;
+    }
+    return calib.outcome;
+  }
+
+  /**
+   * A match: Chrome's frame pacing on a vsync display, one frame in flight — the next frame starts at
+   * the first refresh after the main thread is done AND the GPU finished the frame before (a GPU frame
+   * of 18 ms → ≈ 55 FPS, an interval of two refreshes now and then).
+   */
+  match(scene: Scene, seconds: number, seed = 1, stopWhen?: () => boolean): MatchStats {
+    const m = this.m;
+    const random = rng(seed);
+    const base = this.clock;
+    let t = 0;
+    let gpuEnd = 0;
+    const blocks: number[] = [];
+    let blockMs = 0;
+    let blockFrames = 0;
+    let prevPlayT: number | null = null;
+    let total = 0;
+    let totalFrames = 0;
+    const firstNotice = this.notices.length;
+    while (t < seconds * 1000 && !stopWhen?.()) {
+      const s = t / 1000;
+      this.matchT = t;
+      const play = scene.focused ? scene.focused(s) : true;
+      const capped = scene.cap && s >= scene.cap.from ? scene.cap.hz : m.hz;
+      const period = 1000 / Math.min(m.hz, capped);
+      const cpu = Math.max(0.5, (scene.cpu ? scene.cpu(s, random) : 7) + (random() * 2 - 1) * m.jitter * 0.5);
+      const gpu = Math.max(
+        0.5,
+        m.gpu(this.values, megapixels(m, this.values)) * scene.load(s) * (scene.throttle ? scene.throttle(s) : 1) + (random() * 2 - 1) * m.jitter,
+      );
+      this.inFrame = true;
+      this.listener?.(base + t, cpu, play);
+      this.inFrame = false;
+      // Between two frames: what the controller deferred (a step is on screen from the next frame on).
+      while (this.queue.length) this.queue.shift()!();
+      if (play && prevPlayT !== null) {
+        const dt = t - prevPlayT;
+        blockMs += dt;
+        blockFrames++;
+        total += dt;
+        totalFrames++;
+        if (blockMs >= 5000) {
+          blocks.push((blockFrames * 1000) / blockMs);
+          blockMs = 0;
+          blockFrames = 0;
+        }
+      }
+      prevPlayT = play ? t : null;
+      const prevEnd = gpuEnd;
+      gpuEnd = Math.max(t + cpu, gpuEnd) + gpu;
+      const hitch = scene.hitch ? scene.hitch(s, random) : 0;
+      t = Math.max(Math.ceil((Math.max(t + cpu, prevEnd) + hitch) / period - 1e-9) * period, t + period);
+    }
+    this.clock = base + t + 30_000; // end screen, menu
+    const below = blocks.filter((f) => f < 57).length / Math.max(1, blocks.length);
+    return {
+      blocks,
+      below,
+      worst: Math.min(...blocks),
+      fps: (totalFrames * 1000) / Math.max(1, total),
+      steps: this.notices.slice(firstNotice).map((n) => n.at),
+    };
+  }
+}
+
+const INTEL = "Intel(R) Iris(R) Xe Graphics · D3D11";
+
+/** A fresh profile (or `store`), the game simulated, the controller as main.ts builds it (+ the deferral queue). */
+function session(m: Machine & { gpuName: string }, boot: Values, store = new S.SettingsStore(memoryStorage()), extra: { experiments?: Set<string> } = {}) {
+  const sim = new SimGame(m, boot);
+  const ctl = new GC.GraphicsController(store, sim.host, () => ({ dpr: m.dpr }), () => m.hz, () => {}, isWeak, {
+    experiments: extra.experiments ?? new Set(),
+    defer: (fn) => void sim.queue.push(fn),
+  });
+  return { sim, ctl, store };
+}
+
+const fmtValues = (v: Values) => `${v.renderScale} % · ${v.antialiasing} · aniso ${v.anisotropy} · snow ${v.snow}${v.shadows === "dynamic" ? ` · live shadows ${v.shadowQuality}` : ""}`;
+const fmtMatch = (r: MatchStats) => `${r.fps.toFixed(1)} FPS, worst 5 s ${r.worst.toFixed(1)}, ${(r.below * 100).toFixed(0)} % of the time under 57, steps at ${r.steps.map((x) => `${x.toFixed(0)} s`).join(", ") || "—"}`;
+
+/** The owner's WORK laptop: Iris Xe, ~1874 × 956 CSS at 125 %, on battery / an office power plan — the chip settles 32 % slower after a minute or two. */
+const workLaptop = () => ({ ...irisXeField({ css: [1874, 956] as [number, number] }), name: "work laptop (Iris Xe, battery)", gpuName: INTEL });
+const workScene = (seed: number): Scene => ({ load: fights(seed, 1.25), throttle: throttling(1.32, 60, 180) });
+
+await test("the owner's work laptop on battery (Iris Xe, 1874 × 956 at 125 %): before — 60 FPS at first, then not; now — 85 % from the menu, one guard step in the first match, stored; the next match holds", async () => {
+  const boot = G.presetValues("bas", { dpr: 1.25 });
+  // BEFORE: the old rule (+30 %), no guard.
+  const before = session(workLaptop(), boot, undefined, { experiments: new Set(["noguard", "tunemargin30"]) });
+  await before.ctl.runDetection("first");
+  const oldValues = before.ctl.effective();
+  assert.equal(oldValues.renderScale, 90);
+  const b1 = before.sim.match(workScene(1), 300);
+  assert.equal(b1.steps.length, 0);
+  assert.ok(b1.below > 0.2, `before: ${fmtMatch(b1)}`); // the field report: "then not"
+  // The first minute (cool chip) held: "60 FPS at first".
+  assert.ok(b1.blocks.slice(0, 10).every((f) => f >= 57), `first minute: ${b1.blocks.slice(0, 10).map((f) => f.toFixed(0))}`);
+  console.log(`      before (old rule, no guard): ${fmtValues(oldValues)} → ${fmtMatch(b1)}`);
+
+  // NOW.
+  const now = session(workLaptop(), boot);
+  await now.ctl.runDetection("first");
+  assert.equal(now.sim.detectConfig?.marginPixels, 1.5); // integrated GPU: the larger margin
+  const picked = now.ctl.effective();
+  assert.equal(picked.renderScale, 85);
+  const m1 = now.sim.match(workScene(1), 300);
+  assert.equal(m1.steps.length, 1, fmtMatch(m1));
+  assert.equal(now.sim.applyInFrame, 0); // applied between two frames, never inside one (blank-frame rule)
+  assert.match(now.sim.notices[0].text, /^Graphics lowered to hold 60 FPS \(resolution 85% → 80%\)$/);
+  assert.ok(m1.below < b1.below / 3, `now: ${fmtMatch(m1)} vs before ${fmtMatch(b1)}`);
+  const stored = now.store.get().graphics.auto.GIVRE;
+  assert.equal(stored.values.renderScale, 80); // kept: it helped
+  assert.equal(stored.guardSteps, 1);
+  assert.match(stored.summary, /^In a match this PC fell to about \d+ FPS, so Auto lowered the graphics one step to hold 60 FPS: 80% resolution/);
+  console.log(`      now: menu ${fmtValues(picked)} → match 1: ${fmtMatch(m1)}`);
+  // Next session (same store): starts at 80 %, never back up; the chip is warm from the start.
+  const next = session(workLaptop(), boot, now.store);
+  assert.equal(next.ctl.needsDetection(), false); // no new detection: the guard's step stands
+  assert.equal(next.ctl.effective().renderScale, 80);
+  const m2 = next.sim.match({ load: fights(2, 1.25), throttle: throttling(1.32, 0, 30) }, 300, 2);
+  assert.equal(m2.steps.length, 0); // the floor: nothing below, nothing to do
+  assert.ok(m2.below < 0.1, `match 2: ${fmtMatch(m2)}`);
+  console.log(`      match 2 (warm chip): ${fmtValues(next.ctl.effective())} → ${fmtMatch(m2)}`);
+});
+
+await test("the owner's personal laptop plugged in (the field's 90 % held 60): now 85 % from the menu; matches hold 60, the guard never steps", async () => {
+  const m = { ...irisXeField(), gpuName: INTEL };
+  const boot = G.presetValues("bas", { dpr: 1.25 });
+  const run = session(m, boot);
+  await run.ctl.runDetection("first");
+  assert.equal(run.ctl.effective().renderScale, 85);
+  const r = run.sim.match({ load: fights(4, 1.2), throttle: throttling(1.06, 60, 240) }, 300, 4);
+  assert.equal(r.steps.length, 0, fmtMatch(r));
+  assert.ok(r.below === 0, fmtMatch(r));
+  console.log(`      ${fmtValues(run.ctl.effective())} → ${fmtMatch(r)}`);
+  // The old answer (90 %) held there too — the larger margin costs one resolution step on this machine.
+  const old = session(m, boot, undefined, { experiments: new Set(["tunemargin30"]) });
+  await old.ctl.runDetection("first");
+  assert.equal(old.ctl.effective().renderScale, 90);
+  const ro = old.sim.match({ load: fights(4, 1.2), throttle: throttling(1.06, 60, 240) }, 300, 4);
+  assert.equal(ro.steps.length, 0, fmtMatch(ro));
+});
+
+await test("the work laptop at 100 % zoom (the floor IS native): the guard can only take filtering and snow — then the floor, never lower", async () => {
+  const m = { ...workLaptop(), dpr: 1 };
+  const boot = G.presetValues("bas", { dpr: 1 });
+  const run = session(m, boot);
+  await run.ctl.runDetection("first");
+  const picked = run.ctl.effective();
+  assert.equal(picked.renderScale, 100);
+  const r = run.sim.match({ load: fights(5, 1.3), throttle: throttling(1.32, 60, 180) }, 300, 5);
+  const floor = A.buildLadder(boot, { dpr: 1 }, m.caps).at(-1)!;
+  assert.ok(r.steps.length <= 1, fmtMatch(r));
+  assert.ok(G.sameValues(run.ctl.effective(), floor) || G.sameValues(run.ctl.effective(), picked));
+  assert.ok(A.noCostlier(floor, run.ctl.effective()));
+  console.log(`      menu ${fmtValues(picked)} → ${fmtMatch(r)}; now ${fmtValues(run.ctl.effective())}`);
+});
+
+await test("gaming PC (RTX 2080 Super, 240 Hz): matches far above 60 → the guard never steps (its promise is 60, the image stays)", async () => {
+  const m = { ...rtx2080(), gpuName: "NVIDIA GeForce RTX 2080 SUPER · D3D11" };
+  const boot = G.presetValues("eleve", { dpr: 1 });
+  const run = session(m, boot);
+  await run.ctl.runDetection("first");
+  assert.equal(run.sim.detectConfig?.marginPixels, 1.3); // discrete GPU: the usual margin
+  const v = run.ctl.effective();
+  const r = run.sim.match({ load: fights(6, 1.35), cpu: () => 3.6 }, 120, 6);
+  assert.equal(r.steps.length, 0);
+  assert.ok(r.fps > 150, fmtMatch(r));
+  assert.equal(G.sameValues(run.ctl.effective(), v), true);
+});
+
+await test("entry GPU (GTX 1050, 60 Hz, High kept by the detection): a heavy match → MSAA 4× → 2×, kept", async () => {
+  const m = { ...gtx1050(), gpuName: "NVIDIA GeForce GTX 1050 · D3D11" };
+  const eleve = G.presetValues("eleve", { dpr: 1 });
+  const run = session(m, eleve);
+  await run.ctl.runDetection("first");
+  assert.equal(G.sameValues(run.ctl.effective(), eleve), true);
+  const r = run.sim.match({ load: fights(7, 1.35) }, 300, 7);
+  assert.ok(r.steps.length >= 1, fmtMatch(r));
+  assert.match(run.sim.notices[0].text, /MSAA 4× → MSAA 2×/);
+  assert.ok(r.below < 0.25, fmtMatch(r));
+  console.log(`      High → ${fmtValues(run.ctl.effective())} — ${fmtMatch(r)}`);
+});
+
+await test("processor-limited laptop (AI and physics take ~18 ms a frame in fights): no step — lower graphics would not give a frame back", async () => {
+  const m = { ...irisXeField(), gpuName: INTEL };
+  const run = session(m, G.presetValues("bas", { dpr: 1.25 }));
+  await run.ctl.runDetection("first");
+  const v = run.ctl.effective();
+  const r = run.sim.match({ load: fights(8, 1.1), cpu: (s) => (Math.floor(s / 8) % 2 ? 18 : 9) }, 300, 8);
+  assert.equal(r.steps.length, 0, fmtMatch(r));
+  assert.equal(G.sameValues(run.ctl.effective(), v), true);
+});
+
+await test("Chrome's energy saver (frames capped at 30 on battery, mid-match): one step that changes nothing → judged useless, guard off, NOT stored", async () => {
+  const m = { ...irisXeField(), gpuName: INTEL };
+  const run = session(m, G.presetValues("bas", { dpr: 1.25 }));
+  await run.ctl.runDetection("first");
+  const stored = { ...run.store.get().graphics.auto.GIVRE.values };
+  const r = run.sim.match({ load: fights(9, 1.1), cap: { hz: 30, from: 60 } }, 300, 9);
+  assert.equal(r.steps.length, 1, fmtMatch(r));
+  assert.equal(run.ctl.guardPhase, null); // off for the session
+  // On screen: the step stays (never back up by itself); stored: untouched.
+  assert.ok(run.ctl.effective().renderScale < stored.renderScale);
+  assert.equal(G.sameValues(run.store.get().graphics.auto.GIVRE.values, stored), true);
+  assert.equal(run.store.get().graphics.auto.GIVRE.guardSteps, 0);
+  // Next session: the stored values.
+  const next = session(m, G.presetValues("bas", { dpr: 1.25 }), run.store);
+  assert.equal(G.sameValues(next.ctl.effective(), stored), true);
+});
+
+await test("hitchy but fast enough (kills every ~3 s, browser hitches every ~2 s): no step", async () => {
+  const m = { ...irisXeField(), gpuName: INTEL };
+  const run = session(m, G.presetValues("bas", { dpr: 1.25 }));
+  await run.ctl.runDetection("first");
+  const r = run.sim.match(
+    {
+      load: fights(10, 1.1),
+      cpu: (s, random) => (random() < 1 / 180 ? 45 : 7),
+      hitch: (s, random) => (random() < 1 / 120 ? 25 : 0),
+    },
+    300,
+    10,
+  );
+  assert.equal(r.steps.length, 0, fmtMatch(r));
+});
+
+await test("explicit presets are never touched (Low, High, Custom), and ?diag=noguard turns the guard off", async () => {
+  for (const preset of ["bas", "eleve", "custom"] as const) {
+    const store = new S.SettingsStore(memoryStorage());
+    const run = session(workLaptop(), G.presetValues("bas", { dpr: 1.25 }), store);
+    await run.ctl.runDetection("first"); // a detection exists for the map…
+    const chosen = preset === "custom" ? { ...G.presetValues("bas", { dpr: 1.25 }), renderScale: 100, anisotropy: 4 as const } : null;
+    store.update((d) => {
+      d.graphics.preset = preset;
+      if (chosen) d.graphics.custom = chosen;
+    });
+    const v = run.ctl.effective();
+    const r = run.sim.match(workScene(11), 300, 11);
+    assert.equal(r.steps.length, 0, `${preset}: ${fmtMatch(r)}`); // …but the player picked something else
+    assert.equal(G.sameValues(run.ctl.effective(), v), true);
+  }
+  const off = session(workLaptop(), G.presetValues("bas", { dpr: 1.25 }), undefined, { experiments: new Set(["noguard"]) });
+  await off.ctl.runDetection("first");
+  assert.equal(off.sim.match(workScene(1), 300).steps.length, 0);
+});
+
+await test("no oscillation: over five matches the stored rung only goes down, then stays; a new detection starts from scratch", async () => {
+  const store = new S.SettingsStore(memoryStorage());
+  const boot = G.presetValues("bas", { dpr: 1.25 });
+  // A detection made with no margin at all (?diag=tunemargin0): too heavy for matches on purpose.
+  const first = session(workLaptop(), boot, store, { experiments: new Set(["tunemargin0"]) });
+  await first.ctl.runDetection("first");
+  const scales = [first.ctl.effective().renderScale];
+  let steps = 0;
+  for (let k = 0; k < 5; k++) {
+    const run = k === 0 ? first : session(workLaptop(), boot, store);
+    const r = run.sim.match({ load: fights(20 + k, 1.25), throttle: throttling(1.32, k === 0 ? 60 : 0, k === 0 ? 180 : 30) }, 300, 20 + k);
+    steps += r.steps.length;
+    scales.push(store.get().graphics.auto.GIVRE.values.renderScale);
+  }
+  for (let i = 1; i < scales.length; i++) assert.ok(scales[i] <= scales[i - 1], `${scales}`);
+  assert.ok(steps >= 2, `${steps} steps: ${scales}`);
+  assert.equal(scales.at(-1), scales.at(-2)); // settled
+  const kept = store.get().graphics.auto.GIVRE.guardSteps ?? 0;
+  assert.ok(kept >= 1 && kept <= steps, `${kept} kept of ${steps}`);
+  console.log(`      stored resolution after each match: ${scales.join(" → ")} % (${steps} steps, ${kept} kept)`);
+  // "Run again": a fresh answer, no guard steps.
+  const again = session(workLaptop(), boot, store);
+  await again.ctl.runDetection("manual");
+  assert.equal(store.get().graphics.auto.GIVRE.guardSteps, 0);
+  assert.equal(again.ctl.effective().renderScale, 85);
+});
+
+await test("an edit on the settings page while a step is being judged starts from the values on screen (no jump back up)", async () => {
+  // A detection with no margin (too heavy for fights on purpose), a match until the first step is on screen.
+  const run = session(workLaptop(), G.presetValues("bas", { dpr: 1.25 }), undefined, { experiments: new Set(["tunemargin0"]) });
+  await run.ctl.runDetection("first");
+  run.sim.match(workScene(1), 300, 1, () => run.sim.notices.length > 0);
+  assert.equal(run.sim.notices.length, 1);
+  const onScreen = run.ctl.effective();
+  const stored = run.store.get().graphics.auto.GIVRE.values;
+  assert.ok(onScreen.renderScale < stored.renderScale || !G.sameValues(onScreen, stored)); // not judged (stored) yet
+  const edited = G.editChoice(run.store.get().graphics, "snow", "off", { dpr: 1.25 }, run.ctl.gpu, "GIVRE", onScreen);
+  assert.equal(edited.preset, "custom");
+  assert.equal(edited.custom!.renderScale, onScreen.renderScale);
+  assert.equal(edited.custom!.anisotropy, onScreen.anisotropy);
+});
+
+// ------------------------------------------------------------------ what the detection picks
+
+console.log("what the detection picks, old rule (+30 % everywhere) vs new (+50 % on integrated GPUs):");
+
+await test("summary table: each simulated machine, old vs new detection rule", () => {
+  const rows: [string, Machine, Values, boolean][] = [
+    ["Iris Xe, field-calibrated (personal laptop, 125 %)", irisXeField(), G.presetValues("bas", { dpr: 1.25 }), true],
+    ["Iris Xe, work laptop 1874 × 956 at 125 %", workLaptop(), G.presetValues("bas", { dpr: 1.25 }), true],
+    ["Iris Xe, work laptop 1874 × 956 at 100 %", { ...workLaptop(), dpr: 1 }, G.presetValues("bas", { dpr: 1 }), true],
+    ["Iris Xe, optimistic model (older test)", irisXe("static"), G.presetValues("bas", { dpr: 1.25 }), true],
+    ["Iris Xe booted High (live shadows)", irisXe("dynamic"), G.presetValues("eleve", { dpr: 1.25 }), true],
+    ["UHD 620 (GPU-bound at the floor)", uhd620(), G.presetValues("bas", { dpr: 1 }), true],
+    ["GTX 1050, 60 Hz", gtx1050(), G.presetValues("eleve", { dpr: 1 }), false],
+    ["GTX 1660, 144 Hz", midGpu(), G.presetValues("eleve", { dpr: 1 }), false],
+    ["RTX 2080 Super, 240 Hz", rtx2080(), G.presetValues("eleve", { dpr: 1 }), false],
+  ];
+  for (const [name, m, boot, integrated] of rows) {
+    const look = integrated ? G.presetValues("bas", { dpr: m.dpr }) : boot;
+    const o1 = calibrate(m, boot, { look }).outcome!;
+    const o2 = calibrate(m, boot, { look, cfg: A.tuneConfigFor({ integrated }) }).outcome!;
+    const share = (v: Values) => `${Math.round(gpuShare(m, v, Math.min(60, m.hz)) * 100)} %`;
+    console.log(`      ${name}:\n        old: ${fmtValues(o1.values)} (${o1.mode}, menu GPU ${share(o1.values)} of a 60 FPS frame)\n        new: ${fmtValues(o2.values)} (${o2.mode}, ${share(o2.values)})`);
+    // Never costlier than the old answer; discrete GPUs unchanged.
+    assert.ok(A.noCostlier(o2.values, o1.values));
+    if (!integrated) assert.equal(G.sameValues(o1.values, o2.values), true);
+  }
+});
+
 console.log(`\nAll ${passed} detection checks passed.`);
