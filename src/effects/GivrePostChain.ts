@@ -51,9 +51,10 @@ import { OutputFXAAPass } from "./OutputFXAAPass";
  *
  * The composer is never restructured: the output pass and the FXAA pass
  * keep their places (GPU line, the settings page's FXAA ⇄ MSAA switch,
- * warmAlternateOutput); their render() routes the image. Outside the
- * reference route no pass swaps the composer's buffers any more: the world
- * is drawn into the same buffer every frame.
+ * warmAlternateOutput); their render() routes the image. With FXAA on,
+ * outside the reference route, no pass swaps the composer's buffers any
+ * more: the world is drawn into the same buffer every frame (FXAA off: the
+ * output pass swaps once per frame, as before).
  */
 export type GivreWorldFormat = "rgba16f" | "r11g11b10f" | "srgb8" | "direct";
 export type GivreOutputRoute = "half" | "rgba8" | "fused" | "fused8" | "none";

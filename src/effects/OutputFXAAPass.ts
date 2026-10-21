@@ -24,11 +24,12 @@ import { FXAAShader } from "three/examples/jsm/shaders/FXAAShader.js";
  * exact in any precision). `SUBTEXEL_BITS` quantizes the manual weights to
  * mimic a given hardware; undefined = exact weights.
  *
- * Cost: no 8 B/px intermediate write + read (RGBA16F), but each pixel
- * converts 5 texels (the cross of FXAA's neighbourhood: enough for its skip
- * test) instead of 1, and an anti-aliased edge pixel up to ~55. On a
- * bandwidth-bound iGPU this trades 16 B/px of memory traffic for ALU
- * (3 pow per texel): measure it (GivrePostChain, `?gpu`).
+ * Cost: no RGBA16F intermediate (8 B/px written, 8 B/px read back), but
+ * each pixel converts 5 texels (the cross of FXAA's neighbourhood: enough
+ * for its skip test) instead of 1, and an anti-aliased edge pixel up to
+ * ~55. On a bandwidth-bound iGPU this trades 16 B/px of memory traffic for
+ * ALU (3 pow per texel; ≈ 4× the old output + FXAA on the software bench):
+ * measure it (GivrePostChain, `?gpu`).
  *
  * Only ever drawn to the canvas (linearToOutputTexel is the canvas
  * conversion there); same uniforms as three's FXAAPass.
