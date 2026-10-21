@@ -178,16 +178,19 @@ function aggregate(list) {
   return sums;
 }
 
-/** Blink CompositorAnimations::FailureReason bits → names (Chrome 120+). */
+/**
+ * Blink CompositorAnimations::FailureReason bits → names (compositor_animations.h;
+ * bits 11-13 as Lighthouse's non-composited-animations audit reads them).
+ */
 function failureNames(mask) {
   const NAMES = [
     "AcceleratedAnimationsDisabled", "EffectSuppressedByDevtools", "InvalidAnimationOrEffect",
     "UnsupportedTimingParameters", "NonReplaceCompositeMode", "TargetHasInvalidCompositingState",
-    "TargetHasIncompatibleAnimations", "TargetHasCSSOffset", "TargetHasMultipleTransformProperties",
-    "AffectsNonCSSProperties", "TransformCannotBeAcceleratedOnTarget", "FilterMayMovePixels",
-    "UnsupportedCSSProperty", "MixedKeyframeValueTypes", "TimelineSourceInvalidCompositingState",
-    "AnimationHasNoVisibleChange", "AffectsImportantProperty", "SVGTargetHasIndependentTransformProperty",
-    "InvalidCompositorPropertyAnimationState", "CompositorPropertyAnimationsHaveNoEffect", "NonCompositedTimeline",
+    "TargetHasIncompatibleAnimations", "TargetHasCSSOffset", "(obsolete) MultipleTransformProperties",
+    "AffectsNonCSSProperties", "TransformCannotBeAcceleratedOnTarget", "TransformDependsOnBoxSize",
+    "FilterMayMovePixels", "UnsupportedCSSProperty", "(obsolete) MultipleTransformAnimations",
+    "MixedKeyframeValueTypes", "TimelineSourceInvalidCompositingState", "NoVisibleChange",
+    "AffectsImportantProperty", "SVGTargetHasIndependentTransformProperty",
   ];
   const out = [];
   for (let i = 0; i < 31; i++) if (mask & (1 << i)) out.push(NAMES[i] ?? `bit${i}`);

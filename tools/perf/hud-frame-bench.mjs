@@ -562,16 +562,19 @@ function analyse(list, frames) {
   return { hudPid, frames, main, tiles: { n: tiles.n, ms: +tiles.ms.toFixed(2) }, rasterByLayer, busyMs: +busyMs.toFixed(1), worstMs: +worstMs.toFixed(2), drawFrames, display: { n: display.n, ms: +display.ms.toFixed(1), passes: display.passes }, inv, animFailed };
 }
 
-/** Blink CompositorAnimations::FailureReason bits → names. */
+/**
+ * Blink CompositorAnimations::FailureReason bits → names (compositor_animations.h;
+ * bits 11-13 as Lighthouse's non-composited-animations audit reads them).
+ */
 function failureNames(mask) {
   const NAMES = [
     "AcceleratedAnimationsDisabled", "EffectSuppressedByDevtools", "InvalidAnimationOrEffect",
     "UnsupportedTimingParameters", "NonReplaceCompositeMode", "TargetHasInvalidCompositingState",
-    "TargetHasIncompatibleAnimations", "TargetHasCSSOffset", "TargetHasMultipleTransformProperties",
-    "AffectsNonCSSProperties", "TransformCannotBeAcceleratedOnTarget", "FilterMayMovePixels",
-    "UnsupportedCSSProperty", "MixedKeyframeValueTypes", "TimelineSourceInvalidCompositingState",
-    "AnimationHasNoVisibleChange", "AffectsImportantProperty", "SVGTargetHasIndependentTransformProperty",
-    "InvalidCompositorPropertyAnimationState", "CompositorPropertyAnimationsHaveNoEffect", "NonCompositedTimeline",
+    "TargetHasIncompatibleAnimations", "TargetHasCSSOffset", "(obsolete) MultipleTransformProperties",
+    "AffectsNonCSSProperties", "TransformCannotBeAcceleratedOnTarget", "TransformDependsOnBoxSize",
+    "FilterMayMovePixels", "UnsupportedCSSProperty", "(obsolete) MultipleTransformAnimations",
+    "MixedKeyframeValueTypes", "TimelineSourceInvalidCompositingState", "NoVisibleChange",
+    "AffectsImportantProperty", "SVGTargetHasIndependentTransformProperty",
   ];
   const o = [];
   for (let i = 0; i < 31; i++) if (mask & (1 << i)) o.push(NAMES[i] ?? `bit${i}`);

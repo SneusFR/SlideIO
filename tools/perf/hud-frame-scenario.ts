@@ -61,7 +61,7 @@ const DT = 1 / 60;
 const LOCAL = 1;
 const ALL_PHASES = ["rest", "fire", "kill", "afterKill", "hurt", "reload", "late"];
 const ALL_STATES = [
-  "idle", "dashRefill", "worried", "panic", "dead", "idleAgain", "knockdown", "spearReady", "hurry", "comboRope",
+  "idle", "dashRefill", "worried", "panic", "dead", "idleAgain", "knockdown", "getUp", "spearReady", "hurry", "comboRope",
   "paintballRest", "paintballLow", "paintballReload", "popcornRest", "famasRest", "famasLow", "famasReload", "frisbeeRest",
 ];
 
@@ -330,8 +330,12 @@ export function buildBench(width: number, height: number, opt: BenchOptions = {}
       hp = 100;
       playerAlive = true;
     }, 60),
+    // As in the game (PlayerMovement): KNOCKED DOWN for the forced-down window,
+    // then "PRESS SPACE TO GET UP" (its endless bob) until the player stands.
     knockdown: set(() => {
       down = true;
+    }, 40),
+    getUp: set(() => {
       canGetUp = true;
     }, 40),
     spearReady: set(() => {
