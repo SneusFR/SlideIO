@@ -299,8 +299,17 @@ export function buildScenario(width: number, height: number): Scenario {
   on(600, (c) => c.push(["doc.class", "body", "game-paused", false]));
   on(605, () => (clock = 25));
   checkpoints.set(620, "hurry-clock");
+  // Panic (HP ≤ 30 %: sweat drop, tremble, red burst, throbbing HP) with the
+  // FAMAS low (heartbeat count, blinking tank, the wave at its low level).
+  on(626, (c) => {
+    hp = 22;
+    c.push(["combat.damage", 78, 0.4]);
+    primary = "famas";
+    famas = 3;
+  });
+  checkpoints.set(664, "panic-famas-low");
 
-  const LAST = 624;
+  const LAST = 668;
   for (let f = 0; f <= LAST; f++) {
     const cmds: HudCommand[] = [];
     // Solo leaderboard: refreshed at the start of the frame after a stats change.

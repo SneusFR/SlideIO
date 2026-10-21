@@ -143,7 +143,13 @@ export function startHost(local: (() => Promise<HudRuntime>) | null): void {
         runtime.init(full);
         return true;
       }
-      await connect(params.get("hud") ?? "/hud.html" + (virtual ? "" : "?vt=0"));
+      // The HUD document's own address carries `?vt=0` and the page's `?diag=` (as HudHost does).
+      const query = new URLSearchParams();
+      if (!virtual) query.set("vt", "0");
+      const diag = params.get("diag");
+      if (diag) query.set("diag", diag);
+      const q = query.toString();
+      await connect(params.get("hud") ?? "/hud.html" + (q ? `?${q}` : ""));
       // src/hud/host's isolation check runs here, before init (its counter
       // then includes the iframe's 4 ms timer ticks).
       const iso = await hh.isolationCheck(80);
