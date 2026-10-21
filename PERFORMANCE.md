@@ -101,6 +101,9 @@ opérations de skinning par rayon).
 32. **Nouveau widget du HUD** : construit dans `HudRuntime.init` (l'ordre de construction = l'ordre d'empilement), son balisage dans `src/hud/hudMarkup.html`, sa feuille de style liée par `hud.html` **et** par `index.html` (le HUD dans la page reste le repli) ; ses états rares dans le warm-up (règles 15 et 18), qui tourne dans le document du HUD.
 33. **Le document du HUD a une origine opaque** : pas de `localStorage` ni de cookies (les réglages viennent de la page par commande, comme `crosshair.settings`) ; ses scripts, CSS et polices sont des requêtes CORS (`vercel.json` : `Access-Control-Allow-Origin` sur `/assets/*`). Il ne reçoit jamais d'entrée (clavier, souris, focus) : ce qui réagit au joueur reste dans la page du jeu. Ne jamais masquer `#hud-frame` (`display` / `visibility`) : le HUD masque son propre contenu.
 34. **Mesurer le HUD** : la ligne `HUD:` donne où il tourne (`iframe isolée` ou `dans la page (raison)`), ses FPS et son travail par frame (JS des commandes, rendu du navigateur) ; `Browser:` est maintenant celui de la page du jeu seule. `?hud=inline` compare avec l'ancien chemin. `tools/hud-preview/runtime-harness.mjs` compare l'iframe, la page et l'ancien HUD pixel par pixel.
+35. **Nouvelle option graphique** (page Paramètres) : sa valeur dans `GraphicsValues` (`settings/GraphicsSettings.ts` : presets, validation, libellé dans `settings/labels.ts`), son application dans `Game.applyLiveValues` — **en direct seulement si elle ne change aucun programme** (taille, échantillons, visibilité, paramètre de texture, uniform) ; sinon elle va dans `reloadChanges` (« Appliquer et recharger »). Une option qui active / coupe une passe ou une variante (FXAA ⇄ MSAA) : les deux variantes compilées au chargement (`warmAlternateOutput`), vérifié par `tools/perf/settings-page-check.mjs` (aucun programme compilé par un changement en direct). Bas et Élevé restent **exactement** les anciens LOW et HIGH (`scripts/test-graphics-settings.mts`).
+36. **Détection automatique** : elle juge sur les **intervalles entre images** sous charge (+30 % de pixels), jamais sur des requêtes de chronométrage GPU (elles comptent les temps morts du GPU et font flusher Chrome : elles changent ce qu'elles mesurent). Une option ne rejoint l'échelle (`settings/AutoTune.ts`) que si elle s'applique en direct, à sa place dans l'ordre « le moins visible d'abord », et jamais sous le plancher (l'ancien LOW). Changer la logique de la détection = incrémenter `AUTO_TUNE_VERSION` (chaque joueur « Automatique » est mesuré à nouveau, une fois).
+37. **Anciennes clés** `beanzo.graphicsQuality` / `beanzo.fpsCap` : toujours lues et écrites (pont avec un build plus ancien et avec les scripts de banc) — une valeur écrite par quelqu'un d'autre depuis le dernier passage du jeu est reprise au chargement suivant (`adoptLegacyChanges`). Les réglages du joueur vivent dans **un** enregistrement, `slideio.settings`.
 
 ## Mesures (banc headless, avant → après)
 
@@ -353,9 +356,44 @@ banc (`givreDebug.perf.skyFirst / clears / deadLights / passClears` : l'ancien c
 bascule) : mêmes pixels RGBA, au bit près, avant / après — chaque changement seul et tous ensemble,
 sur Givre LOW et HIGH, Jungle et Yard.
 
+## Réglages graphiques et détection automatique (page Paramètres)
+
+La page **Paramètres** (menu principal et menu pause, `menu/SettingsPage.ts`) remplace le petit menu
+SETTINGS : préréglages **Automatique / Bas / Moyen / Élevé / Ultra / Personnalisé**, chaque option
+réglable une à une (résolution de rendu en % de la définition de l'écran, au pour cent près ;
+anticrénelage aucun / FXAA / MSAA 2× / 4× ; ombres désactivées / statiques / dynamiques, leur qualité,
+celles des personnages ; neige, halos, empreintes, particules ; filtrage anisotrope ; limite d'images
+par seconde ; panneau de performances), le réticule, l'audio, et une carte de mesure en direct (FPS
+délivrés, image médiane et lente, processeur, taille du rendu). **Bas** et **Élevé** sont exactement
+les anciens LOW et HIGH. Tout s'applique en direct, sans compiler de shader, sauf le mode d'ombres,
+les ombres des personnages et le MSAA de Jungle / Yard (attribut du contexte WebGL) : signalés, appliqués
+par « Appliquer et recharger ».
+
+**Détection automatique** (`settings/AutoTune.ts`, au premier lancement sur chaque carte et chaque GPU,
+ou à la demande) : une **échelle** de configurations, du meilleur (définition native, MSAA 4×, ombres
+les plus fines, filtrage 16×) au **plancher** (l'ancien LOW : un pixel par pixel CSS, FXAA, filtrage 1×,
+neige légère), en retirant d'abord ce qui se voit le moins. Mesurée sur la vraie carte (le menu, caméra
+immobile pendant la mesure ; ou la vue de pause), **par les intervalles entre images** — pas par des
+requêtes de chronométrage GPU (11ᵉ passe : elles comptent les temps morts du GPU et font flusher Chrome).
+Un écran à 60 Hz montre 60 i/s à 10 ms comme à 16 ms de travail : chaque candidat est donc mesuré avec
+**30 % de pixels en plus** — s'il tient encore l'objectif, il garde ~23 % de l'image libre pour les
+combats. Le plancher d'abord (l'objectif est-il atteignable ?), puis, s'il ne l'est pas, la même vue à
+moitié de pixels : beaucoup plus rapide = la carte graphique limite (réponse : le plancher, et des ombres
+statiques conseillées au prochain chargement si elles étaient dynamiques) ; pas plus rapide = le
+processeur ou le navigateur limite (les graphismes restent en haut, ils n'y changeraient rien). Puis le
+haut de l'échelle (une seule mesure sur une machine puissante) et une recherche dichotomique. Les images
+d'une fenêtre sans le focus sont ignorées. Une réponse, stockée par carte, GPU et objectif : la détection
+ne se relance jamais d'elle-même sur la même machine (pas d'oscillation), et le joueur garde la main.
+Sur les machines simulées d'après les mesures de la 11ᵉ passe (`scripts/test-graphics-autotune.mts`) :
+le portable Iris Xe passe de l'ancien LOW (1920 × 928) à la définition native **2400 × 1160**, FXAA,
+ombres statiques en haute taille, filtrage 4×, avec ~40 % de l'image libre ; le PC RTX 2080 Super à
+240 Hz garde Élevé ou mieux.
+
 ## Vérifier sur une machine
 
-HUD de debug (déjà présent) : lignes `World: N draws` et `CPU`. Repères sur Givre
+HUD de debug (déjà présent) : lignes `World: N draws` et `CPU`. La page **Paramètres** a sa propre carte de
+mesure en direct (FPS délivrés, image médiane et 5 % les plus lentes, processeur) : changer une option et
+voir l'effet tout de suite. Repères sur Givre
 en HIGH : ~37‑55 draws sans bot, ~100‑130 avec 8 bots en vue (contre ~230‑260 et
 ~520‑650 avant) ; en LOW ~36 sans bot, ~85‑95 avec 8 bots. Si la ligne `CPU` reste
 proche du temps de frame, la machine est limitée CPU ; si elle est très en dessous,
