@@ -477,3 +477,48 @@
 @media (min-width: 2400px) { .wpn-plate { zoom: 2; } }
 /* Room on the right for the paint that hangs past the plate (reference: ~38 px margin). */
 #weapon-row { padding-right: 56px; margin-bottom: 24px; }
+
+/* ==========================================================================
+   PERF — animations (hud.css « PERF — animations »; `?diag=hudanim` = the
+   previous rules): the plates' idle motions on the compositor only.
+   ========================================================================== */
+
+/* Reload ring (every weapon while it reloads): the dashed ring and its mask
+   on a still child of the spinning element — no mask layer + offscreen pass
+   per frame; the ring turns as one layer, as it did. */
+html:not(.diag-hudanim) .wpn-ring.spin {
+  background: none;
+  -webkit-mask: none;
+  mask: none;
+}
+html:not(.diag-hudanim) .wpn-ring.spin::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: repeating-conic-gradient(var(--wpn) 0 22deg, rgba(14, 13, 18, 0.55) 22deg 45deg);
+  -webkit-mask: radial-gradient(closest-side, transparent 80%, #000 82%);
+  mask: radial-gradient(closest-side, transparent 80%, #000 82%);
+}
+
+/* Liquid gauges' wave (FAMAS tank, at rest too): the same blob column slid
+   by a transform instead of repainted at every frame — a child one tile
+   (7 px) taller, starting one tile higher (same tile grid), moved 0 → 3 px,
+   clipped by the wave's box as the background was. */
+html:not(.diag-hudanim) .gauge-wave {
+  overflow: hidden;
+  background: none;
+  animation: none;
+}
+html:not(.diag-hudanim) .gauge-wave::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -7px;
+  bottom: 0;
+  background: radial-gradient(ellipse at 50% 50%, var(--liq) 45%, transparent 50%);
+  background-size: 8px 7px;
+  animation: wave-bob-layer 0.9s ease-in-out infinite;
+}
+@keyframes wave-bob-layer { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(3px); } }

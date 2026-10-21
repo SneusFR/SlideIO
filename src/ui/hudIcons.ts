@@ -22,9 +22,8 @@ const O = o(3);
 // ---------------------------------------------------------------------------
 const BUDDY_INK = "#1d1512";
 
-export const BEAN_BUDDY_SVG = `
-<svg class="buddy-art" viewBox="0 0 80 80" aria-hidden="true">
-  <defs>
+// The drawing's pieces, shared by the one-SVG art and the portrait's layers.
+const BB_DEFS = `<defs>
     <radialGradient id="bb-body-grad" cx="36%" cy="32%" r="78%">
       <stop offset="0" stop-color="#ff9b5e"/>
       <stop offset="0.5" stop-color="#f0601f"/>
@@ -34,35 +33,34 @@ export const BEAN_BUDDY_SVG = `
       <stop offset="0" stop-color="#b6ea6a"/>
       <stop offset="1" stop-color="#5ea42a"/>
     </radialGradient>
-  </defs>
-  <!-- Sprout: stem + two leaves on top of the head -->
-  <path d="M40 16c0-4 1-7 3-9" fill="none" stroke="${BUDDY_INK}" stroke-width="4.4" stroke-linecap="round"/>
-  <path d="M40 16c0-4 1-7 3-9" fill="none" stroke="#6fb536" stroke-width="2" stroke-linecap="round"/>
-  <path class="bb-leaf bb-leaf-l" d="M40.5 11c-3-4-9-5-13-2 2 4 8 6 13 2z" fill="url(#bb-leaf-grad)" stroke="${BUDDY_INK}" stroke-width="2.2" stroke-linejoin="round"/>
-  <path class="bb-leaf" d="M43 8c3-5 10-6 15-3-2 5-9 7-15 3z" fill="url(#bb-leaf-grad)" stroke="${BUDDY_INK}" stroke-width="2.4" stroke-linejoin="round"/>
-  <!-- Squat pear body: narrow head, round belly -->
+  </defs>`;
+const BB_STEM = `<path d="M40 16c0-4 1-7 3-9" fill="none" stroke="${BUDDY_INK}" stroke-width="4.4" stroke-linecap="round"/>
+  <path d="M40 16c0-4 1-7 3-9" fill="none" stroke="#6fb536" stroke-width="2" stroke-linecap="round"/>`;
+/** `cls`: the class attribute (with its leading space) or "". */
+const bbLeafL = (cls: string): string =>
+  `<path${cls} d="M40.5 11c-3-4-9-5-13-2 2 4 8 6 13 2z" fill="url(#bb-leaf-grad)" stroke="${BUDDY_INK}" stroke-width="2.2" stroke-linejoin="round"/>`;
+const bbLeafR = (cls: string): string =>
+  `<path${cls} d="M43 8c3-5 10-6 15-3-2 5-9 7-15 3z" fill="url(#bb-leaf-grad)" stroke="${BUDDY_INK}" stroke-width="2.4" stroke-linejoin="round"/>`;
+const BB_BODY = `<!-- Squat pear body: narrow head, round belly -->
   <path class="bb-body" d="M40 14C50 14 55 22 56 30C57 38 70 43 70 57C70 70 57 76 40 76C23 76 10 70 10 57C10 43 23 38 24 30C25 22 30 14 40 14Z"
     fill="url(#bb-body-grad)" stroke="${BUDDY_INK}" stroke-width="4" stroke-linejoin="round"/>
   <ellipse cx="34" cy="21" rx="4.5" ry="2.4" fill="#ffffff" opacity="0.4" transform="rotate(-35 34 21)"/>
   <ellipse cx="20" cy="56" rx="2.6" ry="6" fill="#ffffff" opacity="0.18" transform="rotate(18 20 56)"/>
-  <circle cx="40" cy="67" r="1.3" fill="${BUDDY_INK}" opacity="0.75"/>
-
-  <g transform="translate(0 6)" class="bb-face bb-happy">
-    <g class="bb-eyes">
+  <circle cx="40" cy="67" r="1.3" fill="${BUDDY_INK}" opacity="0.75"/>`;
+/** The happy face's eyes (the blinking part), inside `<g${cls}>`. */
+const bbEyes = (cls: string): string => `<g${cls}>
       <circle cx="31" cy="31" r="6.4" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="2.4"/>
       <circle cx="49" cy="31" r="6.4" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="2.4"/>
       <circle cx="32" cy="31.5" r="2.5" fill="${BUDDY_INK}"/>
       <circle cx="48" cy="31.5" r="2.5" fill="${BUDDY_INK}"/>
       <circle cx="33" cy="30.3" r="0.9" fill="#ffffff"/>
       <circle cx="49" cy="30.3" r="0.9" fill="#ffffff"/>
-    </g>
-    <path d="M27 42q13 2 26 0-1 15-13 15t-13-15z" fill="#6e1a14" stroke="${BUDDY_INK}" stroke-width="2.6" stroke-linejoin="round"/>
+    </g>`;
+const BB_HAPPY_MOUTH = `<path d="M27 42q13 2 26 0-1 15-13 15t-13-15z" fill="#6e1a14" stroke="${BUDDY_INK}" stroke-width="2.6" stroke-linejoin="round"/>
     <ellipse cx="40" cy="53" rx="7" ry="3.2" fill="#e25548"/>
     <path d="M35.5 43.2h4.2v5.6a0.8 0.8 0 0 1-0.8 0.8h-2.6a0.8 0.8 0 0 1-0.8-0.8z" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="1.5" stroke-linejoin="round"/>
-    <path d="M40.3 43.2h4.2v5.6a0.8 0.8 0 0 1-0.8 0.8h-2.6a0.8 0.8 0 0 1-0.8-0.8z" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="1.5" stroke-linejoin="round"/>
-  </g>
-
-  <g transform="translate(0 6)" class="bb-face bb-worried">
+    <path d="M40.3 43.2h4.2v5.6a0.8 0.8 0 0 1-0.8 0.8h-2.6a0.8 0.8 0 0 1-0.8-0.8z" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="1.5" stroke-linejoin="round"/>`;
+const BB_WORRIED = `<g transform="translate(0 6)" class="bb-face bb-worried">
     <path d="M24 23l9 3M56 23l-9 3" fill="none" stroke="${BUDDY_INK}" stroke-width="2.8" stroke-linecap="round"/>
     <circle cx="31" cy="32" r="6" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="2.4"/>
     <circle cx="49" cy="32" r="6" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="2.4"/>
@@ -70,21 +68,19 @@ export const BEAN_BUDDY_SVG = `
     <circle cx="47.5" cy="33.5" r="2.2" fill="${BUDDY_INK}"/>
     <path d="M32 49q8-5 16 0-1 6-8 6t-8-6z" fill="#6e1a14" stroke="${BUDDY_INK}" stroke-width="2.4" stroke-linejoin="round"/>
     <path d="M36.2 46.8h3.6v3.6h-3.6zM40.2 46.8h3.6v3.6h-3.6z" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="1.3" stroke-linejoin="round"/>
-  </g>
-
-  <g transform="translate(0 6)" class="bb-face bb-panic">
-    <path d="M23 22l9-4M57 22l-9-4" fill="none" stroke="${BUDDY_INK}" stroke-width="2.8" stroke-linecap="round"/>
+  </g>`;
+const BB_PANIC_FACE = `<path d="M23 22l9-4M57 22l-9-4" fill="none" stroke="${BUDDY_INK}" stroke-width="2.8" stroke-linecap="round"/>
     <circle cx="31" cy="31" r="7.4" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="2.4"/>
     <circle cx="49" cy="31" r="7.4" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="2.4"/>
     <circle cx="31" cy="31" r="1.5" fill="${BUDDY_INK}"/>
     <circle cx="49" cy="31" r="1.5" fill="${BUDDY_INK}"/>
     <ellipse cx="40" cy="51" rx="7.5" ry="8.5" fill="#6e1a14" stroke="${BUDDY_INK}" stroke-width="2.6"/>
     <path d="M36.3 43.2h3.4v4h-3.4zM40.3 43.2h3.4v4h-3.4z" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="1.3" stroke-linejoin="round"/>
-    <ellipse cx="40" cy="56" rx="4.6" ry="2.4" fill="#e25548"/>
-    <path class="bb-sweat" d="M62 17c3.4 5 3.4 8.4 0 9.4-3.4-1-3.4-4.4 0-9.4z" fill="#8fe3ff" stroke="${BUDDY_INK}" stroke-width="2"/>
-  </g>
-
-  <g transform="translate(0 6)" class="bb-face bb-ouch">
+    <ellipse cx="40" cy="56" rx="4.6" ry="2.4" fill="#e25548"/>`;
+/** The panic face's sweat drop (its falling part). */
+const bbSweat = (cls: string): string =>
+  `<path${cls} d="M62 17c3.4 5 3.4 8.4 0 9.4-3.4-1-3.4-4.4 0-9.4z" fill="#8fe3ff" stroke="${BUDDY_INK}" stroke-width="2"/>`;
+const BB_OUCH_DEAD = `<g transform="translate(0 6)" class="bb-face bb-ouch">
     <path d="M25 27l8 4-8 4M55 27l-8 4 8 4" fill="none" stroke="${BUDDY_INK}" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
     <rect x="28" y="43" width="24" height="10" rx="5" fill="#ffffff" stroke="${BUDDY_INK}" stroke-width="2.6"/>
     <path d="M28.5 48h23M34 43.5v9M40 43.5v9M46 43.5v9" fill="none" stroke="${BUDDY_INK}" stroke-width="1.6"/>
@@ -94,8 +90,88 @@ export const BEAN_BUDDY_SVG = `
     <path d="M26 27l9 9M35 27l-9 9M45 27l9 9M54 27l-9 9" fill="none" stroke="${BUDDY_INK}" stroke-width="3.2" stroke-linecap="round"/>
     <path d="M30 47q10 4 20 0" fill="none" stroke="${BUDDY_INK}" stroke-width="3" stroke-linecap="round"/>
     <path d="M42 48.6v4.4a3.2 3.2 0 0 0 6.4 0v-5.6" fill="#e25548" stroke="${BUDDY_INK}" stroke-width="2.2" stroke-linejoin="round"/>
+  </g>`;
+
+/**
+ * The art as ONE SVG: the leaderboard's avatar (its animations off) and the
+ * portrait under `?diag=hudanim` (the previous portrait: its leaves, eyes and
+ * sweat drop animated as SVG children — hud.css « PERF — animations »).
+ */
+export const BEAN_BUDDY_SVG = `
+<svg class="buddy-art" viewBox="0 0 80 80" aria-hidden="true">
+  ${BB_DEFS}
+  <!-- Sprout: stem + two leaves on top of the head -->
+  ${BB_STEM}
+  ${bbLeafL(' class="bb-leaf bb-leaf-l"')}
+  ${bbLeafR(' class="bb-leaf"')}
+  ${BB_BODY}
+
+  <g transform="translate(0 6)" class="bb-face bb-happy">
+    ${bbEyes(' class="bb-eyes"')}
+    ${BB_HAPPY_MOUTH}
   </g>
+
+  ${BB_WORRIED}
+
+  <g transform="translate(0 6)" class="bb-face bb-panic">
+    ${BB_PANIC_FACE}
+    ${bbSweat(' class="bb-sweat"')}
+  </g>
+
+  ${BB_OUCH_DEAD}
 </svg>`;
+
+/**
+ * PERF — the PORTRAIT (#buddy-portrait, CombatHUD): the same drawing as
+ * stacked SVG LAYERS, so that its idle motions run on the compositor.
+ *
+ * CSS animations of SVG CHILDREN (`<path>`, `<g>`) cost the HUD's process
+ * at EVERY display refresh, at rest: the panic sweat drop animates even
+ * hidden (an SVG element under a `display: none` group keeps its style and
+ * its animation, which no compositor can run) and asks for a main frame;
+ * there, each SVG-child animation re-runs the SVG's style and layout — the
+ * leaves sway and the eyes blink all match long — and the portrait's layer
+ * is rasterized again (in the browser's GPU process, which the game's own
+ * frames need too).
+ *
+ * Here each moving part has an `<svg>` of its own (same 80×80 viewBox, same
+ * box: absolutely stacked over each other) in a `<div>` the animation moves:
+ * a compositor-only transform (a box Chrome always composites — not the
+ * `<svg>` root itself, whose transform animations it may keep on the main
+ * thread). Painted in the drawing's
+ * order — stem, left leaf, right leaf, body + faces, eyes, sweat drop (the
+ * eyes and the drop were drawn before the mouth / last in their face: they
+ * touch nothing drawn after them, so on top is the same picture). The faces
+ * keep their classes (`.bb-face.bb-happy`… the mood rules show one); the
+ * eyes and the drop sit in their face's group, alone in their layer. Each
+ * pivot is the SVG child's own one, written in the layer's CSS px (hud.css
+ * « PERF — animations »). The one-SVG art (BEAN_BUDDY_SVG) stays for the
+ * avatar and `?diag=hudanim`.
+ */
+export const BEAN_BUDDY_LAYERS = `
+<div class="buddy-art bb-layers">
+  <svg class="bb-layer" viewBox="0 0 80 80" aria-hidden="true">
+  ${BB_DEFS}
+  ${BB_STEM}
+  </svg>
+  <div class="bb-layer bb-leaf-layer bb-leaf-layer-l"><svg viewBox="0 0 80 80" aria-hidden="true">${bbLeafL("")}</svg></div>
+  <div class="bb-layer bb-leaf-layer bb-leaf-layer-r"><svg viewBox="0 0 80 80" aria-hidden="true">${bbLeafR("")}</svg></div>
+  <svg class="bb-layer" viewBox="0 0 80 80" aria-hidden="true">
+  ${BB_BODY}
+  <g transform="translate(0 6)" class="bb-face bb-happy">
+    ${BB_HAPPY_MOUTH}
+  </g>
+  ${BB_WORRIED}
+  <g transform="translate(0 6)" class="bb-face bb-panic">
+    ${BB_PANIC_FACE}
+  </g>
+  ${BB_OUCH_DEAD}
+  </svg>
+  <div class="bb-layer bb-eyes-layer"><svg viewBox="0 0 80 80" aria-hidden="true"><g transform="translate(0 6)" class="bb-face bb-happy">
+    ${bbEyes("")}
+  </g></svg></div>
+  <div class="bb-layer bb-sweat-layer"><svg viewBox="0 0 80 80" aria-hidden="true"><g transform="translate(0 6)" class="bb-face bb-panic">${bbSweat("")}</g></svg></div>
+</div>`;
 
 /** Popcorn grain used as the popcorn shotgun's ammo pip (one per real load):
  *  a lobed golden puff, near-black sticker outline, pale cream heart. */

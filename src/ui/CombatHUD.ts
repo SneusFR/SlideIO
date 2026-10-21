@@ -1,7 +1,8 @@
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import type { HealthView } from "../hud/protocol";
 import { hudFeed } from "./HudFeed";
-import { BEAN_BUDDY_SVG } from "./hudIcons";
+import { BEAN_BUDDY_LAYERS, BEAN_BUDDY_SVG } from "./hudIcons";
+import { HUD_ANIM_LEGACY_CLASS } from "./perfDiag";
 import { replayAnim } from "./hudKit";
 
 /** Min seconds between two "hurt" punches (continuous beams hit at 60 Hz). */
@@ -82,8 +83,12 @@ export class CombatHUD {
   private clock = 0;
 
   constructor() {
-    // Bean Buddy portrait art (all mood faces live in the SVG, CSS picks one).
-    this.buddyArt.innerHTML = BEAN_BUDDY_SVG;
+    // Bean Buddy portrait art (all mood faces live in the SVG, CSS picks one):
+    // stacked layers whose idle motions stay on the compositor (hudIcons
+    // BEAN_BUDDY_LAYERS); the one-SVG art under `?diag=hudanim` (HudRuntime).
+    this.buddyArt.innerHTML = document.documentElement.classList.contains(HUD_ANIM_LEGACY_CLASS)
+      ? BEAN_BUDDY_SVG
+      : BEAN_BUDDY_LAYERS;
     this.buddy.classList.add("mood-happy");
     this.lastMood = "happy";
 

@@ -42,6 +42,10 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *   nohudidle  the HUD document's old permanent frame loop: a main frame at
  *            every refresh even at rest (src/hud/runtime/frameClock.ts) —
  *            the debug line "HUD: … images/s" back at the display rate
+ *   hudanim  the HUD's previous animation CSS + Bean Buddy markup: the idle
+ *            motions that repainted / re-rasterized at every frame (SVG-child
+ *            animations, clip-path / mask on animated elements, the FAMAS
+ *            wave's background-position…) — hud.css « PERF — animations »
  *
  * The HUD's own switches reach its document (the HUD iframe has its own
  * address: src/hud/host/HudHost.ts hudDocumentUrl passes `?diag=` on).
@@ -58,6 +62,14 @@ export function perfExperiments(search: string = typeof location === "undefined"
       .filter(Boolean),
   );
 }
+
+/**
+ * `?diag=hudanim`: the class HudRuntime puts on the HUD document's <html>
+ * (the iframe's, or the game page's in the inline fallback). The HUD
+ * stylesheets' compositor-only overrides key on its ABSENCE, and CombatHUD
+ * then builds the one-SVG Bean Buddy instead of its layers.
+ */
+export const HUD_ANIM_LEGACY_CLASS = "diag-hudanim";
 
 /** The number of a numbered experiment (`scale50` → 50), or null when absent / invalid. */
 export function experimentValue(experiments: ReadonlySet<string>, prefix: string): number | null {

@@ -32,6 +32,7 @@ import { PopcornShotgunHUD } from "../../ui/PopcornShotgunHUD";
 import { SpearHUD } from "../../ui/SpearHUD";
 import { WaterFamasHUD } from "../../ui/WaterFamasHUD";
 import { takePaintGpuMs, warmUpPaint } from "../../ui/paint/PaintLayer";
+import { HUD_ANIM_LEGACY_CLASS, perfExperiments } from "../../ui/perfDiag";
 import type {
   CameraSnapshot,
   CreateHudRuntime,
@@ -105,6 +106,12 @@ class Runtime implements HudRuntime {
 
   init(init: HudInit): void {
     if (this.w) return;
+    // `?diag=hudanim` (ui/perfDiag.ts): the HUD's previous animation CSS — the
+    // overrides that keep its idle animations on the compositor key on the
+    // absence of this class (hud.css « PERF — animations »). This document's
+    // own address: the HUD iframe's (HudHost passes `?diag=` on), or the game
+    // page's in the inline fallback.
+    document.documentElement.classList.toggle(HUD_ANIM_LEGACY_CLASS, perfExperiments().has("hudanim"));
     injectMarkup();
     // Same order as Game's constructor (MatchClockHUD was a field
     // initializer: first): the widgets that append to the HUD's containers
