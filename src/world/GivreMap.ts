@@ -12,9 +12,11 @@ import {
   worldSpaceCopy,
   buildStaticBatches,
   toStandardMaterial,
+  type ChunkGrid,
   type StaticEntry,
 } from "./GivreRenderOptim";
-import { applyUberMaterial, batchAnimatedMeshes, freezeStaticTransforms } from "./MapBatching";
+import { applyUberMaterial, batchAnimatedMeshes, freezeStaticTransforms, type MapUberMaterial } from "./MapBatching";
+import { GivreDepthPrepass, depthPrepassWanted } from "./GivreDepthPrepass";
 import { diagSwitch, perfExperiments } from "../ui/perfDiag";
 import mapModelUrl from "../assets/MAP/Givre/givre_01.glb?url";
 import backdropModelUrl from "../assets/MAP/Givre/givre_01_fond.glb?url";
@@ -100,6 +102,11 @@ export class GivreMap {
   readonly materials = new Map<string, THREE.Material>();
   /** Animated décor (mixer root, clip, nodes, instanced puffs). */
   readonly animated: GivreAnimatedDecor;
+  /**
+   * Depth prepass of the static batches (GivreConfig.staticBatching.depthPrepass,
+   * `?diag=prepass` / `?diag=noprepass`) — null when off for the session.
+   */
+  depthPrepass: GivreDepthPrepass | null = null;
 
   private constructor(
     physics: PhysicsWorld,
@@ -114,7 +121,7 @@ export class GivreMap {
     // boiler) stays a shot target, consistent with the server's AABBs.
     const colliderSources = new Set<string>();
     for (const c of data.colliders) if (c.source) colliderSources.add(c.source);
-    this.animated = this.buildVisual(gltf, colliderSources);
+    this.animated = this.buildVisual(gltf, colliderSources, backdrop);
     this.buildLighting();
 
     backdrop.name = "givre_01_fond";
@@ -209,6 +216,7 @@ export class GivreMap {
   private buildVisual(
     gltf: { scene: THREE.Group; animations: THREE.AnimationClip[] },
     colliderSources: ReadonlySet<string>,
+    backdrop: THREE.Object3D,
   ): GivreAnimatedDecor {
     const scene = gltf.scene;
     scene.updateMatrixWorld(true);
@@ -236,7 +244,7 @@ export class GivreMap {
     // GivreRenderOptim. Shot targets + snow surfaces.
     const merged = new THREE.Group();
     merged.name = "givre_01_merged";
-    const { meshes, snow } = mergeStaticBatches(scene, animated);
+    const { meshes, snow, grid } = mergeStaticBatches(scene, animated);
     for (const mesh of meshes) {
       merged.add(mesh);
       this.hittables.push(mesh);
@@ -246,6 +254,30 @@ export class GivreMap {
     // own (never rendered) merged mesh with the original GIV_Neige material.
     if (snow) this.snowSurfaces.push(snow);
     this.group.add(merged);
+
+    // PERF (GPU): the static map depth-only first, so its heavy material is
+    // shaded once per pixel instead of ≈ 2 times — same image (see
+    // GivreDepthPrepass). The proxies sort before every other opaque. The
+    // backdrop's plain + mountains (2 meshes, ≈ 2 k triangles, identity
+    // matrices like the batches) join it: toward the outer plain, the map's
+    // own ground runs on under them — shaded, then covered by the backdrop
+    // (drawn after the map: its sphere is farther).
+    const experiments = perfExperiments();
+    if (depthPrepassWanted(givre.staticBatching.depthPrepass, experiments)) {
+      const occluders: THREE.Mesh[] = [...meshes];
+      backdrop.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh) occluders.push(o as THREE.Mesh);
+      });
+      const prepass = new GivreDepthPrepass(occluders, grid, {
+        knownPatch: (m) => (m as MapUberMaterial).isMapUberMaterial === true,
+        // `?diag=prepassall`: every triangle (to compare with the big ones only).
+        minArea: experiments.has("prepassall") ? 0 : givre.staticBatching.depthPrepassMinArea,
+      });
+      if (prepass.proxies.length > 0) {
+        this.group.add(prepass.group);
+        this.depthPrepass = prepass;
+      }
+    }
 
     // Animated nodes: never shadow casters. Only collider-backed ones (the
     // boiler) stay shot targets — the rest (steam, smoke, banners,
@@ -454,7 +486,7 @@ function setupLightmapFiltering(lightmaps: ReadonlySet<THREE.Texture>, mipLevels
 function mergeStaticBatches(
   scene: THREE.Object3D,
   animated: ReadonlySet<THREE.Object3D>,
-): { meshes: THREE.Mesh[]; snow: THREE.Mesh | null } {
+): { meshes: THREE.Mesh[]; snow: THREE.Mesh | null; grid: ChunkGrid } {
   const entries: StaticEntry[] = [];
   const staticMeshes: THREE.Mesh[] = [];
   scene.traverse((o) => {
@@ -519,15 +551,16 @@ function mergeStaticBatches(
   // GIV_Lampe keeps its own batches: its panels never cast (see below).
   if (b.uberMaterial) applyUberMaterial(entries, new Set([...keepMaterials, "GIV_Lampe"]));
   const box = givre.shadowBounds; // playable envelope (X / Z)
+  const grid: ChunkGrid = {
+    minX: box.min[0],
+    minZ: box.min[2],
+    maxX: box.max[0],
+    maxZ: box.max[2],
+    cellsX: b.cellsX,
+    cellsZ: b.cellsZ,
+  };
   const batches = buildStaticBatches(entries, (g) => mergeGeometries(g, false), {
-    grid: {
-      minX: box.min[0],
-      minZ: box.min[2],
-      maxX: box.max[0],
-      maxZ: box.max[2],
-      cellsX: b.cellsX,
-      cellsZ: b.cellsZ,
-    },
+    grid,
     chunkMinTriangles: b.chunkMinTriangles,
     singleSidedMaxThickness: b.singleSidedMaxThickness,
     // `?diag=percomponent`: the single-sided rule per connected component
@@ -553,7 +586,7 @@ function mergeStaticBatches(
     mesh.updateMatrix();
     out.push(mesh);
   }
-  return { meshes: out, snow };
+  return { meshes: out, snow, grid };
 }
 
 /**

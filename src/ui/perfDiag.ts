@@ -39,14 +39,25 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *            by as much = they wait for each other (something serializes)
  *   noflush  no gl.flush() at the pass boundaries (Game.flushGpu): the old
  *            submission, to compare
+ *   prepass  Givre: depth prepass of the static map (GivreDepthPrepass) —
+ *            the map (+ backdrop) drawn depth-only first, then the map's
+ *            material shaded ≈ once per covered pixel instead of ≈ 2 times;
+ *            same image (checked at load on this GPU: console line
+ *            "[GPU] pré-passe…"). Costs the big triangles' vertices twice
+ *            + 2 draws: compare the GPU line (`?gpu=draws`: "pré-passe" +
+ *            "carte") and the CPU line
+ *   noprepass  Givre: no depth prepass (when GivreConfig turns it on)
+ *   prepassall  Givre: with `prepass`, every map triangle in it (not only
+ *            those ≥ GivreConfig.staticBatching.depthPrepassMinArea m²) —
+ *            the vertex cost of a complete prepass
  *   percomponent  Givre: the single-sided rule of the static map (closed,
  *            outward, ≤ 2 m thin solids drawn FrontSide) applied per
  *            connected component of a mesh, not only per whole mesh
  *            (GivreRenderOptim.closedOutwardThinTriangles) — NOT the same
  *            image to the bit (a few pixels per view): an experiment
  *
- * (Session switches — percomponent: `?diag=<name>` on, `?diag=no<name>`
- * off, see diagSwitch; read once at load.)
+ * (Session switches — prepass, percomponent: `?diag=<name>` on,
+ * `?diag=no<name>` off, see diagSwitch; read once at load.)
  * Several at once: `?diag=noflush,scale50`. Never for normal play.
  */
 export function perfExperiments(search: string = typeof location === "undefined" ? "" : location.search): ReadonlySet<string> {
