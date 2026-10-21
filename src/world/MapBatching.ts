@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { buildStaticBatches, type StaticEntry } from "./GivreRenderOptim";
+import { registerFrozenMap } from "../effects/matrixFresh";
 
 /**
  * PERF — draw-call batching shared by the maps (Givre, Jungle, Yard).
@@ -639,6 +640,10 @@ export function batchAnimatedMeshes(
  * update forces its subtree). Call once the map is final; nodes animated by
  * code (position / rotation / scale written at runtime) must be listed in
  * `animated` or not be under `root`.
+ *
+ * The map root also skips the renderer's own scene pass of each frame once
+ * Game.frame's explicit pass has computed it (matrixFresh: its décor mixer
+ * runs before that pass, nothing writes a map node after it).
  */
 export function freezeStaticTransforms(
   root: THREE.Object3D,
@@ -649,4 +654,5 @@ export function freezeStaticTransforms(
     o.updateMatrix();
     o.matrixAutoUpdate = false;
   });
+  registerFrozenMap(root);
 }

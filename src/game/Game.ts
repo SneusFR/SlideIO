@@ -76,6 +76,7 @@ import { Shockwave } from "../effects/Shockwave";
 import { fxLights } from "../effects/FXLightPool";
 import { StaticShadowCache, findStaticShadowSetup } from "../effects/StaticShadowCache";
 import { nextSkinnedRaycastFrame } from "../effects/SkinnedRaycast";
+import { markFrozenMapsFresh } from "../effects/matrixFresh";
 import { warmUpEnemyHealthBars } from "../bots/BotModel";
 
 import { HammerWeapon, HammerState } from "../weapons/HammerWeapon";
@@ -4217,6 +4218,7 @@ export class Game {
     // pass skips their subtrees (see matrixFresh).
     this.botManager.markMatricesFresh();
     this.corpses.markMatricesFresh();
+    markFrozenMapsFresh(); // the map too (its décor mixer ran above)
     // GIVRE: puff instances + garland halos from the final node matrices.
     this.givreEffects?.afterMatrixUpdate();
     sections?.lap("bots anim");

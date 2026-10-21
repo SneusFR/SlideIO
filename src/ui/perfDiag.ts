@@ -123,6 +123,34 @@ export function diagSwitch(experiments: ReadonlySet<string>, name: string, defau
   return defaultOn;
 }
 
+/**
+ * CPU-side optimisations that change neither the image nor the game (same GL state, same
+ * matrices, same HUD) are ON by default; `?diag=no<name>` turns one off from the load, to compare
+ * on any machine (see PERFORMANCE.md « Vérifier sur une machine »):
+ *
+ *   nohudskip       the HUD display-state commands repeated every frame are sent again
+ *                   (hud/host/HudProxies.ts)
+ *   nouniformcache  three.js's own uniform caches and setters (effects/UniformCacheKinds.ts)
+ *   nofreshskip     the renderer's second pass over the map and the FP arms runs again, and
+ *                   the frame's pass over the dead bots (effects/matrixFresh.ts)
+ *
+ * DEV builds expose the live switches as `window.__cpuOpt` (`__cpuOpt.hudskip.on = false`): a
+ * headless check compares both paths in the SAME session, on the same frame.
+ */
+const optSwitches: Record<string, { on: boolean }> = {};
+
+export function optSwitch(name: string): { on: boolean } {
+  let s = optSwitches[name];
+  if (!s) {
+    s = { on: !perfExperiments().has(`no${name}`) };
+    optSwitches[name] = s;
+    if (import.meta.env?.DEV && typeof window !== "undefined") {
+      (window as unknown as Record<string, unknown>).__cpuOpt = optSwitches;
+    }
+  }
+  return s;
+}
+
 /** The number of a numbered experiment (`scale50` → 50), or null when absent / invalid. */
 export function experimentValue(experiments: ReadonlySet<string>, prefix: string): number | null {
   for (const e of experiments) {

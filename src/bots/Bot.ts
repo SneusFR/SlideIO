@@ -17,6 +17,7 @@ import { ParticleSystem } from "../effects/ParticleSystem";
 import { BotModel, BotModelEnv, BotPose } from "./BotModel";
 import { BotAI } from "./BotAI";
 import { BotWeapon, BotWeaponWorld, BotShooter, randomBotWeapon } from "./BotWeapons";
+import { freshSkip, markMatrixFresh } from "../effects/matrixFresh";
 import type { RemoteWeaponController } from "../network/remote/RemoteWeaponController";
 
 /** Shared context handed to every bot each frame. */
@@ -95,6 +96,8 @@ export class Bot implements Combatant, BotShooter {
   private readonly lastPos = new THREE.Vector3();
   /** > 0 while the HEX SNIPER tongue reels this bot in (locomotion suspended). */
   private pulledTimer = 0;
+  /** Frames since the death (postStep while dead; 0 while alive). */
+  private deadFrames = 0;
 
 
   private readonly body: RAPIER_API.RigidBody;
@@ -663,7 +666,15 @@ export class Bot implements Combatant, BotShooter {
 
   /** Sync visuals after the physics step. */
   postStep(dt: number, camQuat: THREE.Quaternion, camPos: THREE.Vector3, time: number): void {
-    if (!this.health.alive) return;
+    if (!this.health.alive) {
+      // PERF (matrixFresh): dead, the model is hidden and frozen — nothing animates, moves or
+      // re-poses it until the respawn (postStep stops here, the death's own changes are behind
+      // us): once two full scene passes have computed it after the death, the frame's explicit
+      // pass skips it too (its ~70 matrices would come out the same). Respawn: computed again.
+      if (this.deadFrames++ >= 2 && freshSkip.on) markMatrixFresh(this.model.group);
+      return;
+    }
+    this.deadFrames = 0;
 
     // ---- Temporary ragdoll: physics → visuals, then recovery checks ----
     if (this.ragdolled && this.ragdoll) {

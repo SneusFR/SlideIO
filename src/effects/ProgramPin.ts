@@ -1,4 +1,5 @@
 import type * as THREE from "three";
+import { watchProgram } from "./UniformCacheKinds";
 
 /**
  * PERF — a compiled shader program is NEVER released during a session.
@@ -18,7 +19,10 @@ import type * as THREE from "three";
 const pinned = new WeakSet<object>();
 const lastCount = new WeakMap<THREE.WebGLRenderer, number>();
 
-/** Pins every program compiled since the previous call (cheap when none). */
+/**
+ * Pins every program compiled since the previous call (cheap when none) —
+ * and gives its float uniforms raw-double caches (see UniformCacheKinds).
+ */
 export function pinNewPrograms(renderer: THREE.WebGLRenderer): void {
   const programs = renderer.info.programs;
   if (!programs || programs.length === lastCount.get(renderer)) return;
@@ -26,6 +30,7 @@ export function pinNewPrograms(renderer: THREE.WebGLRenderer): void {
     if (pinned.has(program)) continue;
     pinned.add(program);
     (program as unknown as { usedTimes: number }).usedTimes++;
+    watchProgram(program);
   }
   lastCount.set(renderer, programs.length);
 }
