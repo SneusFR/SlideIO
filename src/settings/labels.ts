@@ -184,6 +184,20 @@ export function guardNoticeText(from: GraphicsValues, to: GraphicsValues, goalFp
   return `Graphics lowered to hold ${goalFps} FPS${change ? ` (${change})` : ""}`;
 }
 
+/** The settings page's Auto summary once a rung tried one step back up held a whole match. */
+export function guardRaisedText(values: GraphicsValues, stepsLeft: number, goalFps: number, caps: ChangeCaps): string {
+  const where =
+    stepsLeft === 0
+      ? "back to the detected settings"
+      : stepsLeft === 1
+        ? "still one step under the detected settings"
+        : `still ${stepsLeft} steps under the detected settings`;
+  return (
+    `A whole match held ${goalFps} FPS again, so Auto raised the graphics one step (${where}): ` +
+    `${describeValues(values, caps)}. Run the detection again to measure from scratch.`
+  );
+}
+
 /** The settings page's Auto summary once the guard has kept a step (it replaces the detection's). */
 export function guardSummaryText(values: GraphicsValues, steps: number, fpsBefore: number, goalFps: number, caps: ChangeCaps): string {
   const n = steps === 1 ? "one step" : `${steps} steps`;

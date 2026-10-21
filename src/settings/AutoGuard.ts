@@ -22,9 +22,14 @@ import { sameValues, type GraphicsValues } from "./GraphicsSettings";
  *     the graphics are not the limit (a browser frame cap, the processor, the
  *     browser's GPU process): the guard stops for the session and that step
  *     is not stored;
- *   - never back up by itself (no oscillation: only a new detection raises
- *     the image again), never below the beauty floor (the ladder's last
- *     rung), never for an explicit preset (Low, High, Custom…).
+ *   - never back up inside a session (no oscillation); at the start of a
+ *     LATER session (the next day, then waits doubling after each failed
+ *     try) ONE rung back up towards the detection's own answer is tried,
+ *     stored once it held a whole match, stepped down again otherwise —
+ *     conditions change (charger, room, a lighter HUD after an update);
+ *   - never below the beauty floor (the ladder's last rung), never above
+ *     the detection's answer, never for an explicit preset (Low, High,
+ *     Custom…).
  *
  * Signal: the intervals between rendered frames — as the detection, no GPU
  * timer queries. When the GPU is the limit, Chrome delivers ≈ 1000 / (GPU ms
@@ -47,8 +52,8 @@ export const AUTO_GUARD = {
   /**
    * The promise holds while the delivered frame rate of a stretch stays at
    * ≥ 95 % of the goal (57 FPS for 60). With the trimming below, a 60 Hz
-   * laptop triggers from ≈ 17.8 ms of GPU per frame (≈ 56 FPS delivered:
-   * a missed refresh every ~15 frames, judder you see), while 58-59 FPS
+   * laptop triggers from ≈ 17.6 ms of GPU per frame (≈ 55-56 FPS delivered:
+   * a missed refresh every ~12 frames, judder you see), while 58-59 FPS
    * (a GPU at 16.9-17.2 ms) or lone hitches never cost the image a step.
    */
   holdRatio: 0.95,
@@ -101,6 +106,22 @@ export const AUTO_GUARD = {
   minGain: 0.02,
   /** Verdicts are looked at every 0.5 s of focused play (the per-frame work is a few additions). */
   checkEveryMs: 500,
+  /**
+   * STEPPING BACK UP — never inside a session: the frames of a lower rung say
+   * nothing about the rung above it (a vsync display shows 60 FPS at 10 ms
+   * and at 16 ms alike), so going back up there would be a guess, and an
+   * oscillation when it is wrong (on the owner's laptop 90 % held a whole
+   * match with ≈ 9 late frames, 100 % fell to 45-48 FPS). But conditions
+   * change between sessions — a laptop plugged in again, a cooler room, a
+   * lighter HUD after an update — so at the START of a later session ONE rung
+   * up is tried (towards the detection's own answer, never above it), from
+   * the next day on: the first try 20 h after the step…
+   */
+  retryAfterMs: 20 * 3600_000,
+  /** …each failed try doubling the wait (20 h, 40 h, 80 h…), at most a month. */
+  retryMaxMs: 30 * 24 * 3600_000,
+  /** A tried rung is kept (stored) once it held this much focused play without a step: about one match. */
+  trialKeepMs: 4 * 60_000,
   /** Histogram resolution of the intervals (trimmed frame rate without sorting anything). */
   binMs: 0.25,
   /** Intervals kept per stretch (10 s at 400 FPS). */
@@ -115,8 +136,11 @@ export type AutoGuardConfig = typeof AUTO_GUARD;
  * sort). Fixed memory; nothing allocated per frame.
  */
 export class FrameStretch {
-  /** Intervals, oldest first from `head` (negative = processor-late). */
-  private readonly ring: Float32Array;
+  /**
+   * Intervals, oldest first from `head` (negative = processor-late). Float64:
+   * a value dropped must be exactly the one added (sums, histogram bin).
+   */
+  private readonly ring: Float64Array;
   private head = 0;
   private size = 0;
   private totalMs = 0;
@@ -135,7 +159,7 @@ export class FrameStretch {
   private openCountedMs = 0;
 
   constructor(private readonly cfg: AutoGuardConfig = AUTO_GUARD) {
-    this.ring = new Float32Array(cfg.capacity);
+    this.ring = new Float64Array(cfg.capacity);
     const n = Math.ceil(cfg.stallMs / cfg.binMs) + 1;
     this.bins = new Uint32Array(n);
     this.binSums = new Float64Array(n);
@@ -310,6 +334,8 @@ export class AutoGuard {
   private before = 0;
   /** Steps applied this session. */
   steps = 0;
+  /** Focused play seen this session (ms; stalls left out). */
+  playedMs = 0;
 
   constructor(
     /** The frame rate the promise is about: 60, or the display's rate when lower. */
@@ -355,6 +381,7 @@ export class AutoGuard {
       this.settleLeft = Math.max(this.settleLeft, this.cfg.resumeSettleMs);
       return null;
     }
+    this.playedMs += dt;
     if (this.phase_ === "wait") return null;
     if (this.settleLeft > 0) {
       this.settleLeft -= dt;
@@ -437,4 +464,24 @@ export function guardStepIndex(ladder: readonly GraphicsValues[], current: Graph
     lowest = j;
   }
   return lowest;
+}
+
+/**
+ * The rung ONE step back up from `current`, never above `detected` (the
+ * detection's own answer): the best rung (lowest index, from `detected` on)
+ * whose own step down lands on `current` — the exact undo of one guard step,
+ * fine knobs included. Null when `current` is not below `detected` on this
+ * ladder (nothing to climb back to).
+ */
+export function guardUpIndex(ladder: readonly GraphicsValues[], current: GraphicsValues, detected: GraphicsValues): number | null {
+  const c = ladder.findIndex((v) => sameValues(v, current));
+  const d = ladder.findIndex((v) => sameValues(v, detected));
+  if (c < 0 || d < 0 || d >= c) return null;
+  for (let k = d; k < c; k++) if (guardStepIndex(ladder, ladder[k]) === c) return k;
+  return c - 1;
+}
+
+/** Wait before the next try one step up, after `fails` failed tries in a row (20 h, 40 h, 80 h… a month at most). */
+export function retryDelay(fails: number, cfg: AutoGuardConfig = AUTO_GUARD): number {
+  return Math.min(cfg.retryMaxMs, cfg.retryAfterMs * 2 ** Math.max(0, Math.min(16, fails)));
 }

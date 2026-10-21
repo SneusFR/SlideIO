@@ -274,6 +274,12 @@ export interface AutoResult {
   guardSteps?: number;
   /** Date.now() of the guard's last kept step (null / absent = none). */
   guardAt?: number | null;
+  /** The detection's own answer: the guard climbs back towards it, never above (null / absent = `values`). */
+  detected?: GraphicsValues | null;
+  /** Date.now() from which ONE rung back up may be tried, at the start of a session (null = nothing to try). */
+  guardRetryAt?: number | null;
+  /** Tries one rung up that failed in a row (each doubles the wait before the next). */
+  guardUpFails?: number;
 }
 
 export interface GraphicsChoice {

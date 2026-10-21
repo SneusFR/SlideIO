@@ -4,6 +4,7 @@ import {
   effectivePreset,
   effectiveValues,
   heuristicPreset,
+  liveValues,
   needsDetection,
   presetValues,
   reloadChanges,
@@ -19,8 +20,8 @@ import {
   type ReloadChange,
 } from "./GraphicsSettings";
 import { buildLadder, summarize, tuneConfigFor, type AutoTuneConfig, type TuneOutcome } from "./AutoTune";
-import { AUTO_GUARD, AutoGuard, guardStepIndex, type AutoGuardConfig, type GuardVerdict } from "./AutoGuard";
-import { guardNoticeText, guardSummaryText } from "./labels";
+import { AUTO_GUARD, AutoGuard, guardStepIndex, guardUpIndex, retryDelay, type AutoGuardConfig, type GuardVerdict } from "./AutoGuard";
+import { describeChange, guardNoticeText, guardRaisedText, guardSummaryText } from "./labels";
 import type { PerfPanelMode, SettingsRecord, SettingsStore } from "./SettingsStore";
 import type { OutlineSettings } from "../game/OutlineSettings";
 import type { CrosshairSettings } from "../ui/CrosshairSettings";
@@ -84,6 +85,8 @@ export interface GraphicsControllerOptions {
   defer?: (fn: () => void) => void;
   /** Thresholds of the in-match guard (tests). */
   guardConfig?: AutoGuardConfig;
+  /** Wall clock (Date.now; tests): when a try one rung back up is due. */
+  now?: () => number;
 }
 
 /** The in-match guard of one detection result, for this session. */
@@ -93,11 +96,15 @@ interface GuardSession {
   at: number;
   guard: AutoGuard;
   /**
-   * Values on screen below the stored ones: a step not kept yet (being
-   * judged), or one judged useless (kept on screen for the session, never
-   * stored). Null = the stored values.
+   * Values on screen other than the stored ones: a step not kept yet (being
+   * judged), one judged useless (kept on screen for the session, never
+   * stored), or the rung one step up tried this session. Null = the stored values.
    */
   live: GraphicsValues | null;
+  /** This session tries ONE rung back up (since its start): kept after a whole match without a step. */
+  trial: { to: GraphicsValues; startPlayedMs: number } | null;
+  /** The try did not hold: the guard stepped back down from it (the next try waits twice as long). */
+  trialFailed: boolean;
 }
 
 export interface DetectionProgress {
@@ -140,9 +147,12 @@ export class GraphicsController {
   private readonly marginOverride: number | null;
   private readonly defer: (fn: () => void) => void;
   private readonly guardConfig: AutoGuardConfig;
+  private readonly now: () => number;
   private guardSession: GuardSession | null = null;
   /** The guard gets the frames (recomputed at every sync: cheap per frame). */
   private guardArmed = false;
+  /** True during the constructor: the session's START — the only moment a rung back up is tried. */
+  private starting = true;
 
   constructor(
     private readonly store: SettingsStore,
@@ -158,10 +168,12 @@ export class GraphicsController {
     this.marginOverride = marginSwitch(experiments);
     this.defer = options.defer ?? ((fn) => void setTimeout(fn, 0));
     this.guardConfig = options.guardConfig ?? AUTO_GUARD;
+    this.now = options.now ?? (() => Date.now());
     store.subscribe(() => this.sync());
     host.onDisplayDensityChange = () => this.sync();
     host.addFrameListener?.((t, cpuMs, play) => this.onFrame(t, cpuMs, play));
     this.sync();
+    this.starting = false;
   }
 
   get record(): SettingsRecord {
@@ -248,6 +260,8 @@ export class GraphicsController {
   /** Everything the record says, applied (idempotent: the host only changes what differs). */
   sync(): void {
     const r = this.record;
+    // (first: the guard's session — at the start, a rung back up may be tried: effective() then shows it)
+    this.refreshGuard();
     this.host.applyGraphicsSettings(this.effective());
     this.host.setFpsCap(this.capFps());
     this.host.applyOutlineSettings({ ...r.outline, debugEdges: this.outlineDebug });
@@ -260,7 +274,6 @@ export class GraphicsController {
       this.lastPanel = r.perfPanel;
       this.host.setPerfPanel(r.perfPanel);
     }
-    this.refreshGuard();
   }
 
   /**
@@ -350,6 +363,9 @@ export class GraphicsController {
       version: AUTO_TUNE_VERSION,
       guardSteps: 0,
       guardAt: null,
+      detected: { ...values },
+      guardRetryAt: null,
+      guardUpFails: 0,
     };
   }
 
@@ -395,8 +411,15 @@ export class GraphicsController {
     if (!auto) return;
     let s = this.guardSession;
     if (!s || s.at !== auto.at || s.map !== this.mapId) {
-      s = { map: this.mapId, at: auto.at, guard: new AutoGuard(this.guardGoal(), this.guardConfig), live: null };
+      s = { map: this.mapId, at: auto.at, guard: new AutoGuard(this.guardGoal(), this.guardConfig), live: null, trial: null, trialFailed: false };
       this.guardSession = s;
+      // The START of a session, values lowered by the guard in an earlier one, the wait over: ONE rung back up.
+      const up = this.starting ? this.recoveryRung(auto) : null;
+      if (up) {
+        s.live = { ...up };
+        s.trial = { to: { ...up }, startPlayedMs: 0 };
+        console.info(`[graphics] Auto guard: trying one step higher again this session (${describeChange(auto.values, up, this.host.graphicsCaps)}).`);
+      }
     }
     if (!s.guard.active) return;
     if (s.guard.phase === "watch" && this.guardStepTarget() === null) return; // the floor: nothing below
@@ -410,11 +433,39 @@ export class GraphicsController {
     return j === null ? null : ladder[j];
   }
 
+  /**
+   * The rung ONE step back up from a result the guard lowered in an earlier
+   * session, once its wait is over (guardRetryAt) — never above the
+   * detection's own answer. Null: nothing to try.
+   */
+  private recoveryRung(r: AutoResult): GraphicsValues | null {
+    if (!r.detected || (r.guardSteps ?? 0) <= 0 || r.guardRetryAt == null || this.now() < r.guardRetryAt) return null;
+    const boot = this.host.graphicsBoot;
+    const caps = this.host.graphicsCaps;
+    const ladder = buildLadder(boot, this.env(), caps);
+    const k = guardUpIndex(ladder, liveValues(boot, r.values, caps), liveValues(boot, r.detected, caps));
+    return k === null ? null : ladder[k];
+  }
+
+  /** True while this session tries a rung back up (not stored yet). */
+  get guardTrying(): boolean {
+    return this.guardSession?.trial != null && this.guardLive() !== null;
+  }
+
   private onFrame(t: number, cpuMs: number, play: boolean): void {
     if (!this.guardArmed) return;
     const s = this.guardSession!;
     const v = s.guard.onFrame(t, cpuMs, play);
-    if (v) this.onGuardVerdict(s, v);
+    if (v) {
+      this.onGuardVerdict(s, v);
+      return;
+    }
+    // The rung tried one step up held a whole match: it is stored.
+    const trial = s.trial;
+    if (trial && s.guard.phase === "watch" && s.guard.playedMs - trial.startPlayedMs >= this.guardConfig.trialKeepMs) {
+      s.trial = null;
+      this.defer(() => this.guardKeepTrial(s, trial.to));
+    }
   }
 
   private onGuardVerdict(s: GuardSession, v: GuardVerdict): void {
@@ -438,8 +489,8 @@ export class GraphicsController {
       case "useless":
         // The frame rate does not follow the graphics here (a browser frame
         // cap, the processor, the browser's GPU process): no more steps this
-        // session. The one on screen stays (never back up by itself) but is
-        // not stored: the next session starts from the stored values.
+        // session. The one on screen stays (never back up inside a session)
+        // but is not stored: the next session starts from the stored values.
         this.guardArmed = false;
         console.info(
           `[graphics] Auto guard: ${Math.round(v.before ?? 0)} → ${Math.round(v.fps)} FPS after a step — the graphics are not the limit, guard off for this session.`,
@@ -451,6 +502,11 @@ export class GraphicsController {
   /** One rung down, live (between two frames: see `defer`). */
   private guardStep(s: GuardSession): void {
     if (this.guardSession !== s || !s.guard.active) return;
+    if (s.trial) {
+      // The rung tried one step up did not hold: back down (to the stored rung), the next try later.
+      s.trial = null;
+      s.trialFailed = true;
+    }
     const from = this.effective();
     const to = this.guardStepTarget();
     if (!to || this.record.graphics.preset !== "auto" || this.detection) {
@@ -471,20 +527,63 @@ export class GraphicsController {
     const map = s.map;
     const caps = this.host.graphicsCaps;
     const goal = s.guard.goalFps;
+    const cfg = this.guardConfig;
+    const now = this.now();
+    const trialFailed = s.trialFailed;
+    s.trialFailed = false;
     this.store.update((d) => {
       const r = d.graphics.auto[map];
       if (!r || r.at !== s.at) return; // replaced meanwhile (a new detection)
+      if (sameValues(r.values, values)) {
+        // Back on the stored rung after a try one step up that did not hold: the next try waits twice as long.
+        if (trialFailed) {
+          const fails = (r.guardUpFails ?? 0) + 1;
+          d.graphics.auto[map] = { ...r, guardUpFails: fails, guardRetryAt: now + retryDelay(fails, cfg) };
+        }
+        return;
+      }
       const steps = (r.guardSteps ?? 0) + 1;
       d.graphics.auto[map] = {
         ...r,
         values: { ...values },
+        detected: r.detected ?? { ...r.values },
         guardSteps: steps,
-        guardAt: Date.now(),
+        guardAt: now,
+        guardRetryAt: now + retryDelay(r.guardUpFails ?? 0, cfg),
         summary: guardSummaryText(values, steps, v.before ?? v.fps, goal, caps),
       };
     });
-    // Stored = on screen: nothing left to override (same values: nothing changes on screen).
-    const r = this.store.get().graphics.auto[map];
+    this.dropLiveIfStored(s, values);
+  }
+
+  /** The rung tried one step up held a whole match: stored (one guard step less), the next try another day. */
+  private guardKeepTrial(s: GuardSession, to: GraphicsValues): void {
+    if (this.guardSession !== s) return;
+    const map = s.map;
+    const caps = this.host.graphicsCaps;
+    const goal = s.guard.goalFps;
+    const cfg = this.guardConfig;
+    const now = this.now();
+    this.store.update((d) => {
+      const r = d.graphics.auto[map];
+      if (!r || r.at !== s.at) return;
+      const steps = Math.max(0, (r.guardSteps ?? 0) - 1);
+      d.graphics.auto[map] = {
+        ...r,
+        values: { ...to },
+        guardSteps: steps,
+        guardAt: now,
+        guardUpFails: 0,
+        guardRetryAt: steps > 0 ? now + retryDelay(0, cfg) : null,
+        summary: guardRaisedText(to, steps, goal, caps),
+      };
+    });
+    this.dropLiveIfStored(s, to);
+  }
+
+  /** Stored = on screen: nothing left to override (same values: nothing changes on screen). */
+  private dropLiveIfStored(s: GuardSession, values: GraphicsValues): void {
+    const r = this.store.get().graphics.auto[s.map];
     if (r && r.at === s.at && s.live && sameValues(s.live, values) && sameValues(r.values, values)) {
       s.live = null;
       this.refreshGuard();

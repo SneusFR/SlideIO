@@ -55,8 +55,10 @@ import { describeValues, formatNumber } from "./labels";
  *    oscillates), and the player can always override it.
  * 6. In matches, the AUTO GUARD (settings/AutoGuard) watches the real frames:
  *    if 60 FPS stop holding for a sustained stretch of focused play (fights,
- *    a throttled laptop), it steps this answer down the same ladder — live,
- *    stored, never back up by itself, never below the floor.
+ *    a throttled laptop, the HUD's own drawing — the detection measures with
+ *    the HUD hidden), it steps this answer down the same ladder — live,
+ *    stored, never back up inside a session (one rung back up is tried at
+ *    the start of a later one), never below the floor.
  */
 
 /** Every threshold of the detection, with its reason. */
@@ -105,8 +107,11 @@ export const AUTO_TUNE = {
    *     ~190 k map triangles, the depth clear, submission): +30 % pixels was
    *     only ≈ +15-25 % of frame time;
    *   - the menu is measured on a cool chip in its turbo window, with the
-   *     main thread nearly idle (no AI, no physics); a match adds bots,
-   *     effects and the HUD, keeps the processor busy (processor and GPU share
+   *     main thread nearly idle (no AI, no physics) and the in-match HUD
+   *     HIDDEN (menu-active, game-paused: its raster and compositing never
+   *     reach a probe); a match adds bots, effects and that HUD (on the
+   *     owner's laptop, before its CSS fix: 59.9 → 45 FPS at native with the
+   *     same WebGL time), keeps the processor busy (processor and GPU share
    *     ONE power budget on these chips) and, minutes later, the chip settles
    *     at its sustained power (battery, office power plans: lower still);
    *   - on a 60 Hz screen, 5 % over the 16.7 ms budget already costs ≈ 3 FPS.

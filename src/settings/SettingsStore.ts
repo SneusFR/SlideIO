@@ -116,6 +116,9 @@ function sanitizeAuto(raw: unknown, map: string): AutoResult | null {
     version: num(r.version, 0),
     guardSteps: Math.max(0, Math.min(64, Math.floor(num(r.guardSteps, 0)))),
     guardAt: typeof r.guardAt === "number" && Number.isFinite(r.guardAt) ? r.guardAt : null,
+    detected: r.detected && typeof r.detected === "object" ? sanitizeGraphicsValues(r.detected, HOLE_FILLER) : null,
+    guardRetryAt: typeof r.guardRetryAt === "number" && Number.isFinite(r.guardRetryAt) ? r.guardRetryAt : null,
+    guardUpFails: Math.max(0, Math.min(16, Math.floor(num(r.guardUpFails, 0)))),
   };
 }
 
