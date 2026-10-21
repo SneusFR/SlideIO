@@ -109,11 +109,42 @@ export const GivreConfig = {
      */
     singleSidedMaxThickness: 2,
     /**
+     * EXPERIMENT, off: the same rule per CONNECTED COMPONENT of the meshes
+     * it refuses as a whole (several solids in one mesh: roof slabs over the
+     * whole map, a rack of crates, trees… — GivreRenderOptim.
+     * closedOutwardThinTriangles): fewer rasterised back faces, but NOT the
+     * same image to the bit — a few pixels per view change (bench, see
+     * PERFORMANCE.md « L'overdraw de la carte »). `?diag=percomponent`.
+     */
+    singleSidedPerComponent: false as boolean,
+    /**
      * PERF: every lightmapped flat-colour material shares ONE material
      * (constants moved to vertex attributes — MapBatching
      * applyUberMaterial): ~70 static batches → ~14, same image.
      */
     uberMaterial: true,
+    /**
+     * PERF (GPU): depth prepass of the static batches (GivreDepthPrepass):
+     * the map (+ the backdrop) is drawn depth-only first, then its heavy
+     * material is shaded ≈ once per covered pixel instead of ≈ 2 times. Same
+     * image (and checked at load on the player's GPU). Costs 2 draws and the
+     * vertices of its triangles a second time. Off until measured on the
+     * real GPUs (PERFORMANCE.md « Vérifier sur une machine »).
+     * `?diag=prepass` / `?diag=noprepass` override this default for one
+     * session.
+     */
+    depthPrepass: false as boolean,
+    /**
+     * Only the map triangles of at least this area (m²) go into the prepass:
+     * the big occluders (walls, floors, roofs) do almost all the work —
+     * measured (overdraw-bench, map fragments shaded per visible map pixel,
+     * the 12 views not facing the plain — there the map's ground runs on
+     * under the backdrop, hence the backdrop in the prepass): 1.00-1.13 with
+     * ≈ 26 k triangles at 0.1 m², 1.00 with all 134 k, up to 1.32 with
+     * ≈ 15 k at 0.25 m² and 1.51 with ≈ 10 k at 0.5 m². 0 = every triangle
+     * (`?diag=prepassall`).
+     */
+    depthPrepassMinArea: 0.1,
   },
   /**
    * Draw the map with MeshStandardMaterial instead of the

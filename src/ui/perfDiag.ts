@@ -53,6 +53,22 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *            no margin — an answer too heavy for matches on purpose, to watch
  *            the guard step it down. Only the next detection ("Run again")
  *            uses it.
+ *   prepass  Givre: depth prepass of the static map (GivreDepthPrepass) —
+ *            the map (+ backdrop) drawn depth-only first, then the map's
+ *            material shaded ≈ once per covered pixel instead of ≈ 2 times;
+ *            same image (checked at load on this GPU: console line
+ *            "[GPU] pré-passe…"). Costs the big triangles' vertices twice
+ *            + 2 draws: compare the GPU line (`?gpu=draws`: "pré-passe" +
+ *            "carte") and the CPU line
+ *   noprepass  Givre: no depth prepass (when GivreConfig turns it on)
+ *   prepassall  Givre: with `prepass`, every map triangle in it (not only
+ *            those ≥ GivreConfig.staticBatching.depthPrepassMinArea m²) —
+ *            the vertex cost of a complete prepass
+ *   percomponent  Givre: the single-sided rule of the static map (closed,
+ *            outward, ≤ 2 m thin solids drawn FrontSide) applied per
+ *            connected component of a mesh, not only per whole mesh
+ *            (GivreRenderOptim.closedOutwardThinTriangles) — NOT the same
+ *            image to the bit (a few pixels per view): an experiment
  *
  * Givre post chain — memory traffic of the fullscreen steps on an iGPU
  * (effects/GivrePostChain; each one measured in PERFORMANCE.md « La chaîne
@@ -82,6 +98,8 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *             GPU (`givrePost.ab(true)` adds `direct` — compiles every
  *             program's sRGB variant once: a long freeze)
  *
+ * (Session switches — prepass, percomponent: `?diag=<name>` on,
+ * `?diag=no<name>` off, see diagSwitch; read once at load.)
  * Several at once: `?diag=noflush,scale50`. Never for normal play.
  */
 export function perfExperiments(search: string = typeof location === "undefined" ? "" : location.search): ReadonlySet<string> {
@@ -93,6 +111,16 @@ export function perfExperiments(search: string = typeof location === "undefined"
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean),
   );
+}
+
+/**
+ * An optimisation with a session switch: `?diag=<name>` turns it on,
+ * `?diag=no<name>` off (wins), otherwise `defaultOn`.
+ */
+export function diagSwitch(experiments: ReadonlySet<string>, name: string, defaultOn: boolean): boolean {
+  if (experiments.has(`no${name}`)) return false;
+  if (experiments.has(name)) return true;
+  return defaultOn;
 }
 
 /** The number of a numbered experiment (`scale50` → 50), or null when absent / invalid. */

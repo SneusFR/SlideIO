@@ -12,6 +12,7 @@ import { YardConfig as yardCfg } from "../world/YardConfig";
 import { SpaceSky } from "../world/SpaceSky";
 import { SpaceConfig as spaceCfg } from "../world/SpaceConfig";
 import { GivreMap } from "../world/GivreMap";
+import { type GivreDepthPrepass, logPrepassCheck } from "../world/GivreDepthPrepass";
 import { GIVRE_SKY_RENDER_ORDER, GivreSky } from "../world/GivreSky";
 import { GivreConfig as givreCfg } from "../world/GivreConfig";
 import { GivreEffects } from "../world/GivreEffects";
@@ -561,6 +562,8 @@ export class Game {
    */
   private shadowCache: StaticShadowCache | null = null;
   private readonly shadowCacheSetup: (() => StaticShadowCache | null) | null;
+  /** GIVRE depth prepass of the static map (`?diag=prepass`, GivreDepthPrepass) — verified at load. */
+  private depthPrepass: GivreDepthPrepass | null = null;
 
   // ---- Graphics settings (settings page — see the GRAPHICS SETTINGS section) ----
   /** Values the session booted with: the shadow mode, character shadows and context MSAA stay these. */
@@ -743,6 +746,7 @@ export class Game {
           return cache;
         };
     if (map instanceof GivreMap) {
+      this.depthPrepass = map.depthPrepass;
       // Out-of-bounds mountains + debug wireframes are added to the SCENE
       // (not map.group) so they never join the beam-raycast hittables.
       this.scene.add(map.backdrop);
@@ -2360,6 +2364,12 @@ export class Game {
         warmWorld();
         if (this.composer) this.renderer.info.reset();
       }
+    }
+    // GIVRE depth prepass: same pixels with and without it, checked once on
+    // THIS GPU (else it stays off for the session — see GivreDepthPrepass).
+    if (this.composer && this.depthPrepass) {
+      const differing = this.depthPrepass.verify(this.renderer, this.fpsCamera.camera, () => this.renderComposer());
+      logPrepassCheck(differing, this.depthPrepass);
     }
     // Every program compiled above stays cached for the whole session, even
     // once the warm clones below dispose their materials (see ProgramPin).

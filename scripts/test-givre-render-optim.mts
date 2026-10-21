@@ -6,6 +6,9 @@
 //   3. buildStaticBatches on the real map: same triangle multiset as the old
 //      per-material merge, single-sided only on closed outward thin solids,
 //      FrontSide clones keep name / colour / maps, GIV_Feu never cloned;
+//   3b. the same rule per connected component (closedOutwardThinTriangles): spread-out
+//      solids, a solid next to an open part, inward / thick parts refused; on the real map
+//      the same triangles, and every triangle single-sided today stays single-sided;
 //   4. toStandardMaterial keeps every value the map uses;
 //   5. frontToBackOpaqueSort: renderOrder first, then near → far;
 //   6. SkyCoveredRenderPass: one depth / stencil clear while the sky covers
@@ -19,10 +22,13 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   buildStaticBatches,
+  canBeSingleSided,
   cellOf,
+  closedOutwardThinTriangles,
   frontToBackOpaqueSort,
   isClosedOutward,
   splitByGrid,
+  subsetTriangles,
   toStandardMaterial,
   triangleCount,
   type ChunkGrid,
@@ -198,6 +204,76 @@ console.log(`INFO buildStaticBatches load-time cost: ${(performance.now() - t0).
   );
 }
 
+
+// ---------------------------------------------------------------- 3b. per component
+{
+  // Synthetic: the whole-mesh rule refuses each of these, the per-component rule keeps
+  // exactly the closed outward thin solids.
+  const flat = (g: THREE.BufferGeometry) => (g.index ? g.toNonIndexed() : g);
+  const merge = (...gs: THREE.BufferGeometry[]) => mergeGeometries(gs.map(flat), false)!;
+  const box = (w: number, h: number, d: number, x: number) => new THREE.BoxGeometry(w, h, d).translate(x, 0, 0);
+  const inward = (x: number) => {
+    const g = box(1, 1, 1, x).toNonIndexed();
+    const p = g.getAttribute("position").array as Float32Array;
+    for (let i = 0; i < p.length; i += 9) for (let k = 0; k < 3; k++) [p[i + 3 + k], p[i + 6 + k]] = [p[i + 6 + k], p[i + 3 + k]];
+    return g;
+  };
+  const tallSpread = merge(box(1, 1, 1, 0), new THREE.BoxGeometry(1, 1, 1).translate(10, 10, 10)); // union 11 × 11 × 11
+  const withPlane = merge(box(1, 1, 1, 0), new THREE.PlaneGeometry(4, 4).translate(10, 0, 0));
+  const mixedWinding = merge(box(1, 1, 1, 0), inward(5));
+  const thick = merge(box(3, 3, 3, 0), new THREE.BoxGeometry(1, 1, 1).translate(10, 10, 10));
+  const mat = new THREE.MeshStandardMaterial({ side: THREE.DoubleSide });
+  for (const g of [tallSpread, withPlane, mixedWinding, thick]) assert.equal(canBeSingleSided({ geometry: g, material: mat }, 2, new Set()), false, "whole-mesh rule refuses");
+  const count = (m: Uint8Array | null) => (m ? m.reduce((s, v) => s + v, 0) : 0);
+  assert.equal(count(closedOutwardThinTriangles(tallSpread, 2)), 24, "both 1 m boxes");
+  assert.equal(count(closedOutwardThinTriangles(withPlane, 2)), 12, "the box, not the plane");
+  assert.equal(count(closedOutwardThinTriangles(mixedWinding, 2)), 12, "the outward box, not the inward one");
+  assert.equal(count(closedOutwardThinTriangles(thick, 2)), 12, "the 1 m box, not the 3 m one");
+  assert.equal(closedOutwardThinTriangles(new THREE.PlaneGeometry(2, 2), 2), null);
+  // Weld: a box with a 0.2 mm crack (one corner of one face moved) is closed only with the 1 mm weld
+  // (positions rounded to the millimetre grid).
+  const cracked = box(1, 1, 1, 0).toNonIndexed();
+  (cracked.getAttribute("position").array as Float32Array)[0] += 0.0002;
+  assert.equal(closedOutwardThinTriangles(cracked, 2), null, "exact weld (default): the crack is an open edge");
+  assert.equal(count(closedOutwardThinTriangles(cracked, 2, 1e-3)), 12, "1 mm weld: closed");
+  // subsetTriangles: every attribute verbatim, triangles kept in order.
+  const mask = closedOutwardThinTriangles(withPlane, 2)!;
+  const solids = subsetTriangles(withPlane, mask, 1)!;
+  const rest = subsetTriangles(withPlane, mask, 0)!;
+  assert.equal(triangleCount(solids) + triangleCount(rest), triangleCount(withPlane));
+  assert.deepEqual(Object.keys(solids.attributes).sort(), Object.keys(withPlane.attributes).sort());
+  const indexed = new THREE.BoxGeometry(1, 1, 1);
+  const half = new Uint8Array(12).map((_, t) => (t < 6 ? 1 : 0));
+  const sub = subsetTriangles(indexed, half, 1)!;
+  assert.ok(sub.index, "indexed source → indexed subset");
+  assert.equal(triangleCount(sub), 6);
+
+  // Real map: same triangles as before, the FrontSide set only grows.
+  const perComp = buildStaticBatches(entries, (g) => mergeGeometries(g, false), {
+    grid,
+    chunkMinTriangles: 6000,
+    singleSidedMaxThickness: 2,
+    singleSidedPerComponent: true,
+    keepMaterials: new Set(["GIV_Feu"]),
+  });
+  assert.deepEqual(signatures(perComp), before, "per component: exactly the original static triangles");
+  const sided = (list: { geometry: THREE.BufferGeometry; material: THREE.Material; singleSided: boolean }[], one: boolean) =>
+    signatures(list.filter((b) => b.singleSided === one));
+  const todayFront = sided(batches, true);
+  const nowFront = new Set(sided(perComp, true));
+  for (const s of todayFront) assert.ok(nowFront.has(s), "every triangle single-sided today stays single-sided");
+  for (const b of perComp) {
+    assert.equal(b.material.side, b.singleSided ? THREE.FrontSide : THREE.DoubleSide);
+    if (b.material.name === "GIV_Feu" || b.material.transparent) assert.equal(b.singleSided, false);
+  }
+  const tris = (list: { geometry: THREE.BufferGeometry; singleSided: boolean }[]) =>
+    list.filter((b) => b.singleSided).reduce((s, b) => s + triangleCount(b.geometry), 0);
+  const total = perComp.reduce((s, b) => s + triangleCount(b.geometry), 0);
+  ok(
+    `single-sided per connected component: ${tris(batches)} → ${tris(perComp)} of ${total} tris FrontSide ` +
+      `(${((tris(batches) / total) * 100).toFixed(0)} → ${((tris(perComp) / total) * 100).toFixed(0)} %), ${batches.length} → ${perComp.length} batches, same triangles`,
+  );
+}
 
 // ---------------------------------------------------------------- 4. materials
 {

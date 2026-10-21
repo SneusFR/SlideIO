@@ -214,6 +214,7 @@ const CATEGORY_NAMES: Record<string, string> = {
   givre_01_fond: "fond",
   givre_01_animated: "décor animé",
   givre_01_merged: "carte",
+  givre_prepass: "pré-passe",
   EnemyHealthBars: "barres de vie",
 };
 
