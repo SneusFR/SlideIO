@@ -1,14 +1,20 @@
-// GRAPHICS SETTINGS MODEL — headless checks of src/settings (GraphicsSettings, SettingsStore) and the
-// legacy facade of src/game/GraphicsQuality: the presets (Bas / Élevé = EXACTLY the old LOW / HIGH on
-// every display density), editing → Personnalisé, the "auto" choice before / after a detection, the
-// frame cap, live vs reload-only changes, validation of untrusted storage, the migration of every old
-// key, persistence round trips and storage failures.
-// Usage (repo root):  SLIDEIO_ROOT=$PWD node --import <vitenode>/register.mjs scripts/test-graphics-settings.mts
+// GRAPHICS SETTINGS MODEL — headless checks of src/settings (GraphicsSettings, SettingsStore, labels)
+// and the legacy facade of src/game/GraphicsQuality:
+//   - the presets Bas / Élevé are EXACTLY the old LOW / HIGH on every display density (pixel ratio,
+//     MSAA, shadow sizes, static vs live shadows, frame cap, anisotropy);
+//   - the "auto" choice before / after a detection (per GPU, per map, per target), editing →
+//     Personnalisé, live vs reload-only changes, the beauty floor, the frame cap and the target;
+//   - validation of untrusted storage, the migration of every old key, persistence round trips,
+//     storage failures, and the two-way bridge with the old quality / FPS-cap keys.
+// Usage (repo root):  npx tsx scripts/test-graphics-settings.mts
 import assert from "node:assert/strict";
 
 const G = await import("../src/settings/GraphicsSettings.ts");
 const S = await import("../src/settings/SettingsStore.ts");
 const Q = await import("../src/game/GraphicsQuality.ts");
+const L = await import("../src/settings/labels.ts");
+const O = await import("../src/game/OutlineSettings.ts");
+const C = await import("../src/ui/CrosshairSettings.ts");
 
 let passed = 0;
 async function test(name: string, fn: () => void | Promise<void>): Promise<void> {
@@ -35,344 +41,392 @@ function memoryStorage(init: Record<string, string> = {}, opts: { failWrites?: b
   };
 }
 
-const DPRS = [0.9, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3];
+const DPRS = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3];
 const STRONG = { name: "NVIDIA GeForce RTX 2080 SUPER · D3D11", weak: false };
 const WEAK = { name: "Intel(R) Iris(R) Xe Graphics · D3D11", weak: true };
+const MAP = "GIVRE";
+
+// The OLD presets (src/game/GraphicsQuality.ts before the settings page), verbatim.
+const OLD = {
+  HIGH: { pixelRatioCap: 2, antialias: true, shadowMapSize: 2048, staticShadows: false, maxFps: Infinity, anisotropy: 8 },
+  LOW: { pixelRatioCap: 1, antialias: false, shadowMapSize: 1024, staticShadows: true, maxFps: 60, anisotropy: 1 },
+} as const;
+const OLD_GIVRE_SHADOW = { HIGH: 4096, LOW: 2048 } as const;
 
 console.log("graphics settings model");
 
-await test("Bas = the old LOW preset on every display density (pixel ratio min(DPR, 1), FXAA, static shadows, 1024 / 2048 maps, 60 FPS, aniso 1)", () => {
+await test("Bas / Élevé = the old LOW / HIGH on every display density (renderer pixel ratio, MSAA, shadows, cap, anisotropy)", () => {
   for (const dpr of DPRS) {
-    const v = G.presetValues("bas", { dpr });
-    const q = Q.legacyQuality(v, { dpr }, G.resolveFpsCap("auto", "bas"));
-    assert.equal(q.pixelRatioCap, Math.min(dpr, 1), `ratio @${dpr}`);
-    assert.equal(q.antialias, false);
-    assert.equal(q.shadowMapSize, 1024);
-    assert.equal(q.level, "LOW"); // Givre: GivreConfig.shadowMapSize.LOW = 2048
-    assert.equal(q.staticShadows, true);
-    assert.equal(q.maxFps, 60);
-    assert.equal(q.anisotropy, 1);
-    assert.equal(v.antialiasing, "fxaa"); // Givre composer: OutputFXAAPass, no MSAA
-    assert.equal(G.msaaSamples(v.antialiasing), 0);
-    assert.equal(v.shadows, "static");
-    assert.equal(v.snow, "normale");
-    assert.equal(v.effectLights, 2);
-    assert.equal(v.halos && v.footprints && v.particles === "normal", true);
-  }
-});
-
-await test("Élevé = the old HIGH preset on every display density (min(DPR, 2), MSAA 4×, live shadows with characters, 2048 / 4096, uncapped, aniso 8)", () => {
-  for (const dpr of DPRS) {
-    const v = G.presetValues("eleve", { dpr });
-    const q = Q.legacyQuality(v, { dpr }, G.resolveFpsCap("auto", "eleve"));
-    assert.equal(q.pixelRatioCap, Math.min(dpr, 2), `ratio @${dpr}`);
-    assert.equal(q.antialias, true);
-    assert.equal(G.msaaSamples(v.antialiasing), 4);
-    assert.equal(q.shadowMapSize, 2048);
-    assert.equal(q.level, "HIGH"); // Givre 4096
-    assert.equal(q.staticShadows, false);
-    assert.equal(q.maxFps, Infinity);
-    assert.equal(q.anisotropy, 8);
-    assert.equal(v.shadows, "dynamic");
-    assert.equal(v.characterShadows, true);
-  }
-});
-
-await test("pixel ratio of a preset is exact (no 0.9999… that would floor the canvas one pixel short)", () => {
-  for (const dpr of DPRS) {
-    for (const id of G.PRESET_IDS) {
-      const ratio = G.pixelRatioFor(G.presetValues(id, { dpr }).renderScale, dpr);
-      const cap = G.presetPixelCap(id);
-      const expected = cap === null ? dpr : Math.min(dpr, cap);
-      assert.equal(ratio, Math.round(expected * 1e6) / 1e6, `${id} @${dpr}`);
-      assert.equal(Math.floor(1536 * ratio), Math.floor(1536 * expected), `canvas width ${id} @${dpr}`);
+    for (const [id, level] of [
+      ["bas", "LOW"],
+      ["eleve", "HIGH"],
+    ] as const) {
+      const v = G.presetValues(id, { dpr });
+      const old = OLD[level];
+      const q = Q.legacyQuality(v, { dpr }, G.resolveFpsCap("auto", id));
+      // The old renderer pixel ratio: Math.min(devicePixelRatio, cap) — bit for bit.
+      assert.equal(G.pixelRatioFor(v.renderScale, dpr), Math.min(dpr, old.pixelRatioCap), `${id} ratio @${dpr}`);
+      assert.equal(q.pixelRatioCap, Math.min(dpr, old.pixelRatioCap));
+      assert.equal(q.antialias, old.antialias);
+      assert.equal(q.shadowMapSize, old.shadowMapSize);
+      assert.equal(q.staticShadows, old.staticShadows);
+      assert.equal(q.maxFps, old.maxFps);
+      assert.equal(q.anisotropy, old.anisotropy);
+      assert.equal(q.level, level);
+      // Givre: shadow size from the level, FXAA (LOW) vs composer MSAA 4× (HIGH).
+      assert.equal(G.shadowMapTierSize(v.shadowQuality, true), OLD_GIVRE_SHADOW[level]);
+      assert.equal(v.antialiasing, level === "LOW" ? "fxaa" : "msaa4");
+      assert.equal(G.msaaSamples(v.antialiasing), level === "LOW" ? 0 : 4);
+      assert.equal(v.snow, "normale");
+      assert.equal(v.halos && v.footprints, true);
+      assert.equal(v.particles, "normal");
     }
   }
 });
 
-await test("Moyen sits between Bas and Élevé; Ultra spends more (native resolution, very fine shadows, 16×, dense snow)", () => {
-  const rank = <T>(list: readonly T[], v: T) => list.indexOf(v);
-  for (const dpr of [1, 1.25, 2]) {
-    const bas = G.presetValues("bas", { dpr });
-    const moyen = G.presetValues("moyen", { dpr });
-    const eleve = G.presetValues("eleve", { dpr });
-    const ultra = G.presetValues("ultra", { dpr });
-    assert.ok(moyen.renderScale >= bas.renderScale && moyen.renderScale <= eleve.renderScale);
-    assert.ok(rank(G.ANTIALIASING, moyen.antialiasing) > rank(G.ANTIALIASING, bas.antialiasing));
-    assert.ok(rank(G.ANTIALIASING, moyen.antialiasing) < rank(G.ANTIALIASING, eleve.antialiasing));
-    assert.ok(moyen.anisotropy > bas.anisotropy && moyen.anisotropy < eleve.anisotropy);
+await test("presets: Moyen sits between Bas and Élevé, Ultra above Élevé; every preset matches itself", () => {
+  for (const dpr of DPRS) {
+    const env = { dpr };
+    const bas = G.presetValues("bas", env);
+    const moyen = G.presetValues("moyen", env);
+    const eleve = G.presetValues("eleve", env);
+    const ultra = G.presetValues("ultra", env);
+    assert.ok(bas.renderScale <= moyen.renderScale && moyen.renderScale <= eleve.renderScale && eleve.renderScale <= ultra.renderScale);
     assert.equal(ultra.renderScale, 100);
-    assert.ok(ultra.renderScale >= eleve.renderScale);
+    assert.equal(moyen.antialiasing, "msaa2");
+    assert.equal(moyen.shadows, "dynamic");
     assert.equal(ultra.shadowQuality, "ultra");
     assert.equal(ultra.anisotropy, 16);
-    assert.equal(ultra.snow, "dense");
+    for (const id of G.PRESET_IDS) assert.equal(G.matchPreset(G.presetValues(id, env), env), id, `${id} @${dpr}`);
   }
 });
 
-await test("shadow tiers: medium / high = the old LOW / HIGH sizes per map family", () => {
-  assert.equal(G.shadowMapTierSize("medium", false), 1024);
-  assert.equal(G.shadowMapTierSize("high", false), 2048);
-  assert.equal(G.shadowMapTierSize("medium", true), 2048);
-  assert.equal(G.shadowMapTierSize("high", true), 4096);
-  assert.equal(G.shadowMapTierSize("low", true), 1024);
-  assert.equal(G.shadowMapTierSize("ultra", true), 8192);
+await test("render scale: % of native per axis, never above 100 % for a pixel cap, slider bounds respected", () => {
+  assert.equal(G.scaleForPixelCap(1, 1.25), 80);
+  assert.equal(G.scaleForPixelCap(2, 1.25), 100);
+  assert.equal(G.scaleForPixelCap(1, 2), 50);
+  assert.equal(G.pixelRatioFor(100, 1.25), 1.25);
+  assert.equal(G.pixelRatioFor(80, 1.25), 1);
+  assert.equal(G.pixelRatioFor(100 / 1.5, 1.5), 1); // snapped: one pixel per CSS pixel exactly
+  assert.equal(G.pixelRatioFor(150, 1), 1.5);
+  assert.equal(G.pixelRatioFor(1, 1), 0.25); // never a degenerate canvas
+  const v = G.sanitizeGraphicsValues({ renderScale: 9999 }, G.presetValues("eleve", { dpr: 1 }));
+  assert.equal(v.renderScale, G.RENDER_SCALE_MAX);
+  assert.equal(G.sanitizeGraphicsValues({ renderScale: -5 }, v).renderScale, G.RENDER_SCALE_MIN);
+  assert.equal(G.RENDER_SCALE_STEP, 1);
 });
 
-await test("matchPreset finds each preset back, and nothing for edited values", () => {
-  for (const dpr of [1, 1.25, 2]) {
-    for (const id of G.PRESET_IDS) assert.equal(G.matchPreset(G.presetValues(id, { dpr }), { dpr }), id);
-    assert.equal(G.matchPreset({ ...G.presetValues("eleve", { dpr }), snow: "legere" }, { dpr }), null);
-  }
+await test("beauty floor = the old LOW resolution (one pixel per CSS pixel), within the slider", () => {
+  assert.equal(G.floorRenderScale({ dpr: 1 }), 100);
+  assert.equal(G.floorRenderScale({ dpr: 0.9 }), 100);
+  assert.equal(G.floorRenderScale({ dpr: 1.25 }), 80);
+  assert.equal(G.floorRenderScale({ dpr: 2 }), 50);
+  assert.equal(G.floorRenderScale({ dpr: 3 }), 50);
+  for (const dpr of DPRS) assert.ok(G.floorRenderScale({ dpr }) >= G.presetValues("bas", { dpr }).renderScale - 1e-9);
+  assert.equal(G.FLOOR.antialiasing, "fxaa");
+  assert.equal(G.FLOOR.anisotropy, 1);
+  assert.equal(G.FLOOR.shadowQuality, "medium");
 });
 
-await test("editing a value → Personnalisé with the current values + the edit; undoing the edit → the preset again", () => {
+await test("auto choice: the old heuristic until a detection of THIS GPU and map, then the measured values", () => {
   const env = { dpr: 1.25 };
-  const choice = { preset: "eleve" as const, custom: null, auto: null };
-  const edited = G.editChoice(choice, "antialiasing", "fxaa", env, STRONG);
-  assert.equal(edited.preset, "custom");
-  assert.deepEqual(edited.custom, { ...G.presetValues("eleve", env), antialiasing: "fxaa" });
-  const back = G.editChoice(edited, "antialiasing", "msaa4", env, STRONG);
-  assert.equal(back.preset, "eleve");
-  // From "auto" (heuristic Bas on a weak GPU): the custom values start from what was on screen.
-  const auto = G.editChoice({ preset: "auto", custom: null, auto: null }, "snow", "dense", env, WEAK);
-  assert.equal(auto.preset, "custom");
-  assert.deepEqual(auto.custom, { ...G.presetValues("bas", env), snow: "dense" });
-});
-
-await test('"auto" before any detection = the old AUTO heuristic (weak GPU → Bas, else Élevé); a detection of THIS GPU wins', () => {
-  const env = { dpr: 1 };
-  const none = { preset: "auto" as const, custom: null, auto: null };
-  assert.deepEqual(G.effectiveValues(none, env, WEAK), G.presetValues("bas", env));
-  assert.deepEqual(G.effectiveValues(none, env, STRONG), G.presetValues("eleve", env));
-  assert.equal(G.effectivePreset(none, WEAK), "bas");
-  const detected = { ...G.presetValues("bas", env), renderScale: 85, snow: "legere" as const };
+  const choice = { preset: "auto" as const, custom: null, auto: {} as Record<string, never> };
+  assert.equal(G.sameValues(G.effectiveValues(choice, env, WEAK, MAP), G.presetValues("bas", env)), true);
+  assert.equal(G.sameValues(G.effectiveValues(choice, env, STRONG, MAP), G.presetValues("eleve", env)), true);
+  assert.equal(G.effectivePreset(choice, WEAK, MAP), "bas");
+  assert.equal(G.effectivePreset(choice, STRONG, MAP), "eleve");
+  const measured = { ...G.presetValues("bas", env), renderScale: 100, anisotropy: 4 as const };
   const result = {
-    values: detected,
-    at: 1,
-    gpu: WEAK.name,
-    targetFps: 60,
-    expectedFps: 61,
-    limitedBy: "none" as const,
-    belowTarget: false,
-    summary: "ok",
-    version: G.AUTO_TUNE_VERSION,
+    values: measured, at: 1, gpu: WEAK.name, map: MAP, targetFps: 60, measuredFps: 60, limitedBy: "none" as const,
+    belowTarget: false, complete: true, measuredShadows: "static" as const, summary: "ok", version: G.AUTO_TUNE_VERSION,
   };
-  const withAuto = { preset: "auto" as const, custom: null, auto: result };
-  assert.deepEqual(G.effectiveValues(withAuto, env, WEAK), detected);
-  assert.equal(G.effectivePreset(withAuto, WEAK), "auto");
-  // Another GPU (laptop's dGPU, a new machine) or an older detection logic: the heuristic again.
-  assert.deepEqual(G.effectiveValues(withAuto, env, { name: "AMD Radeon RX 6600", weak: false }), G.presetValues("eleve", env));
-  assert.deepEqual(G.effectiveValues({ ...withAuto, auto: { ...result, version: 0 } }, env, WEAK), G.presetValues("bas", env));
+  const detected = { preset: "auto" as const, custom: null, auto: { [MAP]: result } };
+  assert.equal(G.sameValues(G.effectiveValues(detected, env, WEAK, MAP), measured), true);
+  assert.equal(G.effectivePreset(detected, WEAK, MAP), "auto"); // → the "auto" frame cap: uncapped
+  // Another map, another GPU, an older logic: the heuristic again.
+  assert.equal(G.sameValues(G.effectiveValues(detected, env, WEAK, "JUNGLE"), G.presetValues("bas", env)), true);
+  assert.equal(G.sameValues(G.effectiveValues(detected, env, { name: "Other", weak: true }, MAP), G.presetValues("bas", env)), true);
+  const old = { ...detected, auto: { [MAP]: { ...result, version: G.AUTO_TUNE_VERSION - 1 } } };
+  assert.equal(G.sameValues(G.effectiveValues(old, env, WEAK, MAP), G.presetValues("bas", env)), true);
+  // A named preset ignores the detection, which stays stored.
+  const picked = { ...detected, preset: "ultra" as const };
+  assert.equal(G.sameValues(G.effectiveValues(picked, env, WEAK, MAP), G.presetValues("ultra", env)), true);
+  assert.ok(picked.auto[MAP]);
 });
 
-await test("frame cap: auto follows the preset (Bas → 60, the rest uncapped), explicit values win, 0 = unlimited", () => {
+await test("needsDetection: missing / other target / interrupted / older logic / changed shadow mode in effect", () => {
+  const env = { dpr: 1 };
+  const base = {
+    values: G.presetValues("eleve", env), at: 1, gpu: STRONG.name, map: MAP, targetFps: 240, measuredFps: 240,
+    limitedBy: "none" as const, belowTarget: false, complete: true, measuredShadows: "dynamic" as const, summary: "", version: G.AUTO_TUNE_VERSION,
+  };
+  const choice = (r: typeof base | null, preset: "auto" | "eleve" = "auto") => ({ preset, custom: null, auto: r ? { [MAP]: r } : {} });
+  assert.equal(G.needsDetection(choice(null), STRONG, MAP, 240, "dynamic"), true);
+  assert.equal(G.needsDetection(choice(base), STRONG, MAP, 240, "dynamic"), false);
+  assert.equal(G.needsDetection(choice(base, "eleve"), STRONG, MAP, 240, "dynamic"), false); // not "auto": never
+  assert.equal(G.needsDetection(choice(base), STRONG, MAP, 144, "dynamic"), true); // target changed
+  assert.equal(G.needsDetection(choice(base), STRONG, "YARD", 240, "dynamic"), true); // first time on that map
+  assert.equal(G.needsDetection(choice({ ...base, complete: false }), STRONG, MAP, 240, "dynamic"), true);
+  assert.equal(G.needsDetection(choice({ ...base, version: 0 }), STRONG, MAP, 240, "dynamic"), true);
+  // The detection advised static shadows (reload): measured again once they are in effect, not before.
+  const advised = { ...base, values: { ...base.values, shadows: "static" as const, characterShadows: false } };
+  assert.equal(G.needsDetection(choice(advised), STRONG, MAP, 240, "dynamic"), false);
+  assert.equal(G.needsDetection(choice(advised), STRONG, MAP, 240, "static"), true);
+});
+
+await test("editing a value → Personnalisé; undoing it → the preset again; detections kept", () => {
+  const env = { dpr: 1.25 };
+  const start = { preset: "eleve" as const, custom: null, auto: {} };
+  const edited = G.editChoice(start, "snow", "dense", env, STRONG, MAP);
+  assert.equal(edited.preset, "custom");
+  assert.equal(edited.custom!.snow, "dense");
+  assert.equal(edited.custom!.antialiasing, "msaa4"); // the rest of Élevé
+  const undone = G.editChoice(edited, "snow", "normale", env, STRONG, MAP);
+  assert.equal(undone.preset, "eleve");
+  // From "auto" (heuristic Bas on a weak GPU).
+  const fromAuto = G.editChoice({ preset: "auto", custom: null, auto: {} }, "renderScale", 100, env, WEAK, MAP);
+  assert.equal(fromAuto.preset, "custom");
+  assert.equal(fromAuto.custom!.antialiasing, "fxaa");
+  assert.equal(fromAuto.custom!.renderScale, 100);
+});
+
+await test("live vs reload-only: shadow mode, character shadows and the context MSAA wait for a reload", () => {
+  const env = { dpr: 1 };
+  const bas = G.presetValues("bas", env);
+  const eleve = G.presetValues("eleve", env);
+  const keys = (boot: typeof bas, next: typeof bas, composer: boolean) => G.reloadChanges(boot, next, { composer }).map((c) => c.key);
+  assert.deepEqual(keys(bas, eleve, true), ["shadows"]); // Givre: MSAA is live (composer)
+  assert.deepEqual(keys(bas, eleve, false), ["shadows", "antialiasing"]); // Jungle / Yard: context MSAA
+  assert.deepEqual(keys(eleve, { ...eleve, characterShadows: false }, true), ["characterShadows"]);
+  assert.deepEqual(keys(bas, { ...bas, characterShadows: true }, true), []); // static shadows: no character shadows anyway
+  assert.deepEqual(keys(eleve, { ...eleve, renderScale: 70, snow: "off", anisotropy: 1, shadowQuality: "low", halos: false }, true), []);
+  const live = G.liveValues(bas, eleve, { composer: true });
+  assert.equal(live.shadows, "static");
+  assert.equal(live.characterShadows, false);
+  assert.equal(live.antialiasing, "msaa4");
+  assert.equal(live.shadowQuality, "high");
+  assert.equal(G.liveValues(bas, eleve, { composer: false }).antialiasing, "fxaa");
+});
+
+await test("frame cap: auto follows the preset (Bas → 60), explicit values, unlimited", () => {
   assert.equal(G.resolveFpsCap("auto", "bas"), 60);
-  for (const p of ["moyen", "eleve", "ultra", "custom", "auto"] as const) assert.equal(G.resolveFpsCap("auto", p), Infinity);
+  for (const p of ["auto", "moyen", "eleve", "ultra", "custom"] as const) assert.equal(G.resolveFpsCap("auto", p), Infinity);
   assert.equal(G.resolveFpsCap(144, "bas"), 144);
   assert.equal(G.resolveFpsCap(0, "bas"), Infinity);
 });
 
-await test("detection target: the display rate (snapped), never below 60, never above 240 nor an explicit cap", () => {
-  assert.equal(G.targetFps("display", 59.94, Infinity), 60);
-  assert.equal(G.targetFps("display", 143.6, Infinity), 144);
-  assert.equal(G.targetFps("display", 239.8, Infinity), 240);
+await test("detection target: the display's rate, never above it, under an explicit cap, 30…240", () => {
+  assert.equal(G.targetFps("display", 60.02, Infinity), 60);
+  assert.equal(G.targetFps("display", 1000 / 4.166, Infinity), 240);
   assert.equal(G.targetFps("display", 360, Infinity), 240);
-  assert.equal(G.targetFps("display", 50, Infinity), 60);
-  assert.equal(G.targetFps("display", 240, 60), 60);
-  assert.equal(G.targetFps(144, 60, Infinity), 144);
-  assert.equal(G.snapRefreshRate(1000 / 6.94), 144);
-  assert.equal(G.snapRefreshRate(1000 / 16.67), 60);
+  assert.equal(G.targetFps("display", 50, Infinity), 50); // a 50 Hz screen: 50, not an unreachable 60
+  assert.equal(G.targetFps(144, 60, Infinity), 60); // never above the display
+  assert.equal(G.targetFps(60, 240, Infinity), 60);
+  assert.equal(G.targetFps("display", 240, 144), 144);
+  assert.equal(G.snapRefreshRate(59.94), 60);
+  assert.equal(G.snapRefreshRate(143.8), 144);
+  assert.equal(G.snapRefreshRate(238), 240);
+  assert.equal(G.snapRefreshRate(NaN), 60);
 });
 
-await test("reload-only changes: shadow mode, character shadows (with dynamic shadows), effect lights, context MSAA without composer", () => {
-  const env = { dpr: 1 };
-  const bas = G.presetValues("bas", env);
-  const eleve = G.presetValues("eleve", env);
-  const keys = (boot: typeof bas, next: typeof bas, composer: boolean) =>
-    G.reloadChanges(boot, next, { composer }).map((c) => c.key).sort();
-  assert.deepEqual(keys(bas, eleve, true), ["shadows"]); // Givre: AA, scale, aniso, size… all live
-  assert.deepEqual(keys(bas, eleve, false), ["antialiasing", "shadows"]); // Jungle / Yard: MSAA is the context's
-  assert.deepEqual(keys(bas, { ...bas, renderScale: 70, snow: "off", anisotropy: 16, shadowQuality: "ultra" }, true), []);
-  assert.deepEqual(keys(eleve, { ...eleve, characterShadows: false }, true), ["characterShadows"]);
-  assert.deepEqual(keys(bas, { ...bas, characterShadows: true }, true), []); // static shadows: characters never cast anyway
-  assert.deepEqual(keys(bas, { ...bas, effectLights: 0 }, true), ["effectLights"]);
-  assert.deepEqual(keys(bas, { ...bas, antialiasing: "none" }, false), []); // FXAA ≡ none without a post chain
-  // What the session shows meanwhile: live fields from the new values, reload-only ones from the boot.
-  const live = G.liveValues(bas, { ...eleve, renderScale: 90 }, { composer: true });
-  assert.equal(live.renderScale, 90);
-  assert.equal(live.antialiasing, "msaa4");
-  assert.equal(live.shadows, "static");
-  assert.equal(live.effectLights, bas.effectLights);
-});
-
-await test("beauty floor: 80 % of native, never more than one pixel per CSS pixel; FXAA, light snow", () => {
-  assert.equal(G.floorRenderScale({ dpr: 1 }), 80);
-  assert.equal(G.floorRenderScale({ dpr: 1.25 }), 80); // = ratio 1.0: the old LOW resolution
-  assert.equal(G.floorRenderScale({ dpr: 2 }), 50); // Retina at one pixel per CSS pixel
-  assert.equal(G.floorRenderScale({ dpr: 4 }), G.RENDER_SCALE_MIN);
-  assert.equal(G.FLOOR.antialiasing, "fxaa");
-  assert.equal(G.FLOOR.snow, "legere");
-});
-
-await test("untrusted values are validated field by field (garbage, out of range, wrong types)", () => {
+await test("validation of untrusted values: bad / missing fields take the fallback's", () => {
   const fb = G.presetValues("eleve", { dpr: 1 });
-  assert.deepEqual(G.sanitizeGraphicsValues(null, fb), fb);
-  assert.deepEqual(G.sanitizeGraphicsValues("nope", fb), fb);
   const v = G.sanitizeGraphicsValues(
-    { renderScale: 9999, antialiasing: "ssaa", shadows: 3, shadowQuality: "ultra", snow: "legere", anisotropy: 3, effectLights: 1, halos: "yes" },
+    { renderScale: "x", antialiasing: "ssaa", shadows: 3, shadowQuality: "ultra", snow: "legere", anisotropy: 3, halos: "yes", effectLights: 2 },
     fb,
   );
-  assert.equal(v.renderScale, G.RENDER_SCALE_MAX);
+  assert.equal(v.renderScale, fb.renderScale);
   assert.equal(v.antialiasing, fb.antialiasing);
   assert.equal(v.shadows, fb.shadows);
   assert.equal(v.shadowQuality, "ultra");
   assert.equal(v.snow, "legere");
   assert.equal(v.anisotropy, fb.anisotropy);
-  assert.equal(v.effectLights, 1);
   assert.equal(v.halos, fb.halos);
-  assert.equal(G.sanitizeGraphicsValues({ renderScale: -5 }, fb).renderScale, G.RENDER_SCALE_MIN);
-  assert.equal(G.sanitizeGraphicsValues({ renderScale: Number.NaN }, fb).renderScale, fb.renderScale);
+  assert.equal("effectLights" in v, false); // the removed option is dropped
+  for (const raw of [null, undefined, 42, "x", []]) assert.equal(G.sameValues(G.sanitizeGraphicsValues(raw, fb), fb), true);
 });
 
-console.log("settings record + migration");
-
-await test("no old key → Automatique, auto cap, default outline / crosshair / panel; first-launch detection wanted", () => {
-  const st = memoryStorage();
-  const store = new S.SettingsStore(st, () => "bas", () => 1);
-  const r = store.get();
-  assert.equal(r.v, S.SETTINGS_VERSION);
-  assert.equal(r.graphics.preset, "auto");
-  assert.equal(r.fpsCap, "auto");
-  assert.equal(r.fpsTarget, "display");
-  assert.equal(r.dynamicResolution, false);
-  assert.equal(r.perfPanel, "full");
-  assert.equal(S.needsFirstDetection(r, "Intel(R) Iris(R) Xe Graphics · D3D11"), true);
-  assert.ok(st.map.has(S.SETTINGS_KEY), "migrated record persisted once");
+await test("labels: every option value has a French label, descriptions name what the map uses", () => {
+  for (const a of G.ANTIALIASING) assert.ok(L.AA_LABELS[a]);
+  for (const s of G.SHADOW_MODES) assert.ok(L.SHADOW_LABELS[s]);
+  for (const q of G.SHADOW_QUALITIES) assert.ok(L.SHADOW_QUALITY_LABELS[q]);
+  for (const s of G.SNOW_LEVELS) assert.ok(L.SNOW_LABELS[s]);
+  for (const p of G.PRESET_CHOICES) assert.ok(L.PRESET_LABELS[p]);
+  assert.equal(L.frNumber(16.666, 1), "16,7");
+  const d = L.describeValues(G.presetValues("bas", { dpr: 1.25 }), G.DEFAULT_CAPS);
+  assert.match(d, /résolution 80\u202f%/);
+  assert.match(d, /FXAA/);
+  assert.match(d, /ombres statiques \(moyenne\)/);
+  assert.equal(/neige/.test(L.describeValues(G.presetValues("bas", { dpr: 1 }), { ...G.DEFAULT_CAPS, snow: false })), false);
+  assert.equal(L.fpsCapLabel("auto", "bas"), "Auto (60)");
+  assert.equal(L.fpsCapLabel(0, "bas"), "Aucune");
 });
 
-await test("old LOW / HIGH → Bas / Élevé exactly, no first-launch detection (the player chose)", () => {
-  for (const [old, preset] of [["LOW", "bas"], ["HIGH", "eleve"]] as const) {
-    const store = new S.SettingsStore(memoryStorage({ [S.LEGACY_KEYS.quality]: old }), () => "eleve");
-    assert.equal(store.get().graphics.preset, preset);
-    assert.equal(S.needsFirstDetection(store.get(), "any"), false);
+console.log("settings store");
+
+const autoWeak = () => "bas" as const;
+const autoStrong = () => "eleve" as const;
+
+await test("migration: LOW / HIGH → Bas / Élevé, AUTO or nothing → Automatique, FPS LIMIT kept", () => {
+  const cases: [Record<string, string>, string, unknown][] = [
+    [{}, "auto", "auto"],
+    [{ "beanzo.graphicsQuality": "AUTO" }, "auto", "auto"],
+    [{ "beanzo.graphicsQuality": "LOW" }, "bas", "auto"],
+    [{ "beanzo.graphicsQuality": "HIGH", "beanzo.fpsCap": "60" }, "eleve", 60],
+    [{ "beanzo.graphicsQuality": "LOW", "beanzo.fpsCap": "OFF" }, "bas", 0],
+    [{ "beanzo.graphicsQuality": "garbage", "beanzo.fpsCap": "999" }, "auto", "auto"],
+  ];
+  for (const [init, preset, cap] of cases) {
+    const r = S.migrateLegacy(memoryStorage(init), autoStrong);
+    assert.equal(r.graphics.preset, preset, JSON.stringify(init));
+    assert.equal(r.fpsCap, cap, JSON.stringify(init));
+    assert.deepEqual(r.graphics.auto, {});
   }
 });
 
-await test("old FPS LIMIT AUTO / 60 / OFF → auto / 60 / unlimited", () => {
-  for (const [old, cap] of [["AUTO", "auto"], ["60", 60], ["OFF", 0]] as const) {
-    const store = new S.SettingsStore(memoryStorage({ [S.LEGACY_KEYS.fpsCap]: old, [S.LEGACY_KEYS.quality]: "HIGH" }));
-    assert.equal(store.get().fpsCap, cap);
-  }
+await test("migration: an explicit snow level → Personnalisé = the same preset with that snow (the game looks the same)", () => {
+  const r1 = S.migrateLegacy(memoryStorage({ "beanzo.graphicsQuality": "HIGH", "slideio.givreSnow": "dense" }), autoWeak, 1.25);
+  assert.equal(r1.graphics.preset, "custom");
+  assert.equal(G.sameValues(r1.graphics.custom!, { ...G.presetValues("eleve", { dpr: 1.25 }), snow: "dense" }), true);
+  assert.equal(r1.fpsCap, "auto");
+  // AUTO on a weak GPU was LOW (capped at 60): Personnalisé from Bas, the 60 cap pinned.
+  const r2 = S.migrateLegacy(memoryStorage({ "slideio.givreSnow": "off" }), autoWeak, 1.25);
+  assert.equal(r2.graphics.preset, "custom");
+  assert.equal(G.sameValues(r2.graphics.custom!, { ...G.presetValues("bas", { dpr: 1.25 }), snow: "off" }), true);
+  assert.equal(r2.fpsCap, 60);
+  assert.equal(G.resolveFpsCap(r2.fpsCap, "custom"), 60);
+  // The default level changes nothing.
+  assert.equal(S.migrateLegacy(memoryStorage({ "slideio.givreSnow": "normale" }), autoWeak).graphics.preset, "auto");
 });
 
-await test("old snow level other than normal → Personnalisé = that preset + the snow (same image), LOW keeps its 60 cap", () => {
-  const dpr = 1.25;
-  const low = new S.SettingsStore(memoryStorage({ [S.LEGACY_KEYS.quality]: "LOW", [S.LEGACY_KEYS.snow]: "legere" }), () => "eleve", () => dpr);
-  const r = low.get();
-  assert.equal(r.graphics.preset, "custom");
-  assert.deepEqual(r.graphics.custom, { ...G.presetValues("bas", { dpr }), snow: "legere" });
-  assert.equal(r.fpsCap, 60, "old LOW + AUTO cap = 60 → kept explicitly");
-  assert.equal(G.resolveFpsCap(r.fpsCap, r.graphics.preset), 60);
-  // AUTO quality: the custom values start from what the old AUTO picked on this GPU.
-  let asked = 0;
-  const auto = new S.SettingsStore(memoryStorage({ [S.LEGACY_KEYS.snow]: "off" }), () => (asked++, "bas"), () => 1);
-  assert.equal(auto.get().graphics.preset, "custom");
-  assert.equal(auto.get().graphics.custom?.snow, "off");
-  assert.equal(auto.get().graphics.custom?.antialiasing, "fxaa");
-  assert.equal(asked, 1);
-  // Old snow "normale" (the default) is no choice at all: Automatique.
-  const normal = new S.SettingsStore(memoryStorage({ [S.LEGACY_KEYS.snow]: "normale" }), () => "bas");
-  assert.equal(normal.get().graphics.preset, "auto");
-  // An explicit OFF cap stays OFF.
-  const off = new S.SettingsStore(memoryStorage({ [S.LEGACY_KEYS.quality]: "LOW", [S.LEGACY_KEYS.snow]: "dense", [S.LEGACY_KEYS.fpsCap]: "OFF" }));
-  assert.equal(off.get().fpsCap, 0);
+await test("migration: outline + crosshair records validated as before (untouched old crosshair → the new default)", () => {
+  const r = S.migrateLegacy(
+    memoryStorage({
+      "slideio.givreOutline": JSON.stringify({ enabled: false, thickness: 99, intensity: 0.5 }),
+      "slideio.crosshair": JSON.stringify({ shape: "CROSS", scale: 1.5, color: "#FF0000", highContrast: true, reducedMotion: false }),
+    }),
+    autoStrong,
+  );
+  assert.deepEqual(r.outline, { enabled: false, thickness: O.OUTLINE_THICKNESS_MAX, intensity: 0.5 });
+  assert.deepEqual(r.crosshair, { shape: "CROSS", scale: 1.5, color: "#ff0000", highContrast: true, reducedMotion: false });
+  const untouched = S.migrateLegacy(memoryStorage({ "slideio.crosshair": JSON.stringify({ shape: "DOT", scale: 1, color: "#FFFFFF" }) }), autoStrong);
+  assert.deepEqual(untouched.crosshair, C.defaultCrosshairSettings());
+  const broken = S.migrateLegacy(memoryStorage({ "slideio.givreOutline": "{nope", "slideio.crosshair": "[" }), autoStrong);
+  assert.deepEqual(broken.outline, O.DEFAULT_OUTLINE_VALUES);
 });
 
-await test("old outline and crosshair records → validated as before (legacy untouched crosshair → new default look)", () => {
-  const st = memoryStorage({
-    [S.LEGACY_KEYS.outline]: JSON.stringify({ enabled: false, thickness: 9, intensity: 0.4 }),
-    [S.LEGACY_KEYS.crosshair]: JSON.stringify({ shape: "CROSS", scale: 1.5, color: "#FF0000", highContrast: true, reducedMotion: true }),
-  });
-  const r = new S.SettingsStore(st).get();
-  assert.deepEqual(r.outline, { enabled: false, thickness: 3, intensity: 0.4 });
-  assert.deepEqual(r.crosshair, { shape: "CROSS", scale: 1.5, color: "#ff0000", highContrast: true, reducedMotion: true });
-  const legacy = new S.SettingsStore(
-    memoryStorage({ [S.LEGACY_KEYS.crosshair]: JSON.stringify({ shape: "DOT", scale: 1, color: "#ffffff" }) }),
-  ).get();
-  assert.equal(legacy.crosshair.shape, "STICKER");
-  const broken = new S.SettingsStore(memoryStorage({ [S.LEGACY_KEYS.outline]: "{nope", [S.LEGACY_KEYS.crosshair]: "[]" })).get();
-  assert.equal(broken.outline.enabled, true);
-  assert.equal(broken.crosshair.shape, "STICKER");
-});
-
-await test("migration runs once: the new record wins over the old keys afterwards", () => {
-  const st = memoryStorage({ [S.LEGACY_KEYS.quality]: "LOW" });
-  new S.SettingsStore(st).update((d) => void (d.graphics = { preset: "ultra", custom: null, auto: null }));
-  st.map.set(S.LEGACY_KEYS.quality, "HIGH"); // an old key written later (old build) changes nothing
-  assert.equal(new S.SettingsStore(st).get().graphics.preset, "ultra");
-});
-
-await test("round trip: update → persisted → reloaded identical; subscribers notified with the new record", () => {
-  const st = memoryStorage();
-  const store = new S.SettingsStore(st);
-  const seen: string[] = [];
-  store.subscribe((r) => seen.push(r.graphics.preset));
+await test("store: first load migrates and persists ONE record; later loads read it; changes persist and notify", () => {
+  const storage = memoryStorage({ "beanzo.graphicsQuality": "LOW", "beanzo.fpsCap": "60" });
+  const store = new S.SettingsStore(storage, autoStrong);
+  assert.equal(store.get().graphics.preset, "bas");
+  assert.ok(storage.map.has(S.SETTINGS_KEY));
+  let notified = 0;
+  const off = store.subscribe(() => notified++);
   store.update((d) => {
-    d.graphics = { preset: "custom", custom: { ...G.presetValues("moyen", { dpr: 1 }), renderScale: 85 }, auto: null };
-    d.fpsCap = 144;
-    d.dynamicResolution = true;
+    d.graphics.preset = "ultra";
+    d.fpsTarget = 144;
     d.perfPanel = "fps";
-    d.crosshair.color = "#00ff00";
   });
-  assert.deepEqual(seen, ["custom"]);
-  const again = new S.SettingsStore(st).get();
-  assert.deepEqual(again, store.get());
-  assert.equal(again.graphics.custom?.renderScale, 85);
+  assert.equal(notified, 1);
+  off();
+  store.update((d) => void (d.fpsCap = 144));
+  assert.equal(notified, 1);
+  const again = new S.SettingsStore(storage, autoWeak).get();
+  assert.equal(again.graphics.preset, "ultra");
+  assert.equal(again.fpsTarget, 144);
   assert.equal(again.fpsCap, 144);
-  assert.equal(again.dynamicResolution, true);
   assert.equal(again.perfPanel, "fps");
-  assert.equal(again.crosshair.color, "#00ff00");
 });
 
-await test("a corrupted / foreign record is read as far as it validates (never throws, never blocks the game)", () => {
-  for (const raw of ["{", "null", "42", JSON.stringify({ v: 1, graphics: "x", fpsCap: 7, perfPanel: "huge" }), JSON.stringify({ v: 99, fpsCap: 240 })]) {
-    const r = new S.SettingsStore(memoryStorage({ [S.SETTINGS_KEY]: raw })).get();
-    assert.equal(r.v, S.SETTINGS_VERSION);
-    assert.ok(G.PRESET_CHOICES.includes(r.graphics.preset));
-    assert.ok(G.FPS_CAPS.includes(r.fpsCap));
-  }
-  assert.equal(new S.SettingsStore(memoryStorage({ [S.SETTINGS_KEY]: JSON.stringify({ v: 99, fpsCap: 240 }) })).get().fpsCap, 240);
-  // "custom" without values falls back to auto.
-  const r = new S.SettingsStore(memoryStorage({ [S.SETTINGS_KEY]: JSON.stringify({ v: 1, graphics: { preset: "custom" } }) })).get();
-  assert.equal(r.graphics.preset, "auto");
-});
-
-await test("storage failures (private mode, quota, sandbox) leave the session working in memory", () => {
-  const ro = new S.SettingsStore(memoryStorage({}, { failWrites: true }));
-  ro.update((d) => void (d.fpsCap = 30));
-  assert.equal(ro.get().fpsCap, 30);
-  const blocked = new S.SettingsStore(memoryStorage({}, { failReads: true, failWrites: true }));
+await test("store: unreadable / unwritable storage → the session keeps working in memory", () => {
+  const ro = memoryStorage({}, { failWrites: true });
+  const store = new S.SettingsStore(ro, autoStrong);
+  assert.equal(store.get().graphics.preset, "auto");
+  store.update((d) => void (d.graphics.preset = "bas"));
+  assert.equal(store.get().graphics.preset, "bas");
+  const blocked = new S.SettingsStore(memoryStorage({}, { failReads: true }), autoStrong);
   assert.equal(blocked.get().graphics.preset, "auto");
   const none = new S.SettingsStore(null);
-  none.update((d) => void (d.perfPanel = "off"));
-  assert.equal(none.get().perfPanel, "off");
+  assert.deepEqual(none.get().graphics, { preset: "auto", custom: null, auto: {} });
 });
 
-await test("a stored detection result survives validation; a stale GPU or version re-detects", () => {
-  const st = memoryStorage();
-  const store = new S.SettingsStore(st);
-  const values = { ...G.presetValues("bas", { dpr: 1 }), renderScale: 80 };
-  store.update((d) => {
-    d.graphics = {
-      preset: "auto",
+await test("store: corrupted / foreign records read as far as they validate", () => {
+  for (const raw of ["{", "null", "[]", JSON.stringify({ v: 99, graphics: { preset: "laser" }, fpsCap: "x", perfPanel: 3 })]) {
+    const store = new S.SettingsStore(memoryStorage({ [S.SETTINGS_KEY]: raw }), autoStrong);
+    const r = store.get();
+    assert.ok(G.PRESET_CHOICES.includes(r.graphics.preset));
+    assert.ok(G.FPS_CAPS.includes(r.fpsCap));
+    assert.ok(S.PERF_PANEL_MODES.includes(r.perfPanel));
+  }
+  // "custom" without values falls back to auto; detections: bad map keys and bad entries dropped.
+  const r = S.sanitizeRecord({
+    v: 1,
+    graphics: {
+      preset: "custom",
       custom: null,
-      auto: { values, at: 5, gpu: "GPU A", targetFps: 60, expectedFps: 62, limitedBy: "gpu", belowTarget: false, summary: "s", version: G.AUTO_TUNE_VERSION },
-    };
+      auto: { GIVRE: { values: { renderScale: 90 }, gpu: "A", version: 1, targetFps: 60 }, "bad key": { values: {} }, YARD: 5 },
+    },
   });
-  const r = new S.SettingsStore(st).get();
-  assert.deepEqual(r.graphics.auto?.values, values);
-  assert.equal(S.needsFirstDetection(r, "GPU A"), false);
-  assert.equal(S.needsFirstDetection(r, "GPU B"), true);
+  assert.equal(r.graphics.preset, "auto");
+  assert.deepEqual(Object.keys(r.graphics.auto), ["GIVRE"]);
+  assert.equal(r.graphics.auto.GIVRE.values.renderScale, 90);
+  assert.equal(r.graphics.auto.GIVRE.map, "GIVRE");
+  assert.equal(r.graphics.auto.GIVRE.complete, true);
+});
+
+await test("old keys bridge: the record keeps LOW / HIGH / AUTO and the FPS limit in step for an older build", () => {
+  const storage = memoryStorage({});
+  const store = new S.SettingsStore(storage, autoStrong);
+  store.get();
+  assert.equal(storage.map.get("beanzo.graphicsQuality"), "AUTO");
+  store.update((d) => void (d.graphics.preset = "bas"));
+  assert.equal(storage.map.get("beanzo.graphicsQuality"), "LOW");
+  store.update((d) => void (d.fpsCap = 0));
+  assert.equal(storage.map.get("beanzo.fpsCap"), "OFF");
+  // Ultra / Personnalisé / a 144 cap have no old equivalent: the keys keep their value.
+  store.update((d) => {
+    d.graphics.preset = "ultra";
+    d.fpsCap = 144;
+  });
+  assert.equal(storage.map.get("beanzo.graphicsQuality"), "LOW");
+  assert.equal(storage.map.get("beanzo.fpsCap"), "OFF");
+});
+
+await test("old keys bridge: a value written by someone else since (older build, bench script) is taken over at the next load", () => {
+  const storage = memoryStorage({ "beanzo.graphicsQuality": "LOW" });
+  new S.SettingsStore(storage, autoStrong).get(); // migrated: Bas
+  // Same store, nobody else wrote: no change.
+  assert.equal(new S.SettingsStore(storage, autoStrong).get().graphics.preset, "bas");
+  storage.map.set("beanzo.graphicsQuality", "HIGH");
+  storage.map.set("beanzo.fpsCap", "60");
+  const r = new S.SettingsStore(storage, autoStrong).get();
+  assert.equal(r.graphics.preset, "eleve");
+  assert.equal(r.fpsCap, 60);
+  // Garbage in the old key is ignored.
+  storage.map.set("beanzo.graphicsQuality", "MEGA");
+  assert.equal(new S.SettingsStore(storage, autoStrong).get().graphics.preset, "eleve");
+  // A detection survives a takeover (only the preset changes).
+  const s2 = new S.SettingsStore(storage, autoStrong);
+  s2.update((d) => {
+    d.graphics.preset = "auto";
+    d.graphics.auto = { GIVRE: { ...r.graphics.auto.GIVRE, values: G.presetValues("bas", { dpr: 1 }), gpu: "A", map: "GIVRE", at: 1, targetFps: 60, measuredFps: 60, limitedBy: "none", belowTarget: false, complete: true, measuredShadows: "static", summary: "", version: G.AUTO_TUNE_VERSION } };
+  });
+  storage.map.set("beanzo.graphicsQuality", "LOW");
+  const r3 = new S.SettingsStore(storage, autoStrong).get();
+  assert.equal(r3.graphics.preset, "bas");
+  assert.ok(r3.graphics.auto.GIVRE);
+});
+
+await test("outline / crosshair validation helpers stay pure (the HUD document imports them)", () => {
+  assert.deepEqual(O.sanitizeOutlineValues({ enabled: "no", thickness: 0, intensity: 2 }), {
+    enabled: O.DEFAULT_OUTLINE_VALUES.enabled,
+    thickness: O.OUTLINE_THICKNESS_MIN,
+    intensity: 1,
+  });
+  const ch = C.sanitizeCrosshairSettings({ shape: "STAR", scale: 99, color: "red" });
+  assert.equal(ch.shape, "STICKER");
+  assert.equal(ch.scale, C.CROSSHAIR_SCALE_MAX);
+  assert.equal(ch.color, C.DEFAULT_CROSSHAIR.color);
 });
 
 console.log(`\nAll ${passed} graphics settings checks passed.`);

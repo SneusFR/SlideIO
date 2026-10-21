@@ -1,18 +1,23 @@
-// AUTOMATIC GRAPHICS DETECTION — headless checks of src/settings/AutoTune (ladder, verdicts, binary
-// search, the frame-driven calibration) and src/settings/GraphicsController (store ↔ game, first-launch
-// detection, cancel, result → "Automatique", reload-only downgrade), fed with SIMULATED machines: a GPU
-// cost model per setting (pixels × anti-aliasing, snow, filtering, shadows…), vsync-paced frames,
-// timer-query results arriving late, noise and hitches. The real browser path is covered by the
-// end-to-end bench (no GPU there: SwiftShader).
-// Usage (repo root):  SLIDEIO_ROOT=$PWD node --import <vitenode>/register.mjs scripts/test-graphics-autotune.mts
+// AUTOMATIC GRAPHICS DETECTION — headless checks of src/settings/AutoTune (the ladder, the probe
+// verdicts, the frame-driven calibration) and src/settings/GraphicsController (store ↔ game, result →
+// "Automatique" per map, cancel, reload-only advice), fed with SIMULATED machines: a GPU cost model per
+// setting, a main-thread cost, a vsync-paced display (a frame that misses its refresh waits for the
+// next one), seeded jitter, focus losses.
+//
+// The machine models are calibrated on what was measured on the real hardware (PERFORMANCE.md,
+// 11th pass): the owner's laptop (Intel Iris Xe, 1920 × 928 CSS at 125 %, 60 Hz — Givre LOW 10.5 ms of
+// GPU at 2560 × 1238, 16.2 ms at 3200 × 1546; HIGH ≈ 22 ms at 2400 × 1160, 5 ms of it the live shadow
+// map) and the gaming PC (RTX 2080 Super, 2560 × 1440, 240 Hz, ~3 ms of game CPU per frame).
+// Usage (repo root):  npx tsx scripts/test-graphics-autotune.mts
 import assert from "node:assert/strict";
 
 const G = await import("../src/settings/GraphicsSettings.ts");
 const A = await import("../src/settings/AutoTune.ts");
 const S = await import("../src/settings/SettingsStore.ts");
-const C = await import("../src/settings/GraphicsController.ts");
+const GC = await import("../src/settings/GraphicsController.ts");
 
-type Values = ReturnType<typeof G.presetValues>;
+type Values = import("../src/settings/GraphicsSettings.ts").GraphicsValues;
+type Caps = import("../src/settings/GraphicsSettings.ts").GraphicsCaps;
 
 let passed = 0;
 async function test(name: string, fn: () => void | Promise<void>): Promise<void> {
@@ -21,12 +26,11 @@ async function test(name: string, fn: () => void | Promise<void>): Promise<void>
   console.log(`  ✓ ${name}`);
 }
 
-const CAPS = { ...G.DEFAULT_CAPS };
-const JUNGLE_CAPS = { ...G.DEFAULT_CAPS, composer: false, snow: false, halos: false, footprints: false, anisotropicTextures: false };
+// ------------------------------------------------------------------ machines
 
-/** Deterministic PRNG (same "noise" every run). */
+/** Deterministic PRNG (xorshift32). */
 function rng(seed: number): () => number {
-  let s = seed >>> 0;
+  let s = seed >>> 0 || 1;
   return () => {
     s ^= s << 13;
     s >>>= 0;
@@ -37,434 +41,539 @@ function rng(seed: number): () => number {
   };
 }
 
-/**
- * A machine: GPU ms of a configuration. `pixel` = cost of the full native
- * resolution with FXAA; MSAA multiplies it; snow, halos, filtering, shadow
- * resolution and dynamic shadows add fixed costs.
- */
 interface Machine {
-  pixel: number;
-  fixed: number;
-  cpu: number;
-  refreshHz: number;
-  timer: boolean;
+  name: string;
+  hz: number;
+  css: [number, number];
+  dpr: number;
+  /** Main-thread ms per frame (game JS + submission + the browser's own work). */
+  cpuMs: number;
+  /** GPU ms per frame for these values at this many megapixels. */
+  gpu: (v: Values, mpx: number) => number;
+  caps: Caps;
+  /** ± jitter on both sides (ms). */
+  jitter: number;
 }
 
-function gpuCost(m: Machine, v: Values): number {
-  const px = (v.renderScale / 100) ** 2;
-  const aa = v.antialiasing === "msaa4" ? 2.1 : v.antialiasing === "msaa2" ? 1.5 : v.antialiasing === "fxaa" ? 1.06 : 1;
-  const snow = { off: 0, legere: 0.08, normale: 0.15, dense: 0.26 }[v.snow] * m.pixel * 0.6;
-  const aniso = Math.log2(v.anisotropy) * 0.02 * m.pixel;
-  const shadowQ = G.SHADOW_QUALITIES.indexOf(v.shadowQuality) * 0.015 * m.pixel;
-  const live = v.shadows === "dynamic" ? 0.08 * m.pixel : 0;
-  const halos = v.halos ? 0.03 * m.pixel : 0;
-  const particles = v.particles === "normal" ? 0.004 * m.pixel : 0;
-  return m.fixed + m.pixel * px * aa + snow + aniso + shadowQ + live + halos + particles;
-}
+const ANISO_COST: Record<number, number> = { 1: 0, 2: 0.06, 4: 0.12, 8: 0.2, 16: 0.3 };
+const SNOW_COST: Record<string, number> = { off: 0, legere: 0.15, normale: 0.3, dense: 0.5 };
+const SHADOW_TEXELS: Record<string, number> = { low: 0.52, medium: 2.1, high: 8.4, ultra: 33.5 }; // Givre, Mtexel
 
-/**
- * Runs a Calibration against a simulated machine: vsync-paced frames
- * (interval = max(GPU, CPU, refresh), Chrome's pipelining), GPU results two
- * frames late, ±noise, a hitch every 17 frames, slow first frames after each
- * candidate (render-target allocation).
- */
-function simulate(m: Machine, ladder: Values[], budgetMs: number, opts: { noise?: number; supersample?: Values | null; maxFrames?: number } = {}) {
-  const r = rng(7);
-  const noise = opts.noise ?? 0.06;
-  let current: Values = ladder[0];
-  let sinceApply = 0;
-  let applied = 0;
-  const host = {
-    apply: (v: Values) => {
-      current = v;
-      sinceApply = 0;
-      applied++;
-    },
-    gpuTimerAlive: () => m.timer,
+/** Intel Iris Xe (the owner's laptop): fill-rate bound, MSAA and the live shadow map expensive. */
+function irisXe(boot: "static" | "dynamic", opts: Partial<Machine> = {}): Machine {
+  const perMpx: Record<string, number> = { none: 2.6, fxaa: 3.0, msaa2: 4.4, msaa4: 5.75 };
+  return {
+    name: `Iris Xe (${boot})`,
+    hz: 60,
+    css: [1920, 928],
+    dpr: 1.25,
+    cpuMs: 7,
+    jitter: 0.6,
+    caps: { ...G.DEFAULT_CAPS },
+    gpu: (v, mpx) =>
+      1 +
+      mpx * (perMpx[v.antialiasing] + ANISO_COST[v.anisotropy]) +
+      SNOW_COST[v.snow] +
+      (v.shadows === "dynamic" ? SHADOW_TEXELS[v.shadowQuality] * 0.6 : 0),
+    ...opts,
   };
-  const calib = new A.Calibration(host, ladder, budgetMs, opts.supersample ?? null);
+}
+
+/** RTX 2080 Super at 1440p / 240 Hz (the gaming PC): ~3.6 ms of main thread per frame. */
+function rtx2080(opts: Partial<Machine> = {}): Machine {
+  const perMpx: Record<string, number> = { none: 0.2, fxaa: 0.22, msaa2: 0.28, msaa4: 0.35 };
+  return {
+    name: "RTX 2080 Super",
+    hz: 240,
+    css: [2560, 1440],
+    dpr: 1,
+    cpuMs: 3.6,
+    jitter: 0.25,
+    caps: { ...G.DEFAULT_CAPS },
+    gpu: (v, mpx) =>
+      0.4 + mpx * (perMpx[v.antialiasing] + ANISO_COST[v.anisotropy] * 0.1) + SNOW_COST[v.snow] * 0.1 + (v.shadows === "dynamic" ? SHADOW_TEXELS[v.shadowQuality] * 0.05 : 0),
+    ...opts,
+  };
+}
+
+/** Old office laptop (UHD 620, 1080p): GPU-bound even at the floor. */
+function uhd620(): Machine {
+  return {
+    name: "UHD 620",
+    hz: 60,
+    css: [1920, 1080],
+    dpr: 1,
+    cpuMs: 9,
+    jitter: 0.8,
+    caps: { ...G.DEFAULT_CAPS, maxShadowQuality: "high" },
+    gpu: (v, mpx) => 1 + mpx * ({ none: 8, fxaa: 9, msaa2: 13, msaa4: 17 } as Record<string, number>)[v.antialiasing] + SNOW_COST[v.snow],
+  };
+}
+
+function megapixels(m: Machine, v: Values): number {
+  const ratio = G.pixelRatioFor(v.renderScale, m.dpr);
+  return (m.css[0] * ratio * m.css[1] * ratio) / 1e6;
+}
+
+interface RunOptions {
+  target?: number;
+  /** Frames (by index) rendered while the window had no focus. */
+  unfocused?: (frame: number) => boolean;
+  seed?: number;
+  maxFrames?: number;
+  cfg?: typeof A.AUTO_TUNE;
+  /** Stop after this many frames (cancel). */
+  cancelAt?: number;
+}
+
+/** Runs a whole calibration on a simulated machine. */
+function calibrate(m: Machine, boot: Values, opts: RunOptions = {}) {
+  const ladder = A.buildLadder(boot, { dpr: m.dpr }, m.caps);
+  const target = opts.target ?? Math.min(240, m.hz);
+  let applied: Values = boot;
+  const appliedLog: Values[] = [];
+  const calib = new A.Calibration(
+    {
+      apply: (v) => {
+        applied = v;
+        appliedLog.push(v);
+      },
+    },
+    ladder,
+    target,
+    opts.cfg,
+  );
+  const random = rng(opts.seed ?? 7);
+  const period = 1000 / m.hz;
   let t = 1000;
   calib.start(t);
-  const pendingGpu: { tag: number; ms: number; due: number }[] = [];
-  let frames = 0;
-  for (let tag = 1; !calib.done && frames < (opts.maxFrames ?? 20000); tag++, frames++) {
-    const jitter = 1 + (r() * 2 - 1) * noise;
-    let gpu = gpuCost(m, current) * jitter;
-    if (sinceApply < 2) gpu *= 3; // allocation / re-bake after a change
-    const cpu = m.cpu * (1 + (r() * 2 - 1) * noise);
-    let interval = Math.max(gpu, cpu, 1000 / m.refreshHz);
-    if (frames % 17 === 16) interval *= 3; // a hitch (GC, another tab…)
-    calib.onFrame(t, cpu, tag);
-    if (m.timer) pendingGpu.push({ tag, ms: gpu, due: frames + 2 });
-    for (let i = pendingGpu.length - 1; i >= 0; i--) {
-      if (pendingGpu[i].due <= frames) {
-        calib.onGpu(pendingGpu[i].tag, pendingGpu[i].ms);
-        pendingGpu.splice(i, 1);
-      }
+  let frame = 0;
+  const maxFrames = opts.maxFrames ?? 20000;
+  while (!calib.done && frame < maxFrames) {
+    if (opts.cancelAt !== undefined && frame === opts.cancelAt) {
+      calib.cancel();
+      break;
     }
+    const cpu = m.cpuMs + (random() * 2 - 1) * m.jitter;
+    const gpu = m.gpu(applied, megapixels(m, applied)) + (random() * 2 - 1) * m.jitter;
+    const work = Math.max(cpu, gpu);
+    // rAF on a vsync-paced display: the next frame starts at the first refresh after the work.
+    const interval = Math.max(1, Math.ceil(work / period - 1e-9)) * period;
+    calib.onFrame(t, cpu, !(opts.unfocused?.(frame) ?? false));
     t += interval;
-    sinceApply++;
+    frame++;
   }
-  return { outcome: calib.outcome ?? calib.cancel(), frames, applied, seconds: (t - 1000) / 1000, calib };
+  return { calib, ladder, outcome: calib.outcome, appliedLog, frames: frame, seconds: (t - 1000) / 1000 };
 }
 
-/** Best rung of the ladder (lowest index) whose noise-free GPU cost holds the budget. */
-function bestRung(m: Machine, ladder: Values[], budgetMs: number): number {
-  for (let i = 0; i < ladder.length; i++) if (gpuCost(m, ladder[i]) <= budgetMs * A.AUTO_TUNE.gpuBudget) return i;
-  return ladder.length - 1;
+/** Real (unamplified) GPU share of the frame budget of a set of values on a machine. */
+function gpuShare(m: Machine, v: Values, target: number): number {
+  return m.gpu(v, megapixels(m, v)) / (1000 / target);
 }
 
-const LAPTOP: Machine = { pixel: 22, fixed: 0.8, cpu: 5.5, refreshHz: 60, timer: true }; // Iris Xe, Givre at 1920×928
-const GAMING: Machine = { pixel: 1.1, fixed: 0.25, cpu: 3.1, refreshHz: 240, timer: true }; // RTX 2080 Super, 1440p @ 240 Hz
+// ------------------------------------------------------------------ ladder
 
-console.log("ladder");
+console.log("detection ladder");
 
-await test("ladder: best first, every rung cheaper than the previous one, the floor last (Givre, DPR 1 and 1.25)", () => {
-  for (const dpr of [1, 1.25]) {
-    const boot = G.presetValues("bas", { dpr });
-    const ladder = A.buildLadder(boot, { dpr }, CAPS);
-    assert.ok(ladder.length >= 10 && ladder.length <= 14, `rungs: ${ladder.length}`);
-    const top = ladder[0];
-    assert.equal(top.antialiasing, "msaa4");
-    assert.equal(top.renderScale, 100);
-    assert.equal(top.snow, "dense");
-    assert.equal(top.anisotropy, 16);
-    for (let i = 1; i < ladder.length; i++) {
-      assert.ok(gpuCost(LAPTOP, ladder[i]) < gpuCost(LAPTOP, ladder[i - 1]) + 1e-9, `rung ${i} not cheaper`);
-      assert.ok(!G.sameValues(ladder[i], ladder[i - 1]), `rung ${i} duplicates`);
+await test("ladder: best first (native, MSAA 4×, sharpest shadows, 16×), the beauty floor last, no duplicate", () => {
+  for (const dpr of [1, 1.25, 2]) {
+    for (const boot of [G.presetValues("bas", { dpr }), G.presetValues("eleve", { dpr })]) {
+      const ladder = A.buildLadder(boot, { dpr }, G.DEFAULT_CAPS);
+      const top = ladder[0];
+      const floor = ladder[ladder.length - 1];
+      assert.equal(top.renderScale, 100);
+      assert.equal(top.antialiasing, "msaa4");
+      assert.equal(top.anisotropy, 16);
+      assert.equal(top.snow, "normale");
+      assert.equal(top.shadowQuality, boot.shadows === "dynamic" ? "ultra" : "high");
+      assert.equal(floor.antialiasing, "fxaa");
+      assert.equal(floor.anisotropy, 1);
+      assert.equal(floor.snow, "legere");
+      assert.equal(floor.renderScale, G.floorRenderScale({ dpr }));
+      assert.equal(floor.shadowQuality, boot.shadows === "dynamic" ? "medium" : "high");
+      for (let i = 1; i < ladder.length; i++) assert.equal(G.sameValues(ladder[i], ladder[i - 1]), false);
     }
-    const floor = ladder[ladder.length - 1];
-    assert.equal(floor.renderScale, G.floorRenderScale({ dpr }));
-    assert.equal(floor.antialiasing, "fxaa");
-    assert.equal(floor.snow, "legere");
-    assert.equal(floor.halos, true);
-    assert.equal(floor.footprints, true);
-    assert.equal(floor.shadows, boot.shadows, "shadow mode never touched (reload-only)");
   }
 });
 
-await test("ladder never goes under the beauty floor, and keeps the session's reload-only settings on every rung", () => {
-  for (const dpr of [0.9, 1, 1.25, 1.5, 2, 3]) {
-    for (const boot of [G.presetValues("bas", { dpr }), G.presetValues("eleve", { dpr }), { ...G.presetValues("eleve", { dpr }), effectLights: 1 as const }]) {
-      for (const caps of [CAPS, JUNGLE_CAPS]) {
+await test("ladder: every rung keeps what only a reload changes (shadow mode, character shadows, context MSAA) and halos / footprints / particles", () => {
+  for (const dpr of [1, 1.25, 2]) {
+    for (const boot of [
+      G.presetValues("bas", { dpr }),
+      G.presetValues("eleve", { dpr }),
+      { ...G.presetValues("eleve", { dpr }), characterShadows: false },
+      { ...G.presetValues("eleve", { dpr }), shadows: "off" as const },
+    ]) {
+      for (const composer of [true, false]) {
+        const caps = { ...G.DEFAULT_CAPS, composer, snow: composer, halos: composer, footprints: composer, anisotropicTextures: composer };
         for (const v of A.buildLadder(boot, { dpr }, caps)) {
-          assert.ok(v.renderScale >= G.floorRenderScale({ dpr }) - 1e-9, "scale floor");
           assert.equal(v.shadows, boot.shadows);
           assert.equal(v.characterShadows, boot.characterShadows);
-          assert.equal(v.effectLights, boot.effectLights);
-          if (caps.composer) assert.notEqual(v.antialiasing, "none", "FXAA at least");
-          else assert.equal(v.antialiasing, boot.antialiasing, "context MSAA is reload-only");
-          if (caps.snow) assert.notEqual(v.snow, "off");
-          assert.ok(G.SHADOW_QUALITIES.indexOf(v.shadowQuality) >= G.SHADOW_QUALITIES.indexOf("medium") || v.shadowQuality === boot.shadowQuality);
+          if (!composer) assert.equal(v.antialiasing, boot.antialiasing);
+          assert.equal(v.halos, true && (composer ? true : boot.halos));
+          assert.equal(v.particles, "normal");
+          assert.ok(v.renderScale >= G.floorRenderScale({ dpr }) - 1e-9 && v.renderScale <= 100);
         }
       }
     }
   }
 });
 
-await test("ladder respects the GPU: MSAA samples, anisotropy and shadow size limits", () => {
-  const weakCaps = { ...CAPS, maxSamples: 0, maxAnisotropy: 4, maxShadowQuality: "high" as const };
-  const ladder = A.buildLadder(G.presetValues("eleve", { dpr: 1 }), { dpr: 1 }, weakCaps);
-  assert.equal(ladder[0].antialiasing, "fxaa");
-  assert.equal(ladder[0].anisotropy, 4);
-  assert.equal(ladder[0].shadowQuality, "high");
-  assert.ok(ladder.every((v) => !G.isMsaa(v.antialiasing)));
-});
-
-await test("Retina (DPR 2): more resolution rungs, down to one pixel per CSS pixel", () => {
-  const ladder = A.buildLadder(G.presetValues("bas", { dpr: 2 }), { dpr: 2 }, CAPS);
-  const scales = [...new Set(ladder.map((v) => v.renderScale))];
-  assert.deepEqual(scales, [100, 90, 85, 80, 75, 70, 65, 60, 55, 50]);
-});
-
-console.log("verdicts + search");
-
-await test("verdict with GPU timer: fits under 80 % of the budget; processor-bound when the GPU has room but frames are late", () => {
-  const budget = 1000 / 60;
-  const base = { frames: 30, frameP90: 17, gpuFrames: 30 };
-  assert.equal(A.judge({ ...base, frameMs: 16.7, cpuMs: 4, gpuMs: 13 }, budget).fits, true);
-  assert.equal(A.judge({ ...base, frameMs: 22, cpuMs: 4, gpuMs: 14 }, budget).fits, false);
-  const cpu = A.judge({ ...base, frameMs: 22, cpuMs: 19, gpuMs: 6 }, budget);
-  assert.equal(cpu.fits, true);
-  assert.equal(cpu.cpuBound, true);
-});
-
-await test("verdict without GPU timer: frames at the target rate (vsync) fit; a busy main thread is the processor", () => {
-  const budget = 1000 / 60;
-  const j = (frameMs: number, p90: number, cpuMs: number) => A.judge({ frames: 30, frameMs, frameP90: p90, cpuMs, gpuMs: null, gpuFrames: 0 }, budget);
-  assert.equal(j(16.7, 18, 5).fits, true);
-  assert.equal(j(16.7, 33.3, 5).fits, false, "one frame in ten missed is too many");
-  assert.equal(j(25, 33, 5).fits, false);
-  const cpu = j(25, 33, 23);
-  assert.equal(cpu.fits && cpu.cpuBound, true);
-});
-
-await test("binary search: answers the best fitting rung of a monotonic ladder in ≤ ⌈log2 n⌉ + 1 probes, with a verdict on it", () => {
-  for (let n = 1; n <= 20; n++) {
-    for (let best = 0; best <= n; best++) {
-      const s = new A.LadderSearch(n);
-      let probes = 0;
-      for (let next = s.next(); next !== null; next = s.next()) {
-        probes++;
-        s.report(next, { fits: next >= best, cpuBound: false, frameMs: 16, cpuMs: 4, gpuMs: 10, fps: 60 });
-        assert.ok(probes <= 20);
+await test("ladder: cost never rises along it (every knob is the same or cheaper than one rung above)", () => {
+  const rank = {
+    aa: { none: 0, fxaa: 1, msaa2: 2, msaa4: 3 } as Record<string, number>,
+    q: { low: 0, medium: 1, high: 2, ultra: 3 } as Record<string, number>,
+    snow: { off: 0, legere: 1, normale: 2, dense: 3 } as Record<string, number>,
+  };
+  for (const dpr of [1, 1.25, 1.5, 2]) {
+    for (const boot of [G.presetValues("bas", { dpr }), G.presetValues("eleve", { dpr })]) {
+      const ladder = A.buildLadder(boot, { dpr }, G.DEFAULT_CAPS);
+      for (let i = 1; i < ladder.length; i++) {
+        const a = ladder[i - 1];
+        const b = ladder[i];
+        assert.ok(b.renderScale <= a.renderScale);
+        assert.ok(rank.aa[b.antialiasing] <= rank.aa[a.antialiasing]);
+        assert.ok(rank.q[b.shadowQuality] <= rank.q[a.shadowQuality]);
+        assert.ok(rank.snow[b.snow] <= rank.snow[a.snow]);
+        assert.ok(b.anisotropy <= a.anisotropy);
       }
-      assert.equal(s.answer, Math.min(best, n - 1));
-      assert.ok(s.verdicts.has(s.answer), "the chosen rung was measured");
-      assert.ok(probes <= Math.ceil(Math.log2(Math.max(1, n))) + 1, `n=${n} best=${best}: ${probes} probes`);
     }
   }
 });
 
-console.log("calibration on simulated machines");
-
-await test("Iris Xe laptop, 60 Hz: picks the best rung that holds 60 i/s with margin, in a few seconds", () => {
-  const dpr = 1;
-  const ladder = A.buildLadder(G.presetValues("bas", { dpr }), { dpr }, CAPS);
-  const budget = 1000 / 60;
-  const run = simulate(LAPTOP, ladder, budget);
-  const expected = bestRung(LAPTOP, ladder, budget);
-  assert.equal(run.outcome.complete, true);
-  assert.equal(run.outcome.index, expected, `index ${run.outcome.index} vs ${expected}`);
-  assert.ok(gpuCost(LAPTOP, run.outcome.values) <= budget * 0.8);
-  assert.ok(run.outcome.probes <= 5, `${run.outcome.probes} probes`);
-  assert.ok(run.seconds < 8, `${run.seconds.toFixed(1)} s`);
-  assert.equal(run.outcome.limitedBy, "none");
-  assert.equal(run.outcome.usedGpuTimer, true);
-  // The laptop's real problem (33-41 FPS on Bas): the answer is cheaper than Bas, never under the floor.
-  assert.ok(gpuCost(LAPTOP, run.outcome.values) < gpuCost(LAPTOP, G.presetValues("bas", { dpr })));
-  assert.ok(run.outcome.values.renderScale >= G.floorRenderScale({ dpr }));
+await test("ladder: GPU limits respected (2× MSAA only, no anisotropy, smaller shadow maps), Jungle / Yard without post chain", () => {
+  const boot = G.presetValues("eleve", { dpr: 1 });
+  const weakCaps = { ...G.DEFAULT_CAPS, maxSamples: 2, maxAnisotropy: 1, maxShadowQuality: "high" as const };
+  const ladder = A.buildLadder(boot, { dpr: 1 }, weakCaps);
+  assert.equal(ladder[0].antialiasing, "msaa2");
+  assert.equal(ladder[0].shadowQuality, "high");
+  assert.ok(ladder.every((v) => v.anisotropy === 1));
+  const jungle = A.buildLadder(boot, { dpr: 1.25 }, { ...G.DEFAULT_CAPS, composer: false, snow: false, halos: false, footprints: false, anisotropicTextures: false });
+  assert.ok(jungle.every((v) => v.antialiasing === "msaa4" && v.snow === boot.snow && v.anisotropy === boot.anisotropy));
+  assert.equal(jungle[jungle.length - 1].renderScale, 80);
 });
 
-await test("same laptop at Windows 125 % (1536 × 742 CSS): the floor is the old LOW resolution, still a valid answer", () => {
-  const dpr = 1.25;
-  const ladder = A.buildLadder(G.presetValues("bas", { dpr }), { dpr }, CAPS);
-  const run = simulate({ ...LAPTOP, pixel: 34 }, ladder, 1000 / 60);
-  assert.equal(run.outcome.values.renderScale >= 80, true);
-  assert.equal(run.outcome.belowTarget, true, "pixel cost too high: floor reached");
-  assert.equal(run.outcome.index, ladder.length - 1);
-  assert.equal(run.outcome.limitedBy, "gpu");
+await test("margin probe = +30 % pixels (render scale × √1.3), half-pixel check, capped", () => {
+  const v = G.presetValues("bas", { dpr: 1.25 });
+  const m = A.withMargin({ ...v, renderScale: 100 });
+  assert.ok(Math.abs(m.renderScale ** 2 / 100 ** 2 - 1.3) < 1e-9);
+  assert.equal(A.withMargin({ ...v, renderScale: 190 }).renderScale, A.AUTO_TUNE.maxProbeScale);
+  assert.ok(Math.abs(A.halfPixels({ ...v, renderScale: 80 }).renderScale ** 2 / 80 ** 2 - 0.5) < 1e-9);
+  assert.equal(A.halfPixels({ ...v, renderScale: 30 }).renderScale, A.AUTO_TUNE.minProbeScale);
 });
 
-await test("RTX 2080 Super, 1440p, 240 Hz: top rung holds 240 i/s on the GPU (supersampling only with lots of room)", () => {
-  const dpr = 1;
-  const ladder = A.buildLadder(G.presetValues("eleve", { dpr }), { dpr }, CAPS);
-  const budget = 1000 / 240;
-  const run = simulate(GAMING, ladder, budget, { supersample: A.supersampleRung(ladder[0]) });
-  assert.equal(run.outcome.index, bestRung(GAMING, ladder, budget));
-  assert.ok(gpuCost(GAMING, run.outcome.values) <= budget * 0.8);
-  // Same GPU at 60 Hz: plenty of room → supersampling is tried and kept.
-  const run60 = simulate({ ...GAMING, refreshHz: 60 }, ladder, 1000 / 60, { supersample: A.supersampleRung(ladder[0]) });
-  assert.equal(run60.outcome.index, -1);
-  assert.equal(run60.outcome.values.renderScale, A.AUTO_TUNE.supersampleScale);
+await test("verdicts: delivered frame rate (not the median) and late frames", () => {
+  const stats = (intervals: number[]) => {
+    const sorted = Float64Array.from(intervals).sort();
+    return { ...A.deliveredStats(sorted), cpuMs: 1, sorted };
+  };
+  const p60 = 1000 / 60;
+  assert.equal(A.holds(stats(Array(60).fill(p60)), 60), true);
+  // One frame in five misses its refresh: the median still says 60, the player gets 50.
+  const mixed = stats(Array.from({ length: 60 }, (_, i) => (i % 5 === 0 ? 2 * p60 : p60)));
+  assert.ok(Math.abs(mixed.frameMs - p60) < 1e-9);
+  assert.ok(mixed.fps < 51);
+  assert.equal(A.holds(mixed, 60), false);
+  // A single hitch in a second is fine; a few percent of misses are not.
+  assert.equal(A.holds(stats([...Array(59).fill(p60), 50]), 60), true);
+  assert.equal(A.holds(stats([...Array(56).fill(p60), ...Array(4).fill(2 * p60)]), 60), false);
+  // 240 Hz display, goal 60: uncapped frames hold it easily.
+  assert.equal(A.holds(stats(Array(200).fill(1000 / 240)), 60), true);
 });
 
-await test("processor-bound machine: graphics stay high (lowering them would not help) and the outcome says so", () => {
-  const ladder = A.buildLadder(G.presetValues("eleve", { dpr: 1 }), { dpr: 1 }, CAPS);
-  const run = simulate({ pixel: 2, fixed: 0.2, cpu: 21, refreshHz: 60, timer: true }, ladder, 1000 / 60);
-  assert.equal(run.outcome.index, 0);
-  assert.equal(run.outcome.limitedBy, "cpu");
+// ------------------------------------------------------------------ machines
+
+console.log("detection on simulated machines");
+
+await test("owner's laptop (Iris Xe, 60 Hz, booted Bas): MORE than the old LOW — native resolution, FXAA, sharper static shadows — with margin", () => {
+  const m = irisXe("static");
+  const boot = G.presetValues("bas", { dpr: m.dpr });
+  const run = calibrate(m, boot);
+  const o = run.outcome!;
+  assert.ok(o && o.complete && o.mode === "target");
+  const v = o.values;
+  assert.equal(v.renderScale, 100); // 2400 × 1160 instead of the old 1920 × 928
+  assert.equal(v.antialiasing, "fxaa");
+  assert.equal(v.shadows, "static");
+  assert.equal(v.shadowQuality, "high");
+  assert.ok(v.anisotropy >= 4);
+  // Holds 60 with room: the real GPU time leaves ≥ 20 % of the frame free.
+  assert.ok(gpuShare(m, v, 60) <= 0.8, `GPU share ${gpuShare(m, v, 60)}`);
+  // …and the rung just above it would not have held the target with the margin.
+  const above = run.ladder[o.index - 1];
+  assert.ok(m.gpu(above, megapixels(m, A.withMargin(above))) > 1000 / 60 - m.jitter);
+  assert.ok(run.seconds < 15, `${run.seconds} s`);
+  console.log(`      → ${v.renderScale} %, ${v.antialiasing}, aniso ${v.anisotropy}, ${o.probes} probes, ${run.seconds.toFixed(1)} s, GPU ${(gpuShare(m, v, 60) * 100).toFixed(0)} % of the frame`);
 });
 
-await test("no GPU timer (frames only, vsync-quantized): one rung of margin under the best that holds the rate", () => {
-  const ladder = A.buildLadder(G.presetValues("bas", { dpr: 1 }), { dpr: 1 }, CAPS);
-  const m = { ...LAPTOP, timer: false };
-  const run = simulate(m, ladder, 1000 / 60);
-  // Best rung whose frames come at 60 (GPU under the whole frame, within the slack)…
-  let holds = ladder.length - 1;
-  for (let i = 0; i < ladder.length; i++) {
-    if (gpuCost(m, ladder[i]) <= (1000 / 60) * A.AUTO_TUNE.frameSlack / 1.065) {
-      holds = i;
-      break;
-    }
-  }
-  assert.equal(run.outcome.usedGpuTimer, false);
-  assert.ok(run.outcome.index >= holds && run.outcome.index <= Math.min(ladder.length - 1, holds + 2), `index ${run.outcome.index} vs holds ${holds}`);
-  assert.ok(gpuCost(m, run.outcome.values) < 1000 / 60, "the result holds 60 with room");
+await test("owner's laptop booted Élevé (live shadows, MSAA): MSAA and the big shadow map go, the floor is never crossed", () => {
+  const m = irisXe("dynamic");
+  const boot = G.presetValues("eleve", { dpr: m.dpr });
+  const o = calibrate(m, boot).outcome!;
+  assert.equal(o.mode, "target");
+  assert.equal(o.values.shadows, "dynamic");
+  assert.notEqual(o.values.antialiasing, "msaa4");
+  assert.ok(["medium", "high"].includes(o.values.shadowQuality));
+  assert.ok(o.values.renderScale >= 80);
+  assert.ok(gpuShare(m, o.values, 60) <= 0.8);
 });
 
-await test("robust to noise and hitches: same answer over 6 seeds of ±15 % noise (no oscillation)", () => {
-  const ladder = A.buildLadder(G.presetValues("bas", { dpr: 1 }), { dpr: 1 }, CAPS);
-  const budget = 1000 / 60;
+await test("gaming PC (RTX 2080 Super, 240 Hz): at least Élevé, and 240 FPS held with margin", () => {
+  const m = rtx2080();
+  const boot = G.presetValues("eleve", { dpr: 1 });
+  const run = calibrate(m, boot);
+  const o = run.outcome!;
+  assert.equal(o.mode, "target");
+  assert.equal(o.values.renderScale, 100);
+  assert.equal(o.values.antialiasing, "msaa4");
+  assert.ok(["high", "ultra"].includes(o.values.shadowQuality));
+  assert.ok(o.values.anisotropy >= 8);
+  assert.ok(m.gpu(o.values, megapixels(m, A.withMargin(o.values))) < 1000 / 240);
+  assert.ok(run.seconds < 10, `${run.seconds} s`);
+  console.log(`      → ${o.values.antialiasing}, shadows ${o.values.shadowQuality}, aniso ${o.values.anisotropy}, ${o.probes} probes, ${run.seconds.toFixed(1)} s`);
+});
+
+await test("processor-limited machine (main thread longer than a 240 Hz frame): the graphics stay at the top — lowering them would not help", () => {
+  const m = rtx2080({ cpuMs: 4.6, jitter: 0.5 });
+  const o = calibrate(m, G.presetValues("eleve", { dpr: 1 })).outcome!;
+  assert.equal(o.mode, "cpu");
+  assert.equal(o.index, 0);
+  assert.equal(o.values.antialiasing, "msaa4");
+  // Same on a 60 Hz laptop whose CPU only gives ~40 FPS.
+  const slowCpu = irisXe("static", { cpuMs: 22, jitter: 1 });
+  const o2 = calibrate(slowCpu, G.presetValues("bas", { dpr: 1.25 })).outcome!;
+  assert.equal(o2.mode, "cpu");
+  assert.ok(o2.index <= 4, `rung ${o2.index}`); // no resolution loss
+  assert.equal(o2.values.renderScale, 100);
+});
+
+await test("GPU-limited machine that misses the target even at the floor: the floor (the old LOW look), never lower", () => {
+  const m = uhd620();
+  const run = calibrate(m, G.presetValues("bas", { dpr: 1 }));
+  const o = run.outcome!;
+  assert.equal(o.mode, "gpu");
+  assert.equal(o.index, run.ladder.length - 1);
+  assert.equal(o.values.renderScale, 100); // 1 px per CSS px at 100 % zoom
+  assert.equal(o.values.antialiasing, "fxaa");
+  assert.ok(o.floorFps! < 55);
+  // Probes never went under the half-pixel check, never under the floor otherwise.
+  assert.ok(run.appliedLog.every((v) => v.renderScale >= A.AUTO_TUNE.minProbeScale));
+});
+
+await test("an unfocused window restarts the probe (a laptop in the background is much slower): same answer", () => {
+  const m = irisXe("static");
+  const boot = G.presetValues("bas", { dpr: m.dpr });
+  const clean = calibrate(m, boot).outcome!;
+  const run = calibrate(m, boot, { unfocused: (f) => (f >= 40 && f < 140) || (f >= 300 && f < 320) });
+  assert.equal(run.outcome!.index, clean.index);
+  assert.ok(run.frames > 0);
+});
+
+await test("deterministic and one-shot: the same machine gives the same answer every run (no oscillation)", () => {
+  const m = irisXe("static");
+  const boot = G.presetValues("bas", { dpr: m.dpr });
   const answers = new Set<number>();
-  for (let i = 0; i < 6; i++) {
-    const m = { ...LAPTOP, pixel: LAPTOP.pixel * (1 + i * 0.0001) };
-    answers.add(simulate(m, ladder, budget, { noise: 0.15 }).outcome.index);
-  }
-  assert.ok(answers.size <= 2, `answers: ${[...answers]}`);
-  const expected = bestRung(LAPTOP, ladder, budget);
-  for (const a of answers) assert.ok(Math.abs(a - expected) <= 1, `answer ${a} vs ${expected}`);
+  for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) answers.add(calibrate(m, boot, { seed }).outcome!.index);
+  assert.equal(answers.size, 1, `answers: ${[...answers]}`);
 });
 
-await test("cancel mid-way: the conservative bound of the search (never a rung that failed), marked incomplete", () => {
-  const ladder = A.buildLadder(G.presetValues("bas", { dpr: 1 }), { dpr: 1 }, CAPS);
-  const run = simulate(LAPTOP, ladder, 1000 / 60, { maxFrames: 60 });
-  assert.equal(run.calib.done, true);
-  assert.equal(run.outcome.complete, false);
-  const v = run.outcome.verdict;
-  assert.ok(v === null || v.fits, "never a rung known to miss");
-  assert.ok(run.outcome.index >= bestRung(LAPTOP, ladder, 1000 / 60));
+await test("time limit / cancel: the best KNOWN rung (incomplete), or nothing when stopped during the first probe", () => {
+  const m = irisXe("static");
+  const boot = G.presetValues("bas", { dpr: m.dpr });
+  const short = calibrate(m, boot, { cfg: { ...A.AUTO_TUNE, maxFocusedMs: 2500 } });
+  assert.equal(short.outcome!.complete, false);
+  assert.equal(short.outcome!.index, short.ladder.length - 1); // only the floor was known
+  const cancelled = calibrate(m, boot, { cancelAt: 5 });
+  assert.equal(cancelled.outcome, null);
 });
 
-await test("a probe ignores its settle frames and the GPU results of the previous candidate", () => {
-  const ladder = [G.presetValues("eleve", { dpr: 1 }), G.presetValues("bas", { dpr: 1 })];
-  const applied: Values[] = [];
-  const calib = new A.Calibration({ apply: (v) => applied.push(v), gpuTimerAlive: () => true }, ladder, 1000 / 60, null);
+await test("progress: done / total never decreases, ends at total", () => {
+  const m = rtx2080();
+  const ladder = A.buildLadder(G.presetValues("eleve", { dpr: 1 }), { dpr: 1 }, m.caps);
+  let applied = ladder[0];
+  const calib = new A.Calibration({ apply: (v) => (applied = v) }, ladder, 240);
+  calib.start(0);
   let t = 0;
-  calib.start(t);
-  // Probe of rung 0 (mid of 2 rungs): late GPU results of OTHER tags must not count.
-  for (let tag = 1; tag <= 40 && !calib.done && applied.length === 1; tag++) {
-    t += 16.7;
-    calib.onFrame(t, 4, tag);
-    calib.onGpu(tag + 1000, 99); // a stranger's result
-    calib.onGpu(tag, 10);
+  let lastDone = 0;
+  while (!calib.done) {
+    calib.onFrame(t, 3, true);
+    const work = Math.max(3, m.gpu(applied, megapixels(m, applied)));
+    t += Math.ceil(work / (1000 / 240)) * (1000 / 240);
+    const p = calib.progress;
+    assert.ok(p.done >= lastDone && p.done <= p.total);
+    lastDone = p.done;
   }
-  assert.ok(applied.length >= 1);
-  const v0 = calib["search"].verdicts.get(0);
-  assert.ok(v0, "rung 0 measured");
-  assert.ok(Math.abs((v0!.gpuMs ?? 0) - 10) < 1e-9, `gpu ${v0!.gpuMs}`);
+  assert.equal(calib.progress.done, calib.progress.total);
 });
 
-await test("summary messages (French): target held, floor reached, processor-bound, software renderer", () => {
-  const ctx = { targetFps: 60, caps: CAPS, software: false };
-  const v = { ...G.presetValues("bas", { dpr: 1 }), renderScale: 85, snow: "legere" as const };
-  const ok = A.summarize({ values: v, index: 7, verdict: { fits: true, cpuBound: false, frameMs: 16.7, cpuMs: 5, gpuMs: 12.4, fps: 60 }, probes: 4, complete: true, limitedBy: "none", belowTarget: false, usedGpuTimer: true }, ctx);
-  assert.match(ok, /^Réglages choisis pour tenir 60 i\/s : résolution 85 %, FXAA, ombres statiques \(moyenne\), neige légère/);
-  assert.match(ok, /12,4 ms par image sur 16,7/);
-  const floor = A.summarize({ values: v, index: 11, verdict: { fits: false, cpuBound: false, frameMs: 21, cpuMs: 5, gpuMs: 19, fps: 47.6 }, probes: 5, complete: true, limitedBy: "gpu", belowTarget: true, usedGpuTimer: true }, ctx);
-  assert.match(floor, /Même au plancher de qualité .* environ 48 i\/s au lieu de 60 : c'est la carte graphique qui limite/);
-  const cpu = A.summarize({ values: v, index: 0, verdict: { fits: true, cpuBound: true, frameMs: 22.1, cpuMs: 21, gpuMs: 5, fps: 45 }, probes: 4, complete: true, limitedBy: "cpu", belowTarget: true, usedGpuTimer: true }, ctx);
-  assert.match(cpu, /processeur ou le navigateur qui limite \(22,1 ms par image\)/);
-  const sw = A.summarize({ values: v, index: 11, verdict: null, probes: 0, complete: true, limitedBy: "gpu", belowTarget: true, usedGpuTimer: false }, { ...ctx, software: true });
-  assert.match(sw, /^Rendu logiciel détecté/);
-  const partial = A.summarize({ values: v, index: 9, verdict: null, probes: 2, complete: false, limitedBy: "none", belowTarget: false, usedGpuTimer: true }, ctx);
-  assert.match(partial, /détection interrompue/);
+await test("summary (French): target held / processor-limited / graphics-card-limited / software rendering", () => {
+  const caps = G.DEFAULT_CAPS;
+  const values = G.presetValues("bas", { dpr: 1.25 });
+  const base = { values, index: 3, goalFps: 60, floorFps: 61, answerFps: 60, probes: 4, complete: true };
+  assert.match(A.summarize({ ...base, mode: "target" }, { targetFps: 60, caps, software: false }), /tenir 60 i\/s/);
+  assert.match(A.summarize({ ...base, mode: "cpu", floorFps: 41 }, { targetFps: 60, caps, software: false }), /processeur/);
+  assert.match(A.summarize({ ...base, mode: "gpu", floorFps: 33 }, { targetFps: 60, caps, software: false }), /environ 33 i\/s au lieu de 60/);
+  assert.match(A.summarize({ ...base, mode: "gpu" }, { targetFps: 60, caps, software: true }), /Rendu logiciel/);
+  assert.match(A.summarize({ ...base, mode: "target", complete: false }, { targetFps: 60, caps, software: false }), /interrompue/);
 });
 
-console.log("controller (store ↔ game)");
+// ------------------------------------------------------------------ controller
 
-function memoryStorage(init: Record<string, string> = {}) {
-  const map = new Map(Object.entries(init));
-  return { map, getItem: (k: string) => (map.has(k) ? map.get(k)! : null), setItem: (k: string, v: string) => void map.set(k, v) };
+console.log("graphics controller");
+
+function memoryStorage() {
+  const map = new Map<string, string>();
+  return { map, getItem: (k: string) => map.get(k) ?? null, setItem: (k: string, v: string) => void map.set(k, v) };
 }
 
-function fakeHost(boot: Values, caps = CAPS, gpuName = "Intel(R) Iris(R) Xe Graphics · D3D11") {
-  const calls = { applied: [] as Values[], caps: [] as number[], dyn: [] as [boolean, number][], outline: 0, panel: [] as string[], cancel: [] as boolean[] };
-  let resolveTune: ((o: InstanceType<typeof A.Calibration>["outcome"] & object) => void) | null = null;
+function fakeHost(opts: { gpuName?: string; map?: string; boot?: Values; caps?: Caps; software?: boolean } = {}) {
+  const calls = { apply: [] as Values[], cap: [] as number[], outline: 0, panel: [] as string[], cancel: 0 };
+  let pending: ((o: import("../src/settings/AutoTune.ts").TuneOutcome | null) => void) | null = null;
+  let lastTarget = 0;
+  const boot = opts.boot ?? G.presetValues("bas", { dpr: 1.25 });
   const host = {
     graphicsBoot: boot,
-    graphicsCaps: caps,
-    gpuName,
-    softwareRenderer: false,
-    autoTuning: false,
+    graphicsCaps: opts.caps ?? G.DEFAULT_CAPS,
+    gpuName: opts.gpuName ?? "Intel(R) Iris(R) Xe Graphics · D3D11",
+    mapId: opts.map ?? "GIVRE",
+    softwareRenderer: opts.software ?? false,
     onDisplayDensityChange: null as (() => void) | null,
-    applyGraphicsSettings: (v: Values) => void calls.applied.push(v),
-    setFpsCap: (fps: number) => void calls.caps.push(fps),
-    setDynamicResolution: (on: boolean, fps: number) => void calls.dyn.push([on, fps]),
+    applyGraphicsSettings: (v: Values) => void calls.apply.push(v),
+    setFpsCap: (fps: number) => void calls.cap.push(fps),
     applyOutlineSettings: () => void calls.outline++,
-    setPerfPanel: (m: string) => void calls.panel.push(m),
-    startAutoTune: (_target: number) =>
-      new Promise<NonNullable<InstanceType<typeof A.Calibration>["outcome"]>>((r) => {
-        resolveTune = r;
-      }),
-    cancelAutoTune: (restore: boolean) => {
-      calls.cancel.push(restore);
-      resolveTune?.({ values: boot, index: 0, verdict: null, probes: 1, complete: false, limitedBy: "none", belowTarget: false, usedGpuTimer: true });
+    setPerfPanel: (mode: string) => void calls.panel.push(mode),
+    startAutoTune: (target: number) => {
+      lastTarget = target;
+      return new Promise<import("../src/settings/AutoTune.ts").TuneOutcome | null>((r) => (pending = r));
+    },
+    cancelAutoTune: () => {
+      calls.cancel++;
+      pending?.(null);
+      pending = null;
     },
   };
-  return { host, calls, finish: (o: NonNullable<InstanceType<typeof A.Calibration>["outcome"]>) => resolveTune?.(o) };
+  return {
+    host,
+    calls,
+    resolve: (o: import("../src/settings/AutoTune.ts").TuneOutcome) => {
+      pending?.(o);
+      pending = null;
+    },
+    target: () => lastTarget,
+  };
 }
 
-const isWeak = (n: string) => /intel|iris|uhd/i.test(n);
+const isWeak = (name: string) => /intel|iris/i.test(name);
 
-await test("controller: applies the stored choice at once (graphics, cap, dynamic resolution, outline, crosshair once, panel)", () => {
-  let dpr = 1;
-  const store = new S.SettingsStore(memoryStorage({ [S.LEGACY_KEYS.quality]: "LOW" }), () => "bas", () => dpr);
-  const { host, calls } = fakeHost(G.presetValues("bas", { dpr }));
-  const crosshairs: unknown[] = [];
-  const ctl = new C.GraphicsController(store, host, () => ({ dpr }), () => 60, (c) => crosshairs.push(c), isWeak);
-  assert.deepEqual(calls.applied.at(-1), G.presetValues("bas", { dpr }));
-  assert.equal(calls.caps.at(-1), 60);
-  assert.deepEqual(calls.dyn.at(-1), [false, 60]);
-  assert.equal(crosshairs.length, 1);
-  assert.deepEqual(calls.panel, ["full"]);
-  store.update((d) => void (d.fpsCap = 144));
-  assert.equal(calls.caps.at(-1), 144);
-  assert.equal(crosshairs.length, 1, "unchanged crosshair: no HUD command");
-  store.update((d) => void (d.crosshair.scale = 2));
-  assert.equal(crosshairs.length, 2);
-  // Browser zoom: the presets re-resolve for the new density.
-  dpr = 1.25;
-  host.onDisplayDensityChange?.();
-  assert.equal(calls.applied.at(-1)?.renderScale, 80);
-  assert.equal(ctl.needsFirstDetection(), false);
+await test("sync: the stored choice reaches the game once per change (values, cap, outline, crosshair / panel deduplicated)", () => {
+  const store = new S.SettingsStore(memoryStorage());
+  const f = fakeHost();
+  let crosshairs = 0;
+  const ctl = new GC.GraphicsController(store, f.host, () => ({ dpr: 1.25 }), () => 60, () => void crosshairs++, isWeak);
+  assert.equal(f.calls.apply.length, 1);
+  assert.equal(G.sameValues(f.calls.apply[0], G.presetValues("bas", { dpr: 1.25 })), true); // weak GPU, no detection: Bas
+  assert.equal(f.calls.cap[0], 60);
+  assert.equal(crosshairs, 1);
+  assert.deepEqual(f.calls.panel, ["full"]);
+  store.update((d) => void (d.graphics.preset = "ultra"));
+  assert.equal(G.sameValues(f.calls.apply.at(-1)!, G.presetValues("ultra", { dpr: 1.25 })), true);
+  assert.equal(f.calls.cap.at(-1), Infinity);
+  assert.equal(crosshairs, 1); // crosshair unchanged: not re-sent
+  store.update((d) => void (d.crosshair.scale = 1.5));
+  assert.equal(crosshairs, 2);
+  assert.equal(ctl.needsDetection(), false); // not "auto"
 });
 
-await test("controller: first launch → detection → stored as Automatique (French summary, this GPU), applied", async () => {
-  const store = new S.SettingsStore(memoryStorage(), () => "bas", () => 1);
-  const boot = G.presetValues("bas", { dpr: 1 });
-  const { host, calls, finish } = fakeHost(boot);
-  const ctl = new C.GraphicsController(store, host, () => ({ dpr: 1 }), () => 60, () => {}, isWeak);
-  assert.equal(ctl.needsFirstDetection(), true);
-  assert.equal(ctl.effectivePreset(), "bas", "auto before detection = heuristic Bas");
+await test("detection: the result becomes « Automatique » for this map and GPU; another map still needs its own", async () => {
+  const store = new S.SettingsStore(memoryStorage());
+  store.update((d) => void (d.graphics.preset = "auto"));
+  const f = fakeHost();
+  const ctl = new GC.GraphicsController(store, f.host, () => ({ dpr: 1.25 }), () => 60, () => {}, isWeak);
+  assert.equal(ctl.needsDetection(), true);
   const events: string[] = [];
   ctl.subscribe((e) => events.push(e.kind));
-  const done = ctl.runDetection("first");
+  const values = { ...G.presetValues("bas", { dpr: 1.25 }), renderScale: 100, anisotropy: 4 as const };
+  const run = ctl.runDetection("first");
   assert.equal(ctl.detecting, true);
-  assert.equal(ctl.runDetection("first"), done, "one detection at a time");
-  const chosen = { ...boot, renderScale: 85, snow: "legere" as const };
-  finish({ values: chosen, index: 8, verdict: { fits: true, cpuBound: false, frameMs: 16.7, cpuMs: 5, gpuMs: 12.9, fps: 60 }, probes: 4, complete: true, limitedBy: "none", belowTarget: false, usedGpuTimer: true });
-  const result = await done;
+  assert.equal(f.target(), 60);
+  f.resolve({ values, index: 4, mode: "target", goalFps: 60, floorFps: 60, answerFps: 60, probes: 5, complete: true });
+  const result = await run;
   assert.ok(result);
-  assert.equal(store.get().graphics.preset, "auto");
-  assert.equal(store.get().graphics.auto?.gpu, host.gpuName);
-  assert.equal(store.get().graphics.auto?.version, G.AUTO_TUNE_VERSION);
-  assert.match(store.get().graphics.auto!.summary, /^Réglages choisis pour tenir 60 i\/s/);
-  assert.deepEqual(calls.applied.at(-1), chosen);
-  assert.equal(ctl.needsFirstDetection(), false);
-  assert.equal(ctl.autoDetected, true);
+  assert.equal(ctl.detecting, false);
   assert.deepEqual(events, ["start", "done"]);
-  assert.deepEqual(ctl.pendingReload(), []);
+  const r = store.get();
+  assert.equal(r.graphics.preset, "auto");
+  assert.equal(G.sameValues(r.graphics.auto.GIVRE.values, values), true);
+  assert.equal(r.graphics.auto.GIVRE.gpu, f.host.gpuName);
+  assert.equal(r.graphics.auto.GIVRE.targetFps, 60);
+  assert.equal(G.sameValues(f.calls.apply.at(-1)!, values), true); // applied for good
+  assert.equal(f.calls.cap.at(-1), Infinity); // "auto" cap of a measured choice: uncapped
+  assert.equal(ctl.needsDetection(), false);
+  assert.equal(ctl.pendingReload().length, 0);
+  // Same store, another map: the heuristic until its own detection.
+  const f2 = fakeHost({ map: "YARD" });
+  const ctl2 = new GC.GraphicsController(store, f2.host, () => ({ dpr: 1.25 }), () => 60, () => {}, isWeak);
+  assert.equal(ctl2.needsDetection(), true);
+  assert.equal(G.sameValues(ctl2.effective(), G.presetValues("bas", { dpr: 1.25 })), true);
 });
 
-await test("controller: even the floor misses with live shadows → static shadows proposed for the next load", async () => {
-  const store = new S.SettingsStore(memoryStorage(), () => "eleve", () => 1);
-  const boot = G.presetValues("eleve", { dpr: 1 });
-  const { host, finish } = fakeHost(boot, CAPS, "NVIDIA GeForce MX150");
-  const ctl = new C.GraphicsController(store, host, () => ({ dpr: 1 }), () => 60, () => {}, isWeak);
-  const done = ctl.runDetection();
-  const floor = A.buildLadder(boot, { dpr: 1 }, CAPS).at(-1)!;
-  finish({ values: floor, index: 11, verdict: { fits: false, cpuBound: false, frameMs: 22, cpuMs: 5, gpuMs: 20, fps: 45 }, probes: 5, complete: true, limitedBy: "gpu", belowTarget: true, usedGpuTimer: true });
-  const result = await done;
-  assert.equal(result?.values.shadows, "static");
-  assert.match(result!.summary, /statiques au prochain chargement/);
-  assert.deepEqual(ctl.pendingReload().map((c) => c.key), ["shadows"]);
-});
-
-await test("controller: cancel restores the player's values and stores nothing", async () => {
-  const store = new S.SettingsStore(memoryStorage({ [S.LEGACY_KEYS.quality]: "HIGH" }));
-  const { host, calls } = fakeHost(G.presetValues("eleve", { dpr: 1 }), CAPS, "NVIDIA GeForce RTX 2080 SUPER");
-  const ctl = new C.GraphicsController(store, host, () => ({ dpr: 1 }), () => 240, () => {}, isWeak);
+await test("detection cancelled (PLAY, Annuler): nothing stored, the player's values come back", async () => {
+  const store = new S.SettingsStore(memoryStorage());
+  store.update((d) => void (d.graphics.preset = "eleve"));
+  const f = fakeHost({ gpuName: "NVIDIA GeForce RTX 2080 SUPER · D3D11", boot: G.presetValues("eleve", { dpr: 1 }) });
+  const ctl = new GC.GraphicsController(store, f.host, () => ({ dpr: 1 }), () => 240, () => {}, isWeak);
   const events: string[] = [];
   ctl.subscribe((e) => events.push(e.kind));
-  const done = ctl.runDetection();
+  const before = JSON.stringify(store.get());
+  const run = ctl.runDetection("manual");
   ctl.cancelDetection();
-  assert.equal(await done, null);
-  assert.deepEqual(calls.cancel, [true]);
-  assert.equal(store.get().graphics.preset, "eleve");
+  assert.equal(await run, null);
+  assert.equal(f.calls.cancel, 1);
   assert.deepEqual(events, ["start", "cancelled"]);
+  assert.equal(JSON.stringify(store.get()), before);
+  assert.equal(G.sameValues(f.calls.apply.at(-1)!, G.presetValues("eleve", { dpr: 1 })), true);
 });
 
-await test("controller: detection target = display rate unless an explicit lower cap; dynamic resolution holds the cap in effect", () => {
-  const store = new S.SettingsStore(memoryStorage({ [S.LEGACY_KEYS.quality]: "LOW" }));
-  const { host } = fakeHost(G.presetValues("bas", { dpr: 1 }));
-  const ctl = new C.GraphicsController(store, host, () => ({ dpr: 1 }), () => 144, () => {}, isWeak);
-  assert.equal(ctl.detectionTarget(), 144); // "auto" cap of Automatique = uncapped
-  assert.equal(ctl.playTarget(), 60); // Bas: the old 60 cap
+await test("graphics card limited with live shadows: static shadows advised for the next load (reload bar), measured again then", async () => {
+  const store = new S.SettingsStore(memoryStorage());
+  store.update((d) => void (d.graphics.preset = "auto"));
+  const boot = G.presetValues("eleve", { dpr: 1 });
+  const f = fakeHost({ gpuName: "AMD Radeon RX 6400", boot });
+  const ctl = new GC.GraphicsController(store, f.host, () => ({ dpr: 1 }), () => 60, () => {}, () => false);
+  const floor = A.buildLadder(boot, { dpr: 1 }, G.DEFAULT_CAPS).at(-1)!;
+  const run = ctl.runDetection("first");
+  f.resolve({ values: floor, index: 9, mode: "gpu", goalFps: 60, floorFps: 41, answerFps: 41, probes: 2, complete: true });
+  const result = (await run)!;
+  assert.equal(result.values.shadows, "static");
+  assert.equal(result.values.characterShadows, false);
+  assert.equal(result.belowTarget, true);
+  assert.equal(result.limitedBy, "gpu");
+  assert.match(result.summary, /statiques au prochain chargement/);
+  assert.deepEqual(ctl.pendingReload().map((c) => c.key), ["shadows"]);
+  // This session (live shadows) does not measure again; the next one (static) does, once.
+  assert.equal(ctl.needsDetection(), false);
+  const f2 = fakeHost({ gpuName: "AMD Radeon RX 6400", boot: { ...boot, shadows: "static", characterShadows: false } });
+  const ctl2 = new GC.GraphicsController(store, f2.host, () => ({ dpr: 1 }), () => 60, () => {}, () => false);
+  assert.equal(ctl2.needsDetection(), true);
+});
+
+await test("detection target: the display's rate; an EXPLICIT cap lowers it, the « auto » cap of Bas does not", () => {
+  const store = new S.SettingsStore(memoryStorage());
+  store.update((d) => {
+    d.graphics.preset = "bas";
+    d.fpsCap = "auto";
+  });
+  const f = fakeHost();
+  const ctl = new GC.GraphicsController(store, f.host, () => ({ dpr: 1 }), () => 144, () => {}, isWeak);
+  assert.equal(ctl.capFps(), 60); // Bas: the old 60 cap in play
+  assert.equal(ctl.detectionTarget(), 144); // …but the detection aims at the screen
   store.update((d) => void (d.fpsCap = 120));
   assert.equal(ctl.detectionTarget(), 120);
-  store.update((d) => void (d.fpsTarget = 60));
+  store.update((d) => {
+    d.fpsCap = 0;
+    d.fpsTarget = 60;
+  });
   assert.equal(ctl.detectionTarget(), 60);
 });
 
-console.log(`\nAll ${passed} automatic detection checks passed.`);
+console.log(`\nAll ${passed} detection checks passed.`);
