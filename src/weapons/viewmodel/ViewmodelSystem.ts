@@ -5,6 +5,7 @@ import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.j
 import { loadFPArmsGltf, loadFPPoseClips } from "./FPArmsRig";
 import { WeaponViewProfile, createWeaponMount } from "../profiles/WeaponProfile";
 import { FP_CAMERA } from "./FPCameraConfig";
+import { freshSkip, markMatrixFresh, skipFreshMatrixUpdate } from "../../effects/matrixFresh";
 
 /**
  * COMMON FIRST-PERSON VIEWMODEL SYSTEM (local player only).
@@ -114,6 +115,15 @@ export class ViewmodelSystem {
     key.target.position.set(0, 0, -1);
     this.camera.add(key, key.target);
     this.scene.add(ambient);
+
+    if (freshSkip.on) {
+      // PERF (matrixFresh): the FP scene root never moves (identity): frozen,
+      // it no longer forces its whole subtree at every render pass; the FP
+      // camera subtree (arms, weapon, key light) — computed by syncCamera
+      // right before the FP pass — skips that pass's second computation.
+      this.scene.matrixAutoUpdate = false;
+      skipFreshMatrixUpdate(this.camera);
+    }
 
     this.ready = this.loadArms();
   }
@@ -726,6 +736,8 @@ export class ViewmodelSystem {
     );
     this.camera.scale.set(1, 1, 1);
     this.camera.updateMatrixWorld(true);
+    // Final until the next change: the FP render pass that follows skips it.
+    if (freshSkip.on) markMatrixFresh(this.camera);
   }
 
   /**
