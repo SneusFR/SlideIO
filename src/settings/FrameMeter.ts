@@ -1,164 +1,109 @@
-import type * as THREE from "three";
-import { GpuTimer } from "../ui/GpuTimer";
-
-/** What a frame meter user receives. */
-export interface FrameListener {
-  /** A rendered frame: its start (performance.now, ms), its main-thread time (ms), its GPU tag. */
-  frame?(t: number, cpuMs: number, tag: number): void;
-  /** A frame's GPU execution time arrived (a few frames late; null = voided by a disjoint event). */
-  gpu?(tag: number, ms: number | null, arrivedAt: number): void;
-}
+/** A rendered frame: its start (performance.now, ms) and its main-thread time (ms). */
+export type FrameListener = (t: number, cpuMs: number) => void;
 
 export interface LiveStats {
-  /** Rendered frames per second over the window. */
+  /** Frames delivered per second over the window. */
   fps: number;
   /** Median interval between rendered frames (ms). */
   frameMs: number;
-  /** Median main-thread time of a frame (ms). */
+  /** 95th percentile of the intervals (ms): the slow frames the player feels. */
+  frameP95: number;
+  /** Mean main-thread time of a frame (game JS + render submission, ms). */
   cpuMs: number;
-  /** Median GPU execution time (ms), null when no GPU timer reports. */
+  /**
+   * GPU execution time per frame (ms) from the DEBUG GPU timer — only when it
+   * already runs (`npm run dev`, `?gpu` in the address). Indicative: a query
+   * around a whole frame also counts the GPU's idle gaps. Null otherwise: the
+   * settings never add timer queries of their own (they make Chrome flush:
+   * they would change what they measure).
+   */
   gpuMs: number | null;
 }
 
-const RING = 256;
+const RING = 512;
 
 /**
- * Frame timings for the graphics settings: every rendered frame (menu preview,
- * pause, play) is recorded with its main-thread time and, when the browser
- * has EXT_disjoint_timer_query_webgl2, its GPU time. One GPU timer at a time
- * (WebGL forbids nested timer queries): the debug one when it exists (dev
- * builds, `?gpu`), else this meter's own — created only while someone needs
- * GPU times (the settings page open, a detection running, the dynamic
- * resolution on), never on a software renderer (SwiftShader never returns
- * results and slows down with queries in flight).
+ * Frame timings for the graphics settings: every rendered frame (menu
+ * preview, pause, play) is recorded with its main-thread time, in fixed
+ * typed arrays (nothing allocated per frame). The automatic detection
+ * listens to the frames; the settings page reads a summary four times a
+ * second.
  */
 export class FrameMeter {
-  private own: GpuTimer | null = null;
-  private ownMissing = false;
-  private users = 0;
-  private tag = 0;
-  private open: GpuTimer | null = null;
-  private readonly listeners = new Set<FrameListener>();
+  private readonly listeners: FrameListener[] = [];
   private readonly frameT = new Float64Array(RING);
   private readonly frameCpu = new Float64Array(RING);
   private frameCount = 0;
-  private readonly gpuT = new Float64Array(RING);
-  private readonly gpuMs = new Float64Array(RING);
+  private readonly gpuT = new Float64Array(64);
+  private readonly gpuMs = new Float64Array(64);
   private gpuCount = 0;
 
-  constructor(
-    private readonly renderer: THREE.WebGLRenderer,
-    private readonly debugTimer: GpuTimer | null,
-    private readonly ownAllowed: boolean,
-  ) {
-    if (debugTimer) debugTimer.onFrame = (ms, tag) => this.onGpu(ms, tag);
-  }
-
-  /** The timer measuring frames now (null = no GPU times). */
-  private timer(): GpuTimer | null {
-    if (this.debugTimer && !this.debugTimer.dead) return this.debugTimer;
-    return this.own && !this.own.dead ? this.own : null;
-  }
-
-  /** True while GPU times can arrive. */
-  get gpuAvailable(): boolean {
-    return this.timer() !== null;
-  }
-
-  /** Someone needs GPU times (the meter's own timer is created on the first one). */
-  acquire(): void {
-    this.users++;
-    if (this.debugTimer || this.own || this.ownMissing || !this.ownAllowed) return;
-    this.own = GpuTimer.create(this.renderer);
-    if (!this.own) {
-      this.ownMissing = true;
-      return;
-    }
-    this.own.onFrame = (ms, tag) => this.onGpu(ms, tag);
-  }
-
-  release(): void {
-    this.users = Math.max(0, this.users - 1);
-    if (this.users > 0 || !this.own) return;
-    if (this.open === this.own) this.open = null;
-    this.own.dispose();
-    this.own = null;
-  }
-
+  /** Every rendered frame goes to `listener` until the returned function is called. */
   addListener(listener: FrameListener): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  /** Right before the frame's GPU work: opens the GPU timer frame. Returns the frame's tag. */
-  begin(pass = "monde"): number {
-    const tag = ++this.tag;
-    const timer = this.timer();
-    this.open = timer;
-    timer?.beginFrame(pass, tag);
-    return tag;
-  }
-
-  /** Right after the frame's GPU work. */
-  endGpu(): void {
-    this.open?.endFrame();
-    this.open = null;
+    this.listeners.push(listener);
+    return () => {
+      const i = this.listeners.indexOf(listener);
+      if (i >= 0) this.listeners.splice(i, 1);
+    };
   }
 
   /** The frame is done: `t` = its start, `cpuMs` = its main-thread time. */
-  record(t: number, cpuMs: number, tag: number): void {
+  record(t: number, cpuMs: number): void {
     const k = this.frameCount % RING;
     this.frameT[k] = t;
     this.frameCpu[k] = cpuMs;
     this.frameCount++;
-    for (const l of this.listeners) l.frame?.(t, cpuMs, tag);
+    const listeners = this.listeners;
+    for (let i = 0; i < listeners.length; i++) listeners[i](t, cpuMs);
   }
 
-  private onGpu(ms: number | null, tag: number): void {
-    const now = performance.now();
-    if (ms !== null) {
-      const k = this.gpuCount % RING;
-      this.gpuT[k] = now;
-      this.gpuMs[k] = ms;
-      this.gpuCount++;
-    }
-    for (const l of this.listeners) l.gpu?.(tag, ms, now);
+  /** A frame's GPU time from the debug GPU timer (see LiveStats.gpuMs). */
+  recordGpu(t: number, ms: number): void {
+    const k = this.gpuCount % this.gpuT.length;
+    this.gpuT[k] = t;
+    this.gpuMs[k] = ms;
+    this.gpuCount++;
   }
 
-  /** Medians over the last `windowMs` (the settings page's live readout). */
+  /**
+   * Summary of the last `windowMs` (the settings page's live card) — or of
+   * the last 4 frames when fewer came in that window (a very slow machine),
+   * as long as they are under 5 s old. Null without such frames.
+   */
   stats(now: number, windowMs = 1000): LiveStats | null {
-    const intervals: number[] = [];
-    const cpu: number[] = [];
     const n = Math.min(this.frameCount, RING);
-    let first = Infinity;
-    let last = -Infinity;
-    let count = 0;
-    let prev: number | null = null;
-    for (let i = this.frameCount - n; i < this.frameCount; i++) {
+    const intervals: number[] = [];
+    let cpuSum = 0;
+    let frames = 0;
+    let newest = 0;
+    let oldest = 0;
+    let next: number | null = null;
+    for (let i = this.frameCount - 1; i >= this.frameCount - n; i--) {
       const t = this.frameT[i % RING];
-      if (t < now - windowMs) continue;
-      if (prev !== null) intervals.push(t - prev);
-      prev = t;
-      cpu.push(this.frameCpu[i % RING]);
-      first = Math.min(first, t);
-      last = Math.max(last, t);
-      count++;
+      if (t < now - windowMs && (frames >= 4 || t < now - 5000)) break;
+      if (next !== null) intervals.push(next - t);
+      else newest = t;
+      next = t;
+      oldest = t;
+      cpuSum += this.frameCpu[i % RING];
+      frames++;
     }
-    if (count < 3) return null;
+    if (frames < 3) return null;
+    intervals.sort((a, b) => a - b);
+    const at = (p: number): number => intervals[Math.min(intervals.length - 1, Math.floor(p * (intervals.length - 1) + 0.5))];
     const gpu: number[] = [];
-    const g = Math.min(this.gpuCount, RING);
+    const g = Math.min(this.gpuCount, this.gpuT.length);
     for (let i = this.gpuCount - g; i < this.gpuCount; i++) {
-      if (this.gpuT[i % RING] >= now - windowMs) gpu.push(this.gpuMs[i % RING]);
+      const k = i % this.gpuT.length;
+      if (this.gpuT[k] >= now - windowMs) gpu.push(this.gpuMs[k]);
     }
-    const median = (v: number[]): number => {
-      const s = [...v].sort((a, b) => a - b);
-      return s[Math.floor(s.length / 2)];
-    };
+    gpu.sort((a, b) => a - b);
     return {
-      fps: last > first ? ((count - 1) * 1000) / (last - first) : 0,
-      frameMs: median(intervals),
-      cpuMs: median(cpu),
-      gpuMs: gpu.length >= 3 ? median(gpu) : null,
+      fps: newest > oldest ? ((frames - 1) * 1000) / (newest - oldest) : 0,
+      frameMs: at(0.5),
+      frameP95: at(0.95),
+      cpuMs: cpuSum / frames,
+      gpuMs: gpu.length >= 3 ? gpu[gpu.length >> 1] : null,
     };
   }
 }

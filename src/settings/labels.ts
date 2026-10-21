@@ -1,7 +1,6 @@
 import type {
   AntiAliasing,
   Anisotropy,
-  EffectLights,
   FpsCapSetting,
   FpsTargetSetting,
   GraphicsCaps,
@@ -57,12 +56,6 @@ export const PARTICLE_LABELS: Record<ParticleDensity, string> = {
   normal: "Normales",
 };
 
-export const EFFECT_LIGHT_LABELS: Record<EffectLights, string> = {
-  0: "Aucune",
-  1: "1",
-  2: "2",
-};
-
 export const ANISOTROPY_LABELS: Record<Anisotropy, string> = {
   1: "1×",
   2: "2×",
@@ -78,7 +71,6 @@ export const SETTING_NAMES: Record<GraphicsKey, string> = {
   shadows: "Ombres",
   shadowQuality: "Qualité des ombres",
   characterShadows: "Ombres des personnages",
-  effectLights: "Lumières des effets",
   snow: "Neige",
   halos: "Halos des lumières",
   footprints: "Empreintes dans la neige",
@@ -91,21 +83,21 @@ export function frNumber(n: number, digits = 0): string {
   return n.toFixed(digits).replace(".", ",");
 }
 
-/** "85 %" (non-breaking space, French typography). */
+/** "85 %" (narrow no-break space, French typography). */
 export function frPercent(scale: number): string {
-  return `${Math.round(scale)} %`;
+  return `${Math.round(scale)}\u202f%`;
 }
 
 export function fpsCapLabel(cap: FpsCapSetting, preset: PresetChoice): string {
   if (cap === "auto") {
     const r = resolveFpsCap(cap, preset);
-    return `Automatique (${Number.isFinite(r) ? r : "illimitée"})`;
+    return `Auto (${Number.isFinite(r) ? r : "aucune"})`;
   }
-  return cap === 0 ? "Illimitée" : String(cap);
+  return cap === 0 ? "Aucune" : String(cap);
 }
 
 export function fpsTargetLabel(target: FpsTargetSetting, refreshHz: number): string {
-  return target === "display" ? `Fréquence de l'écran (${Math.round(refreshHz)} Hz)` : `${target} i/s`;
+  return target === "display" ? `Écran (${Math.round(refreshHz)} Hz)` : `${target} i/s`;
 }
 
 /** Value of one setting, as shown in a sentence. */
@@ -119,8 +111,6 @@ export function valueLabel<K extends GraphicsKey>(key: K, value: GraphicsValues[
       return SHADOW_LABELS[value as ShadowMode];
     case "shadowQuality":
       return SHADOW_QUALITY_LABELS[value as ShadowQuality];
-    case "effectLights":
-      return EFFECT_LIGHT_LABELS[value as EffectLights];
     case "snow":
       return SNOW_LABELS[value as SnowLevel];
     case "particles":
@@ -133,8 +123,9 @@ export function valueLabel<K extends GraphicsKey>(key: K, value: GraphicsValues[
 }
 
 /**
- * Short description of a set of values: "résolution 85 %, FXAA, ombres
- * statiques, neige légère, filtrage 2×" — only the settings this map uses.
+ * Short description of a set of values: "résolution 100 %, FXAA, ombres
+ * statiques (haute), neige normale, filtrage 4×" — only the settings this map
+ * uses.
  */
 export function describeValues(v: GraphicsValues, caps: Pick<GraphicsCaps, "composer" | "snow" | "halos" | "anisotropicTextures">): string {
   const parts: string[] = [`résolution ${frPercent(v.renderScale)}`];

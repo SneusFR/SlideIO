@@ -22,6 +22,11 @@ interface Particle {
  * and parked far below the map.
  */
 export class ParticleSystem {
+  /**
+   * Share of each burst / ring really spawned (settings page « Particules » :
+   * 1 = Normales, 0.5 = Réduites). Bursts of one particle stay one.
+   */
+  density = 1;
   private readonly max = MAX_PARTICLES;
   private readonly positions: Float32Array;
   private readonly colors: Float32Array;
@@ -125,6 +130,7 @@ export class ParticleSystem {
     color: THREE.Color,
     gravity = 0,
   ): void {
+    count = this.scaled(count);
     for (let n = 0; n < count; n++) {
       this.tmpDir
         .set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5)
@@ -147,6 +153,7 @@ export class ParticleSystem {
     life: number,
     color: THREE.Color,
   ): void {
+    count = this.scaled(count);
     // Tangent basis of the wall plane.
     const t1 = this.tmpT1;
     const t2 = this.tmpT2;
@@ -174,6 +181,11 @@ export class ParticleSystem {
         .addScaledVector(normal, speed * 0.25 * Math.random());
       this.spawn(this.tmpPos, this.tmpDir, life * (0.6 + Math.random() * 0.4), color, 0, 2.5);
     }
+  }
+
+  /** Particle count of a burst at the current density. */
+  private scaled(count: number): number {
+    return this.density >= 1 || count <= 1 ? count : Math.max(1, Math.round(count * this.density));
   }
 
   update(dt: number): void {

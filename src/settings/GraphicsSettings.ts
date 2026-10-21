@@ -23,20 +23,17 @@ export type ShadowQuality = "low" | "medium" | "high" | "ultra";
 /** Same values as GivreSnow's GivreSnowLevel (kept structural: no world import here). */
 export type SnowLevel = "off" | "legere" | "normale" | "dense";
 export type ParticleDensity = "reduced" | "normal";
-export type EffectLights = 0 | 1 | 2;
 export type Anisotropy = 1 | 2 | 4 | 8 | 16;
 
 export interface GraphicsValues {
-  /** % of the native resolution per axis (50…150). */
+  /** % of the native resolution per axis (RENDER_SCALE_MIN…RENDER_SCALE_MAX). */
   renderScale: number;
   antialiasing: AntiAliasing;
   shadows: ShadowMode;
-  /** Shadow map size tier (per map: see shadowMapTierSize). */
+  /** Shadow map size tier (per map family: see shadowMapTierSize). */
   shadowQuality: ShadowQuality;
   /** Characters, held weapons and moving targets cast shadows (dynamic shadows only). */
   characterShadows: boolean;
-  /** Pooled point lights the weapon / impact effects may use (each one is shaded on every lit pixel). */
-  effectLights: EffectLights;
   snow: SnowLevel;
   halos: boolean;
   footprints: boolean;
@@ -57,15 +54,14 @@ export const SHADOW_MODES: readonly ShadowMode[] = ["off", "static", "dynamic"];
 export const SHADOW_QUALITIES: readonly ShadowQuality[] = ["low", "medium", "high", "ultra"];
 export const SNOW_LEVELS: readonly SnowLevel[] = ["off", "legere", "normale", "dense"];
 export const PARTICLE_DENSITIES: readonly ParticleDensity[] = ["reduced", "normal"];
-export const EFFECT_LIGHTS: readonly EffectLights[] = [0, 1, 2];
 export const ANISOTROPY_LEVELS: readonly Anisotropy[] = [1, 2, 4, 8, 16];
 export const PRESET_IDS: readonly PresetId[] = ["bas", "moyen", "eleve", "ultra"];
 export const PRESET_CHOICES: readonly PresetChoice[] = ["auto", "bas", "moyen", "eleve", "ultra", "custom"];
 
-/** Render scale slider bounds (%). Above 100 = supersampling (strong GPUs only). */
+/** Render scale slider bounds (%), 1 % steps. Above 100 = supersampling (strong GPUs only). */
 export const RENDER_SCALE_MIN = 50;
 export const RENDER_SCALE_MAX = 150;
-export const RENDER_SCALE_STEP = 5;
+export const RENDER_SCALE_STEP = 1;
 
 /**
  * Shadow map size of each tier, longest side, per map family. "medium" and
@@ -82,10 +78,13 @@ export function shadowMapTierSize(quality: ShadowQuality, givre: boolean): numbe
   return SHADOW_TIER_SIZE[givre ? "givre" : "other"][quality];
 }
 
+function sanitizeDpr(dpr: number): number {
+  return Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+}
+
 /** Render scale (% of native) of a pixel-ratio cap on this display: never above 100 %. */
 export function scaleForPixelCap(cap: number, dpr: number): number {
-  const d = sanitizeDpr(dpr);
-  return Math.min(100, (cap / d) * 100);
+  return Math.min(100, (cap / sanitizeDpr(dpr)) * 100);
 }
 
 /**
@@ -98,10 +97,6 @@ export function pixelRatioFor(renderScale: number, dpr: number): number {
   return Math.max(0.25, Math.round(ratio * 1e6) / 1e6);
 }
 
-function sanitizeDpr(dpr: number): number {
-  return Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
-}
-
 interface PresetDef {
   /** Pixel-ratio cap (null = native resolution on every display). */
   pixelCap: number | null;
@@ -112,11 +107,11 @@ interface PresetDef {
  * The named presets. "bas" and "eleve" are EXACTLY the old LOW and HIGH
  * presets (pixel cap 1 / 2, FXAA vs MSAA 4×, static vs live shadows with the
  * characters, LOW / HIGH shadow sizes, anisotropy 1 / 8) plus the defaults of
- * the settings that used to live apart (snow "normale", halos, footprints,
- * the 2 pooled effect lights): players who never open the page see the same
- * game. "moyen" sits between them for entry-level discrete GPUs; "ultra"
- * spends what a strong GPU has left (native resolution on high-DPI screens,
- * twice the shadow resolution, 16× anisotropy, dense snow).
+ * the settings that used to live apart (snow "normale", halos, footprints):
+ * players who never open the page see the same game. "moyen" sits between
+ * them (entry-level discrete GPUs); "ultra" spends what a strong GPU has left
+ * (native resolution on high-DPI screens, twice the shadow resolution, 16×
+ * filtering, dense snow).
  */
 const PRESET_DEFS: Record<PresetId, PresetDef> = {
   bas: {
@@ -126,7 +121,6 @@ const PRESET_DEFS: Record<PresetId, PresetDef> = {
       shadows: "static",
       shadowQuality: "medium",
       characterShadows: false,
-      effectLights: 2,
       snow: "normale",
       halos: true,
       footprints: true,
@@ -141,7 +135,6 @@ const PRESET_DEFS: Record<PresetId, PresetDef> = {
       shadows: "dynamic",
       shadowQuality: "medium",
       characterShadows: true,
-      effectLights: 2,
       snow: "normale",
       halos: true,
       footprints: true,
@@ -156,7 +149,6 @@ const PRESET_DEFS: Record<PresetId, PresetDef> = {
       shadows: "dynamic",
       shadowQuality: "high",
       characterShadows: true,
-      effectLights: 2,
       snow: "normale",
       halos: true,
       footprints: true,
@@ -171,7 +163,6 @@ const PRESET_DEFS: Record<PresetId, PresetDef> = {
       shadows: "dynamic",
       shadowQuality: "ultra",
       characterShadows: true,
-      effectLights: 2,
       snow: "dense",
       halos: true,
       footprints: true,
@@ -190,7 +181,7 @@ export function presetValues(id: PresetId, env: DisplayEnv): GraphicsValues {
   };
 }
 
-/** Pixel-ratio cap of a preset (null = native). The debug panel and the facade use it. */
+/** Pixel-ratio cap of a preset (null = native). */
 export function presetPixelCap(id: PresetId): number | null {
   return PRESET_DEFS[id].pixelCap;
 }
@@ -204,7 +195,6 @@ export function sameValues(a: GraphicsValues, b: GraphicsValues): boolean {
     a.shadows === b.shadows &&
     a.shadowQuality === b.shadowQuality &&
     a.characterShadows === b.characterShadows &&
-    a.effectLights === b.effectLights &&
     a.snow === b.snow &&
     a.halos === b.halos &&
     a.footprints === b.footprints &&
@@ -235,7 +225,6 @@ export function sanitizeGraphicsValues(raw: unknown, fallback: GraphicsValues): 
     shadows: pick(SHADOW_MODES, r.shadows, fallback.shadows),
     shadowQuality: pick(SHADOW_QUALITIES, r.shadowQuality, fallback.shadowQuality),
     characterShadows: typeof r.characterShadows === "boolean" ? r.characterShadows : fallback.characterShadows,
-    effectLights: pick(EFFECT_LIGHTS, r.effectLights, fallback.effectLights),
     snow: pick(SNOW_LEVELS, r.snow, fallback.snow),
     halos: typeof r.halos === "boolean" ? r.halos : fallback.halos,
     footprints: typeof r.footprints === "boolean" ? r.footprints : fallback.footprints,
@@ -246,24 +235,30 @@ export function sanitizeGraphicsValues(raw: unknown, fallback: GraphicsValues): 
 
 // ---------------------------------------------------------------- choice
 
-/** Result of an automatic detection, stored with the choice "auto". */
+/** Result of an automatic detection (stored per map with the choice "auto"). */
 export interface AutoResult {
   values: GraphicsValues;
   /** Date.now() of the detection. */
   at: number;
-  /** GPU the detection measured (a different GPU → detect again). */
+  /** GPU the detection measured (another GPU → detect again). */
   gpu: string;
-  /** Frame rate the detection aimed at. */
+  /** Map it was measured on (each map is measured on its first menu). */
+  map: string;
+  /** Frame rate the detection aimed at (another target → detect again). */
   targetFps: number;
-  /** Frame rate expected with the chosen values (measured), null when unknown. */
-  expectedFps: number | null;
+  /** Frame rate seen with the chosen values (conservative), null when unknown. */
+  measuredFps: number | null;
   /** What limits this machine at the chosen values. */
   limitedBy: "gpu" | "cpu" | "none";
   /** True when even the beauty floor misses the target. */
   belowTarget: boolean;
+  /** False when the detection was stopped before the end (detect again at the next launch). */
+  complete: boolean;
+  /** Shadow mode of the session that measured (a result that changes it is checked again after the reload). */
+  measuredShadows: ShadowMode;
   /** French summary shown in the page. */
   summary: string;
-  /** Algorithm version (a newer detection logic re-detects). */
+  /** Algorithm version (a newer detection logic detects again). */
   version: number;
 }
 
@@ -271,11 +266,11 @@ export interface GraphicsChoice {
   preset: PresetChoice;
   /** Values of "Personnalisé" (null until the player edits something). */
   custom: GraphicsValues | null;
-  /** Last automatic detection (kept when the player switches to another preset). */
-  auto: AutoResult | null;
+  /** Last automatic detection of each map (kept when the player picks another preset). */
+  auto: Record<string, AutoResult>;
 }
 
-/** Version of the auto-detection logic: bump it to re-detect every "auto" player once. */
+/** Version of the detection logic: bump it to detect again for every "auto" player once. */
 export const AUTO_TUNE_VERSION = 1;
 
 /** What the "auto" choice resolves to before (or without) a usable detection. */
@@ -286,30 +281,30 @@ export interface GpuHint {
   weak: boolean;
 }
 
-/** True when the stored detection can be used on this GPU. */
-export function autoResultUsable(auto: AutoResult | null, gpu: GpuHint): auto is AutoResult {
-  return auto !== null && auto.version === AUTO_TUNE_VERSION && auto.gpu === gpu.name;
+/** The stored detection usable for this GPU and map (null = none). */
+export function autoResultFor(choice: GraphicsChoice, gpu: GpuHint, map: string): AutoResult | null {
+  const r = choice.auto[map];
+  return r && r.version === AUTO_TUNE_VERSION && r.gpu === gpu.name ? r : null;
 }
 
-/**
- * Effective values of a choice on this display. "auto" without a usable
- * detection = the old AUTO behaviour: Bas on weak GPUs, Élevé elsewhere.
- */
-export function effectiveValues(choice: GraphicsChoice, env: DisplayEnv, gpu: GpuHint): GraphicsValues {
+/** The old AUTO behaviour: Bas on weak GPUs, Élevé elsewhere. */
+export function heuristicPreset(gpu: GpuHint): PresetId {
+  return gpu.weak ? "bas" : "eleve";
+}
+
+/** Effective values of a choice on this display ("auto" without a detection = the old AUTO). */
+export function effectiveValues(choice: GraphicsChoice, env: DisplayEnv, gpu: GpuHint, map: string): GraphicsValues {
+  const heuristic = presetValues(heuristicPreset(gpu), env);
   switch (choice.preset) {
     case "custom":
-      return choice.custom ? sanitizeGraphicsValues(choice.custom, presetValues("eleve", env)) : heuristicValues(env, gpu);
-    case "auto":
-      return autoResultUsable(choice.auto, gpu)
-        ? sanitizeGraphicsValues(choice.auto.values, heuristicValues(env, gpu))
-        : heuristicValues(env, gpu);
+      return choice.custom ? sanitizeGraphicsValues(choice.custom, heuristic) : heuristic;
+    case "auto": {
+      const r = autoResultFor(choice, gpu, map);
+      return r ? sanitizeGraphicsValues(r.values, heuristic) : heuristic;
+    }
     default:
       return presetValues(choice.preset, env);
   }
-}
-
-export function heuristicValues(env: DisplayEnv, gpu: GpuHint): GraphicsValues {
-  return presetValues(gpu.weak ? "bas" : "eleve", env);
 }
 
 /**
@@ -317,16 +312,16 @@ export function heuristicValues(env: DisplayEnv, gpu: GpuHint): GraphicsValues {
  * IS the old heuristic preset (Bas on weak GPUs) — for the frame cap too
  * ("auto" cap: Bas → 60), exactly like the old AUTO + AUTO cap.
  */
-export function effectivePreset(choice: GraphicsChoice, gpu: GpuHint): PresetChoice {
-  if (choice.preset === "auto" && !autoResultUsable(choice.auto, gpu)) return gpu.weak ? "bas" : "eleve";
-  if (choice.preset === "custom" && !choice.custom) return gpu.weak ? "bas" : "eleve";
+export function effectivePreset(choice: GraphicsChoice, gpu: GpuHint, map: string): PresetChoice {
+  if (choice.preset === "auto" && !autoResultFor(choice, gpu, map)) return heuristicPreset(gpu);
+  if (choice.preset === "custom" && !choice.custom) return heuristicPreset(gpu);
   return choice.preset;
 }
 
 /**
  * The choice after the player edited one value: "Personnalisé" with the
  * current effective values and the edit — or, when the result is exactly a
- * named preset (an edit undone), that preset.
+ * named preset (an edit undone), that preset. The detections stay stored.
  */
 export function editChoice<K extends GraphicsKey>(
   choice: GraphicsChoice,
@@ -334,29 +329,48 @@ export function editChoice<K extends GraphicsKey>(
   value: GraphicsValues[K],
   env: DisplayEnv,
   gpu: GpuHint,
+  map: string,
 ): GraphicsChoice {
-  const values = { ...effectiveValues(choice, env, gpu), [key]: value } as GraphicsValues;
+  const values = { ...effectiveValues(choice, env, gpu, map), [key]: value } as GraphicsValues;
   const named = matchPreset(values, env);
-  if (named) return { ...choice, preset: named, custom: choice.custom };
+  if (named) return { ...choice, preset: named };
   return { ...choice, preset: "custom", custom: values };
+}
+
+/**
+ * True when "Automatique" should measure this machine now: no detection of
+ * this GPU / map / target yet, an interrupted one, an older logic, or a
+ * result that changed the shadow mode (measured again once it is in effect).
+ */
+export function needsDetection(
+  choice: GraphicsChoice,
+  gpu: GpuHint,
+  map: string,
+  targetFps: number,
+  bootShadows: ShadowMode,
+): boolean {
+  if (choice.preset !== "auto") return false;
+  const r = autoResultFor(choice, gpu, map);
+  if (!r || !r.complete || r.targetFps !== targetFps) return true;
+  return r.values.shadows !== r.measuredShadows && r.values.shadows === bootShadows;
 }
 
 // ---------------------------------------------------------------- floor
 
 /**
- * BEAUTY FLOOR — the automatic detection (and the dynamic resolution) never
- * go under it, whatever the machine. The player can still go lower by hand.
- *   - render scale: 80 % of native, but never more than one pixel per CSS
- *     pixel (a Retina screen at 50 % is still the sharpness of a normal
- *     screen; Windows 125 % at 80 % = exactly the old LOW resolution);
- *   - anti-aliasing: FXAA at least (where the map has a post chain);
- *   - shadows: kept (never switched off automatically);
- *   - snow: light at least; bulb halos and footprints kept;
- *   - anisotropy 1×, shadow quality "medium" (the old LOW size), reduced
- *     particles: cheap to see.
+ * BEAUTY FLOOR — the automatic detection never goes under it, whatever the
+ * machine (the player still can, by hand). It is the old LOW look:
+ *   - render scale: one pixel per CSS pixel (the old LOW resolution: 100 %
+ *     at 100 % zoom, 80 % at Windows 125 %, 50 % on a Retina screen), never
+ *     under the slider's 50 %;
+ *   - anti-aliasing: FXAA (where the map has a post chain);
+ *   - shadows: kept (the shadow mode never changes live), the old LOW map
+ *     size with live shadows;
+ *   - snow: light at least; bulb halos and footprints kept; particles kept;
+ *   - anisotropic filtering 1× (the old LOW).
  */
 export function floorRenderScale(env: DisplayEnv): number {
-  return Math.max(RENDER_SCALE_MIN, Math.min(80, 100 / sanitizeDpr(env.dpr)));
+  return Math.max(RENDER_SCALE_MIN, Math.min(100, 100 / sanitizeDpr(env.dpr)));
 }
 
 export const FLOOR = {
@@ -364,7 +378,6 @@ export const FLOOR = {
   snow: "legere" as SnowLevel,
   shadowQuality: "medium" as ShadowQuality,
   anisotropy: 1 as Anisotropy,
-  particles: "reduced" as ParticleDensity,
 };
 
 // ---------------------------------------------------------- capabilities
@@ -389,8 +402,6 @@ export interface GraphicsCaps {
   maxAnisotropy: number;
   /** Map uses mipmapped world textures (anisotropy has a visible effect: Givre). */
   anisotropicTextures: boolean;
-  /** Pooled effect lights of the scene (the max of the option). */
-  effectLightPool: number;
 }
 
 /** Defaults for headless code (tests): a Givre-like map on a capable GPU. */
@@ -405,7 +416,6 @@ export const DEFAULT_CAPS: GraphicsCaps = {
   maxShadowQuality: "ultra",
   maxAnisotropy: 16,
   anisotropicTextures: true,
-  effectLightPool: 2,
 };
 
 /** MSAA sample count of an anti-aliasing choice, clamped to the GPU (Givre composer). */
@@ -442,10 +452,10 @@ export interface ReloadChange {
 /**
  * Which settings changed between the values the session booted with and the
  * stored ones, and need a reload to take effect:
- *   - shadow mode and character shadows: every lit shader (and the shadow
- *     casters' depth shaders) depend on them — switching live would compile
- *     dozens of programs mid-session (PERFORMANCE.md, rule 12);
- *   - effect lights: the scene's light count is part of every lit program;
+ *   - shadow mode and character shadows: switching them live would compile
+ *     dozens of programs mid-session (shadow code in every lit shader, the
+ *     casters' depth programs — PERFORMANCE.md, rule 12) and re-bake or drop
+ *     the static shadow cache;
  *   - MSAA on maps without a post chain: a WebGL context attribute.
  * Everything else (resolution, Givre anti-aliasing, shadow resolution, snow,
  * halos, footprints, particles, anisotropy) is applied live, without any
@@ -461,7 +471,6 @@ export function reloadChanges(boot: GraphicsValues, next: GraphicsValues, caps: 
   const castBoot = boot.shadows === "dynamic" && boot.characterShadows;
   const castNext = next.shadows === "dynamic" && next.characterShadows;
   if (castBoot !== castNext && boot.shadows === next.shadows) add("characterShadows");
-  if (boot.effectLights !== next.effectLights) add("effectLights");
   if (!caps.composer && isMsaa(boot.antialiasing) !== isMsaa(next.antialiasing)) add("antialiasing");
   return out;
 }
@@ -471,7 +480,6 @@ export function liveValues(boot: GraphicsValues, next: GraphicsValues, caps: Pic
   const v = { ...next };
   v.shadows = boot.shadows;
   v.characterShadows = boot.characterShadows;
-  v.effectLights = boot.effectLights;
   if (!caps.composer) v.antialiasing = boot.antialiasing;
   return v;
 }
@@ -492,12 +500,12 @@ export function resolveFpsCap(cap: FpsCapSetting, preset: PresetChoice): number 
   return cap === 0 ? Infinity : cap;
 }
 
-/** Detection / dynamic resolution target: the display's rate or a fixed one. */
-export type FpsTargetSetting = "display" | 60 | 120 | 144 | 240;
-export const FPS_TARGETS: readonly FpsTargetSetting[] = ["display", 60, 120, 144, 240];
+/** Detection target: the display's rate, or a fixed rate (never above the display's). */
+export type FpsTargetSetting = "display" | 60 | 120 | 144 | 165 | 240;
+export const FPS_TARGETS: readonly FpsTargetSetting[] = ["display", 60, 120, 144, 165, 240];
 
 /** Common display rates: a measured interval is snapped to the nearest one within 4 %. */
-const DISPLAY_RATES = [50, 60, 75, 90, 100, 120, 144, 165, 175, 180, 200, 240, 280, 360];
+const DISPLAY_RATES = [30, 48, 50, 60, 75, 90, 100, 120, 144, 165, 175, 180, 200, 240, 280, 360];
 
 export function snapRefreshRate(hz: number): number {
   if (!Number.isFinite(hz) || hz <= 0) return 60;
@@ -514,12 +522,13 @@ export function snapRefreshRate(hz: number): number {
 }
 
 /**
- * Frame rate the detection aims at: the display's rate (or the chosen target),
- * never below 60, never above 240 — and never above a lower frame-rate cap
- * the player set (aiming past the cap is pointless).
+ * Frame rate the detection aims at: the display's rate (or the chosen
+ * target), never above the display's rate (the browser shows no more), never
+ * above a lower frame-rate cap the player set, at most 240.
  */
 export function targetFps(setting: FpsTargetSetting, refreshHz: number, capFps: number): number {
-  const base = setting === "display" ? snapRefreshRate(refreshHz) : setting;
+  const display = snapRefreshRate(refreshHz);
+  const base = setting === "display" ? display : Math.min(setting, display);
   const capped = Math.min(base, Number.isFinite(capFps) && capFps > 0 ? capFps : Infinity);
-  return Math.max(60, Math.min(240, capped));
+  return Math.max(30, Math.min(240, capped));
 }

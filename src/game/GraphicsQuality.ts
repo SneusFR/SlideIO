@@ -12,6 +12,7 @@ import {
   type PresetChoice,
 } from "../settings/GraphicsSettings";
 import { setLegacyAutoBase, settingsStore } from "../settings/SettingsStore";
+import { loadMapSelection } from "../world/MapSelection";
 
 /**
  * Graphics SESSION — the values this page load runs with, resolved ONCE at
@@ -21,11 +22,11 @@ import { setLegacyAutoBase, settingsStore } from "../settings/SettingsStore";
  * session, then applies live changes itself (see Game.applyGraphicsSettings).
  *
  * Modest machines (Intel iGPU laptops…) are FILL-RATE bound in this game:
- * rendered pixels, MSAA, the shadow pass and the forward-lit lights dominate
- * the frame time — each is one setting of the page.
+ * rendered pixels, MSAA (its colour resolves) and the live shadow pass
+ * dominate the GPU time — each is one setting of the page.
  */
 export interface GraphicsSession {
-  /** Effective values at boot (shadow mode, character shadows, effect lights, context MSAA: fixed for the session). */
+  /** Effective values at boot (shadow mode, character shadows, context MSAA: fixed for the session). */
   values: GraphicsValues;
   /** Preset choice at boot ("auto", "bas"…, "custom"). */
   preset: PresetChoice;
@@ -33,6 +34,8 @@ export interface GraphicsSession {
   env: DisplayEnv;
   /** GPU hint used by "auto" (probe only made when the choice needs it). */
   gpu: GpuHint;
+  /** Map this page load plays (the automatic detection is stored per map). */
+  map: string;
 }
 
 /** Legacy shape read by the map / character code at construction. */
@@ -126,7 +129,8 @@ export function getGraphicsSession(): GraphicsSession {
   const record = settingsStore().get();
   const env = currentDisplayEnv();
   const gpu = gpuHintFor(record.graphics.preset);
-  session = { values: effectiveValues(record.graphics, env, gpu), preset: record.graphics.preset, env, gpu };
+  const map = loadMapSelection();
+  session = { values: effectiveValues(record.graphics, env, gpu, map), preset: record.graphics.preset, env, gpu, map };
   return session;
 }
 
@@ -150,7 +154,7 @@ export function getQualitySettings(): QualitySettings {
   if (cached) return cached;
   const s = getGraphicsSession();
   const record = settingsStore().get();
-  cached = legacyQuality(s.values, s.env, resolveFpsCap(record.fpsCap, effectivePreset(record.graphics, s.gpu)));
+  cached = legacyQuality(s.values, s.env, resolveFpsCap(record.fpsCap, effectivePreset(record.graphics, s.gpu, s.map)));
   return cached;
 }
 

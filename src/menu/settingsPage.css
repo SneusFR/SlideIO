@@ -63,6 +63,10 @@
   padding: 18px 22px 6px;
 }
 
+.gs-title-wrap {
+  min-width: 0;
+}
+
 .gs-title {
   font-family: var(--mm-font);
   font-weight: 400;
@@ -71,6 +75,12 @@
   line-height: 1;
   color: var(--mm-text-cream, #fff6e0);
   text-shadow: 0 3px 0 rgba(20, 14, 6, 0.6);
+}
+
+.gs-subtitle {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--gs-faint);
 }
 
 .gs-back {
@@ -162,8 +172,17 @@
   border-top: 1px solid var(--gs-line);
 }
 
-.gs-section-title + .gs-row {
+.gs-section-title + .gs-row,
+.gs-section-intro + .gs-row {
   border-top: 0;
+}
+
+.gs-section-intro {
+  margin: 2px 0 4px;
+  max-width: 60ch;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--gs-faint);
 }
 
 .gs-row-label {
@@ -340,6 +359,21 @@
   font-size: 15px;
 }
 
+/* Six presets on one line; two lines of three on narrow panels. */
+.gs-presets .gs-seg-btn {
+  min-width: 0;
+  flex-basis: 0;
+}
+
+@media (max-width: 720px) {
+  .gs-presets {
+    flex-wrap: wrap;
+  }
+  .gs-presets .gs-seg-btn {
+    flex-basis: 30%;
+  }
+}
+
 .gs-seg-small .gs-seg-btn {
   padding: 4px 8px;
   font-size: 13px;
@@ -482,10 +516,28 @@
   border-radius: 14px;
 }
 
+.gs-detect-title {
+  margin-bottom: 4px;
+  font-family: var(--mm-font);
+  font-size: 15px;
+  letter-spacing: 0.8px;
+  color: #bbf7d0;
+}
+
 .gs-detect-text {
   font-size: 13.5px;
   line-height: 1.5;
   color: var(--gs-dim);
+}
+
+.gs-detect-meta {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--gs-faint);
+}
+
+.gs-detect-meta:empty {
+  display: none;
 }
 
 .gs-detect-progress {
@@ -513,6 +565,17 @@
   flex-direction: column;
   align-items: flex-end;
   gap: 8px;
+}
+
+.gs-detect-target {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.gs-detect-target.hidden {
+  display: none;
 }
 
 .gs-detect-target-label {
@@ -702,7 +765,7 @@
   text-shadow: 0 3px 0 rgba(20, 14, 6, 0.55);
 }
 
-.gs-meter.below .gs-meter-num {
+.gs-meter[data-state="below"] .gs-meter-num {
   color: var(--gs-amber);
 }
 
@@ -719,46 +782,47 @@
   color: var(--gs-faint);
 }
 
-.gs-meter-bar-label {
-  margin-top: 10px;
-  font-size: 12.5px;
+.gs-meter-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 700;
   color: var(--gs-dim);
-  font-variant-numeric: tabular-nums;
 }
 
-.gs-meter-bar {
-  position: relative;
-  height: 10px;
-  margin-top: 6px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  overflow: hidden;
+.gs-meter-status::before {
+  content: "";
+  width: 9px;
+  height: 12px;
+  border-radius: 50% / 58%;
+  transform: rotate(24deg);
+  background: var(--gs-faint);
 }
 
-.gs-meter-fill {
-  position: absolute;
-  inset: 0;
+.gs-meter[data-state="ok"] .gs-meter-status {
+  color: var(--gs-leaf);
+}
+
+.gs-meter[data-state="ok"] .gs-meter-status::before {
   background: var(--gs-leaf);
-  transform: scaleX(0);
-  transform-origin: 0 50%;
-  transition: transform 0.25s ease, background 0.25s ease;
 }
 
-.gs-meter-bar[data-level="tight"] .gs-meter-fill {
+.gs-meter[data-state="below"] .gs-meter-status {
+  color: var(--gs-amber);
+}
+
+.gs-meter[data-state="below"] .gs-meter-status::before {
+  background: var(--gs-amber);
+}
+
+.gs-meter[data-state="busy"] .gs-meter-status {
+  color: var(--gs-gold);
+}
+
+.gs-meter[data-state="busy"] .gs-meter-status::before {
   background: var(--gs-gold);
-}
-
-.gs-meter-bar[data-level="over"] .gs-meter-fill {
-  background: #fb923c;
-}
-
-.gs-meter-mark {
-  position: absolute;
-  left: 80%;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: rgba(255, 255, 255, 0.7);
 }
 
 .gs-meter-rows {
@@ -770,7 +834,16 @@
 .gs-meter-rows div {
   display: flex;
   justify-content: space-between;
+  gap: 10px;
   font-size: 13px;
+}
+
+.gs-meter-rows div.hidden {
+  display: none;
+}
+
+.gs-meter-rows dt {
+  cursor: help;
 }
 
 .gs-meter-rows dt {
@@ -808,7 +881,7 @@
   }
   .gs-meter-rows {
     grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
+    gap: 4px 14px;
   }
 }
 
@@ -837,7 +910,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .gs-meter-fill,
   .gs-detect-fill {
     transition: none;
   }

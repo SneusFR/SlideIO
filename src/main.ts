@@ -163,10 +163,17 @@ async function main(): Promise<void> {
     env: currentDisplayEnv,
   });
   settingsPage.onOpenChange = (open) => menu.setSettingsOpen(open);
+  // A detection measures the map: whatever else would draw or compute at
+  // the same time (BVH builds of the menu's idle slots) goes first.
+  settingsPage.beforeDetection = () => flushMapBvhs();
   menu.onSettings = () => {
     startWeaponIcons();
     settingsPage.open();
   };
+  if (import.meta.env.DEV) {
+    // Headless checks / console: the settings of this page.
+    (window as unknown as Record<string, unknown>).__settings = { store, controller: graphics, page: settingsPage, game };
+  }
   // « Appliquer et recharger »: back on the page after the reload.
   try {
     if (sessionStorage.getItem(REOPEN_KEY)) {
@@ -176,38 +183,41 @@ async function main(): Promise<void> {
   } catch {
     /* no session storage */
   }
-  // FIRST LAUNCH of a player who never chose (or a new GPU): the automatic
-  // detection measures the menu's live map a few seconds after it appears —
-  // once the menu's own start-up work (icon snapshots in a second WebGL
-  // context) is over. PLAY, LOADOUT or CUSTOMIZE stop it (the player's
-  // previous settings come back; it runs again at the next launch).
+  // FIRST LAUNCH on this machine and map (or a new GPU, another target): the
+  // automatic detection measures the menu's live map a few seconds after it
+  // appears — once the menu's own start-up work (icon snapshots in a second
+  // WebGL context, BVH builds) is over, never under another menu (loadout,
+  // customize, lobbies: their own 3D or animations would be measured too).
+  // PLAY, LOADOUT or CUSTOMIZE stop it: the previous settings come back, it
+  // runs again at the next launch. A small notice says what is going on.
   graphics.subscribe((e) => {
     if (e.kind === "start" && e.reason === "first") {
-      menu.showGraphicsToast("Réglage automatique des graphismes pour ce PC…", { busy: true });
+      menu.showGraphicsToast("Réglage automatique des graphismes pour ce PC… l'image change quelques secondes.", { busy: true });
     } else if (e.kind === "done" && e.reason === "first") {
       menu.showGraphicsToast(toastSummary(e.result), {
         action: () => settingsPage.open("graphics"),
-        hideAfterMs: 10000,
+        hideAfterMs: 12000,
       });
-    } else if (e.kind === "cancelled") {
+    } else if (e.kind === "cancelled" && e.reason === "first") {
       menu.hideGraphicsToast();
     }
   });
   const stopDetection = (): void => {
     if (graphics.detecting) graphics.cancelDetection();
   };
-  if (graphics.needsFirstDetection()) {
+  const otherMenuOpen = (): boolean => loadoutMenu.isOpen || customizeMenu.isOpen || browser.isOpen || settingsPage.isOpen;
+  if (graphics.needsDetection()) {
     void (async () => {
       await new Promise((r) => window.setTimeout(r, 2500));
       await weaponIconsIdle();
-      // A menu overlay over the map (3D preview, icons) or the match: try again a bit later.
-      for (let i = 0; i < 30; i++) {
+      // Another menu over the map, or the match: try again a bit later.
+      for (let i = 0; i < 60 && otherMenuOpen(); i++) {
         if (inGame || entering) return;
-        if (!loadoutMenu.isOpen && !customizeMenu.isOpen) break;
         await new Promise((r) => window.setTimeout(r, 1000));
       }
-      if (inGame || entering || loadoutMenu.isOpen || customizeMenu.isOpen) return;
-      if (graphics.needsFirstDetection()) void graphics.runDetection("first");
+      if (inGame || entering || otherMenuOpen() || graphics.detecting || !graphics.needsDetection()) return;
+      flushMapBvhs();
+      void graphics.runDetection("first");
     })();
   }
 
@@ -292,6 +302,9 @@ async function main(): Promise<void> {
     if (!inGame || matchEnd.isShowing || game.isMatchOver) return;
     const locked = document.pointerLockElement === game.domElement;
     if (locked) {
+      // Back in the fight: no detection measuring play frames, no page over them.
+      stopDetection();
+      settingsPage.close();
       menu.hide();
       syncPlayerName(); // a rename in the pause menu shows on the card
       // Back in the fight: reveal the gameplay HUD again.
@@ -362,14 +375,14 @@ async function main(): Promise<void> {
   };
 }
 
-/** One line for the menu's toast after the first-launch detection. */
+/** One line for the menu's notice after the first-launch detection. */
 function toastSummary(result: AutoResult): string {
   if (result.limitedBy === "cpu") return "Graphismes réglés : c'est le processeur qui limite ce PC, le rendu reste beau.";
   if (result.belowTarget) {
-    const fps = result.expectedFps !== null ? ` (environ ${result.expectedFps} i/s)` : "";
-    return `Graphismes réglés au plus léger encore joli${fps}.`;
+    const fps = result.measuredFps !== null ? ` (environ ${result.measuredFps} i/s)` : "";
+    return `Graphismes réglés au plancher de qualité${fps} : ce PC ne tient pas ${result.targetFps} i/s.`;
   }
-  return `Graphismes réglés pour tenir ${result.targetFps} i/s.`;
+  return `Graphismes réglés pour tenir ${result.targetFps} i/s avec de la marge.`;
 }
 
 /**
