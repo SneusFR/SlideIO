@@ -373,21 +373,29 @@ par « Appliquer et recharger ».
 ou à la demande) : une **échelle** de configurations, du meilleur (définition native, MSAA 4×, ombres
 les plus fines, filtrage 16×) au **plancher** (l'ancien LOW : un pixel par pixel CSS, FXAA, filtrage 1×,
 neige légère), en retirant d'abord ce qui se voit le moins. Mesurée sur la vraie carte (le menu, caméra
-immobile pendant la mesure ; ou la vue de pause), **par les intervalles entre images** — pas par des
-requêtes de chronométrage GPU (11ᵉ passe : elles comptent les temps morts du GPU et font flusher Chrome).
-Un écran à 60 Hz montre 60 i/s à 10 ms comme à 16 ms de travail : chaque candidat est donc mesuré avec
-**30 % de pixels en plus** — s'il tient encore l'objectif, il garde ~23 % de l'image libre pour les
-combats. Le plancher d'abord (l'objectif est-il atteignable ?), puis, s'il ne l'est pas, la même vue à
-moitié de pixels : beaucoup plus rapide = la carte graphique limite (réponse : le plancher, et des ombres
-statiques conseillées au prochain chargement si elles étaient dynamiques) ; pas plus rapide = le
-processeur ou le navigateur limite (les graphismes restent en haut, ils n'y changeraient rien). Puis le
-haut de l'échelle (une seule mesure sur une machine puissante) et une recherche dichotomique. Les images
-d'une fenêtre sans le focus sont ignorées. Une réponse, stockée par carte, GPU et objectif : la détection
-ne se relance jamais d'elle-même sur la même machine (pas d'oscillation), et le joueur garde la main.
-Sur les machines simulées d'après les mesures de la 11ᵉ passe (`scripts/test-graphics-autotune.mts`) :
-le portable Iris Xe passe de l'ancien LOW (1920 × 928) à la définition native **2400 × 1160**, FXAA,
-ombres statiques en haute taille, filtrage 4×, avec ~40 % de l'image libre ; le PC RTX 2080 Super à
-240 Hz garde Élevé ou mieux.
+immobile pendant la mesure, avec la passe des bras d'une image de jeu — sa résolution MSAA comprise ; ou
+la vue de pause), **par les intervalles entre images** — pas par des requêtes de chronométrage GPU
+(11ᵉ passe : elles comptent les temps morts du GPU et font flusher Chrome). Un écran à 60 Hz montre
+60 FPS à 10 ms comme à 16 ms de travail : chaque candidat est donc mesuré avec **30 % de pixels en
+plus** — s'il tient encore l'objectif, il garde ~23 % de l'image libre pour les combats (le rendu
+d'origine, lui, est gardé avec la moitié de cette marge : il ne part que s'il manque nettement). **Deux
+objectifs** : 60 FPS doivent tenir (pour eux l'image peut descendre jusqu'au plancher) ; la fréquence
+de l'écran est souhaitée (jusqu'à 240), mais jamais au prix de passer sous le **rendu d'origine** de ce
+GPU (son ancien préréglage : Élevé, Bas sur les puces intégrées) — une machine qui tient 60 FPS garde
+au moins l'image qu'elle a toujours eue. Le plancher d'abord (quels objectifs sont atteignables ?), puis,
+s'il en manque un, la même vue à moitié de pixels : beaucoup plus rapide = la carte graphique limite ;
+pas plus rapide = le processeur ou le navigateur (les graphismes restent en haut, ils n'y changeraient
+rien). Puis le haut de chaque plage (une seule mesure sur une machine puissante) et une recherche
+dichotomique. Les images d'une fenêtre sans le focus sont ignorées. Une réponse, stockée par carte, GPU
+et objectif : la détection ne se relance jamais d'elle-même sur la même machine (pas d'oscillation), et
+le joueur garde la main. Sur les machines simulées d'après les mesures de la 11ᵉ passe
+(`scripts/test-graphics-autotune.mts`) : le portable Iris Xe (60 Hz) passe de l'ancien LOW
+(1920 × 928) à la définition native **2400 × 1160**, FXAA, ombres statiques en haute taille, filtrage
+4×, avec ~40 % de l'image libre ; le PC RTX 2080 Super à 240 Hz garde Élevé ou mieux ; une carte
+moyenne sur un écran 144 Hz garde Élevé à plus de 60 FPS au lieu de descendre pour 144 ; une petite
+carte qui tient 60 FPS en Élevé avec peu de marge garde Élevé — et sur un écran 144 Hz, où chaque image
+d'Élevé lui prend trois rafraîchissements (48 FPS), elle descend juste ce qu'il faut pour 60. Le résumé
+affiché dit la marge réellement mesurée et quand le rendu d'origine a dû baisser.
 
 ## Vérifier sur une machine
 

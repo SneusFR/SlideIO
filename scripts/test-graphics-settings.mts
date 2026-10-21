@@ -137,8 +137,8 @@ await test("auto choice: the old heuristic until a detection of THIS GPU and map
   assert.equal(G.effectivePreset(choice, STRONG, MAP), "eleve");
   const measured = { ...G.presetValues("bas", env), renderScale: 100, anisotropy: 4 as const };
   const result = {
-    values: measured, at: 1, gpu: WEAK.name, map: MAP, targetFps: 60, measuredFps: 60, limitedBy: "none" as const,
-    belowTarget: false, complete: true, measuredShadows: "static" as const, summary: "ok", version: G.AUTO_TUNE_VERSION,
+    values: measured, at: 1, gpu: WEAK.name, map: MAP, targetFps: 60, measuredFps: 60, mode: "target" as const,
+    complete: true, measuredShadows: "static" as const, summary: "ok", version: G.AUTO_TUNE_VERSION,
   };
   const detected = { preset: "auto" as const, custom: null, auto: { [MAP]: result } };
   assert.equal(G.sameValues(G.effectiveValues(detected, env, WEAK, MAP), measured), true);
@@ -158,7 +158,7 @@ await test("needsDetection: missing / other target / interrupted / older logic /
   const env = { dpr: 1 };
   const base = {
     values: G.presetValues("eleve", env), at: 1, gpu: STRONG.name, map: MAP, targetFps: 240, measuredFps: 240,
-    limitedBy: "none" as const, belowTarget: false, complete: true, measuredShadows: "dynamic" as const, summary: "", version: G.AUTO_TUNE_VERSION,
+    mode: "target" as const, complete: true, measuredShadows: "dynamic" as const, summary: "", version: G.AUTO_TUNE_VERSION,
   };
   const choice = (r: typeof base | null, preset: "auto" | "eleve" = "auto") => ({ preset, custom: null, auto: r ? { [MAP]: r } : {} });
   assert.equal(G.needsDetection(choice(null), STRONG, MAP, 240, "dynamic"), true);
@@ -409,7 +409,7 @@ await test("old keys bridge: a value written by someone else since (older build,
   const s2 = new S.SettingsStore(storage, autoStrong);
   s2.update((d) => {
     d.graphics.preset = "auto";
-    d.graphics.auto = { GIVRE: { ...r.graphics.auto.GIVRE, values: G.presetValues("bas", { dpr: 1 }), gpu: "A", map: "GIVRE", at: 1, targetFps: 60, measuredFps: 60, limitedBy: "none", belowTarget: false, complete: true, measuredShadows: "static", summary: "", version: G.AUTO_TUNE_VERSION } };
+    d.graphics.auto = { GIVRE: { ...r.graphics.auto.GIVRE, values: G.presetValues("bas", { dpr: 1 }), gpu: "A", map: "GIVRE", at: 1, targetFps: 60, measuredFps: 60, mode: "target", complete: true, measuredShadows: "static", summary: "", version: G.AUTO_TUNE_VERSION } };
   });
   storage.map.set("beanzo.graphicsQuality", "LOW");
   const r3 = new S.SettingsStore(storage, autoStrong).get();

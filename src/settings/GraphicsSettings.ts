@@ -246,12 +246,18 @@ export interface AutoResult {
   map: string;
   /** Frame rate the detection aimed at (another target → detect again). */
   targetFps: number;
-  /** Frame rate seen with the chosen values (conservative), null when unknown. */
+  /**
+   * Frame rate the chosen values hold with their margin (target / hard), or
+   * the floor's (cpu / gpu); null when unknown.
+   */
   measuredFps: number | null;
-  /** What limits this machine at the chosen values. */
-  limitedBy: "gpu" | "cpu" | "none";
-  /** True when even the beauty floor misses the target. */
-  belowTarget: boolean;
+  /**
+   * target: the target holds; hard: high-refresh screen, 60 FPS held — with
+   * the default look, or below it only when even it missed 60 — the target
+   * would need the image below that look; cpu: the processor limits (graphics
+   * kept); gpu: even the floor misses 60 FPS.
+   */
+  mode: "target" | "hard" | "cpu" | "gpu";
   /** False when the detection was stopped before the end (detect again at the next launch). */
   complete: boolean;
   /** Shadow mode of the session that measured (a result that changes it is checked again after the reload). */

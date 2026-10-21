@@ -883,6 +883,9 @@
     grid-template-columns: repeat(3, 1fr);
     gap: 4px 14px;
   }
+  .gs-subtitle-side {
+    display: none;
+  }
 }
 
 @media (max-width: 640px) {

@@ -183,18 +183,19 @@ async function main(): Promise<void> {
   } catch {
     /* no session storage */
   }
-  // FIRST LAUNCH on this machine and map (or a new GPU, another target): the
-  // automatic detection measures the menu's live map a few seconds after it
-  // appears — once the menu's own start-up work (icon snapshots in a second
-  // WebGL context, BVH builds) is over, never under another menu (loadout,
-  // customize, lobbies: their own 3D or animations would be measured too).
-  // PLAY, LOADOUT or CUSTOMIZE stop it: the previous settings come back, it
-  // runs again at the next launch. A small notice says what is going on.
+  // FIRST LAUNCH on this machine and map (or a new GPU, another target, the
+  // shadows it advised now in effect): the automatic detection measures the
+  // menu's live map a few seconds after it appears — once the menu's own
+  // start-up work (icon snapshots in a second WebGL context, BVH builds) is
+  // over, never under another menu (loadout, customize, lobbies: their own 3D
+  // or animations would be measured too; the settings page shows its
+  // progress). PLAY, LOADOUT or CUSTOMIZE stop it: the previous settings come
+  // back, it runs again at the next launch. A small notice says what is going on.
   graphics.subscribe((e) => {
     if (e.kind === "start" && e.reason === "first") {
       menu.showGraphicsToast("Réglage automatique des graphismes pour ce PC… l'image change quelques secondes.", { busy: true });
     } else if (e.kind === "done" && e.reason === "first") {
-      menu.showGraphicsToast(toastSummary(e.result), {
+      menu.showGraphicsToast(toastSummary(e.result, game.softwareRenderer), {
         action: () => settingsPage.open("graphics"),
         hideAfterMs: 12000,
       });
@@ -205,7 +206,7 @@ async function main(): Promise<void> {
   const stopDetection = (): void => {
     if (graphics.detecting) graphics.cancelDetection();
   };
-  const otherMenuOpen = (): boolean => loadoutMenu.isOpen || customizeMenu.isOpen || browser.isOpen || settingsPage.isOpen;
+  const otherMenuOpen = (): boolean => loadoutMenu.isOpen || customizeMenu.isOpen || browser.isOpen;
   if (graphics.needsDetection()) {
     void (async () => {
       await new Promise((r) => window.setTimeout(r, 2500));
@@ -376,13 +377,21 @@ async function main(): Promise<void> {
 }
 
 /** One line for the menu's notice after the first-launch detection. */
-function toastSummary(result: AutoResult): string {
-  if (result.limitedBy === "cpu") return "Graphismes réglés : c'est le processeur qui limite ce PC, le rendu reste beau.";
-  if (result.belowTarget) {
-    const fps = result.measuredFps !== null ? ` (environ ${result.measuredFps} i/s)` : "";
-    return `Graphismes réglés au plancher de qualité${fps} : ce PC ne tient pas ${result.targetFps} i/s.`;
+function toastSummary(result: AutoResult, softwareRenderer: boolean): string {
+  // Not measured: the browser draws without the graphics card.
+  if (softwareRenderer) return "Rendu logiciel détecté : graphismes au plancher. Active l'accélération matérielle du navigateur.";
+  switch (result.mode) {
+    case "cpu":
+      return "Graphismes réglés : c'est le processeur qui limite ce PC, le rendu reste beau.";
+    case "gpu": {
+      const fps = result.measuredFps !== null ? ` (environ ${result.measuredFps} FPS)` : "";
+      return `Graphismes réglés au plancher de qualité${fps} : ce PC ne tient pas ${Math.min(60, result.targetFps)} FPS.`;
+    }
+    case "hard":
+      return `Graphismes réglés pour tenir ${result.measuredFps ?? Math.min(60, result.targetFps)} FPS au moins (${result.targetFps} demanderaient de baisser l'image).`;
+    default:
+      return `Graphismes réglés pour tenir ${result.targetFps} FPS sur ce PC.`;
   }
-  return `Graphismes réglés pour tenir ${result.targetFps} i/s avec de la marge.`;
 }
 
 /**

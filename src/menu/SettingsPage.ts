@@ -377,7 +377,10 @@ export class SettingsPage {
     const titleWrap = el("div", "gs-title-wrap");
     const title = el("h2", "gs-title", "Paramètres");
     title.id = "gs-title";
-    titleWrap.append(title, el("p", "gs-subtitle", "Tout s'applique tout de suite — regarde la carte à droite."));
+    const subtitle = el("p", "gs-subtitle", "Tout s'applique tout de suite");
+    // (Narrow windows: the panel covers the map — the hint goes, see the CSS.)
+    subtitle.append(el("span", "gs-subtitle-side", " — regarde la carte à droite"), ".");
+    titleWrap.append(title, subtitle);
     const back = el("button", "gs-back", "Retour");
     back.type = "button";
     back.title = "Retour (Échap)";
@@ -441,7 +444,7 @@ export class SettingsPage {
     this.meter.setAttribute("aria-label", "Mesure en direct");
     const top = el("div", "gs-meter-top");
     this.meterNum = el("span", "gs-meter-num", "—");
-    const unit = el("span", "gs-meter-unit", "i/s");
+    const unit = el("span", "gs-meter-unit", "FPS");
     this.meterTarget = el("span", "gs-meter-target");
     top.append(this.meterNum, unit, this.meterTarget);
     this.meterStatus = el("p", "gs-meter-status");
@@ -912,7 +915,7 @@ export class SettingsPage {
         this.detectText,
         `Mesure ${Math.min(total, done + 1)} sur ${total} : l'image change pendant les essais, la caméra reste immobile. Quelques secondes.`,
       );
-      setText(this.detectMeta, `Objectif : ${controller.detectionTarget()} i/s sur cette carte.`);
+      setText(this.detectMeta, `Objectif : ${controller.detectionTarget()} FPS sur cette carte.`);
       this.detectFill.style.transform = `scaleX(${Math.min(1, done / total)})`;
       this.detectProgress.setAttribute("aria-valuenow", String(Math.round((100 * done) / total)));
       setText(this.detectBtn, "Annuler");
@@ -927,13 +930,13 @@ export class SettingsPage {
         ? when.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })
         : "";
       const stale = auto.targetFps !== controller.detectionTarget() ? " — objectif changé depuis : relance-la" : "";
-      setText(this.detectMeta, `Mesuré${date ? ` le ${date}` : ""} pour ${auto.targetFps} i/s${stale}.`);
+      setText(this.detectMeta, `Mesuré${date ? ` le ${date}` : ""} pour ${auto.targetFps} FPS${stale}.`);
     } else {
       setText(
         this.detectText,
-        "Mesure ce PC sur la carte en cours et choisit le plus beau rendu qui tient l'objectif d'images par seconde, avec de la marge. Jamais sous le plancher de qualité (l'ancien préréglage LOW).",
+        "Mesure ce PC sur la carte en cours et choisit le plus beau rendu qui tient l'objectif, avec de la marge pour les combats : 60 FPS au moins, et la fréquence de l'écran tant que l'image reste au moins celle d'origine. Jamais sous le plancher de qualité (l'ancien préréglage LOW).",
       );
-      setText(this.detectMeta, `Objectif : ${controller.detectionTarget()} i/s. Quelques secondes ; l'image change pendant les essais.`);
+      setText(this.detectMeta, `Objectif : ${controller.detectionTarget()} FPS. Quelques secondes ; l'image change pendant les essais.`);
     }
   }
 
@@ -1087,7 +1090,7 @@ export class SettingsPage {
     this.meter.dataset.state = detecting ? "busy" : ok ? "ok" : "below";
     setText(
       this.meterStatus,
-      detecting ? "Détection en cours : mesures sous charge" : ok ? "Objectif tenu" : `Sous l'objectif (${goal} i/s)`,
+      detecting ? "Détection en cours : mesures sous charge" : ok ? "Objectif tenu" : `Sous l'objectif (${goal} FPS)`,
     );
     setText(this.meterFrame, `${frNumber(perf.frameMs, 1)} ms`);
     setText(this.meterSlow, `${frNumber(perf.frameP95, 1)} ms`);

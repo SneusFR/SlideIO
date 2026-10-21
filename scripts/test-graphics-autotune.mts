@@ -96,6 +96,38 @@ function rtx2080(opts: Partial<Machine> = {}): Machine {
   };
 }
 
+/** Mid-range GPU (GTX 1660-like) at 1440p on a 144 Hz screen: Élevé ≈ 105 FPS. */
+function midGpu(): Machine {
+  const perMpx: Record<string, number> = { none: 1.1, fxaa: 1.2, msaa2: 1.6, msaa4: 2.0 };
+  return {
+    name: "GTX 1660",
+    hz: 144,
+    css: [2560, 1440],
+    dpr: 1,
+    cpuMs: 3,
+    jitter: 0.3,
+    caps: { ...G.DEFAULT_CAPS },
+    gpu: (v, mpx) =>
+      0.8 + mpx * (perMpx[v.antialiasing] + ANISO_COST[v.anisotropy] * 0.1) + SNOW_COST[v.snow] * 0.2 + (v.shadows === "dynamic" ? SHADOW_TEXELS[v.shadowQuality] * 0.15 : 0),
+  };
+}
+
+/** Entry-level GPU (GTX 1050-like) at 1080p / 60 Hz: Élevé ≈ 14 ms — holds 60, without much margin. */
+function gtx1050(): Machine {
+  const perMpx: Record<string, number> = { none: 3.0, fxaa: 3.2, msaa2: 4.4, msaa4: 5.6 };
+  return {
+    name: "GTX 1050",
+    hz: 60,
+    css: [1920, 1080],
+    dpr: 1,
+    cpuMs: 6,
+    jitter: 0.4,
+    caps: { ...G.DEFAULT_CAPS },
+    gpu: (v, mpx) =>
+      0.8 + mpx * (perMpx[v.antialiasing] + ANISO_COST[v.anisotropy] * 0.2) + SNOW_COST[v.snow] * 0.3 + (v.shadows === "dynamic" ? SHADOW_TEXELS[v.shadowQuality] * 0.2 : 0),
+  };
+}
+
 /** Old office laptop (UHD 620, 1080p): GPU-bound even at the floor. */
 function uhd620(): Machine {
   return {
@@ -117,6 +149,8 @@ function megapixels(m: Machine, v: Values): number {
 
 interface RunOptions {
   target?: number;
+  /** The look this GPU always had (default: the boot values) — see TuneGoals. */
+  look?: Values;
   /** Frames (by index) rendered while the window had no focus. */
   unfocused?: (frame: number) => boolean;
   seed?: number;
@@ -132,6 +166,7 @@ function calibrate(m: Machine, boot: Values, opts: RunOptions = {}) {
   const target = opts.target ?? Math.min(240, m.hz);
   let applied: Values = boot;
   const appliedLog: Values[] = [];
+  const goals = A.tuneGoals(target, A.defaultRungIndex(ladder, opts.look ?? boot));
   const calib = new A.Calibration(
     {
       apply: (v) => {
@@ -140,7 +175,7 @@ function calibrate(m: Machine, boot: Values, opts: RunOptions = {}) {
       },
     },
     ladder,
-    target,
+    goals,
     opts.cfg,
   );
   const random = rng(opts.seed ?? 7);
@@ -288,9 +323,11 @@ console.log("detection on simulated machines");
 await test("owner's laptop (Iris Xe, 60 Hz, booted Bas): MORE than the old LOW — native resolution, FXAA, sharper static shadows — with margin", () => {
   const m = irisXe("static");
   const boot = G.presetValues("bas", { dpr: m.dpr });
-  const run = calibrate(m, boot);
+  const run = calibrate(m, boot, { look: boot });
   const o = run.outcome!;
   assert.ok(o && o.complete && o.mode === "target");
+  assert.equal(o.marginPixels, A.AUTO_TUNE.marginPixels); // measured with the full margin
+  assert.match(A.summarize(o, { targetFps: 60, caps: m.caps, software: false }), /tenir 60 FPS avec 30\u202f% de pixels en réserve/);
   const v = o.values;
   assert.equal(v.renderScale, 100); // 2400 × 1160 instead of the old 1920 × 928
   assert.equal(v.antialiasing, "fxaa");
@@ -309,7 +346,7 @@ await test("owner's laptop (Iris Xe, 60 Hz, booted Bas): MORE than the old LOW �
 await test("owner's laptop booted Élevé (live shadows, MSAA): MSAA and the big shadow map go, the floor is never crossed", () => {
   const m = irisXe("dynamic");
   const boot = G.presetValues("eleve", { dpr: m.dpr });
-  const o = calibrate(m, boot).outcome!;
+  const o = calibrate(m, boot, { look: G.presetValues("bas", { dpr: m.dpr }) }).outcome!;
   assert.equal(o.mode, "target");
   assert.equal(o.values.shadows, "dynamic");
   assert.notEqual(o.values.antialiasing, "msaa4");
@@ -336,6 +373,7 @@ await test("gaming PC (RTX 2080 Super, 240 Hz): at least Élevé, and 240 FPS he
 await test("processor-limited machine (main thread longer than a 240 Hz frame): the graphics stay at the top — lowering them would not help", () => {
   const m = rtx2080({ cpuMs: 4.6, jitter: 0.5 });
   const o = calibrate(m, G.presetValues("eleve", { dpr: 1 })).outcome!;
+  assert.ok(o.answerFps! < 230);
   assert.equal(o.mode, "cpu");
   assert.equal(o.index, 0);
   assert.equal(o.values.antialiasing, "msaa4");
@@ -345,6 +383,69 @@ await test("processor-limited machine (main thread longer than a 240 Hz frame): 
   assert.equal(o2.mode, "cpu");
   assert.ok(o2.index <= 4, `rung ${o2.index}`); // no resolution loss
   assert.equal(o2.values.renderScale, 100);
+});
+
+await test("60 Hz, entry-level GPU that holds 60 at Élevé with little room: Élevé is KEPT (smaller margin), not lowered for a borderline measure", () => {
+  const m = gtx1050();
+  const eleve = G.presetValues("eleve", { dpr: 1 });
+  const run = calibrate(m, eleve, { look: eleve });
+  const o = run.outcome!;
+  assert.equal(o.mode, "target");
+  assert.equal(G.sameValues(o.values, eleve), true, JSON.stringify(o.values));
+  // With the full 30 % margin it would have gone below Élevé:
+  assert.ok(m.gpu(eleve, megapixels(m, A.withMargin(eleve))) > 1000 / 60);
+  // …but it still holds 60 with ≈ 13 % of the frame free.
+  assert.ok(gpuShare(m, eleve, 60) < 0.88, `${gpuShare(m, eleve, 60)}`);
+  // The summary states the margin it was really measured with.
+  assert.equal(o.marginPixels, A.AUTO_TUNE.keepMarginPixels);
+  assert.match(A.summarize(o, { targetFps: 60, caps: m.caps, software: false }), /15\u202f% de pixels en réserve/);
+});
+
+await test("144 Hz screen, mid GPU (Élevé ≈ 105 FPS): the default look is KEPT at ≥ 60 FPS, never traded for 144", () => {
+  const m = midGpu();
+  const eleve = G.presetValues("eleve", { dpr: 1 });
+  const run = calibrate(m, eleve, { look: eleve });
+  const o = run.outcome!;
+  assert.equal(o.mode, "hard");
+  assert.equal(G.sameValues(o.values, eleve), true, JSON.stringify(o.values));
+  assert.equal(o.goalFps, 60);
+  assert.match(A.summarize(o, { targetFps: 144, caps: m.caps, software: false }), /il est gardé, pour 60 FPS au moins avec 15\u202f% de pixels/);
+  // The floor would have given 144 — the policy keeps the look instead.
+  assert.ok(run.calib.measured.get(run.ladder.length - 1)!.fps >= 140);
+  // With the target at 60 (Objectif « 60 FPS »), the extras above Élevé come back if they keep 60 with margin.
+  const at60 = calibrate(m, eleve, { look: eleve, target: 60 }).outcome!;
+  assert.equal(at60.mode, "target");
+  assert.ok(at60.index <= run.calib.goals.defaultIndex);
+});
+
+await test("144 Hz screen, entry GPU whose default look misses 60 FPS there (vsync: 3 refreshes a frame): lowered only as far as 60 FPS needs, and said so", () => {
+  const m = { ...gtx1050(), name: "GTX 1050 at 144 Hz", hz: 144 };
+  const eleve = G.presetValues("eleve", { dpr: 1 });
+  const run = calibrate(m, eleve, { look: eleve });
+  const o = run.outcome!;
+  assert.equal(o.mode, "hard");
+  assert.equal(o.goalFps, 60);
+  assert.ok(o.index > o.defaultIndex, `rung ${o.index}, default look ${o.defaultIndex}`);
+  // Élevé really misses 60 on this screen (14 ms of work → shown every 3rd refresh, 48 FPS)…
+  const period = 1000 / m.hz;
+  const shownEvery = (v: Values, pixels: number) => Math.ceil(m.gpu(v, megapixels(m, A.withMargin(v, A.AUTO_TUNE, pixels))) / period);
+  assert.ok(shownEvery(eleve, 1) >= 3);
+  // …the answer keeps 60 (every 2nd refresh) with its margin, and the rung above it would not.
+  assert.ok(shownEvery(o.values, o.marginPixels) <= 2);
+  if (o.index - 1 > o.defaultIndex) assert.ok(shownEvery(run.ladder[o.index - 1], A.AUTO_TUNE.marginPixels) >= 3);
+  assert.match(A.summarize(o, { targetFps: 144, caps: m.caps, software: false }), /Le rendu d'origine de cette carte graphique ne tient pas 60 FPS ici/);
+});
+
+await test("144 Hz screen, integrated GPU: never below the old LOW look, 60 FPS at least", () => {
+  const m = irisXe("static", { hz: 144 });
+  const bas = G.presetValues("bas", { dpr: m.dpr });
+  const run = calibrate(m, bas, { look: bas });
+  const o = run.outcome!;
+  assert.ok(o.mode === "target" || o.mode === "hard", o.mode);
+  const d = A.defaultRungIndex(run.ladder, bas);
+  assert.equal(d, run.ladder.length - 1); // the old LOW look IS the floor here
+  assert.ok(o.values.renderScale >= bas.renderScale - 1e-6);
+  assert.equal(o.values.antialiasing, "fxaa");
 });
 
 await test("GPU-limited machine that misses the target even at the floor: the floor (the old LOW look), never lower", () => {
@@ -409,12 +510,18 @@ await test("progress: done / total never decreases, ends at total", () => {
 await test("summary (French): target held / processor-limited / graphics-card-limited / software rendering", () => {
   const caps = G.DEFAULT_CAPS;
   const values = G.presetValues("bas", { dpr: 1.25 });
-  const base = { values, index: 3, goalFps: 60, floorFps: 61, answerFps: 60, probes: 4, complete: true };
-  assert.match(A.summarize({ ...base, mode: "target" }, { targetFps: 60, caps, software: false }), /tenir 60 i\/s/);
-  assert.match(A.summarize({ ...base, mode: "cpu", floorFps: 41 }, { targetFps: 60, caps, software: false }), /processeur/);
-  assert.match(A.summarize({ ...base, mode: "gpu", floorFps: 33 }, { targetFps: 60, caps, software: false }), /environ 33 i\/s au lieu de 60/);
-  assert.match(A.summarize({ ...base, mode: "gpu" }, { targetFps: 60, caps, software: true }), /Rendu logiciel/);
-  assert.match(A.summarize({ ...base, mode: "target", complete: false }, { targetFps: 60, caps, software: false }), /interrompue/);
+  const base = { values, index: 3, defaultIndex: 3, goalFps: 60, floorFps: 61, answerFps: 60, marginPixels: 1.3, probes: 4, complete: true };
+  const ctx = (targetFps: number, software = false) => ({ targetFps, caps, software });
+  assert.match(A.summarize({ ...base, mode: "target" }, ctx(60)), /tenir 60 FPS avec 30\u202f% de pixels en réserve/);
+  assert.doesNotMatch(A.summarize({ ...base, mode: "target" }, ctx(60)), /rendu d'origine/);
+  assert.match(A.summarize({ ...base, mode: "target", index: 9, marginPixels: 1 }, ctx(60)), /plancher de qualité, sans réserve mesurée/);
+  assert.match(A.summarize({ ...base, mode: "target", index: 5 }, ctx(60)), /Le rendu d'origine de cette carte graphique ne gardait pas assez de réserve à 60 FPS/);
+  assert.match(A.summarize({ ...base, mode: "cpu", floorFps: 41 }, ctx(60)), /processeur/);
+  assert.match(A.summarize({ ...base, mode: "gpu", floorFps: 33 }, ctx(60)), /environ 33 FPS au lieu de 60/);
+  assert.match(A.summarize({ ...base, mode: "gpu" }, ctx(60, true)), /Rendu logiciel/);
+  assert.match(A.summarize({ ...base, mode: "target", complete: false }, ctx(60)), /interrompue/);
+  assert.match(A.summarize({ ...base, mode: "hard", marginPixels: 1.15 }, ctx(144)), /Tenir 144 FPS demanderait de passer sous le rendu d'origine de cette carte graphique : il est gardé, pour 60 FPS au moins avec 15\u202f%/);
+  assert.match(A.summarize({ ...base, mode: "hard", index: 6 }, ctx(144)), /ne tient pas 60 FPS ici avec assez de réserve : réglages choisis pour 60 FPS au moins avec 30\u202f%/);
 });
 
 // ------------------------------------------------------------------ controller
@@ -491,12 +598,18 @@ await test("detection: the result becomes « Automatique » for this map and GPU
   const ctl = new GC.GraphicsController(store, f.host, () => ({ dpr: 1.25 }), () => 60, () => {}, isWeak);
   assert.equal(ctl.needsDetection(), true);
   const events: string[] = [];
-  ctl.subscribe((e) => events.push(e.kind));
+  // The page locks its options on "start": the detection must already be running then.
+  const runningAtStart: boolean[] = [];
+  ctl.subscribe((e) => {
+    events.push(e.kind);
+    if (e.kind === "start") runningAtStart.push(ctl.detecting && ctl.progress !== null);
+  });
   const values = { ...G.presetValues("bas", { dpr: 1.25 }), renderScale: 100, anisotropy: 4 as const };
   const run = ctl.runDetection("first");
   assert.equal(ctl.detecting, true);
+  assert.deepEqual(runningAtStart, [true]);
   assert.equal(f.target(), 60);
-  f.resolve({ values, index: 4, mode: "target", goalFps: 60, floorFps: 60, answerFps: 60, probes: 5, complete: true });
+  f.resolve({ values, index: 4, defaultIndex: 9, mode: "target", goalFps: 60, floorFps: 60, answerFps: 60, marginPixels: 1.3, probes: 5, complete: true });
   const result = await run;
   assert.ok(result);
   assert.equal(ctl.detecting, false);
@@ -542,12 +655,12 @@ await test("graphics card limited with live shadows: static shadows advised for 
   const ctl = new GC.GraphicsController(store, f.host, () => ({ dpr: 1 }), () => 60, () => {}, () => false);
   const floor = A.buildLadder(boot, { dpr: 1 }, G.DEFAULT_CAPS).at(-1)!;
   const run = ctl.runDetection("first");
-  f.resolve({ values: floor, index: 9, mode: "gpu", goalFps: 60, floorFps: 41, answerFps: 41, probes: 2, complete: true });
+  f.resolve({ values: floor, index: 9, defaultIndex: 0, mode: "gpu", goalFps: 60, floorFps: 41, answerFps: 41, marginPixels: 1, probes: 2, complete: true });
   const result = (await run)!;
   assert.equal(result.values.shadows, "static");
   assert.equal(result.values.characterShadows, false);
-  assert.equal(result.belowTarget, true);
-  assert.equal(result.limitedBy, "gpu");
+  assert.equal(result.mode, "gpu");
+  assert.equal(result.measuredFps, 41);
   assert.match(result.summary, /statiques au prochain chargement/);
   assert.deepEqual(ctl.pendingReload().map((c) => c.key), ["shadows"]);
   // This session (live shadows) does not measure again; the next one (static) does, once.

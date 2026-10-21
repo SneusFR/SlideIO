@@ -3,7 +3,9 @@ import {
   autoResultFor,
   effectivePreset,
   effectiveValues,
+  heuristicPreset,
   needsDetection,
+  presetValues,
   reloadChanges,
   resolveFpsCap,
   targetFps as computeTargetFps,
@@ -26,6 +28,11 @@ export interface AutoTuneOptions {
   onProgress?: (p: DetectionProgress) => void;
   /** Measure even on a software renderer (headless tests only). */
   allowSoftware?: boolean;
+  /**
+   * The look this GPU always had (its old preset: Élevé, Bas on integrated
+   * GPUs): a high-refresh screen's frame rate never takes the image below it.
+   */
+  defaultLook?: GraphicsValues;
 }
 
 /** What the controller drives (the Game; a fake in the tests). */
@@ -204,10 +211,10 @@ export class GraphicsController {
     const map = this.mapId;
     const boot = this.host.graphicsBoot;
     this.progressState = { done: 0, total: 5, values: null };
-    this.emit({ kind: "start", reason });
     const run = this.host
       .startAutoTune(target, {
         ...opts,
+        defaultLook: presetValues(heuristicPreset(this.gpu), this.env()),
         onProgress: (p) => {
           this.progressState = p;
           this.emit({ kind: "progress", progress: p });
@@ -230,6 +237,9 @@ export class GraphicsController {
         return result;
       });
     this.detection = run;
+    // Only now: the listeners (the page's locked options, its Annuler button)
+    // see the detection running from its very first probe.
+    this.emit({ kind: "start", reason });
     return run;
   }
 
@@ -254,16 +264,16 @@ export class GraphicsController {
       values.characterShadows = false;
       summary += " Les ombres passent en statiques au prochain chargement pour gagner encore (« Appliquer et recharger »).";
     }
-    const measuredFps = o.mode === "target" ? target : o.floorFps !== null ? Math.round(o.floorFps) : null;
+    const measuredFps =
+      o.mode === "target" || o.mode === "hard" ? o.goalFps : o.floorFps !== null ? Math.round(o.floorFps) : null;
     return {
       values,
       at: Date.now(),
       gpu: this.host.gpuName,
       map,
       targetFps: target,
-      measuredFps,
-      limitedBy: o.mode === "cpu" ? "cpu" : o.mode === "gpu" ? "gpu" : "none",
-      belowTarget: o.mode !== "target",
+      measuredFps: measuredFps !== null ? Math.round(measuredFps) : null,
+      mode: o.mode,
       complete: o.complete,
       measuredShadows: boot.shadows,
       summary,

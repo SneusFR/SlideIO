@@ -97,7 +97,7 @@ export function fpsCapLabel(cap: FpsCapSetting, preset: PresetChoice): string {
 }
 
 export function fpsTargetLabel(target: FpsTargetSetting, refreshHz: number): string {
-  return target === "display" ? `Écran (${Math.round(refreshHz)} Hz)` : `${target} i/s`;
+  return target === "display" ? `Écran (${Math.round(refreshHz)} Hz)` : `${target} FPS`;
 }
 
 /** Value of one setting, as shown in a sentence. */

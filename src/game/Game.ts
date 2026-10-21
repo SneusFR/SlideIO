@@ -49,7 +49,7 @@ import {
   type ShadowQuality,
 } from "../settings/GraphicsSettings";
 import { FrameMeter, type LiveStats } from "../settings/FrameMeter";
-import { Calibration, buildLadder, type TuneOutcome } from "../settings/AutoTune";
+import { Calibration, buildLadder, defaultRungIndex, tuneGoals, type TuneOutcome } from "../settings/AutoTune";
 import type { AutoTuneOptions } from "../settings/GraphicsController";
 import { DebugHUD } from "../ui/DebugHUD";
 import { FrameSections } from "../ui/FrameSections";
@@ -578,6 +578,11 @@ export class Game {
   private readonly staticShadowRoots: THREE.Object3D[] = [];
   /** Casters outside the map kept out of a live static re-bake (restored right after it). */
   private rebakeHidden: THREE.Object3D[] | null = null;
+  /**
+   * A detection candidate waiting for the next frame: applied BEFORE its
+   * render (a canvas resized after drawing would show a blank frame).
+   */
+  private pendingProbe: GraphicsValues | null = null;
   /** Running automatic detection (see startAutoTune). */
   private tuning: {
     calib: Calibration;
@@ -3094,6 +3099,7 @@ export class Game {
     this.givreEffects?.update(dt, p.camera, this.renderer.domElement.height);
     this.givreEffects?.syncStandalone(); // puffs + halos (no frame() matrix pass here)
 
+    this.applyPendingProbe();
     this.renderWorld(p.camera);
     this.restoreDynamicCasters(); // (after a live static-shadow re-bake)
     // Settings: the automatic detection and the live card measure these frames.
@@ -3662,10 +3668,12 @@ export class Game {
       return Promise.resolve<TuneOutcome>({
         values: ladder[index],
         index,
+        defaultIndex: index,
         mode: "gpu",
         goalFps: targetFps,
         floorFps: null,
         answerFps: null,
+        marginPixels: 1,
         probes: 0,
         complete: true,
       });
@@ -3674,16 +3682,16 @@ export class Game {
     this.cappedIntervalMs = this.frameIntervalMs;
     this.frameIntervalMs = 0;
     this.nextFrameAt = 0;
-    const calib = new Calibration({ apply: (v) => this.applyLiveValues(v) }, ladder, targetFps);
+    const goals = tuneGoals(targetFps, defaultRungIndex(ladder, opts.defaultLook ?? ladder[ladder.length - 1]));
+    const calib = new Calibration({ apply: (v) => void (this.pendingProbe = v) }, ladder, goals);
     let resolve!: (o: TuneOutcome | null) => void;
     const promise = new Promise<TuneOutcome | null>((r) => (resolve = r));
-    let progressDone = -1;
+    let progressDone = 0;
     const removeListener = this.gfxMeter.addListener((t, cpuMs) => {
       calib.onFrame(t, cpuMs, !document.hidden && document.hasFocus());
-      const progress = calib.progress;
-      if (progress.done !== progressDone) {
-        progressDone = progress.done;
-        opts.onProgress?.(progress);
+      if (calib.probeCount !== progressDone) {
+        progressDone = calib.probeCount;
+        opts.onProgress?.(calib.progress);
       }
       if (calib.done) finish(false);
     });
@@ -3691,6 +3699,7 @@ export class Game {
       if (this.tuning?.calib !== calib) return;
       removeListener();
       this.tuning = null;
+      this.pendingProbe = null;
       this.frameIntervalMs = this.cappedIntervalMs;
       this.nextFrameAt = 0;
       const outcome = calib.outcome;
@@ -3704,6 +3713,14 @@ export class Game {
     calib.start(performance.now());
     opts.onProgress?.(calib.progress);
     return promise;
+  }
+
+  /** The detection's next candidate, right before a render (see pendingProbe). */
+  private applyPendingProbe(): void {
+    const v = this.pendingProbe;
+    if (!v) return;
+    this.pendingProbe = null;
+    this.applyLiveValues(v);
   }
 
   /** Stops a running detection: its promise resolves with null, the player's values come back. */
@@ -3755,7 +3772,11 @@ export class Game {
     this.renderer.info.reset(); // autoReset is off: one reset per frame
     this.worldRenderPass.camera = camera;
     if (this.worldOutline) this.worldOutline.camera = camera;
-    const fpOn = camera === this.fpsCamera.camera && this.viewmodelSystem.visible;
+    // (The automatic detection measures the PLAY frame's structure in the
+    // menu too: the FP overlay pass runs, empty — its depth clear and, with
+    // MSAA, its own full colour resolve, ~4 ms on the laptop's Iris Xe at
+    // native size, that a menu frame would not pay.)
+    const fpOn = (camera === this.fpsCamera.camera && this.viewmodelSystem.visible) || this.tuning !== null;
     if (this.fpOverlayPass) this.fpOverlayPass.enabled = fpOn;
     if (this.fpOutline) {
       this.fpOutline.enabled = fpOn && this.isOutlineActive(this.outlineSettings);
@@ -4415,6 +4436,8 @@ export class Game {
     // FRISBEE LAUNCHER (pack order): controller AFTER syncCamera, then the shared discs + thrown cages.
     this.frisbeeLauncher.postCameraUpdate(running ? dt : 0);
     sections?.lap("armes (vue)");
+    // Automatic detection (pause view): this frame's candidate, before its render.
+    this.applyPendingProbe();
     try {
       // LOW preset: the shadow map is STATIC (baked once at load — see
       // warmUpRendering). No per-frame refresh: the caster re-render was the

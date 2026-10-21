@@ -41,7 +41,7 @@ const browser = await chromium.launch({
 });
 const gc = (page) => page.evaluate(() => window.gc?.());
 
-async function open({ w = W, h = H, dsf = DSF } = {}) {
+async function open({ w = W, h = H, dsf = DSF, legacy = true } = {}) {
   const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: dsf });
   page.setDefaultTimeout(0);
   const errors = [];
@@ -51,14 +51,17 @@ async function open({ w = W, h = H, dsf = DSF } = {}) {
   page.on("pageerror", (e) => errors.push("pageerror " + e.message.slice(0, 240)));
   if (routeFonts) await routeFonts(page);
   await page.goto(`${BASE}/__out/blank.html`).catch(() => page.goto(`${BASE}/favicon.ico`));
-  // The old keys of a player who picked LOW in the old menu (migrated → Bas), FPS LIMIT OFF.
-  await page.evaluate(() => {
+  // The old keys of a player who picked LOW in the old menu (migrated → Bas), FPS LIMIT OFF —
+  // or a first launch (no key at all: « Automatique », measured at the first menu).
+  await page.evaluate((legacy) => {
     localStorage.clear();
     localStorage.setItem("slideio.mapId", "GIVRE");
-    localStorage.setItem("beanzo.graphicsQuality", "LOW");
-    localStorage.setItem("beanzo.fpsCap", "OFF");
+    if (legacy) {
+      localStorage.setItem("beanzo.graphicsQuality", "LOW");
+      localStorage.setItem("beanzo.fpsCap", "OFF");
+    }
     localStorage.setItem("slideio.loadout.v1", JSON.stringify({ melee: "HAMMER", primary: "PAINTBALL_RIFLE" }));
-  });
+  }, legacy);
   await page.goto(`${BASE}/?hud=inline`);
   await page.waitForFunction(() => document.getElementById("menu-loading")?.classList.contains("hidden"), null, { timeout: 900000, polling: 1000 });
   await page.waitForFunction(() => !!window.__settings, null, { timeout: 60000, polling: 500 });
@@ -262,7 +265,10 @@ try {
 
   // ---- Detection: the real probes (forced on the software renderer) ----
   const programsBefore = (await state(page)).programs;
-  await page.evaluate(() => {
+  // Started through the controller as the page's button does (forced on the software renderer), the
+  // page's state read in the same task: it must show the run from its very first probe. In SwiftShader
+  // the floor misses 60 FPS and the detection ends after two probes (a few seconds).
+  const started = await page.evaluate(() => {
     window.__detection = { done: false, result: null, progress: [] };
     const c = window.__settings.controller;
     const off = c.subscribe((e) => {
@@ -273,28 +279,30 @@ try {
       window.__detection.result = r;
       off();
     });
+    return {
+      text: document.querySelector(".gs-detect-text")?.textContent ?? "",
+      button: document.querySelector(".gs-detect .gs-btn")?.textContent ?? "",
+      locked: document.querySelector("#gs-pane-graphics .gs-row")?.inert === true,
+      progressShown: !document.querySelector(".gs-detect-progress")?.classList.contains("hidden"),
+      orbit: window.__settings.game.menuPreview?.orbit ?? null,
+      focus: document.hasFocus(),
+    };
   });
-  await page.waitForFunction(() => window.__detection.progress.length > 0 || window.__detection.done, null, { timeout: 120000, polling: 250 });
-  const focus = await page.evaluate(() => document.hasFocus());
-  const orbit0 = await page.evaluate(() => window.__settings.game.menuPreview?.orbit ?? null);
-  log(`detection running (focus ${focus})`);
-  await sleep(1500);
-  const busy = await page.evaluate(() => ({
-    text: document.querySelector(".gs-detect-text")?.textContent ?? "",
-    button: document.querySelector(".gs-detect .gs-btn")?.textContent ?? "",
-    locked: document.querySelector("#gs-pane-graphics .gs-row")?.inert === true,
-    orbit: window.__settings.game.menuPreview?.orbit ?? null,
-  }));
-  check(/Mesure \d+ sur \d+/.test(busy.text) && busy.button === "Annuler" && busy.locked, `detection in progress shown (« ${busy.text.slice(0, 40)}… », button ${busy.button}, options locked)`);
-  check(orbit0 === busy.orbit, "the menu camera holds still while the detection measures");
+  log(`detection running (focus ${started.focus})`);
+  check(
+    /Mesure \d+ sur \d+/.test(started.text) && started.button === "Annuler" && started.locked && started.progressShown,
+    `detection in progress shown (« ${started.text.slice(0, 40)}… », button ${started.button}, options locked, progress bar)`,
+  );
   await shot(page, "06-detection.png");
+  const orbit1 = await page.evaluate(() => (window.__detection.done ? null : window.__settings.game.menuPreview?.orbit ?? null));
+  check(orbit1 === null || orbit1 === started.orbit, "the menu camera holds still while the detection measures");
   await page.waitForFunction(() => window.__detection.done, null, { timeout: 240000, polling: 500 });
   const det = await page.evaluate(() => {
     const r = window.__detection.result;
     const rec = window.__settings.store.get();
     return { r, preset: rec.graphics.preset, stored: rec.graphics.auto.GIVRE ?? null, text: document.querySelector(".gs-detect-text")?.textContent ?? "" };
   });
-  log(`detection: ${JSON.stringify({ mode: det.r?.limitedBy, below: det.r?.belowTarget, complete: det.r?.complete, values: det.r?.values })}`);
+  log(`detection: ${JSON.stringify({ mode: det.r?.mode, measuredFps: det.r?.measuredFps, complete: det.r?.complete, values: det.r?.values })}`);
   check(det.r && det.preset === "auto" && det.stored && det.stored.version >= 1 && det.stored.summary.length > 20, `detection completed and stored as « Automatique » (complete ${det.r?.complete})`);
   s = await state(page);
   const floor = Math.max(50, Math.min(100, 100 / s.dpr));
@@ -350,13 +358,30 @@ try {
   check(fatal.length === 0, `no console error (${fatal.slice(0, 3).join(" | ")})`);
   await page.close();
 
-  // ---- Narrow window: the panel takes the width, the live card goes under it ----
+  // ---- First launch (no old key): « Automatique », measured a few seconds after the menu appears;
+  // narrow window: the panel takes the width ----
   {
-    const { page: narrow } = await open({ w: 960, h: 540, dsf: 1 });
-    await narrow.evaluate(() => document.querySelector('[data-menu="settings"]').click());
+    const { page: first, errors: firstErrors } = await open({ w: 960, h: 540, dsf: 1, legacy: false });
+    const before = await first.evaluate(() => ({ preset: window.__settings.store.get().graphics.preset, detecting: window.__settings.controller.detecting }));
+    check(before.preset === "auto", `first launch: « Automatique » (${before.preset})`);
+    await first.waitForFunction(() => !!window.__settings.store.get().graphics.auto.GIVRE, null, { timeout: 180000, polling: 500 });
+    const toast = await first.evaluate(() => {
+      const t = document.getElementById("menu-gfx-toast");
+      return { text: t?.textContent ?? "", shown: !!t && !t.classList.contains("hidden"), action: !!t?.querySelector("button") };
+    });
+    // (SwiftShader: the software-rendering notice; a real GPU: « Graphismes réglés… ».)
+    const software = await first.evaluate(() => window.__settings.game.softwareRenderer === true);
+    check(
+      toast.shown && (software ? /Rendu logiciel détecté/ : /Graphismes réglés/).test(toast.text) && toast.action,
+      `first launch: detected by itself, the menu says so (« ${toast.text.slice(0, 80)}… »)`,
+    );
+    await shot(first, "10-premier-lancement.png");
+    await first.evaluate(() => document.querySelector('[data-menu="settings"]').click());
     await sleep(2000);
-    await shot(narrow, "10-fenetre-etroite.png");
-    await narrow.close();
+    await shot(first, "11-fenetre-etroite.png");
+    const fatalFirst = firstErrors.filter((e) => !/favicon|net::ERR|Failed to load resource/i.test(e));
+    check(fatalFirst.length === 0, `first launch: no console error (${fatalFirst.slice(0, 3).join(" | ")})`);
+    await first.close();
   }
 } finally {
   await browser.close();

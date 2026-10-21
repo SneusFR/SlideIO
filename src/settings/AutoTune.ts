@@ -31,26 +31,38 @@ import { describeValues, frNumber } from "./labels";
  *    8× filtering, MSAA 4× → 2×, … then FXAA, then the resolution in small
  *    steps down to one pixel per CSS pixel. Only settings the session
  *    applies LIVE move (no shader compile, no reload).
- * 2. The floor is measured first: does this machine reach the target at all?
- *    If not, the same view at half its pixels tells the graphics card (much
- *    faster with fewer pixels: the floor is the answer) from the processor
- *    or the browser (no faster: the graphics are not the limit — the search
- *    then only has to keep the frame rate the floor reached).
+ * 2. The floor is measured first: which goals can this machine reach at all?
+ *    If it misses one, the same view at half its pixels tells the graphics
+ *    card (much faster with fewer pixels — missing 60 FPS even at the floor:
+ *    the floor is the answer) from the processor or the browser (no faster:
+ *    the graphics are not the limit — the searches then only have to keep
+ *    the frame rate the floor reached).
  * 3. A rung HOLDS when its frames keep the goal WITH MARGIN: it is measured
  *    with 30 % more pixels than it really draws (render scale × √1.3) — a
  *    vsync-locked display shows 60 FPS at 10 ms and at 16 ms of work alike;
  *    with that load on top, a rung that still holds 60 keeps ≈ 23 % of the
- *    frame free for the fights (8 bots, effects, the HUD's own drawing).
- * 4. The top rung first (strong machines answer in one probe), then a binary
- *    search over the rest. One answer, stored: the detection never runs
- *    again by itself on the same machine and map (it never oscillates), and
- *    the player can always override it.
+ *    frame free for the fights (8 bots, effects, the HUD's own drawing). The
+ *    default look (point 4) is kept with half that margin.
+ * 4. Two goals (TuneGoals): 60 FPS must hold — for it the image may go down
+ *    to the floor; the display's rate is wanted — for it the image never goes
+ *    below the DEFAULT LOOK (the old preset of this GPU): a machine that
+ *    holds 60 keeps at least the look it always had.
+ * 5. The top of each searched range first (strong machines answer in one
+ *    probe), then a binary search. One answer, stored: the detection never
+ *    runs again by itself on the same machine and map (it never
+ *    oscillates), and the player can always override it.
  */
 
 /** Every threshold of the detection, with its reason. */
 export const AUTO_TUNE = {
   /** A probe draws this many times the candidate's pixels (≈ +14 % per axis): the margin. */
   marginPixels: 1.3,
+  /**
+   * …but the DEFAULT LOOK (the old preset of this GPU) is kept with half that
+   * margin (+15 % pixels, ≈ 13 % of the frame free): the image a machine always
+   * had only goes when it is clearly short, not for a borderline measure.
+   */
+  keepMarginPixels: 1.15,
   /** A probe holds a frame rate when its median frame interval reaches 97 % of it… */
   holdRatio: 0.97,
   /** …with at most 4 % of its frames late by half a frame or more (one missed refresh in 25). */
@@ -154,9 +166,9 @@ export function buildLadder(boot: GraphicsValues, env: DisplayEnv, caps: Graphic
   return ladder;
 }
 
-/** The candidate drawn with the margin's extra pixels. */
-export function withMargin(values: GraphicsValues, cfg: AutoTuneConfig = AUTO_TUNE): GraphicsValues {
-  return { ...values, renderScale: Math.min(cfg.maxProbeScale, values.renderScale * Math.sqrt(cfg.marginPixels)) };
+/** The candidate drawn with the margin's extra pixels (`pixels` = AUTO_TUNE.marginPixels by default). */
+export function withMargin(values: GraphicsValues, cfg: AutoTuneConfig = AUTO_TUNE, pixels = cfg.marginPixels): GraphicsValues {
+  return { ...values, renderScale: Math.min(cfg.maxProbeScale, values.renderScale * Math.sqrt(pixels)) };
 }
 
 /** The same view at half its pixels (processor or graphics card?). */
@@ -222,21 +234,85 @@ export function sortedPercentile(sorted: ArrayLike<number>, p: number): number {
   return sorted[Math.min(n - 1, Math.max(0, Math.floor(p * (n - 1) + 0.5)))];
 }
 
+// ---------------------------------------------------- the default look
+
+/**
+ * Index of the DEFAULT LOOK in the ladder: the first rung no costlier than
+ * `look` (the old preset of this GPU: Élevé, or Bas on integrated GPUs) in
+ * any knob that costs time per frame — resolution, anti-aliasing, filtering,
+ * snow, and the shadow map size when it is re-rendered every frame. The
+ * high-refresh goal never takes the image below it (see Calibration).
+ */
+export function defaultRungIndex(ladder: readonly GraphicsValues[], look: GraphicsValues): number {
+  const aa: Record<AntiAliasing, number> = { none: 0, fxaa: 1, msaa2: 2, msaa4: 3 };
+  const snow: Record<string, number> = { off: 0, legere: 1, normale: 2, dense: 3 };
+  for (let i = 0; i < ladder.length; i++) {
+    const v = ladder[i];
+    const liveShadows = v.shadows === "dynamic";
+    if (
+      v.renderScale <= look.renderScale + 1e-6 &&
+      aa[v.antialiasing] <= aa[look.antialiasing] &&
+      v.anisotropy <= look.anisotropy &&
+      snow[v.snow] <= snow[look.snow] &&
+      (!liveShadows || qRank(v.shadowQuality) <= qRank(look.shadowQuality))
+    ) {
+      return i;
+    }
+  }
+  return ladder.length - 1;
+}
+
 // ---------------------------------------------------------- calibration
 
-export type TuneMode = "target" | "cpu" | "gpu";
+/**
+ * What the detection aims at. HARD: the frame rate that must hold — 60, or
+ * the display's own rate when it is lower; for it, the image may go down to
+ * the beauty floor. SOFT: the frame rate wanted — the display's rate (or the
+ * player's target), up to 240; for it, the image never goes below the
+ * DEFAULT LOOK (`defaultIndex`): a machine that holds 60 FPS keeps at least
+ * the look it always had, and only trades the extras above it for a
+ * high-refresh screen's frames.
+ */
+export interface TuneGoals {
+  hard: number;
+  soft: number;
+  defaultIndex: number;
+}
+
+/** Goals from the target the player wants (the display's rate by default). */
+export function tuneGoals(target: number, defaultIndex: number): TuneGoals {
+  return { hard: Math.min(60, target), soft: target, defaultIndex };
+}
+
+/**
+ *   target — the answer holds the SOFT goal (on a 60 Hz screen, soft = hard);
+ *   hard   — high-refresh screen: the soft goal would need the image below
+ *            the default look; the answer holds the HARD goal (60 FPS): the
+ *            default look itself, or below it only when even it misses 60;
+ *   cpu    — the processor / browser limits: the graphics would not change
+ *            the frame rate, they stay as beautiful as the measures allow;
+ *   gpu    — even the floor misses 60 FPS (graphics card): the floor.
+ */
+export type TuneMode = "target" | "hard" | "cpu" | "gpu";
 
 export interface TuneOutcome {
   values: GraphicsValues;
   /** Rung index in the ladder. */
   index: number;
-  /** target = the target holds at the answer; cpu = processor / browser-limited; gpu = even the floor misses (graphics card). */
+  /** Rung of the default look (above it = better; an index past it = the look was lowered). */
+  defaultIndex: number;
   mode: TuneMode;
-  /** Frame rate the rungs had to keep (the target, or what the floor reached when processor-limited). */
+  /** Frame rate the answer was chosen to keep. */
   goalFps: number;
   /** Frame rate seen at the floor (raw), and at the answer's probe (with the margin), null when not measured. */
   floorFps: number | null;
   answerFps: number | null;
+  /**
+   * Pixels the answer was measured with, relative to what it draws: the
+   * margin (1.3), the default look's (1.15), or 1 — the floor, measured as is
+   * (nothing lower may be chosen: it is the answer even without a margin).
+   */
+  marginPixels: number;
   probes: number;
   /** False when stopped before the end (time limit): the answer is the best KNOWN rung. */
   complete: boolean;
@@ -248,12 +324,12 @@ export interface CalibrationHost {
   apply(values: GraphicsValues): void;
 }
 
-type Phase = "idle" | "floor" | "cpucheck" | "top" | "search" | "done";
-
 interface Probe {
   /** Rung index (-1 = the half-pixel check). */
   index: number;
   values: GraphicsValues;
+  /** Margin it is drawn with (1 = as is). */
+  pixels: number;
   appliedAt: number;
   seen: number;
   measuring: boolean;
@@ -264,74 +340,147 @@ interface Probe {
 }
 
 /**
+ * One search of the ladder over [lo, hi] for the BEST (lowest) rung that keeps
+ * a goal: the top of the range first (strong machines: one probe), then a
+ * binary search (the cost decreases along the ladder). `hiKnown`: the range's
+ * last rung is already known to keep the goal (the floor, measured first).
+ */
+class RangeSearch {
+  best: number | null;
+  /** Margin `best` was measured with (the known last rung: the floor, measured as is). */
+  bestPixels = 1;
+  private lo: number;
+  private hi: number;
+  private topDone = false;
+
+  constructor(
+    lo: number,
+    hi: number,
+    hiKnown: boolean,
+    readonly goal: number,
+    /** Processor-limited: the delivered frame rate alone (late frames are the processor's). */
+    readonly relative: boolean,
+    /** The default look's rung when this range contains it at an end (measured with the keep margin). */
+    readonly keepIndex: number | null = null,
+  ) {
+    this.best = hiKnown ? hi : null;
+    this.lo = lo;
+    this.hi = hiKnown ? hi - 1 : hi;
+  }
+
+  /** Next rung to measure, null once the answer (or its absence) is known. */
+  next(): number | null {
+    if (this.lo > this.hi) return null;
+    if (!this.topDone) return this.lo;
+    return Math.floor((this.lo + this.hi) / 2);
+  }
+
+  report(index: number, kept: boolean, pixels: number): void {
+    if (kept) this.bestPixels = pixels;
+    if (!this.topDone) {
+      this.topDone = true;
+      if (kept) {
+        this.best = index;
+        this.hi = this.lo - 1; // done: nothing above the top
+      } else {
+        this.lo = index + 1;
+      }
+      return;
+    }
+    if (kept) {
+      this.best = index;
+      this.hi = index - 1;
+    } else {
+      this.lo = index + 1;
+    }
+  }
+
+  /** Probes left at most (progress bar). */
+  get remaining(): number {
+    const span = this.hi - this.lo + 1;
+    if (span <= 0) return 0;
+    return (this.topDone ? 0 : 1) + Math.ceil(Math.log2(span + 1));
+  }
+}
+
+type Stage =
+  | { kind: "floor" }
+  | { kind: "check" }
+  | { kind: "search"; search: RangeSearch; mode: TuneMode; then: (() => void) | null };
+
+/**
  * Drives the probes from the rendered frames (no timers): the Game calls
- * onFrame() after each frame it renders. Candidates are applied through the
+ * onFrame() after each frame it renders; candidates are applied through the
  * host. Frames of an unfocused or hidden window restart the probe (a laptop
  * runs much slower in the background: they would judge the wrong machine).
+ *
+ *   1. the floor, as is: does this machine reach the goals at all?
+ *   2. if it misses one, the floor at half its pixels: much faster = the
+ *      graphics card limits; not faster = the processor / browser;
+ *   3. searches (top first, then binary) — SOFT goal over [top … default
+ *      look]; if no rung there keeps it, HARD goal over [default look …
+ *      floor]; on a 60 Hz screen, one search over the whole ladder.
  */
 export class Calibration {
-  private phase: Phase = "idle";
+  private stage: Stage | null = null;
+  private done_ = false;
   private probe: Probe | null = null;
   private readonly intervals: Float64Array;
-  private lo = 0;
-  private hi: number;
-  private goal: number;
-  private mode: TuneMode = "target";
-  private floorFps: number | null = null;
-  private answerFps: number | null = null;
+  private floorStats: ProbeStats | null = null;
   private probes = 0;
   private focusedMs = 0;
   private lastFrameT: number | null = null;
   private result: TuneOutcome | null = null;
+  /** Fallback answer when stopped early: the best rung known to keep a goal. */
+  private known: { index: number; mode: TuneMode; goal: number; fps: number | null; pixels: number } | null = null;
   /** Probe results by rung (tests, summary). */
   readonly measured = new Map<number, ProbeStats>();
+  readonly goals: TuneGoals;
 
   constructor(
     private readonly host: CalibrationHost,
     readonly ladder: readonly GraphicsValues[],
-    readonly targetFps: number,
+    goals: TuneGoals | number,
     private readonly cfg: AutoTuneConfig = AUTO_TUNE,
   ) {
     if (ladder.length === 0) throw new Error("Calibration: empty ladder");
-    this.hi = ladder.length - 1;
-    this.goal = targetFps;
+    const last = ladder.length - 1;
+    const g = typeof goals === "number" ? tuneGoals(goals, last) : goals;
+    this.goals = {
+      hard: Math.min(g.hard, g.soft),
+      soft: g.soft,
+      defaultIndex: Math.max(0, Math.min(last, g.defaultIndex)),
+    };
     this.intervals = new Float64Array(cfg.maxSamples);
   }
 
   get done(): boolean {
-    return this.phase === "done";
+    return this.done_;
   }
 
   get outcome(): TuneOutcome | null {
     return this.result;
   }
 
+  /** Probes measured so far (cheap: the per-frame check before building `progress`). */
+  get probeCount(): number {
+    return this.probes;
+  }
+
   /** Progress for the page: probes done / expected, the candidate on screen. */
   get progress(): { done: number; total: number; values: GraphicsValues | null } {
-    if (this.phase === "done") return { done: this.probes, total: this.probes, values: null };
-    const searchLeft = this.hi > this.lo ? Math.ceil(Math.log2(this.hi - this.lo + 1)) : 0;
-    let left: number;
-    switch (this.phase) {
-      case "idle":
-      case "floor":
-        left = 2 + Math.ceil(Math.log2(Math.max(1, this.ladder.length - 1)));
-        break;
-      case "cpucheck":
-        left = 2 + Math.ceil(Math.log2(Math.max(1, this.ladder.length - 1)));
-        break;
-      case "top":
-        left = 1 + searchLeft;
-        break;
-      default:
-        left = Math.max(1, searchLeft);
-    }
-    return { done: this.probes, total: this.probes + Math.max(1, left), values: this.probe?.values ?? null };
+    if (this.done_) return { done: this.probes, total: this.probes, values: null };
+    const st = this.stage;
+    const ladderSearch = Math.ceil(Math.log2(this.ladder.length + 1)) + 1;
+    const left = !st || st.kind === "floor" ? 1 + ladderSearch : st.kind === "check" ? 1 + ladderSearch : Math.max(1, st.search.remaining);
+    return { done: this.probes, total: this.probes + left, values: this.probe?.values ?? null };
   }
 
   start(now: number): void {
-    if (this.phase !== "idle") return;
-    this.phase = "floor";
-    this.begin(this.ladder.length - 1, this.ladder[this.ladder.length - 1], now);
+    if (this.stage || this.done_) return;
+    this.stage = { kind: "floor" };
+    const last = this.ladder.length - 1;
+    this.begin(last, this.ladder[last], now);
   }
 
   /**
@@ -341,7 +490,7 @@ export class Calibration {
    */
   onFrame(t: number, cpuMs: number, focused: boolean): void {
     const p = this.probe;
-    if (!p || this.phase === "done") return;
+    if (!p || this.done_) return;
     const prev = this.lastFrameT;
     this.lastFrameT = t;
     if (!focused) {
@@ -375,9 +524,9 @@ export class Calibration {
     if (enough) this.complete(p, t);
   }
 
-  /** Stop now: the best rung known so far (the bound of the search). Null when nothing was measured. */
+  /** Stop now: the best rung known so far. Null when nothing was measured. */
   cancel(): TuneOutcome | null {
-    if (this.phase !== "done") this.finish(false);
+    if (!this.done_) this.finish(false);
     return this.result;
   }
 
@@ -389,8 +538,8 @@ export class Calibration {
     p.cpuSum = 0;
   }
 
-  private begin(index: number, values: GraphicsValues, now: number): void {
-    this.probe = { index, values, appliedAt: now, seen: 0, measuring: false, startedAt: now, lastT: now, count: 0, cpuSum: 0 };
+  private begin(index: number, values: GraphicsValues, now: number, pixels = 1): void {
+    this.probe = { index, values, pixels, appliedAt: now, seen: 0, measuring: false, startedAt: now, lastT: now, count: 0, cpuSum: 0 };
     this.host.apply(values);
   }
 
@@ -399,120 +548,146 @@ export class Calibration {
     return { ...deliveredStats(sorted, this.cfg), cpuMs: p.cpuSum / Math.max(1, p.count + 1), sorted };
   }
 
-  /** The rung keeps the goal: the target itself, or (processor-limited) what the floor reached. */
-  private keeps(stats: ProbeStats): boolean {
-    if (this.mode === "cpu") return stats.frames > 0 && stats.fps >= this.goal;
-    return holds(stats, this.goal, this.cfg);
-  }
-
   private complete(p: Probe, now: number): void {
     this.probes++;
     const stats = this.statsOf(p);
     this.measured.set(p.index, stats);
-    const last = this.ladder.length - 1;
-    switch (this.phase) {
-      case "floor": {
-        this.floorFps = stats.fps;
-        if (holds(stats, this.targetFps, this.cfg)) {
-          this.mode = "target";
-          this.goal = this.targetFps;
-          this.answerFps = stats.fps;
-          this.startTop(now);
-        } else {
-          // Not even the floor: below the target either way (graphics card
-          // until the half-pixel check says otherwise).
-          this.mode = "gpu";
-          this.phase = "cpucheck";
-          this.begin(-1, halfPixels(this.ladder[last], this.cfg), now);
-        }
-        return;
-      }
-      case "cpucheck": {
-        const floor = this.floorFps ?? 0;
-        if (stats.fps >= floor * this.cfg.gpuBoundGain) {
-          // Fewer pixels, many more frames: the graphics card is the limit,
-          // and even the floor misses the target — the floor is the answer.
-          this.mode = "gpu";
-          this.goal = this.targetFps;
-          this.answerFps = floor;
-          this.lo = this.hi = last;
-          this.finish(true);
-        } else {
-          // The frame rate does not follow the pixels: processor / browser.
-          this.mode = "cpu";
-          this.goal = floor * this.cfg.cpuBoundKeep;
-          this.answerFps = floor;
-          this.startTop(now);
-        }
-        return;
-      }
-      case "top": {
-        if (this.keeps(stats)) {
-          this.lo = this.hi = 0;
-          this.answerFps = stats.fps;
-          this.finish(true);
-          return;
-        }
-        this.lo = 1;
-        this.phase = "search";
-        this.next(now);
-        return;
-      }
-      case "search": {
-        if (this.keeps(stats)) {
-          this.hi = p.index;
-          this.answerFps = stats.fps;
-        } else {
-          this.lo = p.index + 1;
-        }
-        this.next(now);
-        return;
-      }
-      default:
-        return;
+    const st = this.stage!;
+    if (st.kind === "floor") return this.afterFloor(stats, now);
+    if (st.kind === "check") return this.afterCheck(stats, now);
+    const kept = st.search.relative ? stats.frames > 0 && stats.fps >= st.search.goal : holds(stats, st.search.goal, this.cfg);
+    st.search.report(p.index, kept, p.pixels);
+    if (kept && (!this.known || p.index <= this.known.index)) {
+      this.known = { index: p.index, mode: st.mode, goal: st.search.goal, fps: stats.fps, pixels: p.pixels };
     }
+    this.step(now);
   }
 
-  private startTop(now: number): void {
+  /** The floor is measured: which goals can this machine reach at all? */
+  private afterFloor(floor: ProbeStats, now: number): void {
+    this.floorStats = floor;
+    const { hard, soft } = this.goals;
     const last = this.ladder.length - 1;
-    if (last === 0) {
-      this.lo = this.hi = 0;
-      this.finish(true);
+    if (holds(floor, soft, this.cfg)) {
+      this.known = { index: last, mode: "target", goal: soft, fps: floor.fps, pixels: 1 };
+      this.startTargetSearches(true, now);
       return;
     }
-    this.phase = "top";
-    this.hi = last; // the floor: known acceptable (or the best we may offer)
-    this.begin(0, withMargin(this.ladder[0], this.cfg), now);
+    if (soft > hard && holds(floor, hard, this.cfg)) this.known = { index: last, mode: "hard", goal: hard, fps: floor.fps, pixels: 1 };
+    // A goal missed even at the floor: the graphics card, or the processor?
+    this.stage = { kind: "check" };
+    this.begin(-1, halfPixels(this.ladder[last], this.cfg), now);
   }
 
-  private next(now: number): void {
-    if (this.lo >= this.hi) {
-      this.finish(true);
+  /** The half-pixel check is measured. */
+  private afterCheck(half: ProbeStats, now: number): void {
+    const floor = this.floorStats!;
+    const { hard, soft, defaultIndex } = this.goals;
+    const last = this.ladder.length - 1;
+    const gpuLimited = half.fps >= floor.fps * this.cfg.gpuBoundGain;
+    const floorHoldsHard = holds(floor, hard, this.cfg);
+    if (gpuLimited) {
+      if (!floorHoldsHard) return this.answer(last, "gpu", hard, floor.fps, true, 1);
+      // Only the high-refresh goal is out of reach: 60 FPS from the default look down.
+      this.startSearch(new RangeSearch(defaultIndex, last, true, hard, false, defaultIndex), "hard", null, now);
       return;
     }
-    const mid = Math.floor((this.lo + this.hi) / 2);
-    this.begin(mid, withMargin(this.ladder[mid], this.cfg), now);
+    // The frame rate does not follow the pixels: the processor / the browser.
+    // The rungs only have to keep what the floor reached.
+    const goal = floor.fps * this.cfg.cpuBoundKeep;
+    if (floor.fps * this.cfg.holdRatio >= hard && soft > hard) {
+      // ≥ 60 anyway: as beautiful as the processor allows, never below the
+      // default look for frames the processor cannot give.
+      const fallback = (): void =>
+        this.startSearch(new RangeSearch(defaultIndex, last, floorHoldsHard, hard, false, defaultIndex), "hard", null, now);
+      this.startSearch(new RangeSearch(0, defaultIndex, false, goal, true, defaultIndex), "cpu", fallback, now);
+      return;
+    }
+    this.startSearch(new RangeSearch(0, last, true, goal, true), "cpu", null, now);
   }
 
-  private finish(complete: boolean): void {
-    this.phase = "done";
+  /**
+   * The floor keeps the soft goal (and so the hard one). Searches staged at
+   * the default look: from the top down to it first (it is kept with the
+   * smaller margin), then — only when even it falls short — below it.
+   */
+  private startTargetSearches(floorKeepsSoft: boolean, now: number): void {
+    const { hard, soft, defaultIndex } = this.goals;
+    const last = this.ladder.length - 1;
+    const upToDefault = (goal: number): RangeSearch =>
+      new RangeSearch(0, defaultIndex, defaultIndex === last && floorKeepsSoft, goal, false, defaultIndex);
+    if (soft <= hard) {
+      if (defaultIndex >= last) {
+        this.startSearch(upToDefault(soft), "target", null, now);
+        return;
+      }
+      const below = (): void => this.startSearch(new RangeSearch(defaultIndex + 1, last, floorKeepsSoft, soft, false), "target", null, now);
+      this.startSearch(upToDefault(soft), "target", below, now);
+      return;
+    }
+    // High-refresh screen: the soft goal down to the default look only…
+    const fallback = (): void => this.startSearch(new RangeSearch(defaultIndex, last, true, hard, false, defaultIndex), "hard", null, now);
+    this.startSearch(upToDefault(soft), "target", fallback, now);
+  }
+
+  private startSearch(search: RangeSearch, mode: TuneMode, then: (() => void) | null, now: number): void {
+    this.stage = { kind: "search", search, mode, then };
+    this.step(now);
+  }
+
+  /** Next probe of the current search, or its answer. */
+  private step(now: number): void {
+    const st = this.stage;
+    if (!st || st.kind !== "search") return;
+    const next = st.search.next();
+    if (next !== null) {
+      const pixels = next === st.search.keepIndex ? this.cfg.keepMarginPixels : this.cfg.marginPixels;
+      this.begin(next, withMargin(this.ladder[next], this.cfg, pixels), now, pixels);
+      return;
+    }
+    if (st.search.best !== null) {
+      const stats = this.measured.get(st.search.best) ?? null;
+      this.answer(st.search.best, st.mode, st.search.goal, stats ? stats.fps : this.floorStats?.fps ?? null, true, st.search.bestPixels);
+      return;
+    }
+    if (st.then) {
+      st.then();
+      return;
+    }
+    // Nothing kept the goal (noise): the floor.
+    const last = this.ladder.length - 1;
+    this.answer(last, st.mode === "cpu" ? "cpu" : "gpu", st.search.goal, this.floorStats?.fps ?? null, true, 1);
+  }
+
+  private answer(index: number, mode: TuneMode, goal: number, fps: number | null, complete: boolean, pixels: number): void {
+    this.done_ = true;
     this.probe = null;
-    // Nothing measured at all (stopped during the first probe): no answer.
-    if (this.floorFps === null) {
-      this.result = null;
-      return;
-    }
-    const index = this.hi;
     this.result = {
       values: this.ladder[index],
       index,
-      mode: this.mode,
-      goalFps: this.goal,
-      floorFps: this.floorFps,
-      answerFps: this.answerFps,
+      defaultIndex: this.goals.defaultIndex,
+      mode,
+      goalFps: goal,
+      floorFps: this.floorStats?.fps ?? null,
+      answerFps: fps,
+      marginPixels: pixels,
       probes: this.probes,
       complete,
     };
+  }
+
+  private finish(complete: boolean): void {
+    if (this.done_) return;
+    // Stopped early: the best rung KNOWN to keep a goal; nothing measured → no answer.
+    if (!this.floorStats) {
+      this.done_ = true;
+      this.probe = null;
+      this.result = null;
+      return;
+    }
+    const last = this.ladder.length - 1;
+    const k = this.known ?? { index: last, mode: "gpu" as TuneMode, goal: this.goals.hard, fps: this.floorStats.fps, pixels: 1 };
+    this.answer(k.index, k.mode, k.goal, k.fps, complete, k.pixels);
   }
 }
 
@@ -535,22 +710,41 @@ export function summarize(o: TuneOutcome, ctx: SummaryContext): string {
     );
   }
   const partial = o.complete ? "" : " Détection interrompue : réglages prudents, elle reprendra au prochain lancement.";
+  // The margin this answer was really measured with (the floor: as is).
+  const reserve =
+    o.marginPixels > 1 + 1e-6
+      ? ` avec ${frNumber((o.marginPixels - 1) * 100, 0)} % de pixels en réserve pour les combats`
+      : " (le plancher de qualité, sans réserve mesurée pour les combats)";
   if (o.mode === "gpu") {
-    const fps = o.floorFps !== null ? `environ ${Math.round(o.floorFps)} i/s` : "moins";
+    const fps = o.floorFps !== null ? `environ ${Math.round(o.floorFps)} FPS` : "moins";
     return (
-      `Même au plancher de qualité (${desc}), ce PC tient ${fps} au lieu de ${ctx.targetFps} : ` +
+      `Même au plancher de qualité (${desc}), ce PC tient ${fps} au lieu de ${Math.min(60, ctx.targetFps)} : ` +
       `c'est la carte graphique qui limite. Le plancher garde un rendu propre ; tu peux descendre plus bas à la main.${partial}`
     );
   }
   if (o.mode === "cpu") {
-    const fps = o.floorFps !== null ? `environ ${Math.round(o.floorFps)} i/s` : "moins que l'objectif";
+    const fps = o.floorFps !== null ? `environ ${Math.round(o.floorFps)} FPS` : "moins que l'objectif";
     return (
       `Ce PC plafonne à ${fps} quels que soient les graphismes : c'est le processeur ou le navigateur qui limite, ` +
       `pas la carte graphique. Les graphismes restent donc beaux : ${desc}.${partial}`
     );
   }
-  return (
-    `Réglages choisis pour tenir ${ctx.targetFps} i/s avec ${frNumber((AUTO_TUNE.marginPixels - 1) * 100, 0)} % ` +
-    `de pixels en réserve pour les combats : ${desc}.${partial}`
-  );
+  const lowered = o.index > o.defaultIndex;
+  if (o.mode === "hard") {
+    if (lowered) {
+      return (
+        `Le rendu d'origine de cette carte graphique ne tient pas ${o.goalFps} FPS ici avec assez de réserve : ` +
+        `réglages choisis pour ${o.goalFps} FPS au moins${reserve} : ${desc}.${partial}`
+      );
+    }
+    return (
+      `Tenir ${ctx.targetFps} FPS demanderait de passer sous le rendu d'origine de cette carte graphique : ` +
+      `il est gardé, pour ${o.goalFps} FPS au moins${reserve} : ${desc}. ` +
+      `Pour plus d'images, baisse la résolution ou l'anticrénelage à la main.${partial}`
+    );
+  }
+  const below = lowered
+    ? ` Le rendu d'origine de cette carte graphique ne gardait pas assez de réserve à ${ctx.targetFps} FPS.`
+    : "";
+  return `Réglages choisis pour tenir ${ctx.targetFps} FPS${reserve} : ${desc}.${below}${partial}`;
 }
