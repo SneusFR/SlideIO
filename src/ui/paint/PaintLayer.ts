@@ -1,6 +1,7 @@
 import { PaintGL, PAINT_RENDER_SCALE } from "./PaintGL";
 import { PaintDripSim } from "./PaintDripSim";
 import type { PaintProfile } from "./paintTypes";
+import { experimentValue, perfExperiments } from "../perfDiag";
 
 /**
  * PaintLayer — one `<canvas class="wpn-paint">` per weapon plate, aligned on
@@ -34,8 +35,25 @@ import type { PaintProfile } from "./paintTypes";
  * (HUD preview page).
  */
 const CREEP_INTERVAL = 0.05;
-/** Backing pixels per ON-SCREEN pixel kept by the paint (supersampling). */
-const SUPERSAMPLE = 2;
+/**
+ * Backing pixels per ON-SCREEN pixel kept by the paint (supersampling).
+ * `?diag=paintssNN` (ui/perfDiag.ts): NN % instead of 200 % — an A/B of the
+ * paint's GPU cost on a real GPU (fewer pixels raymarched, not the same
+ * pixels: a lower supersampling softens the highlights' and edges' filtering).
+ */
+const SUPERSAMPLE = (() => {
+  const pct = experimentValue(perfExperiments(), "paintss");
+  return pct === null ? 2 : Math.min(2, Math.max(0.5, pct / 100));
+})();
+/**
+ * `?diag=paintfpsNN` (ui/perfDiag.ts): at most NN paint draws per second while
+ * the paint moves (default: every display frame) — the other A/B of the
+ * paint's GPU cost (a jerkier jelly, not the same animation).
+ */
+const MOVE_INTERVAL = (() => {
+  const fps = experimentValue(perfExperiments(), "paintfps");
+  return fps === null ? 0 : 1 / fps;
+})();
 /** The on-screen size is measured once the plate's enter animation has settled. */
 const MEASURE_DELAY = 0.5;
 
@@ -144,6 +162,8 @@ export class PaintLayer {
   private glPending = false;
   private dirty = true;
   private creepT = 0;
+  /** Seconds since the last draw (`?diag=paintfpsNN` only). */
+  private sinceDraw = 0;
   /** Backing pixels per plate pixel (max until the on-screen size is known). */
   private scale = PAINT_RENDER_SCALE;
   /** Seconds before the next on-screen measurement (< 0: none pending). */
@@ -225,6 +245,7 @@ export class PaintLayer {
       if (this.measureIn < 0) this.measure();
     }
     this.sim.step(dt * this.timeScale);
+    if (MOVE_INTERVAL > 0) this.sinceDraw += dt;
     const act = this.sim.activity;
     let draw = this.dirty || act === 2;
     if (!draw && act === 1) {
@@ -232,6 +253,13 @@ export class PaintLayer {
       draw = this.creepT >= CREEP_INTERVAL;
     }
     if (!draw) return;
+    if (MOVE_INTERVAL > 0) {
+      if (this.sinceDraw < MOVE_INTERVAL - 1e-3) {
+        this.dirty = true; // drawn at the next allowed frame
+        return;
+      }
+      this.sinceDraw = 0;
+    }
     this.creepT = 0;
     this.dirty = act === 2; // one more frame once the motion has stopped
     const src = getGL()?.draw(this.sim, this.scale);

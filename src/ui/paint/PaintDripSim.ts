@@ -75,9 +75,17 @@ export class PaintDripSim {
 
   /** Node range [start, end) of a cluster (for the renderer). */
   range(i: number): [number, number] {
-    const st = this.states[i];
-    const end = i + 1 < this.states.length ? this.states[i + 1].start : this.nodeCount;
-    return [st.start, end];
+    return [this.rangeStart(i), this.rangeEnd(i)];
+  }
+
+  /** First node of a cluster (range() without the allocation: called at every paint draw). */
+  rangeStart(i: number): number {
+    return this.states[i].start;
+  }
+
+  /** One past the last node of a cluster. */
+  rangeEnd(i: number): number {
+    return i + 1 < this.states.length ? this.states[i + 1].start : this.nodeCount;
   }
 
   dripPhase(i: number): number {

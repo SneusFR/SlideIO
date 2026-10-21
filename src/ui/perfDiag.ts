@@ -46,6 +46,12 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *            motions that repainted / re-rasterized at every frame (SVG-child
  *            animations, clip-path / mask on animated elements, the FAMAS
  *            wave's background-position…) — hud.css « PERF — animations »
+ *   paintssNN  the weapon plate's 3D paint rendered at NN % of the screen's
+ *            pixel density per axis instead of 200 % (src/ui/paint/PaintLayer.ts):
+ *            its GPU cost on a real GPU (paintss100 ≈ 3× fewer pixels at 1080p)
+ *            — NOT the same pixels (less supersampling), an experiment only
+ *   paintfpsNN  that paint drawn at most NN times per second while it moves
+ *            (default: at every display frame) — a jerkier jelly, an experiment
  *
  * The HUD's own switches reach its document (the HUD iframe has its own
  * address: src/hud/host/HudHost.ts hudDocumentUrl passes `?diag=` on).
