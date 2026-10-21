@@ -1133,7 +1133,7 @@ interface MatchStats {
 /** The Game, simulated: renders the machine's frames, feeds the controller's frame listener, applies what the controller asks. */
 class SimGame {
   values: Values;
-  listener: ((t: number, cpu: number, play: boolean) => void) | null = null;
+  listener: ((t: number, cpu: number, play: boolean, between: boolean) => void) | null = null;
   readonly queue: (() => void)[] = [];
   readonly notices: { at: number; text: string }[] = [];
   detectConfig: typeof A.AUTO_TUNE | null = null;
@@ -1167,7 +1167,7 @@ class SimGame {
         return Promise.resolve(self.detect(target, opts));
       },
       cancelAutoTune() {},
-      addFrameListener(l: (t: number, cpu: number, play: boolean) => void) {
+      addFrameListener(l: (t: number, cpu: number, play: boolean, between: boolean) => void) {
         self.listener = l;
         return () => void (self.listener = null);
       },
@@ -1228,7 +1228,7 @@ class SimGame {
           (random() * 2 - 1) * m.jitter,
       );
       this.inFrame = true;
-      this.listener?.(base + t, cpu, play);
+      this.listener?.(base + t, cpu, play, false);
       this.inFrame = false;
       // Between two frames: what the controller deferred (a step is on screen from the next frame on).
       while (this.queue.length) this.queue.shift()!();
@@ -1260,6 +1260,40 @@ class SimGame {
       steps: this.notices.slice(firstNotice).map((n) => n.at),
     };
   }
+
+  /** Frames with no match under way (a match's end screen, the menu); what the controller deferred runs between them. */
+  menu(seconds = 2): void {
+    const period = 1000 / this.m.hz;
+    for (let t = 0; t < seconds * 1000; t += period) {
+      this.inFrame = true;
+      this.listener?.(this.clock, 4, false, true);
+      this.inFrame = false;
+      while (this.queue.length) this.queue.shift()!();
+      this.clock += period;
+    }
+  }
+}
+
+const P = await import("../src/settings/Power.ts");
+type PowerState = import("../src/settings/Power.ts").PowerState;
+
+/** The laptop's power, as the controller reads it (settings/Power), set by the test. */
+function fakePower(initial: PowerState) {
+  let state = initial;
+  const listeners: ((s: PowerState) => void)[] = [];
+  return {
+    get state() {
+      return state;
+    },
+    subscribe(l: (s: PowerState) => void) {
+      listeners.push(l);
+      return () => void listeners.splice(listeners.indexOf(l), 1);
+    },
+    set(s: PowerState) {
+      state = s;
+      for (const l of [...listeners]) l(s);
+    },
+  };
 }
 
 const INTEL = "Intel(R) Iris(R) Xe Graphics · D3D11";
@@ -1269,13 +1303,14 @@ function session(
   m: Machine & { gpuName: string },
   boot: Values,
   store = new S.SettingsStore(memoryStorage()),
-  extra: { experiments?: Set<string>; now?: () => number } = {},
+  extra: { experiments?: Set<string>; now?: () => number; power?: import("../src/settings/Power.ts").PowerSource } = {},
 ) {
   const sim = new SimGame(m, boot);
   const ctl = new GC.GraphicsController(store, sim.host, () => ({ dpr: m.dpr }), () => m.hz, () => {}, isWeak, {
     experiments: extra.experiments ?? new Set(),
     defer: (fn) => void sim.queue.push(fn),
     now: extra.now,
+    power: extra.power ?? P.UNKNOWN_POWER,
   });
   return { sim, ctl, store };
 }
@@ -1502,9 +1537,9 @@ const afk = (hudMs: number): Scene => ({ load: () => 0.8, hudMs });
 const HOUR = 3600_000;
 
 /** The personal laptop with an "Auto" answer at 100 % (FXAA, 4×, normal snow), as the real one had at some point. */
-async function at100(now: () => number, store = new S.SettingsStore(memoryStorage())) {
+async function at100(now: () => number, store = new S.SettingsStore(memoryStorage()), power?: import("../src/settings/Power.ts").PowerSource) {
   const m = { ...irisXeField(), gpuName: INTEL };
-  const run = session(m, G.presetValues("bas", { dpr: 1.25 }), store, { experiments: new Set(["tunemargin0"]), now });
+  const run = session(m, G.presetValues("bas", { dpr: 1.25 }), store, { experiments: new Set(["tunemargin0"]), now, power });
   await run.ctl.runDetection("first");
   return { m, run };
 }
@@ -1588,6 +1623,257 @@ await test("step back up that does not hold (the HUD still heavy): stepped down 
   assert.equal(session(m, G.presetValues("bas", { dpr: 1.25 }), store, { now }).ctl.guardTrying, false);
   clock += 20 * HOUR;
   assert.equal(session(m, G.presetValues("bas", { dpr: 1.25 }), store, { now }).ctl.guardTrying, true);
+});
+
+// ------------------------------------------------------------------ power-aware guard
+
+console.log("power-aware guard (settings/Power: battery or charger)");
+
+/**
+ * The work laptop PLUGGED IN (the owner: "on battery it drops, plugged in it is stable"; measured: the
+ * main thread 2.5 ms per frame instead of 7, the GPU ~20 % faster): fights, no sustained throttling.
+ */
+const mainsScene = (seed: number): Scene => ({ load: fights(seed, 1.25), cpu: () => 2.5 });
+
+await test("power: the Battery Status API feature-detected, never waited for — unknown without it, on a refusal, on a throw", async () => {
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  for (const nav of [undefined, null, {}, { getBattery: 5 }]) assert.equal(P.browserPower(nav).state, "unknown");
+  const throwing = P.browserPower({
+    getBattery: () => {
+      throw new Error("no");
+    },
+  });
+  const refused = P.browserPower({ getBattery: () => Promise.reject(new Error("denied")) });
+  const odd = P.browserPower({ getBattery: () => Promise.resolve({}) });
+  await tick();
+  for (const src of [throwing, refused, odd]) assert.equal(src.state, "unknown");
+  // A laptop: "unknown" until the API answers (no wait), then its state and each chargingchange.
+  const listeners: (() => void)[] = [];
+  const battery = { charging: false, addEventListener: (type: string, l: () => void) => void (type === "chargingchange" && listeners.push(l)) };
+  const src = P.browserPower({ getBattery: () => Promise.resolve(battery) });
+  const seen: string[] = [];
+  src.subscribe((s) => seen.push(s));
+  assert.equal(src.state, "unknown");
+  await tick();
+  assert.equal(src.state, "battery");
+  battery.charging = true;
+  for (const l of listeners) l();
+  assert.equal(src.state, "mains");
+  assert.deepEqual(seen, ["battery", "mains"]);
+  // A desktop (no battery: charging true): mains.
+  const desktop = P.browserPower({ getBattery: () => Promise.resolve({ charging: true, addEventListener() {} }) });
+  await tick();
+  assert.equal(desktop.state, "mains");
+});
+
+await test("power: the record keeps one power state per kept step (most recent last), trimmed and checked when read back", () => {
+  const r = (steps: number, power?: PowerState[], at = 1) => ({ guardSteps: steps, guardPower: power, guardRetryAt: at, detected: G.presetValues("bas", { dpr: 1 }) });
+  assert.equal(GD.topStepPower(r(2, ["mains", "battery"])), "battery");
+  assert.equal(GD.topStepPower(r(2, [])), "unknown"); // kept before power awareness
+  assert.equal(GD.topStepPower(r(0, ["battery"])), "unknown");
+  // Due: at once plugged in after a battery step; otherwise the schedule.
+  assert.equal(GD.retryReason(r(1, ["battery"], 1e15), "mains", 0), "power");
+  assert.equal(GD.retryReason(r(1, ["battery"], 1e15), "battery", 0), null);
+  assert.equal(GD.retryReason(r(1, ["battery"], 1e15), "unknown", 0), null);
+  assert.equal(GD.retryReason(r(1, ["mains"], 1e15), "mains", 0), null);
+  assert.equal(GD.retryReason(r(1, ["mains"], 10), "mains", 10), "scheduled");
+  assert.equal(GD.retryReason({ ...r(1, ["battery"]), detected: null }, "mains", 0), null);
+  assert.deepEqual(GD.pushStepPower(["battery"], "mains", 2), ["battery", "mains"]);
+  assert.deepEqual(GD.pushStepPower(undefined, "battery", 3), ["battery"]);
+  assert.deepEqual(GD.pushStepPower(["unknown", "battery"], "mains", 2), ["battery", "mains"]);
+  assert.deepEqual(GD.popStepPower(["mains", "battery"], 1), ["mains"]);
+  assert.deepEqual(GD.popStepPower([], 2), []);
+  assert.deepEqual(GD.popStepPower(["battery"], 0), []);
+  assert.deepEqual(GD.relabelTopPower(["battery", "battery"], "mains"), ["battery", "mains"]);
+  const stored = (guardSteps: number, guardPower: unknown) =>
+    S.sanitizeRecord({ v: 1, graphics: { preset: "auto", custom: null, auto: { GIVRE: { values: { renderScale: 90 }, gpu: "A", guardSteps, guardPower } } } }).graphics.auto.GIVRE
+      .guardPower;
+  assert.deepEqual(stored(2, ["battery", "nope", 3, "mains", "unknown"]), ["mains", "unknown"]);
+  assert.deepEqual(stored(0, ["battery"]), []);
+  assert.deepEqual(stored(1, "battery"), []);
+});
+
+await test("power: steps taken ON BATTERY are tried again at once in the next session PLUGGED IN (no 20 h wait), one rung per match, each kept after a whole match at 60", async () => {
+  let clock = Date.parse("2026-10-21T12:00:00Z");
+  const now = () => clock;
+  const boot = G.presetValues("bas", { dpr: 1.25 });
+  const s1 = session(workLaptop(), boot, undefined, { power: fakePower("battery"), now });
+  await s1.ctl.runDetection("first");
+  const m1 = s1.sim.match(workScene(1), 300);
+  const r1 = s1.store.get().graphics.auto.GIVRE;
+  console.log(`      on battery: 90 % → ${fmtMatch(m1)} — stored ${r1.values.renderScale} %, steps ${JSON.stringify(r1.guardPower)}`);
+  const n = r1.guardSteps ?? 0;
+  assert.ok(n >= 1, fmtMatch(m1));
+  assert.deepEqual(r1.guardPower, new Array(n).fill("battery"));
+  // 2 h later, plugged in: one rung up at once — the normal wait (20 h) does not apply.
+  clock += 2 * HOUR;
+  const s2 = session(workLaptop(), boot, s1.store, { power: fakePower("mains"), now });
+  const scales = [r1.values.renderScale];
+  for (let k = 0; k < n; k++) {
+    if (k > 0) s2.sim.menu(); // between two matches (end screen, menu): the next battery step
+    assert.equal(s2.ctl.guardTrying, true, `try ${k + 1}`);
+    const m = s2.sim.match(mainsScene(40 + k), 300, 40 + k);
+    assert.equal(m.steps.length, 0, `plugged in, try ${k + 1}: ${fmtMatch(m)}`);
+    // Kept after a whole match — mid-match, never another rung there.
+    assert.equal(s2.ctl.guardTrying, false);
+    scales.push(s2.store.get().graphics.auto.GIVRE.values.renderScale);
+    assert.ok(scales.at(-1)! > scales.at(-2)!, `${scales}`);
+  }
+  console.log(`      plugged in (next session, 2 h later): stored ${scales.join(" → ")} %`);
+  const back = s2.store.get().graphics.auto.GIVRE;
+  assert.equal(G.sameValues(back.values, back.detected!), true); // back to the detection's answer, never above
+  assert.equal(back.guardSteps, 0);
+  assert.deepEqual(back.guardPower, []);
+  assert.equal(back.guardRetryAt, null);
+  s2.sim.menu();
+  assert.equal(s2.ctl.guardTrying, false); // nothing left to try
+  assert.equal(s2.sim.applyInFrame, 0);
+});
+
+await test("power: a step taken PLUGGED IN keeps the normal wait (20 h, then doubled after a failed try)", async () => {
+  let clock = Date.parse("2026-10-21T12:00:00Z");
+  const now = () => clock;
+  const boot = G.presetValues("bas", { dpr: 1.25 });
+  const s1 = session(workLaptop(), boot, undefined, { power: fakePower("mains"), now });
+  await s1.ctl.runDetection("first");
+  s1.sim.match(workScene(1), 300); // a heavy, hot match — plugged in
+  const store = s1.store;
+  const r1 = store.get().graphics.auto.GIVRE;
+  const n = r1.guardSteps ?? 0;
+  assert.ok(n >= 1);
+  assert.deepEqual(r1.guardPower, new Array(n).fill("mains"));
+  clock += 2 * HOUR;
+  const s2 = session(workLaptop(), boot, store, { power: fakePower("mains"), now });
+  assert.equal(s2.ctl.guardTrying, false);
+  assert.equal(s2.ctl.effective().renderScale, r1.values.renderScale);
+  s2.sim.menu();
+  assert.equal(s2.ctl.guardTrying, false);
+  clock += 20 * HOUR;
+  const s3 = session(workLaptop(), boot, store, { power: fakePower("mains"), now });
+  assert.equal(s3.ctl.guardTrying, true); // the normal try, from the next day on
+  // Still too heavy (the chip hot from the start): back down, the next try waits twice as long.
+  const m3 = s3.sim.match({ load: fights(2, 1.25), throttle: throttling(1.32, 0, 30) }, 300, 2);
+  assert.ok(m3.steps.length >= 1, fmtMatch(m3));
+  const r3 = store.get().graphics.auto.GIVRE;
+  assert.equal(r3.values.renderScale, r1.values.renderScale);
+  assert.equal(r3.guardUpFails, 1);
+  assert.equal(r3.guardRetryAt, clock + 40 * HOUR);
+});
+
+await test("power: without the Battery Status API (or ?diag=nopowerguard) — today's behaviour: every step waits the normal time", async () => {
+  let clock = Date.parse("2026-10-21T12:00:00Z");
+  const now = () => clock;
+  const boot = G.presetValues("bas", { dpr: 1.25 });
+  // No API: the steps are stored as "unknown", tried again after the normal wait only.
+  const s1 = session(workLaptop(), boot, undefined, { power: P.browserPower({}), now });
+  await s1.ctl.runDetection("first");
+  s1.sim.match(workScene(1), 300);
+  const r1 = s1.store.get().graphics.auto.GIVRE;
+  const n = r1.guardSteps ?? 0;
+  assert.ok(n >= 1);
+  assert.deepEqual(r1.guardPower, new Array(n).fill("unknown"));
+  clock += 2 * HOUR;
+  assert.equal(session(workLaptop(), boot, s1.store, { power: P.browserPower({}), now }).ctl.guardTrying, false);
+  // A step taken on battery, then ?diag=nopowerguard plugged in: the battery is never read — the normal wait too.
+  const b = session(workLaptop(), boot, undefined, { power: fakePower("battery"), now });
+  await b.ctl.runDetection("first");
+  b.sim.match(workScene(1), 300);
+  assert.equal(GD.topStepPower(b.store.get().graphics.auto.GIVRE), "battery");
+  clock += 2 * HOUR;
+  const off = session(workLaptop(), boot, b.store, { power: fakePower("mains"), now, experiments: new Set(["nopowerguard"]) });
+  assert.equal(off.ctl.guardTrying, false);
+  off.sim.menu();
+  assert.equal(off.ctl.guardTrying, false);
+  clock += 20 * HOUR;
+  assert.equal(session(workLaptop(), boot, s1.store, { power: P.browserPower({}), now }).ctl.guardTrying, true);
+});
+
+await test("power: the charger plugged in MID-MATCH changes nothing before the match is over; at the end screen, one rung up", async () => {
+  const boot = G.presetValues("bas", { dpr: 1.25 });
+  const power = fakePower("battery");
+  const run = session(workLaptop(), boot, undefined, { power });
+  await run.ctl.runDetection("first");
+  run.sim.match(workScene(1), 300); // on battery: stepped down, stored
+  const low = run.ctl.effective().renderScale;
+  assert.ok(low < 90);
+  run.sim.match(workScene(5), 60, 5); // the next match, still on battery…
+  power.set("mains"); // …the charger plugged in during it
+  assert.equal(run.ctl.effective().renderScale, low);
+  assert.equal(run.ctl.guardTrying, false);
+  run.sim.match(mainsScene(6), 120, 6); // the rest of that match: untouched
+  assert.equal(run.ctl.effective().renderScale, low);
+  assert.equal(run.ctl.guardTrying, false);
+  run.sim.menu(); // the end screen
+  assert.equal(run.ctl.guardTrying, true);
+  assert.ok(run.ctl.effective().renderScale > low, `${run.ctl.effective().renderScale}`);
+  assert.equal(run.sim.applyInFrame, 0); // applied between two frames
+  // Unplugged again before the next match: the try goes on (judged on what the match shows).
+  power.set("battery");
+  assert.equal(run.ctl.guardTrying, true);
+});
+
+await test("power: the API answers AFTER the session started (asynchronously, as in Chrome) — plugged in: the try starts in the menu, at once", async () => {
+  let clock = Date.parse("2026-10-21T12:00:00Z");
+  const now = () => clock;
+  const boot = G.presetValues("bas", { dpr: 1.25 });
+  const s1 = session(workLaptop(), boot, undefined, { power: fakePower("battery"), now });
+  await s1.ctl.runDetection("first");
+  s1.sim.match(workScene(1), 300);
+  const low = s1.ctl.effective().renderScale;
+  clock += 2 * HOUR;
+  const power = fakePower("unknown");
+  const s2 = session(workLaptop(), boot, s1.store, { power, now });
+  assert.equal(s2.ctl.guardTrying, false); // not known yet: the normal wait
+  power.set("mains"); // the API's first answer, the game in its menu
+  s2.sim.menu();
+  assert.equal(s2.ctl.guardTrying, true);
+  assert.ok(s2.ctl.effective().renderScale > low);
+  // A scheduled try already under way when the answer comes (the next day, the power not known at the
+  // start) undoes a battery step: it counts as one — it fails on the charger: no doubled wait.
+  const { m, run } = await at100(now, undefined, fakePower("battery"));
+  run.sim.match(afk(6), 300, 31); // 100 → 90 % on battery
+  clock += 21 * HOUR;
+  const late = fakePower("unknown");
+  const s3 = session(m, boot, run.store, { now, power: late });
+  assert.equal(s3.ctl.guardTrying, true); // the normal try (the wait is over)
+  late.set("mains");
+  const r3 = s3.sim.match(afk(6), 300, 35); // the HUD as heavy on the charger: back down
+  assert.equal(r3.steps.length, 1, fmtMatch(r3));
+  const after = run.store.get().graphics.auto.GIVRE;
+  assert.equal(after.values.renderScale, 90);
+  assert.equal(after.guardUpFails, 0);
+  assert.deepEqual(after.guardPower, ["mains"]);
+  assert.equal(after.guardRetryAt, clock + 20 * HOUR);
+});
+
+await test("power: a battery step's try that fails ON THE CHARGER too — back down with no doubled wait; that step is a mains step from then on (the normal wait)", async () => {
+  let clock = Date.parse("2026-10-21T12:00:00Z");
+  const now = () => clock;
+  // The HUD's own drawing (6 ms a frame the 3D does not reduce): 100 % → 90 %, on battery.
+  const { m, run } = await at100(now, undefined, fakePower("battery"));
+  run.sim.match(afk(6), 300, 31);
+  const store = run.store;
+  assert.equal(store.get().graphics.auto.GIVRE.values.renderScale, 90);
+  assert.deepEqual(store.get().graphics.auto.GIVRE.guardPower, ["battery"]);
+  // 2 h later plugged in: 100 % at once — the HUD is just as heavy on the charger: stepped down again.
+  clock += 2 * HOUR;
+  const boot = G.presetValues("bas", { dpr: 1.25 });
+  const s2 = session(m, boot, store, { now, power: fakePower("mains") });
+  assert.equal(s2.ctl.guardTrying, true);
+  assert.equal(s2.ctl.effective().renderScale, 100);
+  const r2 = s2.sim.match(afk(6), 300, 34);
+  assert.equal(r2.steps.length, 1, fmtMatch(r2));
+  const after = store.get().graphics.auto.GIVRE;
+  assert.equal(after.values.renderScale, 90);
+  assert.equal(after.guardSteps, 1);
+  assert.equal(after.guardUpFails, 0); // no penalty
+  assert.deepEqual(after.guardPower, ["mains"]); // needed on the charger too
+  assert.equal(after.guardRetryAt, clock + 20 * HOUR); // the normal wait, not doubled
+  // From now on the normal rules: no try 2 h later (plugged in), one the next day.
+  clock += 2 * HOUR;
+  assert.equal(session(m, boot, store, { now, power: fakePower("mains") }).ctl.guardTrying, false);
+  clock += 19 * HOUR;
+  assert.equal(session(m, boot, store, { now, power: fakePower("mains") }).ctl.guardTrying, true);
 });
 
 // ------------------------------------------------------------------ what the detection picks

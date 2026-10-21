@@ -15,6 +15,7 @@ import {
   type PresetId,
   type SnowLevel,
 } from "./GraphicsSettings";
+import { POWER_STATES, type PowerState } from "./Power";
 import { DEFAULT_OUTLINE_VALUES, sanitizeOutlineValues, type OutlineValues } from "../game/OutlineSettings";
 import { defaultCrosshairSettings, sanitizeCrosshairSettings, type CrosshairSettings } from "../ui/CrosshairSettings";
 
@@ -102,6 +103,10 @@ function sanitizeAuto(raw: unknown, map: string): AutoResult | null {
   const r = raw as Record<string, unknown>;
   if (!r.values || typeof r.values !== "object") return null;
   const num = (v: unknown, d: number): number => (typeof v === "number" && Number.isFinite(v) ? v : d);
+  const guardSteps = Math.max(0, Math.min(64, Math.floor(num(r.guardSteps, 0))));
+  // One entry per kept step at most, the most recent last (see AutoResult.guardPower).
+  const powers = Array.isArray(r.guardPower) ? r.guardPower.filter((p): p is PowerState => POWER_STATES.includes(p as PowerState)) : [];
+  const guardPower = guardSteps > 0 ? powers.slice(-guardSteps) : [];
   return {
     values: sanitizeGraphicsValues(r.values, HOLE_FILLER),
     at: num(r.at, 0),
@@ -114,11 +119,12 @@ function sanitizeAuto(raw: unknown, map: string): AutoResult | null {
     measuredShadows: pick(SHADOW_MODES, r.measuredShadows, sanitizeGraphicsValues(r.values, HOLE_FILLER).shadows),
     summary: typeof r.summary === "string" ? r.summary.slice(0, 600) : "",
     version: num(r.version, 0),
-    guardSteps: Math.max(0, Math.min(64, Math.floor(num(r.guardSteps, 0)))),
+    guardSteps,
     guardAt: typeof r.guardAt === "number" && Number.isFinite(r.guardAt) ? r.guardAt : null,
     detected: r.detected && typeof r.detected === "object" ? sanitizeGraphicsValues(r.detected, HOLE_FILLER) : null,
     guardRetryAt: typeof r.guardRetryAt === "number" && Number.isFinite(r.guardRetryAt) ? r.guardRetryAt : null,
     guardUpFails: Math.max(0, Math.min(16, Math.floor(num(r.guardUpFails, 0)))),
+    guardPower,
   };
 }
 

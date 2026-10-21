@@ -1,5 +1,6 @@
 import { cheaperPerFrame, noCostlier } from "./AutoTune";
-import { sameValues, type GraphicsValues } from "./GraphicsSettings";
+import { sameValues, type AutoResult, type GraphicsValues } from "./GraphicsSettings";
+import type { PowerState } from "./Power";
 
 /**
  * AUTO GUARD — the "Auto" preset's promise kept in MATCHES: at least 60 FPS
@@ -27,6 +28,16 @@ import { sameValues, type GraphicsValues } from "./GraphicsSettings";
  *     try) ONE rung back up towards the detection's own answer is tried,
  *     stored once it held a whole match, stepped down again otherwise —
  *     conditions change (charger, room, a lighter HUD after an update);
+ *   - POWER-AWARE (settings/Power, when the browser tells): each kept step
+ *     records whether the laptop ran on its battery. A step taken on
+ *     battery says nothing about the charger (owner's laptop: 2.8× the
+ *     main-thread time, +20 % GPU on battery), so once plugged in — at the
+ *     start of a session, or when the charger is plugged in BETWEEN matches
+ *     (never mid-match) — its rung is tried again at once, with the same
+ *     rules (kept after a whole match, stepped down otherwise); a try that
+ *     fails costs no doubled wait, and a step that does not hold on the
+ *     charger either is a mains step from then on (the normal wait). A step
+ *     taken plugged in, or with the power unknown, keeps the normal wait;
  *   - never below the beauty floor (the ladder's last rung), never above
  *     the detection's answer, never for an explicit preset (Low, High,
  *     Custom…).
@@ -332,6 +343,8 @@ export class AutoGuard {
   private sinceCheck = 0;
   /** Frame rate of the stretch that triggered the step being judged. */
   private before = 0;
+  /** A step was judged useless this session: the frame rate does not follow the graphics here. */
+  private deaf = false;
   /** Steps applied this session. */
   steps = 0;
   /** Focused play seen this session (ms; stalls left out). */
@@ -411,6 +424,23 @@ export class AutoGuard {
     this.phase_ = "off";
   }
 
+  /**
+   * Other values on screen between two matches (a rung tried back up): the
+   * frames seen so far say nothing about them — watch afresh, after a settle
+   * (also after a stop at the floor). False when a step was judged useless
+   * this session: its frames do not follow the graphics, a try could not be
+   * judged.
+   */
+  restart(): boolean {
+    if (this.deaf) return false;
+    this.phase_ = "watch";
+    this.stretch.clear();
+    this.lastT = null;
+    this.settleLeft = this.cfg.resumeSettleMs;
+    this.sinceCheck = 0;
+    return true;
+  }
+
   private judge(span: number): GuardVerdict | null {
     const s = this.stretch;
     if (s.durationMs < span || s.frames < this.cfg.minFrames) return null;
@@ -442,6 +472,7 @@ export class AutoGuard {
       return { action: "keep-step", fps, before, cpuShare };
     }
     this.phase_ = "off";
+    this.deaf = true;
     return { action: "useless", fps, before, cpuShare };
   }
 }
@@ -484,4 +515,45 @@ export function guardUpIndex(ladder: readonly GraphicsValues[], current: Graphic
 /** Wait before the next try one step up, after `fails` failed tries in a row (20 h, 40 h, 80 h… a month at most). */
 export function retryDelay(fails: number, cfg: AutoGuardConfig = AUTO_GUARD): number {
   return Math.min(cfg.retryMaxMs, cfg.retryAfterMs * 2 ** Math.max(0, Math.min(16, fails)));
+}
+
+type GuardRecord = Pick<AutoResult, "guardSteps" | "guardPower" | "guardRetryAt" | "detected">;
+
+/**
+ * Power state of the step on top of a result's kept steps — the one a try
+ * one rung up undoes. `guardPower` lists the most recent steps (its last
+ * entry = the top); steps kept before power awareness have none: "unknown".
+ */
+export function topStepPower(r: GuardRecord): PowerState {
+  const p = r.guardPower;
+  return (r.guardSteps ?? 0) > 0 && p && p.length > 0 ? p[p.length - 1] : "unknown";
+}
+
+/**
+ * Why a try one rung back up is due for a stored result, or null:
+ *   power     — the step on top was taken on battery and the laptop is on
+ *               its charger now: at once (no wait);
+ *   scheduled — the wait after the last step or failed try is over.
+ */
+export function retryReason(r: GuardRecord, power: PowerState, now: number): "power" | "scheduled" | null {
+  if (!r.detected || (r.guardSteps ?? 0) <= 0) return null;
+  if (power === "mains" && topStepPower(r) === "battery") return "power";
+  return r.guardRetryAt != null && now >= r.guardRetryAt ? "scheduled" : null;
+}
+
+/** The power list once one more step (taken in `power`) is kept: the most recent `steps` at most. */
+export function pushStepPower(list: readonly PowerState[] | undefined, power: PowerState, steps: number): PowerState[] {
+  return [...(list ?? []), power].slice(-Math.max(1, steps));
+}
+
+/** The power list once the step on top is undone (a try one rung up kept), `steps` left. */
+export function popStepPower(list: readonly PowerState[] | undefined, steps: number): PowerState[] {
+  return steps > 0 ? (list ?? []).slice(0, -1).slice(-steps) : [];
+}
+
+/** The power list with the step on top relabelled (a battery step that did not hold on the charger either: mains). */
+export function relabelTopPower(list: readonly PowerState[] | undefined, power: PowerState): PowerState[] {
+  const out = [...(list ?? [])];
+  if (out.length > 0) out[out.length - 1] = power;
+  return out;
 }

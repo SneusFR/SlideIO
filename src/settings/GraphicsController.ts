@@ -20,7 +20,21 @@ import {
   type ReloadChange,
 } from "./GraphicsSettings";
 import { buildLadder, summarize, tuneConfigFor, type AutoTuneConfig, type TuneOutcome } from "./AutoTune";
-import { AUTO_GUARD, AutoGuard, guardStepIndex, guardUpIndex, retryDelay, type AutoGuardConfig, type GuardVerdict } from "./AutoGuard";
+import {
+  AUTO_GUARD,
+  AutoGuard,
+  guardStepIndex,
+  guardUpIndex,
+  popStepPower,
+  pushStepPower,
+  relabelTopPower,
+  retryDelay,
+  retryReason,
+  topStepPower,
+  type AutoGuardConfig,
+  type GuardVerdict,
+} from "./AutoGuard";
+import { browserPower, UNKNOWN_POWER, type PowerSource, type PowerState } from "./Power";
 import { describeChange, guardNoticeText, guardRaisedText, guardSummaryText } from "./labels";
 import type { PerfPanelMode, SettingsRecord, SettingsStore } from "./SettingsStore";
 import type { OutlineSettings } from "../game/OutlineSettings";
@@ -42,8 +56,11 @@ export interface AutoTuneOptions {
   config?: AutoTuneConfig;
 }
 
-/** A rendered frame: its start, its main-thread time, and whether it was focused play. */
-export type PlayFrameListener = (t: number, cpuMs: number, play: boolean) => void;
+/**
+ * A rendered frame: its start, its main-thread time, whether it was focused
+ * play, and whether NO match was under way (the menu, a match's end screen).
+ */
+export type PlayFrameListener = (t: number, cpuMs: number, play: boolean, between: boolean) => void;
 
 /** What the controller drives (the Game; a fake in the tests). */
 export interface GraphicsHost {
@@ -65,7 +82,9 @@ export interface GraphicsHost {
   /**
    * Every rendered frame, with whether it was FOCUSED PLAY — the match under
    * the player's hands: pointer locked, page visible, match not over, no
-   * detection measuring. The Auto guard's input (absent: no guard).
+   * detection measuring — and whether no match was under way at all (menu,
+   * end screen: where a rung back up may be tried once plugged in). The Auto
+   * guard's input (absent: no guard).
    */
   addFrameListener?(listener: PlayFrameListener): () => void;
   /** A short, non-intrusive notice over the game (the Auto guard's step). */
@@ -74,8 +93,13 @@ export interface GraphicsHost {
 
 /** Wiring options of the controller (tests; production uses the defaults). */
 export interface GraphicsControllerOptions {
-  /** `?diag=` switches (default: the address bar's): `noguard`, `tunemarginNN`. */
+  /** `?diag=` switches (default: the address bar's): `noguard`, `nopowerguard`, `tunemarginNN`. */
   experiments?: ReadonlySet<string>;
+  /**
+   * Battery or charger (default: the browser's Battery Status API —
+   * settings/Power; tests: a fake). `?diag=nopowerguard`: never read.
+   */
+  power?: PowerSource;
   /**
    * Runs `fn` once the current frame is over (default: a 0 ms timeout). The
    * guard decides at the END of a frame; resizing the canvas there would show
@@ -101,10 +125,19 @@ interface GuardSession {
    * stored), or the rung one step up tried this session. Null = the stored values.
    */
   live: GraphicsValues | null;
-  /** This session tries ONE rung back up (since its start): kept after a whole match without a step. */
-  trial: { to: GraphicsValues; startPlayedMs: number } | null;
-  /** The try did not hold: the guard stepped back down from it (the next try waits twice as long). */
-  trialFailed: boolean;
+  /**
+   * This session tries ONE rung back up (since its start, or since the
+   * charger was plugged in between two matches: `power`): kept after a whole
+   * match without a step.
+   */
+  trial: { to: GraphicsValues; startPlayedMs: number; power: boolean } | null;
+  /**
+   * The try did not hold: the guard stepped back down from it — the next try
+   * waits twice as long, except after a step taken on battery (`power`).
+   */
+  failedTrial: { power: boolean } | null;
+  /** Power state when the guard's last step was taken (stored with it once kept). */
+  stepPower: PowerState;
 }
 
 export interface DetectionProgress {
@@ -151,8 +184,17 @@ export class GraphicsController {
   private guardSession: GuardSession | null = null;
   /** The guard gets the frames (recomputed at every sync: cheap per frame). */
   private guardArmed = false;
-  /** True during the constructor: the session's START — the only moment a rung back up is tried. */
+  /**
+   * True during the constructor: the session's START — where a rung back up
+   * is tried (and, plugged in, between two matches: see tryPowerTrial).
+   */
   private starting = true;
+  /** Battery or charger (settings/Power; `?diag=nopowerguard`: always unknown). */
+  private readonly power: PowerSource;
+  /** No match under way at the last frame (the session starts in the menu). */
+  private between = true;
+  /** Plugged in (or a try kept) during a match: a rung back up may be tried at the next frame between matches. */
+  private powerTrialWanted = false;
 
   constructor(
     private readonly store: SettingsStore,
@@ -169,9 +211,11 @@ export class GraphicsController {
     this.defer = options.defer ?? ((fn) => void setTimeout(fn, 0));
     this.guardConfig = options.guardConfig ?? AUTO_GUARD;
     this.now = options.now ?? (() => Date.now());
+    this.power = experiments.has("nopowerguard") ? UNKNOWN_POWER : (options.power ?? browserPower());
     store.subscribe(() => this.sync());
     host.onDisplayDensityChange = () => this.sync();
-    host.addFrameListener?.((t, cpuMs, play) => this.onFrame(t, cpuMs, play));
+    host.addFrameListener?.((t, cpuMs, play, between) => this.onFrame(t, cpuMs, play, between));
+    this.power.subscribe((state) => this.onPowerChange(state));
     this.sync();
     this.starting = false;
   }
@@ -366,6 +410,7 @@ export class GraphicsController {
       detected: { ...values },
       guardRetryAt: null,
       guardUpFails: 0,
+      guardPower: [],
     };
   }
 
@@ -411,14 +456,25 @@ export class GraphicsController {
     if (!auto) return;
     let s = this.guardSession;
     if (!s || s.at !== auto.at || s.map !== this.mapId) {
-      s = { map: this.mapId, at: auto.at, guard: new AutoGuard(this.guardGoal(), this.guardConfig), live: null, trial: null, trialFailed: false };
+      s = {
+        map: this.mapId,
+        at: auto.at,
+        guard: new AutoGuard(this.guardGoal(), this.guardConfig),
+        live: null,
+        trial: null,
+        failedTrial: null,
+        stepPower: "unknown",
+      };
       this.guardSession = s;
-      // The START of a session, values lowered by the guard in an earlier one, the wait over: ONE rung back up.
-      const up = this.starting ? this.recoveryRung(auto) : null;
+      // The START of a session, values lowered by the guard in an earlier one — the wait over, or the
+      // step on top taken on battery and the charger plugged in now: ONE rung back up.
+      const why = this.starting ? retryReason(auto, this.power.state, this.now()) : null;
+      const up = why ? this.recoveryRung(auto) : null;
       if (up) {
         s.live = { ...up };
-        s.trial = { to: { ...up }, startPlayedMs: 0 };
-        console.info(`[graphics] Auto guard: trying one step higher again this session (${describeChange(auto.values, up, this.host.graphicsCaps)}).`);
+        s.trial = { to: { ...up }, startPlayedMs: 0, power: why === "power" };
+        const what = why === "power" ? "plugged in — trying one step higher again (a step taken on battery)" : "trying one step higher again this session";
+        console.info(`[graphics] Auto guard: ${what}: ${describeChange(auto.values, up, this.host.graphicsCaps)}.`);
       }
     }
     if (!s.guard.active) return;
@@ -434,12 +490,12 @@ export class GraphicsController {
   }
 
   /**
-   * The rung ONE step back up from a result the guard lowered in an earlier
-   * session, once its wait is over (guardRetryAt) — never above the
-   * detection's own answer. Null: nothing to try.
+   * The rung ONE step back up from a result the guard lowered — never above
+   * the detection's own answer (when it is due: retryReason). Null: nothing
+   * to try.
    */
   private recoveryRung(r: AutoResult): GraphicsValues | null {
-    if (!r.detected || (r.guardSteps ?? 0) <= 0 || r.guardRetryAt == null || this.now() < r.guardRetryAt) return null;
+    if (!r.detected || (r.guardSteps ?? 0) <= 0) return null;
     const boot = this.host.graphicsBoot;
     const caps = this.host.graphicsCaps;
     const ladder = buildLadder(boot, this.env(), caps);
@@ -452,7 +508,12 @@ export class GraphicsController {
     return this.guardSession?.trial != null && this.guardLive() !== null;
   }
 
-  private onFrame(t: number, cpuMs: number, play: boolean): void {
+  private onFrame(t: number, cpuMs: number, play: boolean, between: boolean): void {
+    this.between = between === true;
+    if (this.powerTrialWanted && this.between) {
+      this.powerTrialWanted = false;
+      this.defer(() => this.tryPowerTrial());
+    }
     if (!this.guardArmed) return;
     const s = this.guardSession!;
     const v = s.guard.onFrame(t, cpuMs, play);
@@ -466,6 +527,43 @@ export class GraphicsController {
       s.trial = null;
       this.defer(() => this.guardKeepTrial(s, trial.to));
     }
+  }
+
+  /** The charger plugged in (or the API's first answer): steps taken on battery may go — between two matches. */
+  private onPowerChange(state: PowerState): void {
+    if (state !== "mains") return;
+    // A try already under way (the session's start, before the power was known) undoes a battery step:
+    // judged as such from now on (no doubled wait if it fails).
+    const s = this.guardSession;
+    const trial = s ? s.trial : null;
+    const auto = this.autoResult();
+    if (s && trial && auto && s.at === auto.at && topStepPower(auto) === "battery") trial.power = true;
+    if (this.between) this.defer(() => this.tryPowerTrial());
+    else this.powerTrialWanted = true; // never mid-match: at the next frame between two matches
+  }
+
+  /**
+   * Plugged in, no match under way: ONE rung back up when the step on top was
+   * taken on battery — the same try as at a session's start (kept after a
+   * whole match at 60, stepped down otherwise), with no wait.
+   */
+  private tryPowerTrial(): void {
+    if (this.power.state !== "mains" || !this.between || this.detection || this.record.graphics.preset !== "auto") return;
+    this.refreshGuard();
+    const s = this.guardSession;
+    const auto = this.autoResult();
+    if (!s || !auto || s.at !== auto.at || s.map !== this.mapId || s.trial || s.live) return;
+    if (retryReason(auto, "mains", this.now()) !== "power") return;
+    const up = this.recoveryRung(auto);
+    // The frames seen so far were of the rung below: the guard watches afresh (also after a stop at the
+    // floor) — unless its frames did not follow the graphics this session (a try could not be judged).
+    if (!up || !s.guard.restart()) return;
+    s.live = { ...up };
+    s.trial = { to: { ...up }, startPlayedMs: s.guard.playedMs, power: true };
+    console.info(
+      `[graphics] Auto guard: plugged in — trying one step higher again (a step taken on battery): ${describeChange(auto.values, up, this.host.graphicsCaps)}.`,
+    );
+    this.sync();
   }
 
   private onGuardVerdict(s: GuardSession, v: GuardVerdict): void {
@@ -504,8 +602,8 @@ export class GraphicsController {
     if (this.guardSession !== s || !s.guard.active) return;
     if (s.trial) {
       // The rung tried one step up did not hold: back down (to the stored rung), the next try later.
+      s.failedTrial = { power: s.trial.power };
       s.trial = null;
-      s.trialFailed = true;
     }
     const from = this.effective();
     const to = this.guardStepTarget();
@@ -514,6 +612,7 @@ export class GraphicsController {
       this.refreshGuard();
       return;
     }
+    s.stepPower = this.power.state;
     s.live = { ...to };
     s.guard.applied();
     this.sync(); // → the game applies it (no shader compile: ladder rungs only)
@@ -529,17 +628,24 @@ export class GraphicsController {
     const goal = s.guard.goalFps;
     const cfg = this.guardConfig;
     const now = this.now();
-    const trialFailed = s.trialFailed;
-    s.trialFailed = false;
+    const failed = s.failedTrial;
+    s.failedTrial = null;
+    const power = s.stepPower;
     this.store.update((d) => {
       const r = d.graphics.auto[map];
       if (!r || r.at !== s.at) return; // replaced meanwhile (a new detection)
       if (sameValues(r.values, values)) {
-        // Back on the stored rung after a try one step up that did not hold: the next try waits twice as long.
-        if (trialFailed) {
+        // Back on the stored rung after a try one step up that did not hold.
+        if (failed && !failed.power) {
+          // The next try waits twice as long.
           const fails = (r.guardUpFails ?? 0) + 1;
           d.graphics.auto[map] = { ...r, guardUpFails: fails, guardRetryAt: now + retryDelay(fails, cfg) };
+        } else if (failed && power === "mains") {
+          // A step taken on battery that does not hold on the charger either: a mains step from now on —
+          // the normal wait, not doubled (that try was no failure of the schedule's).
+          d.graphics.auto[map] = { ...r, guardPower: relabelTopPower(r.guardPower, "mains"), guardRetryAt: now + retryDelay(r.guardUpFails ?? 0, cfg) };
         }
+        // (A battery step's try that failed on battery again — unplugged meanwhile: unchanged, tried again once plugged in.)
         return;
       }
       const steps = (r.guardSteps ?? 0) + 1;
@@ -550,10 +656,13 @@ export class GraphicsController {
         guardSteps: steps,
         guardAt: now,
         guardRetryAt: now + retryDelay(r.guardUpFails ?? 0, cfg),
+        guardPower: pushStepPower(r.guardPower, power, steps),
         summary: guardSummaryText(values, steps, v.before ?? v.fps, goal, caps),
       };
     });
     this.dropLiveIfStored(s, values);
+    // Plugged in meanwhile, the step kept taken on battery: tried again at the next frame between two matches.
+    if (this.power.state === "mains") this.powerTrialWanted = true;
   }
 
   /** The rung tried one step up held a whole match: stored (one guard step less), the next try another day. */
@@ -575,10 +684,13 @@ export class GraphicsController {
         guardAt: now,
         guardUpFails: 0,
         guardRetryAt: steps > 0 ? now + retryDelay(0, cfg) : null,
+        guardPower: popStepPower(r.guardPower, steps),
         summary: guardRaisedText(to, steps, goal, caps),
       };
     });
     this.dropLiveIfStored(s, to);
+    // Still plugged in, the next step down taken on battery too: tried at the next frame between two matches.
+    if (this.power.state === "mains") this.powerTrialWanted = true;
   }
 
   /** Stored = on screen: nothing left to override (same values: nothing changes on screen). */

@@ -14,6 +14,8 @@
  * most — the very images the old LOW / HIGH presets produced.
  */
 
+import type { PowerState } from "./Power";
+
 export type PresetId = "bas" | "moyen" | "eleve" | "ultra";
 /** What the player picked in the preset row (ids: "bas" = Low, "moyen" = Medium, "eleve" = High). */
 export type PresetChoice = "auto" | PresetId | "custom";
@@ -280,6 +282,14 @@ export interface AutoResult {
   guardRetryAt?: number | null;
   /** Tries one rung up that failed in a row (each doubles the wait before the next). */
   guardUpFails?: number;
+  /**
+   * Power state when each kept step was taken (settings/Power), the most
+   * recent last — the step on top is the one a try one rung up undoes:
+   * "battery" = taken on the laptop's battery, tried again at once on the
+   * charger; "mains" / "unknown" (or no entry: kept before power awareness)
+   * = the normal wait.
+   */
+  guardPower?: PowerState[];
 }
 
 export interface GraphicsChoice {
