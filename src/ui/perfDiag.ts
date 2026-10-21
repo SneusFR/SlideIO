@@ -60,6 +60,7 @@ export function perfExperiments(search: string = typeof location === "undefined"
  *
  *   nohudskip       the HUD display-state commands repeated every frame are sent again
  *                   (hud/host/HudProxies.ts)
+ *   nouniformcache  three.js's own uniform caches and setters (effects/UniformCacheKinds.ts)
  *
  * DEV builds expose the live switches as `window.__cpuOpt` (`__cpuOpt.hudskip.on = false`): a
  * headless check compares both paths in the SAME session, on the same frame.
