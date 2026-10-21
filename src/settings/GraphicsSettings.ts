@@ -14,6 +14,8 @@
  * most — the very images the old LOW / HIGH presets produced.
  */
 
+import type { PowerState } from "./Power";
+
 export type PresetId = "bas" | "moyen" | "eleve" | "ultra";
 /** What the player picked in the preset row (ids: "bas" = Low, "moyen" = Medium, "eleve" = High). */
 export type PresetChoice = "auto" | PresetId | "custom";
@@ -262,10 +264,32 @@ export interface AutoResult {
   complete: boolean;
   /** Shadow mode of the session that measured (a result that changes it is checked again after the reload). */
   measuredShadows: ShadowMode;
-  /** French summary shown in the page. */
+  /** Summary shown in the page (English; rewritten by the in-match guard when it lowers the values). */
   summary: string;
   /** Algorithm version (a newer detection logic detects again). */
   version: number;
+  /**
+   * In-match guard (settings/AutoGuard): rungs it has taken these values down
+   * since the detection, each one kept because it helped (0 / absent = the
+   * detection's answer as is). Only a new detection raises them again.
+   */
+  guardSteps?: number;
+  /** Date.now() of the guard's last kept step (null / absent = none). */
+  guardAt?: number | null;
+  /** The detection's own answer: the guard climbs back towards it, never above (null / absent = `values`). */
+  detected?: GraphicsValues | null;
+  /** Date.now() from which ONE rung back up may be tried, at the start of a session (null = nothing to try). */
+  guardRetryAt?: number | null;
+  /** Tries one rung up that failed in a row (each doubles the wait before the next). */
+  guardUpFails?: number;
+  /**
+   * Power state when each kept step was taken (settings/Power), the most
+   * recent last — the step on top is the one a try one rung up undoes:
+   * "battery" = taken on the laptop's battery, tried again at once on the
+   * charger; "mains" / "unknown" (or no entry: kept before power awareness)
+   * = the normal wait.
+   */
+  guardPower?: PowerState[];
 }
 
 export interface GraphicsChoice {
@@ -276,7 +300,10 @@ export interface GraphicsChoice {
   auto: Record<string, AutoResult>;
 }
 
-/** Version of the detection logic: bump it to detect again for every "auto" player once. */
+/**
+ * Version of the detection logic: bump it to detect again for every "auto" player once.
+ * (The in-match guard does not change the detection: its fields are optional in the record.)
+ */
 export const AUTO_TUNE_VERSION = 1;
 
 /** What the "auto" choice resolves to before (or without) a usable detection. */
@@ -328,6 +355,8 @@ export function effectivePreset(choice: GraphicsChoice, gpu: GpuHint, map: strin
  * The choice after the player edited one value: "Custom" with the
  * current effective values and the edit — or, when the result is exactly a
  * named preset (an edit undone), that preset. The detections stay stored.
+ * `base`: the values on screen when they differ from the stored choice's (a
+ * step of the in-match guard not stored yet — GraphicsController.effective).
  */
 export function editChoice<K extends GraphicsKey>(
   choice: GraphicsChoice,
@@ -336,8 +365,9 @@ export function editChoice<K extends GraphicsKey>(
   env: DisplayEnv,
   gpu: GpuHint,
   map: string,
+  base: GraphicsValues = effectiveValues(choice, env, gpu, map),
 ): GraphicsChoice {
-  const values = { ...effectiveValues(choice, env, gpu, map), [key]: value } as GraphicsValues;
+  const values = { ...base, [key]: value } as GraphicsValues;
   const named = matchPreset(values, env);
   if (named) return { ...choice, preset: named };
   return { ...choice, preset: "custom", custom: values };

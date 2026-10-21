@@ -102,7 +102,8 @@ opérations de skinning par rayon).
 33. **Le document du HUD a une origine opaque** : pas de `localStorage` ni de cookies (les réglages viennent de la page par commande, comme `crosshair.settings`) ; ses scripts, CSS et polices sont des requêtes CORS (`vercel.json` : `Access-Control-Allow-Origin` sur `/assets/*`). Il ne reçoit jamais d'entrée (clavier, souris, focus) : ce qui réagit au joueur reste dans la page du jeu. Ne jamais masquer `#hud-frame` (`display` / `visibility`) : le HUD masque son propre contenu.
 34. **Mesurer le HUD** : la ligne `HUD:` donne où il tourne (`iframe isolée` ou `dans la page (raison)`), ses FPS et son travail par frame (JS des commandes, rendu du navigateur) ; `Browser:` est maintenant celui de la page du jeu seule. `?hud=inline` compare avec l'ancien chemin. `tools/hud-preview/runtime-harness.mjs` compare l'iframe, la page et l'ancien HUD pixel par pixel.
 35. **Nouvelle option graphique** (page SETTINGS) : sa valeur dans `GraphicsValues` (`settings/GraphicsSettings.ts` : presets, validation, libellé dans `settings/labels.ts`), son application dans `Game.applyLiveValues` — **en direct seulement si elle ne change aucun programme** (taille, échantillons, visibilité, paramètre de texture, uniform) ; sinon elle va dans `reloadChanges` (« Apply & reload »). Une option qui active / coupe une passe ou une variante (FXAA ⇄ MSAA) : les deux variantes compilées au chargement (`warmAlternateOutput`), vérifié par `tools/perf/settings-page-check.mjs` (aucun programme compilé par un changement en direct). Low et High restent **exactement** les anciens LOW et HIGH (`scripts/test-graphics-settings.mts`). L'interface du jeu est en anglais : libellés dans `settings/labels.ts`, en casse normale (les majuscules viennent du CSS).
-36. **Détection automatique** : elle juge sur les **intervalles entre images** sous charge (+30 % de pixels), jamais sur des requêtes de chronométrage GPU (elles comptent les temps morts du GPU et font flusher Chrome : elles changent ce qu'elles mesurent). Une option ne rejoint l'échelle (`settings/AutoTune.ts`) que si elle s'applique en direct, à sa place dans l'ordre « le moins visible d'abord », et jamais sous le plancher (l'ancien LOW). Changer la logique de la détection = incrémenter `AUTO_TUNE_VERSION` (chaque joueur « Auto » est mesuré à nouveau, une fois).
+36. **Détection automatique** : elle juge sur les **intervalles entre images** sous charge (+30 % de pixels **sur tout GPU, puces intégrées comprises** — `AUTO_TUNE.integratedMarginPixels` ; pas de baisse de l'image sans nécessité absolue : ce que le menu ne voit pas est le travail du garde, règle 38 ; `?diag=tunemargin50` = la variante +50 %, l'A/B à essayer si le garde descend trop souvent sur le terrain), jamais sur des requêtes de chronométrage GPU (elles comptent les temps morts du GPU et font flusher Chrome : elles changent ce qu'elles mesurent). Une option ne rejoint l'échelle (`settings/AutoTune.ts`) que si elle s'applique en direct, à sa place dans l'ordre « le moins visible d'abord », et jamais sous le plancher (l'ancien LOW). Changer la logique de la détection = incrémenter `AUTO_TUNE_VERSION` (chaque joueur « Auto » est mesuré à nouveau, une fois).
+38. **Garde « Auto » en partie** (`settings/AutoGuard.ts`) : tous ses seuils sont dans `AUTO_GUARD`, chacun avec sa raison ; il ne juge que le **jeu au premier plan** (pointeur verrouillé, page visible, partie en cours, pas de détection) et ne fait **jamais remonter l'image au cours d'une session** — ne pas ajouter de « remontée quand ça va mieux » en pleine partie : les images d'un barreau plus bas ne disent rien du barreau au-dessus (un écran vsync montre 60 FPS à 10 ms comme à 16 ms), c'est l'oscillation assurée. La seule remontée : **un** barreau, au **début** d'une session suivante, à partir du lendemain (puis attente doublée après chaque essai raté), jamais au-dessus de la réponse de la détection, gardé après une partie entière à 60 FPS — sauf pour un cran **pris sur batterie** (`settings/Power.ts`, quand le navigateur le dit) : sur secteur il est réessayé tout de suite, au début de la session ou **entre deux parties** (jamais en pleine partie), mêmes règles, sans attente doublée s'il ne tient pas. Comme il change l'échelle **en pleine partie**, chaque barreau de l'échelle doit rester applicable sans compiler de programme (règle 35) et sans trou d'image (le pas est appliqué entre deux images : `GraphicsController.defer`, comme `Game.pendingProbe` pour la détection). Jamais pour un préréglage choisi (Low, High, Custom…).
 37. **Anciennes clés** `beanzo.graphicsQuality` / `beanzo.fpsCap` : toujours lues et écrites (pont avec un build plus ancien et avec les scripts de banc) — une valeur écrite par quelqu'un d'autre depuis le dernier passage du jeu est reprise au chargement suivant (`adoptLegacyChanges`). Les réglages du joueur vivent dans **un** enregistrement, `slideio.settings`.
 38. **Animation CSS infinie dans le HUD** (respiration, balancement, rotation, clignotement) : `will-change: transform` (ou `opacity`) sur l'élément animé — sans lui, Chrome peut le re-rastériser **à chaque frame** à l'échelle animée (le portrait `buddy-idle` : 60 → 45-49 FPS en 1080p sur Iris Xe, voir la 12ᵉ passe). Pas d'animation CSS continue sur un enfant de SVG (`<path>`, `<g>` : repeint à chaque frame) hors d'une petite couche à lui (`will-change` sur le `<svg>`). Le banc headless ne chiffre pas ce coût (pas de vrai GPU) : y compter les rastérisations par frame (traces), et mesurer les FPS en partie sur une vraie machine, HUD normal contre élément masqué (`?hud=inline`, puis `visibility: hidden` dans la console).
 
@@ -422,7 +423,100 @@ le joueur garde la main. Sur les machines simulées d'après les mesures de la 1
 moyenne sur un écran 144 Hz garde High à plus de 60 FPS au lieu de descendre pour 144 ; une petite
 carte qui tient 60 FPS en High avec peu de marge garde High — et sur un écran 144 Hz, où chaque image
 de High lui prend trois rafraîchissements (48 FPS), elle descend juste ce qu'il faut pour 60. Le résumé
-affiché dit la marge réellement mesurée et quand le rendu d'origine a dû baisser.
+affiché dit la marge réellement mesurée et quand le rendu d'origine a dû baisser. (Ce modèle de l'Iris Xe
+était optimiste : le vrai portable a choisi 90 % du natif, 2160 × 1044 ; le modèle « calé sur le terrain »
+ci-dessous reproduit ce choix.)
+
+### « Auto » en partie : la marge de la détection et le garde (rapport de terrain du portable du travail)
+
+Sur le portable du travail (Iris Xe, Chrome, ~1874 × 956), « Auto » tenait 60 FPS au début de la partie,
+puis non. La détection mesure le menu — une vue fixe, une puce froide dans sa fenêtre turbo, un thread
+principal sans IA ni physique — et garde sa réponse pour toujours. Une partie ajoute les bots, leurs
+effets et le HUD, occupe le processeur (sur ces puces processeur et GPU partagent **une** enveloppe de
+puissance), et après une à trois minutes la puce revient à sa puissance soutenue (encore moins sur
+batterie ou avec un plan d'alimentation d'entreprise). Sur un écran 60 Hz, 10 % au-dessus des 16,7 ms
+d'une image coûtent déjà ≈ 5 FPS. La marge de la détection reste celle de toujours, le garde fait le
+reste, et ce que la détection ne peut pas voir :
+
+1. **La marge de la détection reste +30 % de pixels sur tout GPU, puces intégrées comprises**
+   (`AUTO_TUNE.integratedMarginPixels` = 1,3, le rendu d'origine gardé avec +15 % ; `AUTO_TUNE_VERSION`
+   reste 1 : la détection ne change pas, aucun joueur « Auto » n'est mesuré à nouveau — les champs du garde
+   sont facultatifs dans l'enregistrement). Règle du propriétaire : pas de baisse de l'image sans nécessité
+   absolue ; et depuis le correctif CSS du HUD, le vrai portable tient 60 FPS **au natif** dans des crash
+   tests de 5 min à 8 joueurs sur secteur (0,03-0,05 % d'images en retard). Ce que le menu ne peut pas voir
+   — puce chaude, batterie ou plan d'alimentation d'entreprise, partie lourde, HUD (point 3) — est le travail
+   du garde (point 2), qui ne baisse l'image que là où il le faut. Variante essayée, gardée en A/B : +50 %
+   sur les puces intégrées (une part de l'image n'y suit pas les pixels — sommets des ~190 k triangles de la
+   carte, clear, soumission — : +30 % de pixels n'y valent que ≈ +20 % de temps) ; sur le modèle calé sur
+   le terrain (`irisXeField` : la règle choisit 90 % du natif, comme le vrai portable), elle choisit **85 %**
+   (2040 × 986 à 1920 × 928 CSS, 125 %). **Si le garde descend trop souvent sur le terrain** : essayer
+   `?diag=tunemargin50`, puis « Run again ». « Auto » ne dépasse jamais 100 % du natif, sur aucun GPU (le
+   haut de l'échelle).
+2. **Le garde en partie** (`settings/AutoGuard.ts`, « Auto » seulement) : il regarde les images du **jeu
+   au premier plan** (pointeur verrouillé, page visible, partie en cours) et, si 60 FPS ne tiennent plus
+   **durablement** — sur les 10 dernières secondes de jeu, des images livrées sous 57 FPS en moyenne (les
+   1,5 % les plus lentes écartées : saccades isolées) **et** pendant au moins 7 de ces secondes (une rafale
+   n'est pas une machine trop juste) — il descend l'échelle de la détection d'un cran significatif
+   (résolution, anticrénelage, taille d'une ombre dynamique ; filtrage et densité de neige, ≈ 1-3 % chacun,
+   partent avec lui), **en direct** (aucune compilation, appliqué entre deux images), avec une ligne
+   discrète en bas de l'écran : « Graphics lowered to hold 60 FPS (resolution 90% → 85%) ». Le cran est
+   ensuite jugé sur les 6 s suivantes : gardé (enregistré comme résultat « Auto » de la carte, résumé de la
+   page mis à jour) s'il a aidé, un cran de plus s'il a aidé sans suffire ; s'il n'a rien changé (plafond
+   d'images du navigateur — l'économiseur d'énergie de Chrome bloque à 30 —, processeur, processus GPU de
+   Chrome), le garde s'arrête pour la session et ce cran n'est **pas** enregistré. Les images que le
+   **processeur** a mises en retard (thread principal ≥ 90 % du budget) ne comptent pas : baisser les
+   graphismes ne les rendrait pas. Jamais de remontée **au cours d'une session** ; au début d'une session
+   suivante, à partir du lendemain, **un** barreau au-dessus est essayé (vers la réponse de la détection,
+   jamais au-delà) : gardé après une partie entière (4 min de jeu) sans cran, sinon le garde redescend
+   (comme avant, enregistré tel quel) et l'essai suivant attend deux fois plus (20 h, 40 h, 80 h… un mois
+   au plus) — les conditions changent entre deux sessions (chargeur branché, pièce plus fraîche, HUD plus
+   léger après une mise à jour). Jamais sous le plancher, jamais pour un préréglage choisi. Tous les seuils
+   sont dans `AUTO_GUARD`, avec leur raison.
+3. **Ce que la détection ne voit pas : le HUD.** Elle mesure au menu (`#hud.menu-active`) ou en pause
+   (`body.game-paused`) : le HUD de la partie est caché, sa rastérisation et sa composition (processus GPU de
+   Chrome, même puce) n'entrent dans aucune mesure. Mesuré sur le portable (vraie carte) : en partie, au natif,
+   45-46 FPS avec l'iframe du HUD visible contre 59,9 FPS sans, pour le même temps WebGL (~12 ms) et le même
+   CPU (6-8 ms) — l'animation de repos du Bean Buddy re-rastérisée à chaque image (corrigée côté HUD). Le
+   garde voit ces images-là : elles sont en retard sans que le thread principal en soit la cause, il les
+   compte ; baisser la 3D libère la puce partagée (sur ce portable : 90 % tenait une partie entière, ≈ 9 images
+   en retard en 5 min ; 100 % tombait à 45-48 FPS) — le cran 100 → 90 % est donc gardé, et l'essai d'un
+   barreau au-dessus, le lendemain, le rend quand le HUD a été allégé.
+4. **Batterie ou secteur** (`settings/Power.ts`). Le propriétaire : ses chutes arrivent **sur batterie**,
+   branché c'est stable — mesuré sur son portable, même scène : thread principal ≈ 2,8× plus lent par image
+   sur batterie (7 ms contre 2,5 ms), GPU ≈ 20 % plus lent. Un cran pris sur batterie restait enregistré
+   jusqu'à l'essai d'une session suivante (20 h et plus) : la session suivante **sur secteur** commençait un
+   barreau trop bas pour rien. Le garde lit donc l'API Battery Status (`navigator.getBattery()` : Chrome /
+   Edge, pages https ; détectée, **jamais attendue** — « inconnu » tant qu'elle n'a pas répondu, et pour de
+   bon sans elle : Firefox, Safari, http, refus, `?diag=nopowerguard` = le comportement d'avant). Chaque cran
+   gardé enregistre l'état de l'alimentation quand il a été pris (`guardPower` : `battery` si
+   `charging === false`, `mains`, `unknown` ; le dernier = le cran du dessus, celui qu'un essai défait).
+   Sur secteur, un cran du dessus pris sur batterie est réessayé **tout de suite** : au début de la session,
+   ou quand le chargeur est branché (`chargingchange`) **entre deux parties** — au menu ou à l'écran de fin,
+   jamais en pleine partie (branché pendant une partie : à la fin de celle-ci). Mêmes règles : gardé après
+   une partie entière à 60 FPS (puis le cran suivant pris sur batterie, au prochain passage par l'écran de
+   fin ou le menu), redescendu sinon — **sans attente doublée** ; un cran qui ne tient pas non plus sur
+   secteur devient un cran « secteur » (attente normale à partir de là, pas un essai à chaque session). Un
+   cran pris sur secteur, ou alimentation inconnue : l'attente normale (20 h, puis doublée après chaque
+   essai raté). Un ordinateur fixe répond `charging: true` (pas de batterie) : secteur. Pas d'essai si un
+   cran a été jugé inutile pendant la session (la cadence n'y suit pas les graphismes : un essai ne
+   pourrait pas être jugé).
+
+Machines simulées (parties de 5 min, combats et chauffe — `scripts/test-graphics-autotune.mts`) : le
+portable du travail sur batterie (puce 32 % plus lente après 1-3 min) choisit 90 % au menu ; sans garde
+(`?diag=noguard`) il passe **42 %** du temps sous 57 FPS (pire tranche de 5 s à 48 FPS) ; avec le garde,
+**deux** crans dans la première partie (90 → 85 % à 2 min 28, 85 → 80 % à 3 min 05), enregistrés : **8 %**
+du temps sous 57 FPS, puis **3 %** à la partie suivante (au plancher, puce chaude dès le début ; pire
+tranche 56,6 FPS). Sur batterie puis branché (session suivante, 2 h plus tard) : 80 → 85 → 90 %, un
+barreau par partie, chacun gardé après une partie entière à 60 FPS — sans attendre le lendemain. Le
+portable personnel sur secteur garde 90 % (60 FPS, aucun cran ; l'A/B `tunemargin50` lui aurait coûté un
+cran de résolution pour rien : 85 %). Le PC RTX 2080 Super, une machine limitée par le processeur, une
+machine à saccades (kills, processus GPU) : aucun cran. Une GTX 1050 qui garde High au menu passe en MSAA 2× dans une partie lourde.
+L'économiseur d'énergie (30 FPS) : un cran jugé inutile, non enregistré, garde arrêté. Sur un écran
+60 Hz, le garde se déclenche à partir de ≈ 17,6 ms de GPU par image (≈ 55-56 FPS livrés) ; 17,0 ms
+(58 FPS) ne coûtent jamais un cran. Le cas du HUD (6 ms de travail GPU par image que la 3D ne réduit pas,
+jamais vu au menu) sur une réponse à 100 % : un cran à 13 s de partie (100 → 90 %), gardé ; le lendemain,
+HUD allégé, la session suivante essaie 100 % et le garde après une partie entière ; HUD toujours lourd :
+l'essai redescend à 90 % après ~13 s de jeu, et le suivant attend 40 h.
 
 ## Vérifier sur une machine
 
@@ -453,6 +547,25 @@ c'est le GPU (ou le processus GPU du navigateur).
   inchangés = CPU et GPU travaillent en parallèle) ; `nopost` = Givre dessiné directement dans
   le canvas, sans cible HDR ni passe de sortie ; `empty` = plus aucun rendu 3D (ce qui reste =
   le coût propre de la page). Jamais pour jouer.
+- **Préréglage Auto** (`?diag=` aussi) : `noguard` = pas de garde en partie (« Auto » garde la
+  réponse de la détection quelle que soit la cadence du match : l'ancien comportement) ;
+  `nopowerguard` = le garde sans la batterie (l'API Battery Status jamais lue : chaque cran attend le
+  délai normal avant d'être réessayé, même un cran pris sur batterie une fois branché) ;
+  `tunemarginNN` = la détection mesure chaque barreau avec NN % de pixels en plus, sur tout GPU
+  (par défaut 30 partout ; `tunemargin50` = la variante +50 % des puces intégrées, **l'A/B à essayer
+  si le garde descend trop souvent sur le terrain** ; `tunemargin0` = aucune marge : une réponse trop
+  lourde pour les combats, exprès, pour voir le garde la corriger). Seule la détection suivante
+  (« Run again ») l'utilise. Quand le garde baisse l'image,
+  une ligne s'affiche en bas de l'écran (« Graphics lowered to hold 60 FPS (resolution 90% → 85%) »),
+  le résumé « Auto-detect » de la page SETTINGS le dit (« In a match this PC fell to about 53 FPS… »),
+  et un pas jugé inutile (la cadence ne suit pas les graphismes : plafond du navigateur, processeur)
+  laisse une ligne `[graphics] Auto guard: …` dans la console. Le garde en cours se lit aussi dans la
+  console en DEV : `__settings.controller.guardPhase` (`watch`, `verify`… ; `null` = il ne tourne pas).
+  Batterie : un essai d'un barreau au-dessus laisse `[graphics] Auto guard: plugged in — trying one step
+  higher again (a step taken on battery): …` (ou `… this session: …` pour l'essai normal) ; en DEV,
+  `__settings.controller.guardTrying` et, dans l'enregistrement, `guardPower` (l'alimentation de chaque
+  cran). À vérifier sur le portable : une partie sur batterie qui fait descendre l'image, puis le chargeur
+  branché au menu → la ligne de console, l'image d'un barreau au-dessus, gardée après une partie entière.
 - `Device:` : le GPU réellement utilisé par le navigateur. « SwiftShader »,
   « Basic Render Driver » ou « llvmpipe » = rendu logiciel (accélération matérielle
   désactivée) : aucune optimisation du jeu n'y changera rien.

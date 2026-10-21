@@ -148,3 +148,61 @@ export function describeValues(v: GraphicsValues, caps: Pick<GraphicsCaps, "comp
   if (v.particles === "reduced") parts.push("reduced particles");
   return parts.join(", ");
 }
+
+type ChangeCaps = Pick<GraphicsCaps, "composer" | "snow" | "halos" | "anisotropicTextures">;
+
+/**
+ * What changed between two sets of values, shortest first: "resolution 90%
+ * → 85%", "MSAA 2× → FXAA, 4× → 1× filtering, light snow" (the in-match
+ * guard's notice). Only the settings this map uses.
+ */
+export function describeChange(from: GraphicsValues, to: GraphicsValues, caps: ChangeCaps): string {
+  const parts: string[] = [];
+  if (Math.abs(from.renderScale - to.renderScale) > 0.01) {
+    parts.push(`resolution ${formatPercent(from.renderScale)} → ${formatPercent(to.renderScale)}`);
+  }
+  const aaFrom = effectiveAntialiasing(from.antialiasing, caps);
+  const aaTo = effectiveAntialiasing(to.antialiasing, caps);
+  if (aaFrom !== aaTo) {
+    parts.push(aaTo === "none" ? "no anti-aliasing" : `${AA_LABELS[aaFrom]} → ${AA_LABELS[aaTo]}`);
+  }
+  if (from.shadows !== "off" && from.shadowQuality !== to.shadowQuality) {
+    parts.push(`shadows ${SHADOW_QUALITY_LABELS[from.shadowQuality].toLowerCase()} → ${SHADOW_QUALITY_LABELS[to.shadowQuality].toLowerCase()}`);
+  }
+  if (caps.anisotropicTextures && from.anisotropy !== to.anisotropy) {
+    parts.push(`${ANISOTROPY_LABELS[from.anisotropy]} → ${ANISOTROPY_LABELS[to.anisotropy]} filtering`);
+  }
+  if (caps.snow && from.snow !== to.snow) parts.push(to.snow === "off" ? "no snow" : `${SNOW_LABELS[to.snow].toLowerCase()} snow`);
+  if (caps.halos && from.halos !== to.halos) parts.push(to.halos ? "light halos" : "no halos");
+  if (from.particles !== to.particles) parts.push(`${PARTICLE_LABELS[to.particles].toLowerCase()} particles`);
+  return parts.join(", ");
+}
+
+/** The in-match notice of a guard step: one short line. */
+export function guardNoticeText(from: GraphicsValues, to: GraphicsValues, goalFps: number, caps: ChangeCaps): string {
+  const change = describeChange(from, to, caps);
+  return `Graphics lowered to hold ${goalFps} FPS${change ? ` (${change})` : ""}`;
+}
+
+/** The settings page's Auto summary once a rung tried one step back up held a whole match. */
+export function guardRaisedText(values: GraphicsValues, stepsLeft: number, goalFps: number, caps: ChangeCaps): string {
+  const where =
+    stepsLeft === 0
+      ? "back to the detected settings"
+      : stepsLeft === 1
+        ? "still one step under the detected settings"
+        : `still ${stepsLeft} steps under the detected settings`;
+  return (
+    `A whole match held ${goalFps} FPS again, so Auto raised the graphics one step (${where}): ` +
+    `${describeValues(values, caps)}. Run the detection again to measure from scratch.`
+  );
+}
+
+/** The settings page's Auto summary once the guard has kept a step (it replaces the detection's). */
+export function guardSummaryText(values: GraphicsValues, steps: number, fpsBefore: number, goalFps: number, caps: ChangeCaps): string {
+  const n = steps === 1 ? "one step" : `${steps} steps`;
+  return (
+    `In a match this PC fell to about ${Math.round(fpsBefore)} FPS, so Auto lowered the graphics ${n} to hold ${goalFps} FPS: ` +
+    `${describeValues(values, caps)}. Run the detection again to measure from scratch.`
+  );
+}

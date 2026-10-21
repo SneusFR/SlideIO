@@ -50,6 +50,7 @@ import {
 } from "../settings/GraphicsSettings";
 import { FrameMeter, type LiveStats } from "../settings/FrameMeter";
 import { Calibration, buildLadder, defaultRungIndex, tuneGoals, type TuneOutcome } from "../settings/AutoTune";
+import { showGraphicsNotice } from "../settings/GraphicsNotice";
 import type { AutoTuneOptions } from "../settings/GraphicsController";
 import { DebugHUD } from "../ui/DebugHUD";
 import { FrameSections } from "../ui/FrameSections";
@@ -3683,7 +3684,8 @@ export class Game {
     this.frameIntervalMs = 0;
     this.nextFrameAt = 0;
     const goals = tuneGoals(targetFps, defaultRungIndex(ladder, opts.defaultLook ?? ladder[ladder.length - 1]));
-    const calib = new Calibration({ apply: (v) => void (this.pendingProbe = v) }, ladder, goals);
+    // (opts.config: the thresholds for this GPU and the `?diag=tunemarginNN` A/B.)
+    const calib = new Calibration({ apply: (v) => void (this.pendingProbe = v) }, ladder, goals, opts.config);
     let resolve!: (o: TuneOutcome | null) => void;
     const promise = new Promise<TuneOutcome | null>((r) => (resolve = r));
     let progressDone = 0;
@@ -3734,6 +3736,26 @@ export class Game {
   /** True while a detection runs. */
   get autoTuning(): boolean {
     return this.tuning !== null;
+  }
+
+  /**
+   * Settings — every rendered frame (its start, its main-thread time) with
+   * whether it was FOCUSED PLAY: the match under the player's hands (pointer
+   * locked, page visible, match not over, no detection measuring) — the Auto
+   * guard (settings/AutoGuard) judges those frames only — and whether no
+   * match was under way at all (the menu, a match's end screen: where the
+   * guard may try a rung back up once the charger is plugged in).
+   */
+  addFrameListener(listener: (t: number, cpuMs: number, play: boolean, between: boolean) => void): () => void {
+    return this.gfxMeter.addListener((t, cpuMs) => {
+      const between = this.menuPreview !== null || this.matchOver;
+      listener(t, cpuMs, !between && this.tuning === null && this.input.pointerLocked && !document.hidden, between);
+    });
+  }
+
+  /** A short notice over the game (the Auto guard's step: settings/GraphicsNotice). */
+  showGraphicsNotice(text: string): void {
+    showGraphicsNotice(text);
   }
 
   /** Settings page "Performance panel" (the debug panel of this page). */
