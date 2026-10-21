@@ -861,6 +861,21 @@ await test("stretch: trimmed frame rate (lone hitches out), processor-late inter
   s.clear();
   for (let i = 0; i < 600; i++) s.push(40, true, 10_000);
   assert.equal(s.shareBelow(10, 57), null);
+  // Sliding for a long time on values right under a histogram bin's edge: what goes out is exactly what
+  // came in (no drift, no bin underflow) — the trimmed rate stays the window's.
+  s.clear();
+  const edge = [16.749999999, 33.249999999, 16.7500000001, 24.99999999];
+  const N = 200_000;
+  for (let i = 0; i < N; i++) s.push(edge[i % 4], false, 1000);
+  const k = s.frames;
+  let sum = 0;
+  for (let i = N - k; i < N; i++) sum += edge[i % 4];
+  assert.ok(k >= 43 && k <= 47, `${k}`);
+  assert.ok(Math.abs(s.durationMs - sum) < 1e-6, `${s.durationMs} vs ${sum}`);
+  assert.ok(Math.abs(s.trimmedFps(0) - (k * 1000) / sum) < 1e-6, `${s.trimmedFps(0)} vs ${(k * 1000) / sum}`);
+  // (and with the slowest 25 % trimmed: exactly the 33.25 ms ones out)
+  const kept = edge.filter((x) => x < 30);
+  assert.ok(s.trimmedFps(0.25) > 1000 / Math.max(...kept) && s.trimmedFps(0.25) < 1000 / Math.min(...kept));
 });
 
 await test("guard: a burst (2 s at 30 FPS in every 10 s — an explosion, a pile-up of bots) averages ≈ 54 FPS but is not sustained: no step", () => {
@@ -883,7 +898,7 @@ await test("guard: holds 60 → never a verdict; a GPU short of 60 for a sustain
   assert.equal(simulate(new GD.AutoGuard(50), 120, () => 18.5, { capHz: 50 }).length, 0);
 });
 
-await test("guard: where it triggers on a 60 Hz screen (GPU ms per frame → delivered FPS → step?) — from ≈ 17.8 ms (≈ 56 FPS)", () => {
+await test("guard: where it triggers on a 60 Hz screen (GPU ms per frame → delivered FPS → step?) — from ≈ 17.6 ms (≈ 55-56 FPS)", () => {
   const rows: string[] = [];
   let firstStep: number | null = null;
   for (const ms of [16.0, 16.5, 17.0, 17.3, 17.6, 17.8, 18.0, 18.5, 19.0, 20.0]) {
@@ -997,6 +1012,33 @@ await test("guard step: the next rung that really moves the frame time (resoluti
   }
 });
 
+await test("step back up: the exact undo of one guard step, never above the detection's answer; the wait doubles after each failed try", () => {
+  const dpr = 1.25;
+  const ladder = A.buildLadder(G.presetValues("bas", { dpr }), { dpr }, G.DEFAULT_CAPS);
+  const fx = ladder.findIndex((v) => v.antialiasing === "fxaa"); // 100 %, FXAA, 4× filtering, normal snow
+  const r90 = ladder.findIndex((v) => v.renderScale === 90);
+  const r85 = ladder.findIndex((v) => v.renderScale === 85);
+  // One step down from FXAA/100 % went to 90 % (fine knobs with it): one step up comes back to FXAA/100 %…
+  assert.equal(GD.guardStepIndex(ladder, ladder[fx]), r90);
+  assert.equal(GD.guardUpIndex(ladder, ladder[r90], ladder[fx]), fx);
+  // …but never above the detection's answer (here 100 % with 1× filtering and light snow).
+  assert.equal(GD.guardUpIndex(ladder, ladder[r90], ladder[r90 - 1]), r90 - 1);
+  // From 85 % one step up is 90 %, whatever the answer above it.
+  assert.equal(GD.guardUpIndex(ladder, ladder[r85], ladder[fx]), r90);
+  // At (or above) the answer: nothing to climb back to.
+  assert.equal(GD.guardUpIndex(ladder, ladder[fx], ladder[fx]), null);
+  assert.equal(GD.guardUpIndex(ladder, ladder[fx], ladder[r90]), null);
+  // Up then down is the identity on every rung a guard step can land on (no drift between the two directions).
+  for (let c = 1; c < ladder.length; c++) {
+    if (!ladder.some((_, k) => GD.guardStepIndex(ladder, ladder[k]) === c)) continue;
+    const up = GD.guardUpIndex(ladder, ladder[c], ladder[0]);
+    assert.ok(up !== null && up < c);
+    assert.equal(GD.guardStepIndex(ladder, ladder[up!]), c, `rung ${c}`);
+  }
+  const h = 3600_000;
+  assert.deepEqual([0, 1, 2, 3, 10].map((f) => GD.retryDelay(f) / h), [20, 40, 80, 160, 720]);
+});
+
 await test("guard texts: a short English notice of what changed, and the page's summary", () => {
   const caps = G.DEFAULT_CAPS;
   const dpr = 1.25;
@@ -1032,6 +1074,12 @@ interface Scene {
   focused?: (s: number) => boolean;
   /** Browser frame cap (Hz) from this second on — Chrome's energy saver: 30. */
   cap?: { hz: number; from: number };
+  /**
+   * GPU time per frame that does NOT follow the 3D render scale: the HUD's raster and compositing
+   * in the browser's GPU process (the real laptop: 59.9 → 45 FPS at native with the same WebGL time,
+   * before the HUD's CSS fix). Never in the menu (the HUD is hidden there): the detection never sees it.
+   */
+  hudMs?: number;
 }
 
 /** Engagements: calm stretches (spawn views, ≈ 0.78 of the menu's view — the field's 9.4 vs 12.4 ms) and fights up to `peak`. */
@@ -1167,7 +1215,9 @@ class SimGame {
       const cpu = Math.max(0.5, (scene.cpu ? scene.cpu(s, random) : 7) + (random() * 2 - 1) * m.jitter * 0.5);
       const gpu = Math.max(
         0.5,
-        m.gpu(this.values, megapixels(m, this.values)) * scene.load(s) * (scene.throttle ? scene.throttle(s) : 1) + (random() * 2 - 1) * m.jitter,
+        m.gpu(this.values, megapixels(m, this.values)) * scene.load(s) * (scene.throttle ? scene.throttle(s) : 1) +
+          (scene.hudMs ?? 0) +
+          (random() * 2 - 1) * m.jitter,
       );
       this.inFrame = true;
       this.listener?.(base + t, cpu, play);
@@ -1207,11 +1257,17 @@ class SimGame {
 const INTEL = "Intel(R) Iris(R) Xe Graphics · D3D11";
 
 /** A fresh profile (or `store`), the game simulated, the controller as main.ts builds it (+ the deferral queue). */
-function session(m: Machine & { gpuName: string }, boot: Values, store = new S.SettingsStore(memoryStorage()), extra: { experiments?: Set<string> } = {}) {
+function session(
+  m: Machine & { gpuName: string },
+  boot: Values,
+  store = new S.SettingsStore(memoryStorage()),
+  extra: { experiments?: Set<string>; now?: () => number } = {},
+) {
   const sim = new SimGame(m, boot);
   const ctl = new GC.GraphicsController(store, sim.host, () => ({ dpr: m.dpr }), () => m.hz, () => {}, isWeak, {
     experiments: extra.experiments ?? new Set(),
     defer: (fn) => void sim.queue.push(fn),
+    now: extra.now,
   });
   return { sim, ctl, store };
 }
@@ -1425,6 +1481,99 @@ await test("an edit on the settings page while a step is being judged starts fro
   assert.equal(edited.preset, "custom");
   assert.equal(edited.custom!.renderScale, onScreen.renderScale);
   assert.equal(edited.custom!.anisotropy, onScreen.anisotropy);
+});
+
+/** A quiet (AFK-like) match: the spawn views, no fight. */
+const afk = (hudMs: number): Scene => ({ load: () => 0.8, hudMs });
+const HOUR = 3600_000;
+
+/** The personal laptop with an "Auto" answer at 100 % (FXAA, 4×, normal snow), as the real one had at some point. */
+async function at100(now: () => number, store = new S.SettingsStore(memoryStorage())) {
+  const m = { ...irisXeField(), gpuName: INTEL };
+  const run = session(m, G.presetValues("bas", { dpr: 1.25 }), store, { experiments: new Set(["tunemargin0"]), now });
+  await run.ctl.runDetection("first");
+  return { m, run };
+}
+
+await test("the HUD's own drawing (hidden while the detection measures): WebGL fits, frames are late anyway → 100 % → 90 %, kept — as on the real laptop (100 %: 45-48 FPS, 90 %: 60)", async () => {
+  let clock = Date.parse("2026-10-21T12:00:00Z");
+  const now = () => clock;
+  const { run } = await at100(now);
+  const top = run.ctl.effective();
+  assert.equal(top.renderScale, 100);
+  // The WebGL frame alone fits (12 ms of 16.7); the HUD adds 6 ms of GPU-process work in matches only.
+  const r = run.sim.match(afk(6), 300, 31);
+  assert.equal(r.steps.length, 1, fmtMatch(r));
+  assert.match(run.sim.notices.at(-1)!.text, /resolution 100% → 90%/);
+  const stored = run.store.get().graphics.auto.GIVRE;
+  assert.equal(stored.values.renderScale, 90);
+  assert.equal(stored.guardSteps, 1);
+  assert.ok(G.sameValues(stored.detected!, top)); // the detection's answer, to climb back to
+  assert.equal(stored.guardRetryAt, clock + 20 * HOUR); // tried again from the next day on
+  assert.ok(r.steps[0] < 25, `${r.steps[0]} s`);
+  console.log(`      ${fmtMatch(r)}`);
+});
+
+await test("step back up: a LATER session tries one rung up (the HUD fixed meanwhile) — kept after a whole match at 60; never inside a session", async () => {
+  let clock = Date.parse("2026-10-21T12:00:00Z");
+  const now = () => clock;
+  const { m, run } = await at100(now);
+  run.sim.match(afk(6), 300, 31);
+  const store = run.store;
+  assert.equal(store.get().graphics.auto.GIVRE.values.renderScale, 90);
+  // Same session: never back up, even when the frames are fine again.
+  run.sim.match(afk(0), 300, 32);
+  assert.equal(run.ctl.effective().renderScale, 90);
+  // Next session too early (2 h later): no try.
+  clock += 2 * HOUR;
+  const early = session(m, G.presetValues("bas", { dpr: 1.25 }), store, { now });
+  assert.equal(early.ctl.effective().renderScale, 90);
+  assert.equal(early.ctl.guardTrying, false);
+  // The next day, the HUD fixed (1 ms): the session starts one rung up, and keeps it after a whole match.
+  clock += 20 * HOUR;
+  const next = session(m, G.presetValues("bas", { dpr: 1.25 }), store, { now });
+  assert.equal(next.ctl.guardTrying, true);
+  assert.equal(next.ctl.effective().renderScale, 100);
+  const r = next.sim.match(afk(1), 300, 33);
+  assert.equal(r.steps.length, 0, fmtMatch(r));
+  const kept = store.get().graphics.auto.GIVRE;
+  assert.equal(kept.values.renderScale, 100);
+  assert.equal(kept.guardSteps, 0);
+  assert.equal(kept.guardRetryAt, null); // back to the detection's answer: nothing left to try
+  assert.match(kept.summary, /^A whole match held 60 FPS again, so Auto raised the graphics one step \(back to the detected settings\): 100% resolution/);
+  assert.equal(next.ctl.guardTrying, false);
+  // Switching to Auto in the middle of a session never starts a try.
+  store.update((d) => {
+    d.graphics.auto.GIVRE = { ...d.graphics.auto.GIVRE, values: { ...d.graphics.auto.GIVRE.values, renderScale: 90, anisotropy: 1, snow: "legere" }, guardSteps: 1, guardRetryAt: clock - 1 };
+    d.graphics.preset = "bas";
+  });
+  store.update((d) => void (d.graphics.preset = "auto"));
+  assert.equal(next.ctl.guardTrying, false);
+  assert.equal(next.ctl.effective().renderScale, 90);
+});
+
+await test("step back up that does not hold (the HUD still heavy): stepped down again, stored as before, the next try waits twice as long", async () => {
+  let clock = Date.parse("2026-10-21T12:00:00Z");
+  const now = () => clock;
+  const { m, run } = await at100(now);
+  run.sim.match(afk(6), 300, 31);
+  const store = run.store;
+  clock += 21 * HOUR;
+  const s2 = session(m, G.presetValues("bas", { dpr: 1.25 }), store, { now });
+  assert.equal(s2.ctl.effective().renderScale, 100); // the try
+  const r = s2.sim.match(afk(6), 300, 34);
+  assert.equal(r.steps.length, 1, fmtMatch(r));
+  assert.match(s2.sim.notices.at(-1)!.text, /resolution 100% → 90%/);
+  const after = store.get().graphics.auto.GIVRE;
+  assert.equal(after.values.renderScale, 90);
+  assert.equal(after.guardSteps, 1);
+  assert.equal(after.guardUpFails, 1);
+  assert.equal(after.guardRetryAt, clock + 40 * HOUR);
+  // 21 h later: still waiting (40 h); 41 h later: one more try.
+  clock += 21 * HOUR;
+  assert.equal(session(m, G.presetValues("bas", { dpr: 1.25 }), store, { now }).ctl.guardTrying, false);
+  clock += 20 * HOUR;
+  assert.equal(session(m, G.presetValues("bas", { dpr: 1.25 }), store, { now }).ctl.guardTrying, true);
 });
 
 // ------------------------------------------------------------------ what the detection picks
