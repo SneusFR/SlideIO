@@ -19,8 +19,24 @@
  * made outside the game frame (network messages, menus).
  */
 
+/** Where frameStamp() reads the frame identity, when a document installs one (see setFrameStampSource). */
+let stampSource: (() => number) | null = null;
+
+/**
+ * The HUD's own document (src/hud/runtime/frameEntry.ts) draws frames only
+ * when something changes — no frame callback is always pending there, and
+ * document.timeline's time then runs ahead between frames. It installs a
+ * frame NUMBER instead, which moves once per frame actually drawn: what
+ * frameStamp() must tell apart. The game page keeps document.timeline (its
+ * own frame loop never stops).
+ */
+export function setFrameStampSource(source: (() => number) | null): void {
+  stampSource = source;
+}
+
 /** Timestamp of the frame being prepared — identical for every callback of one frame. */
 export function frameStamp(): number {
+  if (stampSource) return stampSource();
   const t = typeof document !== "undefined" ? document.timeline?.currentTime : undefined;
   return typeof t === "number" ? t : performance.now();
 }

@@ -39,6 +39,12 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *            by as much = they wait for each other (something serializes)
  *   noflush  no gl.flush() at the pass boundaries (Game.flushGpu): the old
  *            submission, to compare
+ *   nohudidle  the HUD document's old permanent frame loop: a main frame at
+ *            every refresh even at rest (src/hud/runtime/frameClock.ts) —
+ *            the debug line "HUD: … images/s" back at the display rate
+ *
+ * The HUD's own switches reach its document (the HUD iframe has its own
+ * address: src/hud/host/HudHost.ts hudDocumentUrl passes `?diag=` on).
  *
  * Several at once: `?diag=noflush,scale50`. Never for normal play.
  */

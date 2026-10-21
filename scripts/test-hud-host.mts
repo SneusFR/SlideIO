@@ -625,8 +625,14 @@ try {
     assert.equal(b.warns.length, 0);
   });
 
-  await test("?gpu reaches the HUD document (its plate paint times itself for the GPU line)", async () => {
-    for (const [search, url] of [["?gpu=draws", "/hud.html?gpu=draws"], ["?gpu", "/hud.html?gpu="], ["?join=1", "/hud.html"]]) {
+  await test("?gpu and ?diag reach the HUD document (plate paint GPU timer, the HUD's own A/B switches), nothing else", async () => {
+    for (const [search, url] of [
+      ["?gpu=draws", "/hud.html?gpu=draws"],
+      ["?gpu", "/hud.html?gpu="],
+      ["?join=1", "/hud.html"],
+      ["?diag=nohudidle,scale50", "/hud.html?diag=nohudidle%2Cscale50"],
+      ["?join=1&diag=nohudidle&gpu=draws", "/hud.html?gpu=draws&diag=nohudidle"],
+    ]) {
       const b = browser({ search });
       const host = new H.HudHost();
       host.start(b.env);
@@ -702,7 +708,7 @@ try {
     assert.equal(host.takePaintGpuMs(), null);
     b.up({ t: "stats", fps: 243.6, applyMs: 0.31, renderMs: 1.14, paintGpuMs: 0.5 });
     b.up({ t: "stats", fps: 244, applyMs: 0.26, renderMs: 1.05, paintGpuMs: 0.25 });
-    assert.equal(host.describe(), "iframe isolée · 244 FPS · JS 0.3 · rendu 1.1 ms");
+    assert.equal(host.describe(), "iframe isolée · 244 images/s · JS 0.3 · rendu 1.1 ms");
     assert.equal(host.takePaintGpuMs(), 0.75);
     assert.equal(host.takePaintGpuMs(), null, "taken");
     b.up({ t: "stats", fps: 240, applyMs: 0.2, renderMs: 1, paintGpuMs: null });

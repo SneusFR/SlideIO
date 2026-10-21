@@ -202,6 +202,24 @@ export function chooseHudMode(env: {
   return { mode: "frame", url: `${protocol}//${other}${port ? `:${port}` : ""}/hud.html`, sandboxed: false, forced };
 }
 
+/**
+ * The HUD document's address: the frame URL plus the game page's own
+ * diagnostics, which the HUD document reads from its own address
+ * (ui/perfDiag.ts) — `?gpu` (its plate paint context times itself for the
+ * debug HUD's GPU line) and `?diag=` (the HUD's own A/B switches, e.g.
+ * `nohudidle`). Nothing else of the page's query.
+ */
+export function hudDocumentUrl(url: string, search: string): string {
+  const page = new URLSearchParams(search);
+  const query = new URLSearchParams();
+  for (const key of ["gpu", "diag"]) {
+    const value = page.get(key);
+    if (value !== null) query.set(key, value);
+  }
+  const q = query.toString();
+  return q ? `${url}?${q}` : url;
+}
+
 /** The iframe as the host uses it. */
 export interface HudFrameHandle {
   readonly contentWindow: { postMessage(message: unknown, targetOrigin: string, transfer?: unknown[]): void } | null;
@@ -420,11 +438,7 @@ export class HudHost {
       return;
     }
     this.phase = "connecting";
-    // `?gpu` (ui/perfDiag.ts) reaches the HUD document too: its plate paint
-    // context times itself for the debug HUD's GPU line.
-    const gpu = new URLSearchParams(env.search).get("gpu");
-    const url = gpu === null ? choice.url : `${choice.url}?gpu=${encodeURIComponent(gpu)}`;
-    this.frame = env.createFrame(url, choice.sandboxed);
+    this.frame = env.createFrame(hudDocumentUrl(choice.url, env.search), choice.sandboxed);
     this.unlistenWindow = env.onWindowMessage((e) => this.onWindowMessage(e));
     this.helloTimer = this.deadline(HELLO_TIMEOUT_MS, () => {
       this.helloTimer = null;
@@ -525,14 +539,21 @@ export class HudHost {
     return ms;
   }
 
-  /** Debug HUD line "HUD:" — where the HUD runs, and its own frame stats. */
+  /**
+   * Debug HUD line "HUD:" — where the HUD runs, and its own frame stats:
+   * the frames its document asked for per second (it draws only when
+   * something changes: ~1 at rest, the clock; its animations run on the
+   * compositor — a CSS animation only the main thread can run, as
+   * `?diag=hudanim` brings back, draws frames this count does not see), the
+   * commands' JS per game frame, the browser's work per frame drawn.
+   */
   describe(): string {
     switch (this.phase) {
       case "frame": {
         const head = this.isolated ? "iframe isolée" : "iframe (forcée)";
         const s = this.stats;
         if (!s) return head;
-        return `${head} · ${Math.round(s.fps)} FPS · JS ${s.applyMs.toFixed(1)} · rendu ${s.renderMs.toFixed(1)} ms`;
+        return `${head} · ${Math.round(s.fps)} images/s · JS ${s.applyMs.toFixed(1)} · rendu ${s.renderMs.toFixed(1)} ms`;
       }
       case "inline":
         return `dans la page (${this.inlineReason})`;
