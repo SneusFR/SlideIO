@@ -55,6 +55,7 @@ opérations de skinning par rayon).
 | 240 Hz (9ᵉ passe : tir à la tête en dash, 240 → 175 FPS) | **Ni la 3D ni le ragdoll : la somme jeu + navigateur sur un seul thread.** À 244 Hz, une frame dure 4,1 ms, et tout passe par le thread principal : le JS du jeu (~3 ms au repos sur le PC gamer) **puis** le travail du navigateur (~1 ms : style, mise en page, peinture du HUD, envoi au compositeur). Au kill, le JS du jeu ne monte que de 0,2-0,35 ms ; c'est le HUD qui fait passer `Browser` à 2,5 ms de moyenne (8,3 ms sur la frame du kill) : 3,3 + 2,5 = 5,8 ms → 175 FPS. Corrigé : (1) **Classement** : il relisait l'état dessiné de ses lignes (`getComputedStyle`, `getBoundingClientRect`) entre ses propres écritures — à chaque kill (bots compris), 5 recalculs de style + 4 mises en page forcés au milieu du JS du jeu ; les lectures sont regroupées avant la première écriture, et il n'y en a plus quand rien n'anime. (2) **Médaille** : la couleur d'accent `--md`, héritée, et `#medal-display.hidden *` restylaient tout le badge (~58 éléments, dessins SVG compris) à chaque apparition et disparition ; `--md` n'est plus héritée (`@property`), elle est posée sur les 13 éléments qui la peignent, et le masquage vise la liste des parties animées : 57 → 40 éléments restylés à l'apparition, 57 → 18 à la disparition. (3) **Menu caché en jeu** : endormi (`content-visibility: hidden`) une fois son fondu fini — ses deux boucles infinies étaient recalculées à chaque frame de la partie ; sa sonde de ping (requête HTTP + réécriture du ping et du salon toutes les 5 s) ne tourne plus que menu affiché. (4) **Panneau de debug** : une ligne = un nœud texte, réécrite seulement si elle change (il réécrivait tout 15 fois par seconde : le panneau qui sert à mesurer coûtait lui-même). (5) **Cadavre** : le clone du personnage (SkeletonUtils, ~50-70 nœuds) est préparé pendant la protection d'apparition du bot et seulement remis à l'état courant au kill (même objet ; repli sur le clonage si le corps a changé de forme). (6) **Rendu** : une seule mise à jour des os par squelette et par frame (three.js recalculait deux fois chaque personnage qui projette une ombre) ; fusil à popcorn FP sans re-sélection de 4 programmes par frame. **Ce qui restait** : la somme elle-même — réglée à la 10ᵉ passe (« Le HUD dans son propre processus » plus bas). | `ui/LeaderboardHUD.ts`, `ui/leaderboard/*`, `hud.css`, `ui/MedalHUD.ts`, `ui/HudWarmup.ts`, `menu/MenuOverlay.ts`, `style.css`, `ui/DebugHUD.ts`, `ragdoll/CorpseCloneSpare.ts`, `bots/Bot.ts`, `bots/BotModel.ts`, `effects/SkeletonFrameDedupe.ts`, `effects/TwoPassTransparentSplit.ts`, `weapons/popcorn/PopcornShotgunWeapon.ts`, `game/Game.ts` |
 | 240 Hz (10ᵉ passe : le HUD dans son propre processus) | **Le HUD ne passe plus par le thread du jeu.** Mesuré d'abord sur le PC gamer avec le prototype (`/perf/prototype-240hz.html`, Edge 155, RTX 2080 Super, 238 Hz, zoom 90 %) — même charge 3D et même HUD simulé dans trois architectures : tout sur le thread principal (comme le jeu jusqu'ici) **239 FPS au calme, 158 pendant les kills** (50 % de frames en retard, pire frame 20,8 ms) ; 3D dans un worker 240 / 237 ; **HUD dans une iframe isolée 240 / 240** (0 % de frames en retard, pire frame 4,4 ms ; l'iframe tourne bien dans son propre processus). C'est cette dernière qui est en place : le HUD vit dans `hud.html`, chargé dans une iframe `sandbox="allow-scripts"` posée sur le canvas (sans pointeur, jamais de focus). Son origine est opaque, donc Chrome / Edge (isolation des sites) la font tourner **dans un autre processus** : son style, sa mise en page, sa peinture et ses animations se font en parallèle du jeu, plus après lui. Le jeu ne touche plus au DOM du HUD : il appelle `hudHost.api` (les mêmes méthodes que les anciens widgets), qui copie à l'appel l'état utile en données simples (« vues ») et l'envoie en **une liste de commandes par frame** (`postMessage`). Dans l'iframe, le runtime du HUD construit les mêmes widgets, dans le même ordre, avec le même balisage et les mêmes CSS, applique les commandes dans l'ordre et rejoue le warm-up du HUD dans son propre document. **Repli automatique** sur le HUD dans la page (le même runtime, chaque commande appliquée à l'appel : le comportement d'avant) si l'iframe ne répond pas en 8 s, ne tourne pas dans son propre processus (vérifié au chargement), ne voit pas la même taille ni le même zoom que la page, ou cesse de répondre avant la fin de son warm-up ; **et pendant la partie**, si son processus plante ou se fige (aucune nouvelle depuis 3 s alors que la page du jeu, elle, dessine : l'iframe — que Chrome remplacerait par un rectangle gris sur tout le jeu — est retirée et le HUD reconstruit dans la page avec son dernier état) ou si elle ne voit plus la même taille ou le même zoom que la page. En `npm run dev`, le HUD reste dans la page par défaut (`?hud=frame` pour l'iframe) ; `?hud=inline` force l'ancien chemin partout. Ligne `HUD:` du panneau de debug. Rendu : identique au pixel dans la page ; dans l'iframe, seul l'anticrénelage de quelques bords d'éléments animés diffère (≤ 22 niveaux sur 255, sur ≤ 1,2 % des pixels). | `hud.html`, `src/hud/protocol.ts`, `src/hud/host/*`, `src/hud/runtime/*`, `src/hud/hudMarkup.html`, `src/hud/hudFrame.css`, `index.html`, `style.css`, `ui/*HUD.ts` (types), `ui/displayFrames.ts`, `game/Game.ts`, `main.ts`, `combat/HitFeedbackManager.ts`, `killstreaks/mole/MoleStrikeVFX.ts`, `menu/MenuOverlay.ts`, `ui/DebugHUD.ts`, `vite.config.ts`, `vercel.json` |
 | GPU du portable (11ᵉ passe : mesurée sur la vraie carte graphique) | **La cause des 30-40 FPS du portable : le travail GPU de chaque image partait trop tard, et des passes / clears plein écran inutiles le gonflaient.** Mesuré dans un vrai navigateur sur l'Intel Iris Xe (Givre LOW, 1920 × 928 ; détails dans « La cause racine » plus bas). (1) `gl.flush()` après la passe monde et en fin d'image : sans lui, le GPU attendait une partie de l'image puis recevait tout d'un bloc — 36 → 60 FPS sur la même machine, +14 % quand le GPU est la limite. (2) Un seul clear profondeur + stencil de la cible HDR du monde au lieu de deux clears complets (le dôme du ciel, au plan lointain, écrit tous les pixels libres) : à 2560 × 1238, 49 → 57 FPS. (3) Ciel dessiné après les opaques au lieu de remplir tout l'écran en premier (Givre, Jungle, Yard). (4) Plus aucun clear avant les passes plein écran (sortie sRGB, FXAA), qui réécrivent chaque pixel de leur cible. (5) Les 2 lumières ponctuelles du pool FX, toujours éteintes (intensité 0) mais calculées dans chaque pixel éclairé, retirées. Même image, au bit près (vérifié au banc). `?diag=noflush` pour comparer. | `effects/FlushPass.ts`, `effects/SkyCoveredRenderPass.ts`, `effects/FullscreenPass.ts`, `effects/FXLightPool.ts`, `world/GivreSky.ts`, `world/skyDome.ts`, `world/SpaceSky.ts`, `world/YardSky.ts`, `game/Game.ts`, `ui/perfDiag.ts` |
+| GPU (12ᵉ passe : overdraw de la carte) | **Le matériau de la carte était calculé 2,1 fois par pixel où on la voit** (mesuré par pixel et par lot, 14 vues : `tools/perf/overdraw-bench.mjs`) — dans un lot, les triangles arrivent dans l'ordre du BVH, pas d'avant en arrière, et vers la plaine le sol de la carte continue sous le fond. **Pré-passe de profondeur** (`?diag=prepass`, **désactivée par défaut** en attendant la mesure sur l'Iris Xe) : les grands triangles de la carte (≥ 0,1 m², ≈ 26 k sur 134 k) et le fond dessinés d'abord en profondeur seule, en 2 draws ; le matériau de la carte n'est plus calculé que 1,02 fois par pixel (2,13 → 1,02 : −52 % de fragments calculés). Même image au bit près (même calcul de position, `invariant gl_Position` ; 0 pixel de différence au banc, LOW et HIGH), **vérifiée au chargement sur le GPU du joueur** (sinon coupée). Évalués et écartés : réordonner les triangles ou les lots (−5 à −24 %), faces simples partout ou par solide (changent des pixels ; `?diag=percomponent` reste une expérience). | `world/GivreDepthPrepass.ts`, `world/GivreRenderOptim.ts`, `world/GivreMap.ts`, `world/GivreConfig.ts`, `game/Game.ts`, `ui/perfDiag.ts`, `ui/GpuTimer.ts`, `tools/perf/overdraw-bench.mjs`, `tools/perf/overdraw-probe.js`, `tools/perf/prepass-ab.mjs` |
 | Qualité HIGH | Filtrage anisotrope ×8 sur les lightmaps (sols et murs nets en incidence rasante). | `game/GraphicsQuality.ts`, `world/GivreMap.ts` |
 
 ### Bugs corrigés au passage
@@ -104,6 +105,8 @@ opérations de skinning par rayon).
 35. **Nouvelle option graphique** (page SETTINGS) : sa valeur dans `GraphicsValues` (`settings/GraphicsSettings.ts` : presets, validation, libellé dans `settings/labels.ts`), son application dans `Game.applyLiveValues` — **en direct seulement si elle ne change aucun programme** (taille, échantillons, visibilité, paramètre de texture, uniform) ; sinon elle va dans `reloadChanges` (« Apply & reload »). Une option qui active / coupe une passe ou une variante (FXAA ⇄ MSAA) : les deux variantes compilées au chargement (`warmAlternateOutput`), vérifié par `tools/perf/settings-page-check.mjs` (aucun programme compilé par un changement en direct). Low et High restent **exactement** les anciens LOW et HIGH (`scripts/test-graphics-settings.mts`). L'interface du jeu est en anglais : libellés dans `settings/labels.ts`, en casse normale (les majuscules viennent du CSS).
 36. **Détection automatique** : elle juge sur les **intervalles entre images** sous charge (+30 % de pixels), jamais sur des requêtes de chronométrage GPU (elles comptent les temps morts du GPU et font flusher Chrome : elles changent ce qu'elles mesurent). Une option ne rejoint l'échelle (`settings/AutoTune.ts`) que si elle s'applique en direct, à sa place dans l'ordre « le moins visible d'abord », et jamais sous le plancher (l'ancien LOW). Changer la logique de la détection = incrémenter `AUTO_TUNE_VERSION` (chaque joueur « Auto » est mesuré à nouveau, une fois).
 37. **Anciennes clés** `beanzo.graphicsQuality` / `beanzo.fpsCap` : toujours lues et écrites (pont avec un build plus ancien et avec les scripts de banc) — une valeur écrite par quelqu'un d'autre depuis le dernier passage du jeu est reprise au chargement suivant (`adoptLegacyChanges`). Les réglages du joueur vivent dans **un** enregistrement, `slideio.settings`.
+38. **Pré-passe de profondeur (carte de Givre + fond)** : elle suppose que la carte statique et le fond calculent leur profondeur exactement comme ses proxys (`begin_vertex` + `project_vertex`, matrice monde identité, `invariant gl_Position`). Un matériau de lot statique qui déplace les sommets (`onBeforeCompile` sur la position, displacement), qui jette des fragments (`alphaTest`, `alphaHash`) ou qui change le test de profondeur (`depthFunc`, `polygonOffset`) doit rester hors pré-passe : `prepassEligible` (`world/GivreDepthPrepass.ts`) refuse ces cas tout seul (un patch de shader inconnu aussi) — un nouveau patch de matériau de carte qui ne touche pas la position doit y être déclaré (`knownPatch`, comme `MapUberMaterial`). Le fond et la carte restent à la racine de la scène, sans transformation (sinon le contrôle au chargement coupe la pré-passe). Ne jamais activer `logarithmicDepthBuffer` / `reversedDepthBuffer` avec elle (même chose). Mesurer l'overdraw : `tools/perf/overdraw-bench.mjs` ; vérifier l'image : `tools/perf/prepass-ab.mjs`.
+39. **Faces simples** : une face ne passe en `FrontSide` que si l'image reste la même au bit près — à vérifier au banc (`tools/perf/prepass-ab.mjs`, `MODE=xsession` pour une bascule lue au chargement, plusieurs vues, LOW et HIGH). La règle des solides fermés, orientés vers l'extérieur et minces (≤ 2 m) s'applique au mesh entier ; étendue à chaque composante connexe (`?diag=percomponent`), elle change quelques pixels par vue (des égalités de profondeur entre la face avant et la face arrière de solides minces, que la face arrière gagnait) : elle reste une expérience. Un objet que le joueur peut traverser (sans collider) et assez grand pour contenir la caméra ne doit pas être un solide fermé mince — ou garder un matériau `transparent` / listé dans `keepMaterials`.
 
 ## Mesures (banc headless, avant → après)
 
@@ -356,6 +359,166 @@ banc (`givreDebug.perf.skyFirst / clears / deadLights / passClears` : l'ancien c
 bascule) : mêmes pixels RGBA, au bit près, avant / après — chaque changement seul et tous ensemble,
 sur Givre LOW et HIGH, Jungle et Yard.
 
+## L'overdraw de la carte (12ᵉ passe : pré-passe de profondeur)
+
+Sur l'Iris Xe, **un seul lot de la carte** (26 391 indices, celui de la cellule du Stock) prenait
+2,1 à 4,5 ms : le matériau de la carte (MeshStandardMaterial : soleil + hémisphère, ombre PCF, AO
+et émissif cuits) est le pixel le plus cher de l'image, et il était calculé **≈ 2 fois par pixel**.
+
+**L'outil** — `tools/perf/overdraw-bench.mjs` (+ `overdraw-probe.js`, poses dans
+`givre-poses.mjs`) : chaque draw opaque de la passe monde est rejoué **dans l'ordre réel** (la liste
+triée de three, les triangles dans l'ordre de l'index) avec un matériau de comptage additif qui garde
+son côté, son test de profondeur, son stencil, son polygon offset (même géométrie, même objet :
+skinning et instancing compris) ; les compteurs sont relus après chaque draw. Par pixel et par draw :
+fragments **rastérisés** (sans test de profondeur), **calculés** (qui passent le test de profondeur
+dans l'ordre réel : un early-Z parfait — un vrai GPU en rejette plutôt moins), **visibles** ; faces
+avant / arrière à part ; carte de chaleur PNG par vue. Il simule aussi ce que laisseraient une
+pré-passe de profondeur, d'autres ordres de triangles, d'autres tris ou découpes de lots, des faces
+simples partout ; avec `DIAG=prepass`, il compte la pré-passe réelle du jeu.
+
+**Mesure** (Givre LOW, 960 × 540, solo sans bot, 14 vues : les 8 points d'apparition, le centre du
+village face aux 4 directions, la galerie nord, une vue en hauteur) — fragments du matériau de la carte **par pixel où
+la carte est visible** (1 = chaque pixel calculé une seule fois) :
+
+| vue | rastérisés | **calculés** | rejetés par l'early-Z | dont faces arrière | pré-passe complète (carte) | pré-passe ≥ 0,1 m² (carte) | **pré-passe livrée** (carte ≥ 0,1 m² + fond) | ordre idéal par vue | tri selon 8 directions | cellules de 20 m | tout en faces simples (pixels changés) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| spawn1 | 3,84 | **1,75** | 54 % | 12 % | 1,00 | 1,00 | **1,00** | 1,55 | 1,57 | 1,62 | 1,54 (97 px) |
+| spawn2 | 6,51 | **3,32** | 49 % | 32 % | 1,66 | 1,67 | **1,01** | 2,08 | 2,10 | 2,18 | 2,32 (3528 px) |
+| spawn3 | 4,08 | **2,42** | 41 % | 20 % | 1,00 | 1,03 | **1,03** | 1,56 | 1,56 | 1,88 | 1,96 (15 px) |
+| spawn4 | 7,12 | **3,88** | 46 % | 4 % | 1,86 | 1,87 | **1,01** | 3,65 | 3,66 | 3,83 | 3,74 (17 px) |
+| spawn5 | 6,80 | **2,34** | 66 % | 20 % | 1,06 | 1,13 | **1,05** | 1,52 | 1,39 | 2,22 | 1,90 (1221 px) |
+| spawn6 | 4,30 | **1,49** | 65 % | 10 % | 1,00 | 1,04 | **1,04** | 1,28 | 1,24 | 1,53 | 1,36 (1632 px) |
+| spawn7 | 2,72 | **2,12** | 22 % | 23 % | 1,00 | 1,00 | **1,00** | 1,32 | 1,34 | 1,41 | 1,65 (358 px) |
+| spawn8 | 3,68 | **2,51** | 32 % | 26 % | 1,00 | 1,00 | **1,00** | 1,46 | 1,40 | 1,84 | 1,89 (15 px) |
+| centre0 | 3,98 | **1,95** | 51 % | 36 % | 1,00 | 1,06 | **1,06** | 1,21 | 1,21 | 1,85 | 1,31 (6 px) |
+| centre90 | 3,44 | **1,49** | 57 % | 22 % | 1,00 | 1,03 | **1,03** | 1,26 | 1,26 | 1,50 | 1,19 (90 px) |
+| centre180 | 3,41 | **2,18** | 36 % | 10 % | 1,00 | 1,01 | **1,01** | 2,04 | 2,04 | 2,10 | 2,02 (671 px) |
+| centre270 | 3,64 | **2,17** | 40 % | 18 % | 1,00 | 1,00 | **1,00** | 1,92 | 1,92 | 2,16 | 1,81 (319 px) |
+| galerie | 4,81 | **1,25** | 74 % | 6 % | 1,00 | 1,01 | **1,01** | 1,23 | 1,24 | 1,25 | 1,20 (4405 px) |
+| elevated | 5,87 | **1,57** | 73 % | 13 % | 1,00 | 1,00 | **1,00** | 1,22 | 1,25 | 1,33 | 1,40 (124 px) |
+| **14 vues** | 4,34 | **2,13** | 51 % | 19 % | 1,08 | 1,10 | **1,02** | 1,61 | 1,60 | 1,85 | 1,74 |
+
+(colonnes « pré-passe … (carte) » à « tout en faces simples » : simulées par l'outil sur le build d'avant ;
+« pré-passe livrée » : comptée sur le build final avec `?diag=prepass` — 2 draws, 27 741 triangles, et
+2,46 fragments de profondeur seule par pixel visible de la carte dans la pré-passe elle-même.)
+
+- **L'early-Z fait déjà la moitié du travail** : le tri d'avant en arrière des lots
+  (`frontToBackOpaqueSort`) rejette 51 % des fragments rastérisés. Mais il trie des **lots entiers**
+  (6 cellules de 93 × 110 m, par le centre de leur sphère englobante), et dans un lot les triangles
+  arrivent **dans l'ordre du BVH** (`MapBvh` réordonne l'index pour les tirs : un ordre spatial fixe,
+  d'avant en arrière pour certaines directions de vue, d'arrière en avant pour les autres). Le lot
+  double face de la cellule de la caméra couvre 34 à 100 % de l'écran ; chaque pixel qu'il couvre y
+  est rastérisé 2 à 5,7 fois, et 6 à 82 % de ses fragments calculés finissent recouverts. Le lot des
+  solides en face simple de la même cellule, dessiné AVANT lui (le centre de sa sphère est plus
+  proche), est perdu à 86-100 % dans 7 vues sur 14 (77 000 à 230 000 fragments calculés pour rien
+  dans 4 d'entre elles) : ses caisses et dalles sont derrière les murs.
+  Les sols sont calculés deux fois (le sol extérieur passe sous le sol intérieur), les plafonds aussi
+  (le toit est au-dessus), les bandes d'étals et de machines 5 à 8 fois (cartes de chaleur) ; les
+  faces arrière des surfaces double face font 19 % des fragments calculés. **Vers la plaine** (spawn2,
+  spawn4), le sol de la carte continue sous la plaine du fond (`givre_01_fond.glb`), dessinée après
+  la carte : 40 à 46 % des fragments de la carte y sont calculés puis recouverts — une pré-passe de la
+  carte seule y laisse encore 1,66 et 1,86.
+- **Ce qui a été évalué** (même tableau, simulé sur le build d'avant) : *pré-passe de la carte* →
+  1,00 (sauf vers la plaine) ; la même avec seulement les triangles ≥ 0,1 m² (≈ 26 k sur 134 k : murs,
+  sols, toits, grands volumes) → presque autant (1,00 à 1,13 ; ≥ 0,25 m², ≈ 15 k triangles : jusqu'à
+  1,32 ; ≥ 0,5 m², ≈ 10 k : jusqu'à 1,51) ; *ordre idéal des triangles pour chaque vue* (impossible à
+  chaque image : la borne de toute réorganisation statique dans les lots) → −24 % seulement,
+  l'overdraw ENTRE lots reste ; *tri statique selon 8 directions* (8 copies de l'index, choisie selon
+  le cap de la caméra) → autant que l'idéal par vue, mais 8 copies de l'index et un BVH à part ;
+  *cellules de 20 m d'avant en arrière* (≈ une découpe plus fine sans draw de plus) → −13 % ;
+  *découpe 2 × 2 des lots* (spawns 1-5) → −5 % pour +14 à +34 draws ; *tri des lots par leur point le
+  plus proche* (z − rayon, spawns 1-5) → −6 % pour la carte mais +28 % sur une vue, et +3 % pour
+  l'ensemble des opaques ; *lots double face d'abord* → 0 ; *tout en faces simples* → −18 %, mais des
+  pixels changent (des faces arrière sont réellement visibles : 6 à 4 405 px par vue) — exclu.
+
+**Ce qui est fait — la pré-passe de profondeur** (`world/GivreDepthPrepass.ts`, `?diag=prepass`,
+**désactivée par défaut** en attendant la vraie carte graphique) : avant tout le reste, la carte
+statique est dessinée en **profondeur seule** (pas d'écriture de couleur, shader de fragment vide) ;
+la passe monde reste **inchangée** (test LEQUAL, celui de three par défaut) : un fragment de la carte
+ne passe plus que là où il EST la surface la plus proche. Seuls les triangles ≥ 0,1 m² y vont
+(`GivreConfig.staticBatching.depthPrepassMinArea` ; `?diag=prepass,prepassall` = tous) : les grands
+occulteurs font presque tout le travail, pour un cinquième des triangles ; la plaine et les montagnes
+du fond (2 meshes, 2 116 triangles) y sont aussi. Au total : **27 741 triangles et 31 576 sommets**
+(les lots et le fond en ont 233 880), contre 136 680 triangles et 85 442 sommets pour une pré-passe
+complète (`prepassall`). Les proxys sont des maillages de positions seules, soudés au bit près (les
+coutures UV / normales des lots dédoublent des sommets inutiles ici), **un par côté de face : 2 draws**
+(découpés par cellule de la grille, ils n'étaient jamais éliminés par le culling dans les vues
+mesurées : des draws pour rien — option `cells`), dans un groupe d'ordre −1000 (dessinés avant tout
+opaque).
+
+**Même image au bit près** si aucune profondeur de la pré-passe n'est plus PROCHE que celle que la
+passe principale calcule pour le même fragment : alors, en chaque pixel, la profondeur stockée est
+≥ la plus proche m, et avec LEQUAL la passe principale garde, comme avant, le DERNIER fragment
+dessiné à la profondeur m ; transparents et ciel testent le même tampon final. C'est vrai pour
+n'importe quel sous-ensemble des fragments opaques de la passe principale (d'où le filtre par aire
+possible) — mais jamais un fragment qu'elle ne dessine pas (une face arrière d'un lot FrontSide :
+d'où un proxy par côté). La profondeur est la même parce que : mêmes triangles (positions copiées
+au bit près, sommets dans le même ordre), même matrice (identité, comme les lots et le fond : three
+calcule le même `modelViewMatrix` ; un mesh avec une autre matrice est refusé), même calcul (les
+chunks `begin_vertex` + `project_vertex` de three, et les deux programmes déclarent
+`invariant gl_Position` — GLSL ES 3.00 §4.6.1 : même expression, mêmes entrées, même valeur d'un
+programme à l'autre), et seulement des meshes simples (`prepassEligible` : ni skinning, ni morph, ni
+instancing, ni displacement, ni alpha test / hash, ni clipping, ni polygon offset, ni patch de
+shader inconnu ; pas de depth buffer logarithmique). **Et c'est vérifié sur le GPU du joueur** : au
+chargement (`Game.warmUpRendering`), la même image est rendue avec et sans la pré-passe depuis deux
+vues et relue — au moindre pixel différent, la pré-passe est coupée pour la session
+(`[GPU] pré-passe de profondeur DÉSACTIVÉE : …` dans la console).
+
+**Évalué, laissé en expérience — faces simples par composante connexe** (`?diag=percomponent`,
+`GivreRenderOptim.closedOutwardThinTriangles`) : la règle existante (solide fermé, orienté vers
+l'extérieur, ≤ 2 m → `FrontSide`) ne s'applique qu'au mesh ENTIER — or un mesh du glb regroupe
+souvent plusieurs solides disjoints (dalles de toit sur toute la carte, un rack de caisses, une
+rangée de sapins) dont la boîte commune est épaisse, ou un solide et une partie ouverte. Appliquée à
+chaque composante connexe : 66 870 triangles de la carte sur 134 564 en face simple au lieu de
+24 588 (18 → 50 %, mêmes 16 lots). Mais **pas la même image au bit près**
+(`tools/perf/prepass-ab.mjs`, `MODE=xsession` : deux sessions, partie statique du monde) : 14 à 400
+pixels changent par vue (spawn6 14, spawn8 400, vue en hauteur 168 ; jusqu'à 80 niveaux sur 255) —
+et presque autant avec une soudure de 1 mm au lieu de la soudure exacte (0 à 403 pixels sur 14 vues) :
+ce ne sont pas des fissures. Ce sont des **égalités de profondeur** : sur l'arête arrière des toits
+d'étals vus de haut, sur l'arête d'une nervure de conteneur vue en rasant, la face arrière d'un
+solide mince tombe à la même profondeur que sa face avant dans le tampon 24 bits et, dessinée après,
+l'emporte (LEQUAL) — un léger z-fighting, que la face simple fait disparaître. Plus propre, mais pas
+identique : désactivée (`GivreConfig.staticBatching.singleSidedPerComponent`), gardée en expérience.
+Le gain serait de toute façon faible avec la pré-passe, qui supprime déjà le calcul des faces arrière
+cachées (il ne resterait que leur rastérisation) ; le 11ᵉ passage a d'ailleurs mesuré « faces doubles
+→ simples » dans le bruit sur l'Iris Xe.
+
+**Banc A/B** (`tools/perf/prepass-ab.mjs`, build final, solo avec 3 bots, image complète du
+composer relue — monde, bras, sortie, FXAA / MSAA —, RGBA) : avec `?diag=prepass`, pré-passe
+affichée, cachée (mêmes programmes), cachée avec les programmes de production (sans `invariant`),
+puis affichée à nouveau :
+
+| Givre | vues | affichée / cachée | affichée / programmes de production | répétition | draws | triangles |
+|---|---|---|---|---|---|---|
+| LOW (FXAA) | 14 : les 8 spawns, le centre × 4, la galerie, la vue en hauteur | **0 pixel** | **0 pixel** | 0 | +2 (42-50 → 44-52 avec les bots) | +27 741 |
+| HIGH (MSAA 4×) | 6 : spawn1, spawn2, spawn4, centre0, la galerie, la vue en hauteur | **0 pixel** | **0 pixel** | 0 | +2 (48-55 → 50-57) | +27 741 |
+
+Dans chaque session, le contrôle du jeu au chargement a gardé la pré-passe (« image identique avec /
+sans (1 036 800 pixels comparés, 2 draws de profondeur) »). Une première version (12 proxys, triangles
+≥ 0,5 m², sans le fond) : 0 pixel aussi, sur 14 vues LOW et 7 vues HIGH.
+**Temps d'une image SwiftShader** (rendu logiciel sur un processeur partagé par plusieurs bancs : pas
+un GPU) — 5 images de chaque état en alternance, LOW : spawn2 1 928 → 2 480 ms, centre0 3 387 →
+2 009 ms, galerie 1 775 → 1 732 ms (somme −12 %), mais les 5 images d'un même état vont du simple au
+triple (centre0 sans pré-passe : 1 285 à 3 690 ms) : **pas concluant**, dans un sens comme dans
+l'autre (première version : −2 % en LOW, −7 % en HIGH, 3 images). Ce banc ne dit rien du gain sur un
+GPU : c'est la mesure ci-dessous qui décidera.
+
+**Ce qu'il faut mesurer sur la vraie carte graphique** — Iris Xe, Givre LOW, même vue (le centre du
+village, un point d'apparition face à la plaine), fenêtre au premier plan, à une taille où le GPU
+limite (2560 × 1238) : `?gpu=draws` contre `?gpu=draws&diag=prepass` — la ligne `GPU` (total,
+« carte » et « pré-passe ») et les FPS, et la console doit dire `pré-passe de profondeur active`
+(si elle dit `DÉSACTIVÉE : N pixels…`, ce pilote — ANGLE / Direct3D 11 — ne donne pas la même
+profondeur aux deux programmes malgré `invariant` : la pré-passe reste coupée, sans effet visible,
+et c'est la première chose à remonter).
+Attendu : « carte » −35 à −50 % (la moitié des fragments calculés en moins), « pré-passe » ≈ 0,1 à
+0,4 ms (≈ 28 k triangles, profondeur seule). Si le gain est net : `?diag=prepass,prepassall` (tous
+les triangles de la carte, 136 k) donne le coût des sommets d'une pré-passe complète sur cette puce.
+Sur le PC (RTX 2080 Super, 240 Hz) : la ligne `CPU` avec et sans (2 draws de plus, attendu
+< 0,05 ms). Si le gain GPU du portable est net et le CPU du PC inchangé : `depthPrepass: true` dans
+`GivreConfig` (`?diag=noprepass` resterait pour comparer). À savoir : un GPU qui élimine lui-même les
+surfaces cachées avant de les calculer (Apple, la plupart des mobiles) n'y gagne rien et paie la
+pré-passe — à mesurer sur un Mac avant de l'activer pour tous.
+
 ## Réglages graphiques et détection automatique (page SETTINGS)
 
 La page **SETTINGS** (menu principal et menu pause, `menu/SettingsPage.ts`) remplace le petit menu
@@ -425,7 +588,14 @@ c'est le GPU (ou le processus GPU du navigateur).
   doublés = l'image est limitée par les pixels) ; `cpu5` = 5 ms de CPU en plus par image (FPS
   inchangés = CPU et GPU travaillent en parallèle) ; `nopost` = Givre dessiné directement dans
   le canvas, sans cible HDR ni passe de sortie ; `empty` = plus aucun rendu 3D (ce qui reste =
-  le coût propre de la page). Jamais pour jouer.
+  le coût propre de la page). Jamais pour jouer. Bascules d'optimisations (lues au chargement ;
+  `?diag=<nom>` active, `?diag=no<nom>` désactive) : `prepass` = pré-passe de profondeur de la
+  carte de Givre (12ᵉ passe ; `prepass,prepassall` = avec tous ses triangles, pas seulement les
+  grands : le coût des sommets d'une pré-passe complète) — la console (F12) dit alors
+  `[GPU] pré-passe de profondeur active : image identique…` (vérifiée au chargement sur ce GPU)
+  ou `DÉSACTIVÉE : N pixels…`, et `?gpu=draws` montre son coût GPU (« pré-passe ») à côté de
+  « carte » ; `percomponent` = faces simples par composante connexe (une expérience : change
+  quelques pixels).
 - `Device:` : le GPU réellement utilisé par le navigateur. « SwiftShader »,
   « Basic Render Driver » ou « llvmpipe » = rendu logiciel (accélération matérielle
   désactivée) : aucune optimisation du jeu n'y changera rien.
