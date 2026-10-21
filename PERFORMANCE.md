@@ -104,6 +104,7 @@ opérations de skinning par rayon).
 35. **Nouvelle option graphique** (page SETTINGS) : sa valeur dans `GraphicsValues` (`settings/GraphicsSettings.ts` : presets, validation, libellé dans `settings/labels.ts`), son application dans `Game.applyLiveValues` — **en direct seulement si elle ne change aucun programme** (taille, échantillons, visibilité, paramètre de texture, uniform) ; sinon elle va dans `reloadChanges` (« Apply & reload »). Une option qui active / coupe une passe ou une variante (FXAA ⇄ MSAA) : les deux variantes compilées au chargement (`warmAlternateOutput`), vérifié par `tools/perf/settings-page-check.mjs` (aucun programme compilé par un changement en direct). Low et High restent **exactement** les anciens LOW et HIGH (`scripts/test-graphics-settings.mts`). L'interface du jeu est en anglais : libellés dans `settings/labels.ts`, en casse normale (les majuscules viennent du CSS).
 36. **Détection automatique** : elle juge sur les **intervalles entre images** sous charge (+30 % de pixels), jamais sur des requêtes de chronométrage GPU (elles comptent les temps morts du GPU et font flusher Chrome : elles changent ce qu'elles mesurent). Une option ne rejoint l'échelle (`settings/AutoTune.ts`) que si elle s'applique en direct, à sa place dans l'ordre « le moins visible d'abord », et jamais sous le plancher (l'ancien LOW). Changer la logique de la détection = incrémenter `AUTO_TUNE_VERSION` (chaque joueur « Auto » est mesuré à nouveau, une fois).
 37. **Anciennes clés** `beanzo.graphicsQuality` / `beanzo.fpsCap` : toujours lues et écrites (pont avec un build plus ancien et avec les scripts de banc) — une valeur écrite par quelqu'un d'autre depuis le dernier passage du jeu est reprise au chargement suivant (`adoptLegacyChanges`). Les réglages du joueur vivent dans **un** enregistrement, `slideio.settings`.
+38. **Chaîne de post-traitement de Givre** (`effects/GivrePostChain.ts`) : le format et la précision de ce que lit le FXAA **font partie de l'image**. Le FXAA est discontinu (seuil de contraste, fin de bord) : passer son entrée de flottants 16 bits à 8 bits change ~5 % des pixels (±1 niveau, et jusqu'à 60 niveaux sur quelques bords), et écrêter avant lui les valeurs > 1 (émissifs, halos : jusqu'à 6,4) change les bords autour d'elles. Une nouvelle cible, un nouveau format, une passe fusionnée : comparer pixel par pixel (`tools/perf/post-chain-check.mjs`, et `?diag=postab` → `givrePost.ab()` sur la vraie carte), jamais à l'œil ; une variante devient le défaut par `GIVRE_POST_DEFAULT`, l'ancienne chaîne restant accessible (`?diag=postref`).
 
 ## Mesures (banc headless, avant → après)
 
@@ -356,6 +357,132 @@ banc (`givreDebug.perf.skyFirst / clears / deadLights / passClears` : l'ancien c
 bascule) : mêmes pixels RGBA, au bit près, avant / après — chaque changement seul et tous ensemble,
 sur Givre LOW et HIGH, Jungle et Yard.
 
+## La chaîne de post-traitement de Givre, octet par octet (12ᵉ passe)
+
+Sur l'Iris Xe, la fin de l'image est limitée par la **mémoire**, pas par le calcul. Mesuré à la
+11ᵉ passe (1920 × 928) : la passe de sortie sRGB (lit 8 o/px, écrit 8 o/px) coûtait 1,2 ms, le FXAA
+(lit 8 o/px, écrit 4) 0,8 ms — ≈ 25 Go/s effectifs, la mémoire qu'un iGPU partage avec le
+processeur. À 2160 × 1044 (Auto, 90 % du natif), **1 o/px ≈ 2,25 Mo par image ≈ 0,09 ms**. La chaîne
+de LOW / Auto (FXAA) :
+
+| Étape | Lit (o/px) | Écrit (o/px) |
+|---|---|---|
+| Monde (+ bras) → cible RGBA16F | 8 par fragment mélangé | 8 par fragment écrit (≥ 1 par pixel : le ciel couvre le reste) |
+| Sortie sRGB → 2ᵉ image RGBA16F | 8 | 8 |
+| FXAA → canvas | 8 (les voisins viennent du cache) | 4 |
+
+Chaque variante ci-dessous retire une partie de ce trafic ; toutes derrière `?diag=` (combinables,
+`src/effects/GivrePostChain.ts`), **la chaîne de référence reste celle par défaut**. Banc
+(SwiftShader, 960 × 540, Givre LOW avec 3 bots, RGBA, référence et variante dans la même session,
+simulation figée ; 5 vues autour du point d'apparition et 5 vues visant un halo, la vapeur, la fumée,
+une vitre et des empreintes — 3 à 13 vues par variante ; `tools/perf/post-chain-check.mjs`) :
+
+| `?diag=` | Ce qui change | o/px en moins : sortie + FXAA ; monde | Pixels différents | dont ±1 niveau | Écart max (où) |
+|---|---|---|---|---|---|
+| `out8` | la sortie écrit une image RGBA8 dédiée (sans profondeur) | 8 ; 0 | 4,4 – 22,8 % | 96 % | 84 (bords FXAA), 124 (autour des pixels > 1) |
+| `fused` | plus d'image intermédiaire : le FXAA lit le monde et convertit lui-même chaque texel (`OutputFXAAPass`) | 16 ; 0 | **0,03 – 0,15 %** | 78 % | 78 (20 à 210 px par image au-delà d'un niveau, sur des bords) |
+| `fused8` | idem, poids bilinéaires arrondis à 1/256 (comme les échantillonneurs à 8 bits de sous-texel) | 16 ; 0 | 0,6 – 0,9 % (SwiftShader, 3 vues) | 97 % | 42 |
+| `worldsrgb` | monde en SRGB8_ALPHA8 (+ `out8`) | 12 ; ≈ 8 | 5,1 – 22,8 % | 96 % | 84, 124 |
+| `worldsrgb,fused` | monde SRGB8 + `fused` | 20 ; ≈ 8 | 6,5 – 7,8 % (3 vues) | 94 % | 49, 115 |
+| `world11` | monde en R11F_G11F_B10F (+ `out8`) | 12 ; ≈ 8 | 53 – 78 % (5 vues) | 80 % | 57, 123 |
+| `direct` | Givre dessiné comme Jungle / Yard (sRGB encodé par les matériaux, cible RGBA8), plus de passe de sortie | 20 ; ≈ 8 | 5,6 – 30,7 % | 73 % | 87, 124 — **compromis visuel** |
+
+(« monde » : 4 o au lieu de 8 par fragment écrit, 8 au lieu de 16 par fragment mélangé — ≈ 8 o/px
+pour ~1,9 écriture par pixel (le matériau de la carte est calculé ≈ 1,9 fois par pixel couvert,
+mesure de l'agent `gpu-overdraw`) et ~0,15 mélange. Alpha : identique partout — le monde vaut 1,0
+partout, mesuré à chaque vue, et R11F_G11F_B10F, sans alpha, se lit 1,0.)
+
+**Pourquoi rien n'est identique au bit près.** (1) Le FXAA est **discontinu** : seuil de contraste,
+direction du bord, fin du bord (`|Δluma| ≥ gradient / 4`)… Quantifier son entrée (8 bits au lieu des
+flottants 16 bits de l'image intermédiaire) ne change chaque luminance que d'un demi-niveau, mais fait
+basculer quelques décisions : quelques centaines de pixels de bord changent de 20 à 80 niveaux ; et
+hors des bords, des pixels changent d'un niveau (l'ancienne image arrondissait d'abord en demi-flottant) —
+~3 % en moyenne, jusqu'à 23 % d'une vue de toit enneigé quand un grand aplat tombe sur une frontière
+d'arrondi. (2) Le monde
+contient des **valeurs > 1** (jusqu'à 6,4 en linéaire, 0,5 à 1,6 % des pixels : émissifs, halos) :
+l'ancienne chaîne les garde jusqu'au FXAA, qui mélange leurs voisins avec elles avant l'écrêtage du
+canvas ; écrêtées plus tôt (image RGBA8, monde SRGB8), les bords autour de ces points s'éclaircissent
+moins (jusqu'à 124 niveaux, sur 0,1 à 0,5 % des pixels). (3) `fused` refait exactement les mêmes
+conversions, y compris l'arrondi en demi-flottant de l'ancienne image (sans lui : 2,4 à 3,5 % des pixels
+changent) ; il ne reste que la précision du filtre bilinéaire du GPU (la seule lecture fractionnaire
+est celle du mélange final ; celles de la recherche du bord tombent à 0 ou ½ texel) et de minuscules
+écarts d'arrondi (ordre des opérations du filtre) qui font basculer quelques bords. SwiftShader filtre avec des poids exacts (`fused`) ;
+la plupart des GPU de bureau quantifient à 8 bits (`fused8`) : sur l'Iris Xe, `givrePost.ab()` dit
+laquelle des deux colle.
+
+**`direct` sur les effets transparents** (vues visant chaque effet, cadre de 320 × 240 autour de
+lui ; image entière entre parenthèses) : **halo** d'une lanterne — la lueur additive, ajoutée en sRGB,
+s'étale et s'aplatit : 5,7 % du cadre change de plus de 16 niveaux, jusqu'à 72 (image : 10,9 %,
+max 124) ; **vapeur** — les chevauchements des bouffées s'éclaircissent : 3,9 % au-delà de 16
+niveaux, jusqu'à 123 (11,2 %) ; **fumée** des cheminées sur le ciel — des écarts faibles mais étendus :
+25 % du cadre, 0,03 % au-delà de 16 niveaux (30,7 %, max 84) ; **vitres** (réservoir du Water FAMAS
+d'un bot, dôme du chargeur du Paintball en main) — jusqu'à 94 – 116 niveaux sur le verre (7,1 %) ;
+**neige** — de petits écarts sur chaque flocon, dans toutes les vues ; **empreintes** — presque
+rien : le décalque multiplicatif ne dépend guère de l'espace du mélange (13,9 % du cadre à ±1-2,
+0,03 % au-delà de 8 niveaux). Différences visibles à la comparaison directe : un compromis, pas une
+optimisation.
+
+**Ce que ça coûte.** Au banc, SwiftShader émule le GPU sur le processeur : le calcul s'y voit, la
+bande passante non (et la machine, 2 cœurs partagés, était chargée : écarts de ±30 % et plus). Temps
+d'une image (`renderComposer` + relecture d'un pixel) et de la seule sortie + FXAA, médiane (min – max)
+de 6 mesures sur 2 vues, variantes en alternance :
+
+| Variante | Image (ms) | Sortie + FXAA (ms) |
+|---|---|---|
+| référence | 1 861 (1 376 – 2 242) | 342 (179 – 674) |
+| `out8` | 2 353 (1 129 – 2 652) | 312 (224 – 397) |
+| `fused` | 3 208 (1 385 – 4 331) | 1 467 (1 253 – 1 859) |
+| `fused8` | 3 084 (2 794 – 3 548) | 1 480 (747 – 2 252) |
+| `worldsrgb` | 2 295 (1 862 – 2 391) | 258 (183 – 468) |
+| `worldsrgb,fused` (3 mesures) | 2 760 (1 797 – 4 000) | 1 853 (1 732 – 1 977) |
+| `direct` | 1 397 (1 124 – 2 083) | 236 (91 – 291) |
+
+`fused` convertit 5 texels par pixel au lieu d'un (15 `pow`, ~55 conversions sur un pixel de bord) :
+≈ 4,3 fois la sortie + FXAA d'origine en calcul émulé ; les variantes 8 bits y sont un peu moins chères
+(moins de conversions en demi-flottant), les écarts d'image entière sont dans le bruit.
+
+Estimation pour l'Iris Xe à 2160 × 1044 (1 o/px ≈ 0,09 ms ; écritures couleur du monde ≈ 17 o/px en
+RGBA16F avec les effets transparents, ≈ 8,5 en 4 octets) :
+
+| Variante | o/px en moins | Gain estimé (trafic seul) | Calcul en plus |
+|---|---|---|---|
+| `out8` | 8 | ≈ 0,7 ms | — |
+| `fused` / `fused8` | 16 | ≈ 1,4 ms | ≈ 0,3 – 0,7 ms de `pow` (en partie caché sous la mémoire) |
+| `worldsrgb` (+ `out8`) | ≈ 20 | ≈ 1,8 ms | — |
+| `worldsrgb,fused` | ≈ 28 | ≈ 2,5 ms | comme `fused` |
+| `direct` | ≈ 28 | ≈ 2,5 ms | — (moins : plus de conversion) |
+
+Ce sont des majorants (l'Iris Xe compresse les cibles uniformes, le ciel ; avec la pré-passe de
+profondeur de `gpu-overdraw`, ≈ 1 écriture par pixel : le gain des formats du monde baisse de moitié) —
+**à mesurer** avec `?gpu` : total de la ligne `GPU:` et termes `sortie` + `FXAA`.
+
+**HIGH (MSAA 4×, sans FXAA)** : la sortie dessine le canvas, `out8` / `fused` n'y changent rien
+(0 pixel). Les formats du monde, eux, divisent par deux la cible multi-échantillonnée **et ses deux
+résolutions par image** (≈ 4 ms chacune sur le portable en HIGH) : ≈ 40 o/px de moins sur les
+résolutions seules. Banc (2 vues) : `worldsrgb` = 3,6 % des pixels à **±1 niveau**, sauf les bords
+MSAA des points > 1 (≈ 500 px, jusqu'à 112 niveaux : la référence moyennait 6,4 avec ses voisins) ;
+`world11` = 65 % des pixels à ±1 à 4 niveaux ; `direct` = 5 %, jusqu'à 151 niveaux (mélanges et
+résolution MSAA en sRGB). Temps du banc (2 échantillons, bruités) : référence 3,9 s, `worldsrgb`
+4,1 s, `world11` 3,7 s, `direct` 2,5 s.
+
+Chargées depuis l'adresse comme un joueur (le warm-up compile leurs variantes), toutes les chaînes
+ont été vérifiées au banc, LOW et HIGH : la chaîne demandée est celle construite, **0 programme
+compilé** en jeu comme par la bascule FXAA ⇄ MSAA en direct (93 programmes en LOW, 97 en HIGH, comme
+la référence), aucune erreur GL ni console, canvas opaque.
+
+**Recommandation.** Rien n'est identique au bit près : **la référence reste le défaut**. À mesurer sur
+l'Iris Xe (un seul déploiement, des adresses) : `?gpu`, `?gpu&diag=fused8`, `?gpu&diag=fused`,
+`?gpu&diag=out8`, `?gpu&diag=worldsrgb`, `?gpu&diag=worldsrgb,fused8`, `?gpu&diag=direct` (GPU médian
+à la même vue, fenêtre au premier plan), et `?diag=postab` → `givrePost.ab()` à 2-3 vues. (1)
+**`fused8` ou `fused`** (celle qui colle à l'Iris Xe) : la seule variante quasi identique (0,03 à 0,15 %
+des pixels, 20 à 210 pixels de bord par image au-delà d'un niveau) ; si le GPU baisse, c'est le candidat au défaut
+(`GIVRE_POST_DEFAULT`), avec l'accord du propriétaire pour ces quelques pixels d'anticrénelage.
+(2) Compromis invisibles mais pas identiques, au propriétaire de décider : `out8` (4 à 23 % des pixels à
+±1, l'anticrénelage de quelques bords et autour des points lumineux) et `worldsrgb` (idem en LOW ; en
+HIGH ±1 sur 3,6 % des pixels et le gain des résolutions MSAA). (3) `world11` : abandonné (mêmes octets
+que `worldsrgb`, 10 fois plus de pixels changés). (4) `direct` : compromis **visible** sur les effets
+transparents (neige, halos, fumées, vitres, empreintes) — le plus économe, pour mémoire.
+
 ## Réglages graphiques et détection automatique (page SETTINGS)
 
 La page **SETTINGS** (menu principal et menu pause, `menu/SettingsPage.ts`) remplace le petit menu
@@ -426,6 +553,16 @@ c'est le GPU (ou le processus GPU du navigateur).
   inchangés = CPU et GPU travaillent en parallèle) ; `nopost` = Givre dessiné directement dans
   le canvas, sans cible HDR ni passe de sortie ; `empty` = plus aucun rendu 3D (ce qui reste =
   le coût propre de la page). Jamais pour jouer.
+  **Chaîne de post-traitement de Givre** (12ᵉ passe, mesures dans « La chaîne de post-traitement
+  de Givre ») : `out8` = image intermédiaire RGBA8 ; `fused` / `fused8` = sortie sRGB faite par le
+  FXAA lui-même, sans image intermédiaire (poids bilinéaires exacts / à 1/256) ; `worldsrgb` /
+  `world11` = cible du monde en SRGB8_ALPHA8 / R11F_G11F_B10F (avec `out8`, ou `fused`) ; `direct` =
+  Givre dessiné comme Jungle / Yard (compromis visuel : les effets transparents se mélangent en
+  sRGB) ; `postref` = la chaîne de référence quel que soit le défaut. À comparer avec `?gpu` (ligne
+  `GPU:`, termes `sortie` + `FXAA`, et le total). `postab` : dans la console, `givrePost.ab()`
+  dessine la vue courante avec chaque chaîne et la compare pixel par pixel à la référence **sur
+  cette carte** (`console.table` : pixels différents, %, écart max) ; `givrePost.ab(true)` ajoute
+  `direct` (compile une fois la variante sRGB de chaque programme : un long gel).
 - `Device:` : le GPU réellement utilisé par le navigateur. « SwiftShader »,
   « Basic Render Driver » ou « llvmpipe » = rendu logiciel (accélération matérielle
   désactivée) : aucune optimisation du jeu n'y changera rien.
