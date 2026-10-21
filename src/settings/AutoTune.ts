@@ -43,8 +43,8 @@ import { describeValues, formatNumber } from "./labels";
  *    with that load on top, a rung that still holds 60 keeps ≈ 23 % of the
  *    frame free for the fights (8 bots, effects, the HUD's own drawing). The
  *    default look (point 4) is kept with half that margin. Integrated GPUs
- *    get +50 % (see AUTO_TUNE.integratedMarginPixels: on them the margin in
- *    pixels buys less frame time, and matches run hotter than the menu).
+ *    too, by default (AUTO_TUNE.integratedMarginPixels: `?diag=tunemargin50`
+ *    is the +50 % A/B — the in-match guard covers what the menu can't see).
  * 4. Two goals (TuneGoals): 60 FPS must hold — for it the image may go down
  *    to the floor; the display's rate is wanted — for it the image never goes
  *    below the DEFAULT LOOK (the old preset of this GPU): a machine that
@@ -100,37 +100,33 @@ export const AUTO_TUNE = {
   outlierShare: 0.02,
   /**
    * INTEGRATED GPUs (Intel, AMD APUs, mobile chips — the old "weak" list):
-   * every rung above the floor is measured with +50 % pixels instead of
-   * +30 % (≈ +22 % per axis). The +30 % margin let Auto pass in the menu and
-   * still miss 60 FPS in matches on the owner's Iris Xe laptops:
-   *   - a good part of an iGPU frame does not scale with pixels (vertices of
-   *     ~190 k map triangles, the depth clear, submission): +30 % pixels was
-   *     only ≈ +15-25 % of frame time;
-   *   - the menu is measured on a cool chip in its turbo window, with the
-   *     main thread nearly idle (no AI, no physics) and the in-match HUD
-   *     HIDDEN (menu-active, game-paused: its raster and compositing never
-   *     reach a probe); a match adds bots, effects and that HUD (on the
-   *     owner's laptop, before its CSS fix: 59.9 → 45 FPS at native with the
-   *     same WebGL time), keeps the processor busy (processor and GPU share
-   *     ONE power budget on these chips) and, minutes later, the chip settles
-   *     at its sustained power (battery, office power plans: lower still);
-   *   - on a 60 Hz screen, 5 % over the 16.7 ms budget already costs ≈ 3 FPS.
-   * +50 % keeps ≈ 30-45 % of the frame time free in the menu's view; the
-   * in-match guard (settings/AutoGuard) corrects what is left. Auto never
-   * picks more than 100 % of native on any GPU (the ladder's top).
+   * the SAME margin as every GPU by default. The owner's rule is "no visual
+   * downgrade unless absolutely necessary", and since the HUD's CSS fix the
+   * Iris Xe laptop holds 60 FPS at 100 % of native in 5-minute 8-player
+   * crash tests on mains power (0.03-0.05 % late frames). What a menu probe
+   * cannot see — a hot chip, a laptop on battery or an office power plan, a
+   * heavy match, the in-match HUD (hidden while the detection measures:
+   * menu-active, game-paused) — is the in-match guard's job
+   * (settings/AutoGuard: it steps down in the match, only when needed).
+   * The A/B if the guard steps too often in the field: `?diag=tunemargin50`
+   * (+50 % pixels, ≈ +22 % per axis — on these chips a good part of the
+   * frame does not scale with pixels, so +30 % pixels buy only ≈ +20 % of
+   * frame time). Auto never picks more than 100 % of native on any GPU (the
+   * ladder's top).
    */
-  integratedMarginPixels: 1.5,
+  integratedMarginPixels: 1.3,
   /** …and the DEFAULT LOOK with half that margin, as on other GPUs (on iGPUs the default look is the floor). */
-  integratedKeepMarginPixels: 1.25,
+  integratedKeepMarginPixels: 1.15,
 };
 
 export type AutoTuneConfig = typeof AUTO_TUNE;
 
 /**
- * The detection's thresholds for this GPU: integrated GPUs get the larger
- * margin (see AUTO_TUNE.integratedMarginPixels). `marginPercent` (the
- * `?diag=tunemarginNN` A/B switch) forces the margin to NN % extra pixels
- * (keep margin: half of it) on any GPU — `tunemargin30` = the old rule.
+ * The detection's thresholds for this GPU (integrated GPUs: their own
+ * constants, today the same margin — see AUTO_TUNE.integratedMarginPixels).
+ * `marginPercent` (the `?diag=tunemarginNN` A/B switch) forces the margin to
+ * NN % extra pixels (keep margin: half of it) on any GPU — `tunemargin50` =
+ * the +50 % variant for integrated GPUs, `tunemargin30` = the default rule.
  */
 export function tuneConfigFor(gpu: { integrated: boolean }, marginPercent: number | null = null): AutoTuneConfig {
   if (marginPercent !== null && Number.isFinite(marginPercent) && marginPercent >= 0) {

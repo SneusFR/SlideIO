@@ -43,10 +43,12 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *            detection's answer whatever the match's frame rate (the old
  *            behaviour)
  *   tunemarginNN  the automatic detection measures every rung with NN %
- *            extra pixels on any GPU (tunemargin30 = the old rule; default:
- *            50 on integrated GPUs, 30 elsewhere); tunemargin0 = no margin —
- *            an answer too heavy for matches on purpose, to watch the guard
- *            step it down. Only the next detection ("Run again") uses it.
+ *            extra pixels on any GPU (default: 30 everywhere); tunemargin50 =
+ *            the +50 % variant for integrated GPUs — the A/B to try if the
+ *            in-match guard steps down too often in the field; tunemargin0 =
+ *            no margin — an answer too heavy for matches on purpose, to watch
+ *            the guard step it down. Only the next detection ("Run again")
+ *            uses it.
  *
  * Several at once: `?diag=noflush,scale50`. Never for normal play.
  */

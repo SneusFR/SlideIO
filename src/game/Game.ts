@@ -3684,7 +3684,7 @@ export class Game {
     this.frameIntervalMs = 0;
     this.nextFrameAt = 0;
     const goals = tuneGoals(targetFps, defaultRungIndex(ladder, opts.defaultLook ?? ladder[ladder.length - 1]));
-    // (opts.config: the thresholds for this GPU — integrated GPUs get the larger margin.)
+    // (opts.config: the thresholds for this GPU and the `?diag=tunemarginNN` A/B.)
     const calib = new Calibration({ apply: (v) => void (this.pendingProbe = v) }, ladder, goals, opts.config);
     let resolve!: (o: TuneOutcome | null) => void;
     const promise = new Promise<TuneOutcome | null>((r) => (resolve = r));

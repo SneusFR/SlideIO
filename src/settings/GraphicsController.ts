@@ -38,7 +38,7 @@ export interface AutoTuneOptions {
    * GPUs): a high-refresh screen's frame rate never takes the image below it.
    */
   defaultLook?: GraphicsValues;
-  /** Thresholds of the detection (integrated GPUs: the larger margin — tuneConfigFor). */
+  /** Thresholds of the detection (tuneConfigFor: this GPU, `?diag=tunemarginNN`). */
   config?: AutoTuneConfig;
 }
 

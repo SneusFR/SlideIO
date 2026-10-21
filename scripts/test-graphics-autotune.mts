@@ -698,16 +698,22 @@ await test("detection target: the display's rate; an EXPLICIT cap lowers it, the
 
 // ------------------------------------------------------------------ integrated GPUs
 
-console.log("integrated GPUs: the larger margin");
+console.log("integrated GPUs: the margin (default +30 %, ?diag=tunemargin50 = the +50 % A/B)");
 
-await test("integrated GPUs: every rung above the floor measured with +50 % pixels, discrete GPUs keep +30 %, ?diag=tunemarginNN overrides; never above 100 % of native", () => {
+await test("integrated GPUs: the same +30 % margin as every GPU by default (the guard covers the matches); ?diag=tunemarginNN overrides (tunemargin50 = the +50 % A/B); never above 100 % of native", () => {
   const igpu = A.tuneConfigFor({ integrated: true });
-  assert.equal(igpu.marginPixels, 1.5);
-  assert.equal(igpu.keepMarginPixels, 1.25);
+  assert.equal(igpu.marginPixels, A.AUTO_TUNE.marginPixels);
+  assert.equal(igpu.keepMarginPixels, A.AUTO_TUNE.keepMarginPixels);
+  assert.equal(igpu.marginPixels, 1.3);
+  assert.equal(igpu.keepMarginPixels, 1.15);
   assert.equal(A.tuneConfigFor({ integrated: false }), A.AUTO_TUNE);
-  const old = A.tuneConfigFor({ integrated: true }, 30);
-  assert.ok(Math.abs(old.marginPixels - 1.3) < 1e-9 && Math.abs(old.keepMarginPixels - 1.15) < 1e-9);
+  const ab = A.tuneConfigFor({ integrated: true }, 50);
+  assert.ok(Math.abs(ab.marginPixels - 1.5) < 1e-9 && Math.abs(ab.keepMarginPixels - 1.25) < 1e-9);
+  const thirty = A.tuneConfigFor({ integrated: true }, 30);
+  assert.ok(Math.abs(thirty.marginPixels - 1.3) < 1e-9 && Math.abs(thirty.keepMarginPixels - 1.15) < 1e-9);
   assert.equal(A.tuneConfigFor({ integrated: false }, 0).marginPixels, 1);
+  // The detection itself is unchanged: no forced new measurement for "Auto" players.
+  assert.equal(G.AUTO_TUNE_VERSION, 1);
   // Whatever the margin, the answer is a ladder rung: never above 100 % of native (the probes alone draw more).
   for (const dpr of [1, 1.25, 1.5, 2]) {
     for (const boot of [G.presetValues("bas", { dpr }), G.presetValues("eleve", { dpr })]) {
@@ -718,7 +724,7 @@ await test("integrated GPUs: every rung above the floor measured with +50 % pixe
 
 /**
  * The owner's personal laptop CALIBRATED ON THE FIELD REPORT (Iris Xe, 1920 × 928 CSS at 125 %, 60 Hz):
- * with the old rule (+30 % pixels) the detection picks 90 % of native (2160 × 1044), FXAA, static shadows
+ * with the default rule (+30 % pixels) the detection picks 90 % of native (2160 × 1044), FXAA, static shadows
  * high, light snow — what it picked on the real laptop. That rung's MENU view costs 12.4 ms here; the
  * field measured 9.4 ms at the spawn view (the menu's orbit sees the whole arena: heavier than a spawn
  * view — the play scenes below are relative to the menu's view). 3 ms of a frame do not scale with pixels.
@@ -743,21 +749,23 @@ function irisXeField(opts: Partial<Machine> = {}): Machine {
   };
 }
 
-await test("field check: the old rule picks what the real laptop picked (90 % of native, FXAA, light snow); +50 % on integrated GPUs picks 85 %", () => {
+await test("field check: the default rule picks what the real laptop picked (90 % of native, FXAA, light snow); the +50 % A/B (tunemargin50) picks 85 %", () => {
   const m = irisXeField();
   const boot = G.presetValues("bas", { dpr: m.dpr });
-  const old = calibrate(m, boot, { look: boot }).outcome!;
-  assert.equal(old.values.renderScale, 90);
-  assert.equal(old.values.antialiasing, "fxaa");
-  assert.equal(old.values.snow, "legere");
-  assert.equal(old.values.shadowQuality, "high");
+  const def = calibrate(m, boot, { look: boot, cfg: A.tuneConfigFor({ integrated: true }) }).outcome!;
+  assert.equal(def.values.renderScale, 90);
+  assert.equal(def.values.antialiasing, "fxaa");
+  assert.equal(def.values.snow, "legere");
+  assert.equal(def.values.shadowQuality, "high");
+  assert.equal(def.marginPixels, 1.3);
+  assert.match(A.summarize(def, { targetFps: 60, caps: m.caps, software: false }), /with 30% extra pixels as headroom for fights: 90% resolution/);
   // Its menu view: 12.4 ms (the field's spawn view at this rung: 9.4 ms).
-  assert.ok(Math.abs(m.gpu(old.values, megapixels(m, old.values)) - 12.4) < 0.15);
-  const neu = calibrate(m, boot, { look: boot, cfg: A.tuneConfigFor({ integrated: true }) }).outcome!;
-  assert.equal(neu.mode, "target");
-  assert.equal(neu.values.renderScale, 85);
-  assert.equal(neu.marginPixels, 1.5);
-  assert.match(A.summarize(neu, { targetFps: 60, caps: m.caps, software: false }), /with 50% extra pixels as headroom for fights: 85% resolution/);
+  assert.ok(Math.abs(m.gpu(def.values, megapixels(m, def.values)) - 12.4) < 0.15);
+  const ab = calibrate(m, boot, { look: boot, cfg: A.tuneConfigFor({ integrated: true }, 50) }).outcome!;
+  assert.equal(ab.mode, "target");
+  assert.equal(ab.values.renderScale, 85);
+  assert.equal(ab.marginPixels, 1.5);
+  assert.match(A.summarize(ab, { targetFps: 60, caps: m.caps, software: false }), /with 50% extra pixels as headroom for fights: 85% resolution/);
 });
 
 // ------------------------------------------------------------------ in-match guard
@@ -1279,62 +1287,68 @@ const fmtMatch = (r: MatchStats) => `${r.fps.toFixed(1)} FPS, worst 5 s ${r.wors
 const workLaptop = () => ({ ...irisXeField({ css: [1874, 956] as [number, number] }), name: "work laptop (Iris Xe, battery)", gpuName: INTEL });
 const workScene = (seed: number): Scene => ({ load: fights(seed, 1.25), throttle: throttling(1.32, 60, 180) });
 
-await test("the owner's work laptop on battery (Iris Xe, 1874 × 956 at 125 %): before — 60 FPS at first, then not; now — 85 % from the menu, one guard step in the first match, stored; the next match holds", async () => {
+await test("the owner's work laptop on battery (Iris Xe, 1874 × 956 at 125 %): 90 % from the menu — 60 FPS at first, then not without the guard; with it, 90 → 85 → 80 % in the first match, stored; the next match holds", async () => {
   const boot = G.presetValues("bas", { dpr: 1.25 });
-  // BEFORE: the old rule (+30 %), no guard.
-  const before = session(workLaptop(), boot, undefined, { experiments: new Set(["noguard", "tunemargin30"]) });
+  // WITHOUT THE GUARD (?diag=noguard): the field report.
+  const before = session(workLaptop(), boot, undefined, { experiments: new Set(["noguard"]) });
   await before.ctl.runDetection("first");
   const oldValues = before.ctl.effective();
-  assert.equal(oldValues.renderScale, 90);
   const b1 = before.sim.match(workScene(1), 300);
+  console.log(`      without the guard: ${fmtValues(oldValues)} → ${fmtMatch(b1)}`);
+  assert.equal(oldValues.renderScale, 90);
   assert.equal(b1.steps.length, 0);
-  assert.ok(b1.below > 0.2, `before: ${fmtMatch(b1)}`); // the field report: "then not"
+  assert.ok(b1.below > 0.2, `without the guard: ${fmtMatch(b1)}`); // the field report: "then not"
   // The first minute (cool chip) held: "60 FPS at first".
   assert.ok(b1.blocks.slice(0, 10).every((f) => f >= 57), `first minute: ${b1.blocks.slice(0, 10).map((f) => f.toFixed(0))}`);
-  console.log(`      before (old rule, no guard): ${fmtValues(oldValues)} → ${fmtMatch(b1)}`);
 
-  // NOW.
+  // WITH THE GUARD (the default): the same detection, the same 90 %.
   const now = session(workLaptop(), boot);
   await now.ctl.runDetection("first");
-  assert.equal(now.sim.detectConfig?.marginPixels, 1.5); // integrated GPU: the larger margin
   const picked = now.ctl.effective();
-  assert.equal(picked.renderScale, 85);
   const m1 = now.sim.match(workScene(1), 300);
-  assert.equal(m1.steps.length, 1, fmtMatch(m1));
-  assert.equal(now.sim.applyInFrame, 0); // applied between two frames, never inside one (blank-frame rule)
-  assert.match(now.sim.notices[0].text, /^Graphics lowered to hold 60 FPS \(resolution 85% → 80%\)$/);
-  assert.ok(m1.below < b1.below / 3, `now: ${fmtMatch(m1)} vs before ${fmtMatch(b1)}`);
   const stored = now.store.get().graphics.auto.GIVRE;
-  assert.equal(stored.values.renderScale, 80); // kept: it helped
-  assert.equal(stored.guardSteps, 1);
-  assert.match(stored.summary, /^In a match this PC fell to about \d+ FPS, so Auto lowered the graphics one step to hold 60 FPS: 80% resolution/);
-  console.log(`      now: menu ${fmtValues(picked)} → match 1: ${fmtMatch(m1)}`);
+  console.log(`      with the guard: menu ${fmtValues(picked)} → match 1: ${fmtMatch(m1)}`);
+  console.log(`        notices: ${now.sim.notices.map((n) => `${n.at.toFixed(0)} s "${n.text}"`).join(" · ")}; stored ${fmtValues(stored.values)}, ${stored.guardSteps} step(s)`);
+  assert.equal(now.sim.detectConfig?.marginPixels, 1.3); // integrated GPU: the same margin as every GPU
+  assert.equal(G.sameValues(picked, oldValues), true);
+  assert.equal(m1.steps.length, 2, fmtMatch(m1)); // both rungs below 90 %: 85 %, then the floor
+  assert.ok(m1.steps[0] > 60, `first step at ${m1.steps[0]} s`); // the cool chip's first minute: untouched
+  assert.equal(now.sim.applyInFrame, 0); // applied between two frames, never inside one (blank-frame rule)
+  assert.match(now.sim.notices[0].text, /^Graphics lowered to hold 60 FPS \(resolution 90% → 85%\)$/);
+  assert.match(now.sim.notices[1].text, /^Graphics lowered to hold 60 FPS \(resolution 85% → 80%\)$/);
+  assert.ok(m1.below < b1.below / 2, `with the guard: ${fmtMatch(m1)} vs without ${fmtMatch(b1)}`);
+  assert.equal(stored.values.renderScale, 80); // kept: each step helped
+  assert.equal(stored.guardSteps, 2);
+  assert.equal(G.sameValues(stored.detected!, picked), true); // the detection's answer, to climb back to one day
+  assert.match(stored.summary, /^In a match this PC fell to about \d+ FPS, so Auto lowered the graphics 2 steps to hold 60 FPS: 80% resolution/);
   // Next session (same store): starts at 80 %, never back up; the chip is warm from the start.
   const next = session(workLaptop(), boot, now.store);
-  assert.equal(next.ctl.needsDetection(), false); // no new detection: the guard's step stands
+  assert.equal(next.ctl.needsDetection(), false); // no new detection: the guard's steps stand
   assert.equal(next.ctl.effective().renderScale, 80);
   const m2 = next.sim.match({ load: fights(2, 1.25), throttle: throttling(1.32, 0, 30) }, 300, 2);
+  console.log(`      match 2 (warm chip): ${fmtValues(next.ctl.effective())} → ${fmtMatch(m2)}`);
   assert.equal(m2.steps.length, 0); // the floor: nothing below, nothing to do
   assert.ok(m2.below < 0.1, `match 2: ${fmtMatch(m2)}`);
-  console.log(`      match 2 (warm chip): ${fmtValues(next.ctl.effective())} → ${fmtMatch(m2)}`);
 });
 
-await test("the owner's personal laptop plugged in (the field's 90 % held 60): now 85 % from the menu; matches hold 60, the guard never steps", async () => {
+await test("the owner's personal laptop plugged in (the field's 90 % held 60): 90 % from the menu, matches hold 60, the guard never steps; the +50 % A/B would cost it one resolution step (85 %)", async () => {
   const m = { ...irisXeField(), gpuName: INTEL };
   const boot = G.presetValues("bas", { dpr: 1.25 });
+  const scene = (): Scene => ({ load: fights(4, 1.2), throttle: throttling(1.06, 60, 240) });
   const run = session(m, boot);
   await run.ctl.runDetection("first");
-  assert.equal(run.ctl.effective().renderScale, 85);
-  const r = run.sim.match({ load: fights(4, 1.2), throttle: throttling(1.06, 60, 240) }, 300, 4);
+  const r = run.sim.match(scene(), 300, 4);
+  console.log(`      ${fmtValues(run.ctl.effective())} → ${fmtMatch(r)}`);
+  assert.equal(run.ctl.effective().renderScale, 90);
   assert.equal(r.steps.length, 0, fmtMatch(r));
   assert.ok(r.below === 0, fmtMatch(r));
-  console.log(`      ${fmtValues(run.ctl.effective())} → ${fmtMatch(r)}`);
-  // The old answer (90 %) held there too — the larger margin costs one resolution step on this machine.
-  const old = session(m, boot, undefined, { experiments: new Set(["tunemargin30"]) });
-  await old.ctl.runDetection("first");
-  assert.equal(old.ctl.effective().renderScale, 90);
-  const ro = old.sim.match({ load: fights(4, 1.2), throttle: throttling(1.06, 60, 240) }, 300, 4);
-  assert.equal(ro.steps.length, 0, fmtMatch(ro));
+  // ?diag=tunemargin50: 85 % — it held too, one resolution step lower for nothing on this machine.
+  const ab = session(m, boot, undefined, { experiments: new Set(["tunemargin50"]) });
+  await ab.ctl.runDetection("first");
+  const ra = ab.sim.match(scene(), 300, 4);
+  console.log(`      tunemargin50: ${fmtValues(ab.ctl.effective())} → ${fmtMatch(ra)}`);
+  assert.equal(ab.ctl.effective().renderScale, 85);
+  assert.equal(ra.steps.length, 0, fmtMatch(ra));
 });
 
 await test("the work laptop at 100 % zoom (the floor IS native): the guard can only take filtering and snow — then the floor, never lower", async () => {
@@ -1461,11 +1475,11 @@ await test("no oscillation: over five matches the stored rung only goes down, th
   const kept = store.get().graphics.auto.GIVRE.guardSteps ?? 0;
   assert.ok(kept >= 1 && kept <= steps, `${kept} kept of ${steps}`);
   console.log(`      stored resolution after each match: ${scales.join(" → ")} % (${steps} steps, ${kept} kept)`);
-  // "Run again": a fresh answer, no guard steps.
+  // "Run again": a fresh answer (the default rule: 90 %), no guard steps.
   const again = session(workLaptop(), boot, store);
   await again.ctl.runDetection("manual");
   assert.equal(store.get().graphics.auto.GIVRE.guardSteps, 0);
-  assert.equal(again.ctl.effective().renderScale, 85);
+  assert.equal(again.ctl.effective().renderScale, 90);
 });
 
 await test("an edit on the settings page while a step is being judged starts from the values on screen (no jump back up)", async () => {
@@ -1578,9 +1592,9 @@ await test("step back up that does not hold (the HUD still heavy): stepped down 
 
 // ------------------------------------------------------------------ what the detection picks
 
-console.log("what the detection picks, old rule (+30 % everywhere) vs new (+50 % on integrated GPUs):");
+console.log("what the detection picks: the rule (+30 % on every GPU) vs the A/B ?diag=tunemargin50 (+50 %):");
 
-await test("summary table: each simulated machine, old vs new detection rule", () => {
+await test("summary table: each simulated machine, the detection's rule vs the +50 % A/B", () => {
   const rows: [string, Machine, Values, boolean][] = [
     ["Iris Xe, field-calibrated (personal laptop, 125 %)", irisXeField(), G.presetValues("bas", { dpr: 1.25 }), true],
     ["Iris Xe, work laptop 1874 × 956 at 125 %", workLaptop(), G.presetValues("bas", { dpr: 1.25 }), true],
@@ -1594,13 +1608,15 @@ await test("summary table: each simulated machine, old vs new detection rule", (
   ];
   for (const [name, m, boot, integrated] of rows) {
     const look = integrated ? G.presetValues("bas", { dpr: m.dpr }) : boot;
-    const o1 = calibrate(m, boot, { look }).outcome!;
-    const o2 = calibrate(m, boot, { look, cfg: A.tuneConfigFor({ integrated }) }).outcome!;
+    const rule = calibrate(m, boot, { look, cfg: A.tuneConfigFor({ integrated }) }).outcome!;
+    const ab = calibrate(m, boot, { look, cfg: A.tuneConfigFor({ integrated }, 50) }).outcome!;
     const share = (v: Values) => `${Math.round(gpuShare(m, v, Math.min(60, m.hz)) * 100)} %`;
-    console.log(`      ${name}:\n        old: ${fmtValues(o1.values)} (${o1.mode}, menu GPU ${share(o1.values)} of a 60 FPS frame)\n        new: ${fmtValues(o2.values)} (${o2.mode}, ${share(o2.values)})`);
-    // Never costlier than the old answer; discrete GPUs unchanged.
-    assert.ok(A.noCostlier(o2.values, o1.values));
-    if (!integrated) assert.equal(G.sameValues(o1.values, o2.values), true);
+    console.log(
+      `      ${name}:\n        rule: ${fmtValues(rule.values)} (${rule.mode}, menu GPU ${share(rule.values)} of a 60 FPS frame)\n        tunemargin50: ${fmtValues(ab.values)} (${ab.mode}, ${share(ab.values)})`,
+    );
+    // The rule is the generic one on every GPU (the same answer as AUTO_TUNE's); the A/B is never costlier.
+    assert.equal(G.sameValues(rule.values, calibrate(m, boot, { look }).outcome!.values), true);
+    assert.ok(A.noCostlier(ab.values, rule.values));
   }
 });
 

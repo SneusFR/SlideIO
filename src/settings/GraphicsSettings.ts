@@ -292,9 +292,9 @@ export interface GraphicsChoice {
 
 /**
  * Version of the detection logic: bump it to detect again for every "auto" player once.
- * 2: integrated GPUs measured with +50 % pixels instead of +30 % (AUTO_TUNE.integratedMarginPixels).
+ * (The in-match guard does not change the detection: its fields are optional in the record.)
  */
-export const AUTO_TUNE_VERSION = 2;
+export const AUTO_TUNE_VERSION = 1;
 
 /** What the "auto" choice resolves to before (or without) a usable detection. */
 export interface GpuHint {
