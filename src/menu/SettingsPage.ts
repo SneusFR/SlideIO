@@ -37,8 +37,8 @@ import {
   SNOW_LABELS,
   fpsCapLabel,
   fpsTargetLabel,
-  frNumber,
-  frPercent,
+  formatNumber,
+  formatPercent,
   valueLabel,
 } from "../settings/labels";
 import type { DetectionEvent, GraphicsController } from "../settings/GraphicsController";
@@ -76,62 +76,52 @@ export interface SettingsPageDeps {
 export type SettingsTab = "graphics" | "crosshair" | "audio";
 
 const TABS: { id: SettingsTab; label: string }[] = [
-  { id: "graphics", label: "Graphismes" },
-  { id: "crosshair", label: "Réticule" },
+  { id: "graphics", label: "Graphics" },
+  { id: "crosshair", label: "Crosshair" },
   { id: "audio", label: "Audio" },
 ];
 
-/** Cost of an option for the frame time: 1 bean = faible … 3 = fort. */
+/** Cost of an option for the frame time: 1 bean = light … 3 = heavy. */
 type Cost = 1 | 2 | 3;
-const COST_WORDS: Record<Cost, string> = { 1: "faible", 2: "moyen", 3: "fort" };
+const COST_WORDS: Record<Cost, string> = { 1: "Light", 2: "Medium", 3: "Heavy" };
 
 const PRESET_HINTS: Record<PresetChoice, string> = {
-  auto: "Mesuré sur ce PC et cette carte : le plus beau rendu qui tient l'objectif d'images par seconde, avec de la marge pour les combats.",
-  bas: "L'ancien préréglage LOW : FXAA, ombres statiques, un pixel par pixel d'écran. Pour les puces graphiques intégrées.",
-  moyen: "MSAA 2×, ombres dynamiques de taille moyenne, filtrage 4×. Pour les petites cartes graphiques.",
-  eleve: "L'ancien préréglage HIGH : MSAA 4×, ombres dynamiques détaillées, filtrage 8×.",
-  ultra: "Pleine définition même sur un écran haute densité, ombres très fines, filtrage 16×, neige dense. Pour les cartes puissantes.",
-  custom: "Tes propres réglages, option par option. Choisis un préréglage pour revenir à un ensemble prêt.",
+  auto: "Measured on this PC and this map: the best look that holds your FPS target, with headroom for fights.",
+  bas: "The old LOW preset: FXAA, static shadows, one pixel per screen pixel. For integrated graphics.",
+  moyen: "MSAA 2×, medium dynamic shadows, 4× filtering. For entry-level graphics cards.",
+  eleve: "The old HIGH preset: MSAA 4×, detailed dynamic shadows, 8× filtering.",
+  ultra: "Full resolution even on high-density screens, the sharpest shadows, 16× filtering, dense snow. For powerful graphics cards.",
+  custom: "Your own settings, option by option. Pick a preset to go back to a ready-made set.",
 };
 
 const VOLUME_ROWS: { bus: AudioBus; label: string; desc: string; linked?: AudioBus[] }[] = [
-  { bus: "master", label: "Volume général", desc: "Tous les sons du jeu." },
+  { bus: "master", label: "Main volume", desc: "Every sound in the game." },
   // Weapon IMPACT sounds (hammer hits, explosions…) live on the "impacts" bus
   // but belong to the weapon volume from the player's point of view.
-  { bus: "weapons", label: "Armes", desc: "Tirs, rechargements et impacts.", linked: ["impacts"] },
-  { bus: "music", label: "Musique", desc: "La musique du menu." },
-  { bus: "ambience", label: "Ambiance", desc: "Les sons de la carte." },
+  { bus: "weapons", label: "Weapon volume", desc: "Shots, reloads and impacts.", linked: ["impacts"] },
+  { bus: "music", label: "Music volume", desc: "The menu music." },
+  { bus: "ambience", label: "Ambiance volume", desc: "The sounds of the map." },
 ];
 
 const SHAPES: { value: CrosshairShape; label: string }[] = [
   { value: "STICKER", label: "Sticker" },
-  { value: "DOT", label: "Point" },
-  { value: "CROSS", label: "Croix" },
+  { value: "DOT", label: "Dot" },
+  { value: "CROSS", label: "Cross" },
 ];
 
-/** Session storage flag: reopen the page after « Appliquer et recharger ». */
+/** Session storage flag: reopen the page after "Apply & reload". */
 export const REOPEN_KEY = "slideio.reopenSettings";
-
-/** French typography: no-break spaces before « : », and narrow ones before « ; ! ? » and inside « ». */
-function fr(text: string): string {
-  return text
-    .replace(/ :/g, "\u00a0:")
-    .replace(/ ([;!?])/g, "\u202f$1")
-    .replace(/« /g, "«\u00a0")
-    .replace(/ »/g, "\u00a0»");
-}
 
 /** Small DOM builder: tag, class, text. */
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   if (className) node.className = className;
-  if (text !== undefined) node.textContent = fr(text);
+  if (text !== undefined) node.textContent = text;
   return node;
 }
 
 function setText(node: HTMLElement, text: string): void {
-  const t = fr(text);
-  if (node.textContent !== t) node.textContent = t;
+  if (node.textContent !== text) node.textContent = text;
 }
 
 interface Option<T> {
@@ -183,7 +173,7 @@ class Segmented<T> {
     }
   }
 
-  /** Options whose labels / availability depend on the state (frame cap « Auto (60) »…). */
+  /** Options whose labels / availability depend on the state (frame cap "Auto (60)"…). */
   setOptions(options: Option<T>[]): void {
     const same =
       options.length === this.options.length &&
@@ -209,7 +199,7 @@ class Segmented<T> {
     for (const { option, button } of this.buttons) {
       button.setAttribute("aria-disabled", option.disabled ? "true" : "false");
       button.classList.toggle("off-limits", !!option.disabled);
-      if (option.title) button.title = fr(option.title);
+      if (option.title) button.title = option.title;
       else button.removeAttribute("title");
     }
   }
@@ -296,7 +286,7 @@ class Slider {
   }
 
   private show(v: number): void {
-    const text = fr(this.format(v));
+    const text = this.format(v);
     if (this.out.textContent !== text) this.out.textContent = text;
     this.input.setAttribute("aria-valuetext", text);
     // Filled part of the track (custom property on the input only).
@@ -321,7 +311,8 @@ interface Row {
  * the pause menu (the same overlay); the live game view stays visible on the
  * right so every change is seen — and measured, on the live card — as it
  * happens. Changes apply at once, except the few that need a reload (listed
- * at the bottom, « Appliquer et recharger »).
+ * at the bottom, "Apply & reload"). Short labels are written in natural case
+ * and shown in uppercase by the stylesheet, like the rest of the menu.
  */
 export class SettingsPage {
   /** Opened / closed (the menu hides its own UI while the page is up). */
@@ -375,15 +366,15 @@ export class SettingsPage {
     const panel = el("section", "gs-panel");
     const head = el("header", "gs-head");
     const titleWrap = el("div", "gs-title-wrap");
-    const title = el("h2", "gs-title", "Paramètres");
+    const title = el("h2", "gs-title", "Settings");
     title.id = "gs-title";
-    const subtitle = el("p", "gs-subtitle", "Tout s'applique tout de suite");
+    const subtitle = el("p", "gs-subtitle", "Everything applies instantly");
     // (Narrow windows: the panel covers the map — the hint goes, see the CSS.)
-    subtitle.append(el("span", "gs-subtitle-side", " — regarde la carte à droite"), ".");
+    subtitle.append(el("span", "gs-subtitle-side", " — watch the map on the right"), ".");
     titleWrap.append(title, subtitle);
-    const back = el("button", "gs-back", "Retour");
+    const back = el("button", "gs-back", "Back");
     back.type = "button";
-    back.title = "Retour (Échap)";
+    back.title = "Back (Esc)";
     back.addEventListener("pointerenter", () => deps.sounds.hover());
     back.addEventListener("click", () => {
       deps.sounds.click();
@@ -393,7 +384,7 @@ export class SettingsPage {
 
     const tabs = el("nav", "gs-tabs");
     tabs.setAttribute("role", "tablist");
-    tabs.setAttribute("aria-label", "Catégories");
+    tabs.setAttribute("aria-label", "Settings categories");
     for (const t of TABS) {
       const b = el("button", "gs-tab", t.label);
       b.type = "button";
@@ -430,9 +421,9 @@ export class SettingsPage {
     this.reloadBar = el("footer", "gs-reload hidden");
     const reloadCopy = el("div", "gs-reload-copy");
     this.reloadText = el("p", "gs-reload-text");
-    this.reloadWarn = el("p", "gs-reload-warn", "Recharger quitte la partie en cours.");
+    this.reloadWarn = el("p", "gs-reload-warn", "Reloading leaves the current match.");
     reloadCopy.append(this.reloadText, this.reloadWarn);
-    this.reloadBtn = el("button", "gs-btn gs-btn-gold", "Appliquer et recharger");
+    this.reloadBtn = el("button", "gs-btn gs-btn-gold", "Apply & reload");
     this.reloadBtn.type = "button";
     this.reloadBtn.addEventListener("click", () => this.onReload());
     this.reloadBar.append(reloadCopy, this.reloadBtn);
@@ -441,7 +432,7 @@ export class SettingsPage {
 
     // Live card (the live view's corner).
     this.meter = el("aside", "gs-meter");
-    this.meter.setAttribute("aria-label", "Mesure en direct");
+    this.meter.setAttribute("aria-label", "Live performance");
     const top = el("div", "gs-meter-top");
     this.meterNum = el("span", "gs-meter-num", "—");
     const unit = el("span", "gs-meter-unit", "FPS");
@@ -452,19 +443,19 @@ export class SettingsPage {
     const metric = (label: string, hint: string): { row: HTMLElement; dd: HTMLElement } => {
       const wrap = el("div");
       const dt = el("dt", "", label);
-      dt.title = fr(hint);
+      dt.title = hint;
       const dd = el("dd", "", "—");
       wrap.append(dt, dd);
       rows.appendChild(wrap);
       return { row: wrap, dd };
     };
-    this.meterFrame = metric("Image", "Temps médian entre deux images affichées").dd;
-    this.meterSlow = metric("Images lentes", "Les 5 % d'images les plus lentes : ce qu'on ressent comme des saccades").dd;
-    this.meterCpu = metric("Processeur (jeu)", "Temps du jeu sur le processeur, par image").dd;
-    const gpu = metric("Carte graphique", "Indicatif : mesuré par les requêtes de chronométrage du mode debug (?gpu)");
+    this.meterFrame = metric("Frame", "Median time between two displayed frames").dd;
+    this.meterSlow = metric("Slow frames", "The slowest 5% of frames: what you feel as stutter").dd;
+    this.meterCpu = metric("CPU (game)", "Game time on the processor, per frame").dd;
+    const gpu = metric("GPU", "Approximate: from the debug mode's GPU timer queries (?gpu)");
     this.meterGpuRow = gpu.row;
     this.meterGpu = gpu.dd;
-    this.meterSize = metric("Rendu", "Taille de l'image 3D calculée, en pixels").dd;
+    this.meterSize = metric("Render", "Size of the rendered 3D image, in pixels").dd;
     this.meterDevice = el("p", "gs-meter-device");
     this.meter.append(top, this.meterStatus, rows, this.meterDevice);
 
@@ -553,13 +544,13 @@ export class SettingsPage {
       const chip = el("span", "gs-cost");
       chip.dataset.cost = String(cost);
       chip.setAttribute("role", "img");
-      chip.setAttribute("aria-label", `Impact ${COST_WORDS[cost]} sur les images par seconde`);
-      chip.title = `Impact ${COST_WORDS[cost]} sur les images par seconde`;
+      chip.setAttribute("aria-label", `${COST_WORDS[cost]} impact on FPS`);
+      chip.title = `${COST_WORDS[cost]} impact on FPS`;
       for (let i = 0; i < 3; i++) chip.appendChild(el("i", i < cost ? "full" : ""));
       chip.appendChild(el("span", "gs-cost-word", COST_WORDS[cost]));
       head.appendChild(chip);
     }
-    const reload = el("span", "gs-chip-reload hidden", "Au rechargement");
+    const reload = el("span", "gs-chip-reload hidden", "On reload");
     const note = el("span", "gs-chip-note hidden");
     head.append(reload, note);
     const p = el("p", "gs-row-desc", desc);
@@ -571,7 +562,7 @@ export class SettingsPage {
     return { el: r, desc: p, note, reload, control: ctl };
   }
 
-  /** Edit one graphics value: "Personnalisé" (or the preset these values are exactly). */
+  /** Edit one graphics value: "Custom" (or the preset these values are exactly). */
   private edit<K extends GraphicsKey>(key: K, value: GraphicsValues[K]): void {
     const { controller, store } = this.deps;
     const env = this.deps.env();
@@ -592,7 +583,7 @@ export class SettingsPage {
     store.update((d) => {
       d.graphics = { ...d.graphics, preset: id };
     });
-    // "Automatique" means MEASURED: no up-to-date measurement here → now.
+    // "Auto" means MEASURED: no up-to-date measurement here → now.
     if (id === "auto" && controller.needsDetection()) this.startDetection();
   }
 
@@ -611,9 +602,9 @@ export class SettingsPage {
     pane.appendChild(fieldset);
 
     // ---- Preset + detection ----
-    const presetSec = this.section(fieldset, "Préréglage");
+    const presetSec = this.section(fieldset, "Preset");
     const presetSeg = new Segmented<PresetChoice>(
-      "Préréglage",
+      "Graphics preset",
       (["auto", "bas", "moyen", "eleve", "ultra", "custom"] as PresetChoice[]).map((p) => ({ value: p, label: PRESET_LABELS[p] })),
       (p) => this.pickPreset(p),
       sounds,
@@ -625,17 +616,17 @@ export class SettingsPage {
 
     const detect = el("div", "gs-detect");
     const detectCopy = el("div", "gs-detect-copy");
-    const detectTitle = el("p", "gs-detect-title", "Détection automatique");
+    const detectTitle = el("p", "gs-detect-title", "Auto-detect");
     this.detectText = el("p", "gs-detect-text");
     this.detectMeta = el("p", "gs-detect-meta");
     this.detectProgress = el("div", "gs-detect-progress hidden");
     this.detectProgress.setAttribute("role", "progressbar");
-    this.detectProgress.setAttribute("aria-label", "Progression de la détection");
+    this.detectProgress.setAttribute("aria-label", "Detection progress");
     this.detectFill = el("div", "gs-detect-fill");
     this.detectProgress.appendChild(this.detectFill);
     detectCopy.append(detectTitle, this.detectText, this.detectMeta, this.detectProgress);
     const detectSide = el("div", "gs-detect-side");
-    this.detectBtn = el("button", "gs-btn", "Lancer la détection");
+    this.detectBtn = el("button", "gs-btn", "Run detection");
     this.detectBtn.type = "button";
     this.detectBtn.addEventListener("pointerenter", () => sounds.hover());
     this.detectBtn.addEventListener("click", () => {
@@ -644,15 +635,15 @@ export class SettingsPage {
       else this.startDetection();
     });
     const targetWrap = el("div", "gs-detect-target");
-    const targetLabel = el("span", "gs-detect-target-label", "Objectif");
+    const targetLabel = el("span", "gs-detect-target-label", "Target");
     const targetSeg = new Segmented<FpsTargetSetting>(
-      "Objectif de la détection",
+      "Detection target",
       [],
       (t) => {
         this.deps.store.update((d) => {
           d.fpsTarget = t;
         });
-        // "Automatique" measured for the old target: measure again for the new one.
+        // "Auto" measured for the old target: measure again for the new one.
         if (this.record.graphics.preset === "auto" && this.deps.controller.needsDetection()) this.startDetection();
       },
       sounds,
@@ -666,107 +657,107 @@ export class SettingsPage {
     // ---- Image ----
     const image = this.section(fieldset, "Image");
     const scale = new Slider(
-      "Résolution de rendu",
+      "Render resolution",
       { min: RENDER_SCALE_MIN, max: RENDER_SCALE_MAX, step: RENDER_SCALE_STEP },
-      (v) => frPercent(v),
+      (v) => formatPercent(v),
       (v) => this.edit("renderScale", v),
       150,
     );
     const scaleRow = this.row(
       image,
-      "Résolution de rendu",
-      "Le nombre de pixels calculés, en % de la définition de ton écran. Moins : beaucoup plus rapide, un peu plus flou. Au-delà de 100 % : suréchantillonnage, pour les cartes puissantes.",
+      "Render resolution",
+      "How many pixels are rendered, as a % of your screen's resolution. Lower is much faster and a bit blurrier; above 100% is supersampling, for powerful graphics cards.",
       scale.el,
       3,
     );
     const scalePx = el("p", "gs-row-sub");
     scaleRow.control.appendChild(scalePx);
 
-    const aa = new Segmented<AntiAliasing>("Anticrénelage", [], (v) => this.edit("antialiasing", v), sounds);
+    const aa = new Segmented<AntiAliasing>("Anti-aliasing", [], (v) => this.edit("antialiasing", v), sounds);
     const aaRow = this.row(
       image,
-      "Anticrénelage",
-      "Lisse les bords en escalier. FXAA coûte peu ; le MSAA est plus net, mais lourd pour une puce graphique intégrée.",
+      "Anti-aliasing",
+      "Smooths jagged edges. FXAA is cheap; MSAA is sharper but heavy on integrated graphics.",
       aa.el,
       3,
     );
 
     // ---- Shadows ----
-    const shadowsSec = this.section(fieldset, "Ombres");
+    const shadowsSec = this.section(fieldset, "Shadows");
     const shadows = new Segmented<ShadowMode>(
-      "Ombres",
+      "Shadows",
       (["off", "static", "dynamic"] as const).map((v) => ({ value: v, label: SHADOW_LABELS[v] })),
       (v) => this.edit("shadows", v),
       sounds,
     );
     const shadowsRow = this.row(
       shadowsSec,
-      "Ombres",
-      "Statiques : les ombres de la carte, calculées une fois au chargement. Dynamiques : recalculées à chaque image, avec celles des personnages.",
+      "Shadows",
+      "Static: the map's shadows, computed once at load. Dynamic: recomputed every frame, the characters' shadows included.",
       shadows.el,
       2,
     );
-    const quality = new Segmented<ShadowQuality>("Qualité des ombres", [], (v) => this.edit("shadowQuality", v), sounds);
+    const quality = new Segmented<ShadowQuality>("Shadow quality", [], (v) => this.edit("shadowQuality", v), sounds);
     const qualityRow = this.row(
       shadowsSec,
-      "Qualité des ombres",
-      "La taille de la carte d'ombres : des bords d'ombre plus nets. Avec les ombres dynamiques, elle se paie à chaque image.",
+      "Shadow quality",
+      "Size of the shadow map: sharper shadow edges. With dynamic shadows, it costs time every frame.",
       quality.el,
       2,
     );
-    const chars = new Segmented<boolean>("Ombres des personnages", yesNo(), (on) => this.edit("characterShadows", on), sounds);
+    const chars = new Segmented<boolean>("Character shadows", yesNo(), (on) => this.edit("characterShadows", on), sounds);
     const charsRow = this.row(
       shadowsSec,
-      "Ombres des personnages",
-      "Les personnages, leurs armes et les cibles mobiles projettent leur ombre au sol (avec les ombres dynamiques).",
+      "Character shadows",
+      "Characters, their weapons and moving targets cast shadows on the ground (with dynamic shadows).",
       chars.el,
       2,
     );
 
     // ---- Effects ----
-    const fx = this.section(fieldset, "Effets");
+    const fx = this.section(fieldset, "Effects");
     const snow = new Segmented<SnowLevel>(
-      "Neige",
+      "Snow",
       (["off", "legere", "normale", "dense"] as const).map((v) => ({ value: v, label: SNOW_LABELS[v] })),
       (v) => this.edit("snow", v),
       sounds,
     );
-    const snowRow = this.row(fx, "Neige", "Les flocons qui tombent sur Givre.", snow.el, 1);
-    const halos = new Segmented<boolean>("Halos des lumières", yesNo(), (on) => this.edit("halos", on), sounds);
-    const halosRow = this.row(fx, "Halos des lumières", "La lueur autour des ampoules et des lanternes de Givre.", halos.el, 1);
-    const prints = new Segmented<boolean>("Empreintes dans la neige", yesNo(), (on) => this.edit("footprints", on), sounds);
-    const printsRow = this.row(fx, "Empreintes dans la neige", "Les traces de pas laissées dans la neige de Givre.", prints.el, 1);
+    const snowRow = this.row(fx, "Snow", "The snowflakes falling on Givre.", snow.el, 1);
+    const halos = new Segmented<boolean>("Light halos", yesNo(), (on) => this.edit("halos", on), sounds);
+    const halosRow = this.row(fx, "Light halos", "The glow around the bulbs and lanterns of Givre.", halos.el, 1);
+    const prints = new Segmented<boolean>("Snow footprints", yesNo(), (on) => this.edit("footprints", on), sounds);
+    const printsRow = this.row(fx, "Snow footprints", "The footprints left in the snow of Givre.", prints.el, 1);
     const particles = new Segmented<ParticleDensity>(
-      "Particules",
+      "Particles",
       (["normal", "reduced"] as const).map((v) => ({ value: v, label: PARTICLE_LABELS[v] })),
       (v) => this.edit("particles", v),
       sounds,
     );
-    this.row(fx, "Particules", "Étincelles et éclats des impacts, des explosions et des coups de masse.", particles.el, 1);
-    const aniso = new Segmented<Anisotropy>("Filtrage anisotrope", [], (v) => this.edit("anisotropy", v), sounds);
-    const anisoRow = this.row(fx, "Filtrage anisotrope", "Garde les sols et les murs nets quand on les voit de biais.", aniso.el, 1);
+    this.row(fx, "Particles", "Sparks and debris from impacts, explosions and hammer hits.", particles.el, 1);
+    const aniso = new Segmented<Anisotropy>("Anisotropic filtering", [], (v) => this.edit("anisotropy", v), sounds);
+    const anisoRow = this.row(fx, "Anisotropic filtering", "Keeps floors and walls sharp when you see them at an angle.", aniso.el, 1);
 
     // ---- Performance ----
-    const rate = this.section(fieldset, "Performances");
+    const rate = this.section(fieldset, "Performance");
     const cap = new Segmented<FpsCapSetting>(
-      "Limite d'images par seconde",
+      "FPS limit",
       [],
       (v) => this.deps.store.update((d) => void (d.fpsCap = v)),
       sounds,
       "gs-seg-wrap",
     );
-    const capRow = this.row(rate, "Limite d'images par seconde", "", cap.el);
+    const capRow = this.row(rate, "FPS limit", "", cap.el);
     const panel = new Segmented<PerfPanelMode>(
-      "Panneau de performances",
+      "Performance panel",
       [
-        { value: "full", label: "Complet" },
-        { value: "fps", label: "FPS seulement" },
-        { value: "off", label: "Masqué" },
+        { value: "full", label: "Full" },
+        { value: "fps", label: "FPS only" },
+        { value: "off", label: "Hidden" },
       ],
       (v) => this.deps.store.update((d) => void (d.perfPanel = v)),
       sounds,
     );
-    this.row(rate, "Panneau de performances", "Le panneau de mesures en haut à gauche, en partie. Masqué, il ne coûte plus rien.", panel.el);
+    this.row(rate, "Performance panel", "The stats panel in the top-left corner during a match. Hidden, it costs nothing.", panel.el);
 
     // ---- Outline (Givre cel-shading, when the map has it) ----
     let outlineRefresh: (() => void) | null = null;
@@ -794,8 +785,8 @@ export class SettingsPage {
       const h = Math.floor(window.innerHeight * ratio);
       const nw = Math.floor(window.innerWidth * env.dpr);
       const nh = Math.floor(window.innerHeight * env.dpr);
-      setText(scalePx, `${w} × ${h} pixels · écran ${nw} × ${nh}`);
-      note(scaleRow, v.renderScale < floorRenderScale(env) - 0.5 ? "Sous le plancher de la détection" : "");
+      setText(scalePx, `${w} × ${h} pixels · screen ${nw} × ${nh}`);
+      note(scaleRow, v.renderScale < floorRenderScale(env) - 0.5 ? "Below the auto-detect floor" : "");
       aa.setOptions(
         (["none", "fxaa", "msaa2", "msaa4"] as AntiAliasing[]).map((a) => {
           const off = (!caps.composer && (a === "fxaa" || a === "msaa2")) || (a === "msaa2" && caps.maxSamples < 2) || (a === "msaa4" && caps.maxSamples < 4);
@@ -803,26 +794,26 @@ export class SettingsPage {
             value: a,
             label: AA_LABELS[a],
             disabled: off,
-            title: off ? (caps.composer ? "Non pris en charge par cette carte graphique" : "Sur Givre seulement") : undefined,
+            title: off ? (caps.composer ? "Not supported by this graphics card" : "Givre only") : undefined,
           };
         }),
       );
       aa.set(caps.composer ? v.antialiasing : v.antialiasing === "msaa2" ? "msaa4" : v.antialiasing === "fxaa" ? "none" : v.antialiasing);
-      note(aaRow, caps.composer ? "" : "Ici, MSAA au rechargement");
+      note(aaRow, caps.composer ? "" : "MSAA applies on reload here");
       // Shadows
       shadows.set(v.shadows);
       quality.setOptions(
         SHADOW_QUALITIES.map((q) => {
           const off = SHADOW_QUALITIES.indexOf(q) > SHADOW_QUALITIES.indexOf(caps.maxShadowQuality);
-          return { value: q, label: SHADOW_QUALITY_LABELS[q], disabled: off, title: off ? "Trop grande pour cette carte graphique" : undefined };
+          return { value: q, label: SHADOW_QUALITY_LABELS[q], disabled: off, title: off ? "Too big for this graphics card" : undefined };
         }),
       );
       quality.set(v.shadowQuality);
       quality.setEnabled(v.shadows !== "off");
-      note(qualityRow, v.shadows === "off" ? "Sans ombres" : "");
+      note(qualityRow, v.shadows === "off" ? "No shadows" : "");
       chars.set(v.characterShadows);
       chars.setEnabled(v.shadows === "dynamic");
-      note(charsRow, v.shadows === "dynamic" ? "" : "Avec les ombres dynamiques");
+      note(charsRow, v.shadows === "dynamic" ? "" : "Needs dynamic shadows");
       // Effects
       snow.set(v.snow);
       halos.set(v.halos);
@@ -831,21 +822,21 @@ export class SettingsPage {
       aniso.setOptions(
         ANISOTROPY_LEVELS.map((a) => {
           const off = a > Math.max(1, caps.maxAnisotropy);
-          return { value: a, label: ANISOTROPY_LABELS[a], disabled: off, title: off ? "Au-delà du maximum de cette carte graphique" : undefined };
+          return { value: a, label: ANISOTROPY_LABELS[a], disabled: off, title: off ? "Above the maximum of this graphics card" : undefined };
         }),
       );
       aniso.set(v.anisotropy);
-      note(snowRow, caps.snow ? "" : "Sur Givre");
-      note(halosRow, caps.halos ? "" : "Sur Givre");
-      note(printsRow, caps.footprints ? "" : "Sur Givre");
-      note(anisoRow, caps.anisotropicTextures ? "" : "Visible sur Givre");
+      note(snowRow, caps.snow ? "" : "Givre only");
+      note(halosRow, caps.halos ? "" : "Givre only");
+      note(printsRow, caps.footprints ? "" : "Givre only");
+      note(anisoRow, caps.anisotropicTextures ? "" : "Shows on Givre");
       // Performance
       const effectivePreset = controller.effectivePreset();
       cap.setOptions(FPS_CAPS.map((c) => ({ value: c, label: fpsCapLabel(c, effectivePreset) })));
       cap.set(record.fpsCap);
       setText(
         capRow.desc,
-        `Plafonne les images calculées : moins de chauffe et de bruit sur un portable. Sans limite, le jeu suit ton écran (${hz} Hz).`,
+        `Caps the frame rate: less heat and fan noise on a laptop (60 also fixes stutter on some). Off, the game follows your screen (${hz} Hz).`,
       );
       panel.set(record.perfPanel);
       // Reload chips
@@ -860,25 +851,25 @@ export class SettingsPage {
 
   private buildOutline(parent: HTMLElement): () => void {
     const { sounds, store, controller } = this.deps;
-    const sec = this.section(parent, "Contours (Givre)");
-    const on = new Segmented<boolean>("Contours cel-shading", yesNo(), (v) => store.update((d) => void (d.outline.enabled = v)), sounds);
-    this.row(sec, "Contours cel-shading", "Le liseré blanc autour des formes, façon dessin animé.", on.el, 2);
+    const sec = this.section(parent, "Outline (Givre)");
+    const on = new Segmented<boolean>("Cel outline", yesNo(), (v) => store.update((d) => void (d.outline.enabled = v)), sounds);
+    this.row(sec, "Cel outline", "The white cartoon outline around shapes.", on.el, 2);
     const thick = new Slider(
-      "Épaisseur des contours",
+      "Outline thickness",
       { min: OUTLINE_THICKNESS_MIN * 100, max: OUTLINE_THICKNESS_MAX * 100, step: 5 },
-      (v) => `${frNumber(v / 100, 2)} px`,
+      (v) => `${formatNumber(v / 100, 2)} px`,
       (v) => store.update((d) => void (d.outline.thickness = v / 100)),
     );
-    this.row(sec, "Épaisseur", "Largeur du liseré.", thick.el);
+    this.row(sec, "Outline thickness", "Width of the outline.", thick.el);
     const intensity = new Slider(
-      "Intensité des contours",
+      "Outline intensity",
       { min: 0, max: 100, step: 1 },
-      (v) => frPercent(v),
+      (v) => formatPercent(v),
       (v) => store.update((d) => void (d.outline.intensity = v / 100)),
     );
-    this.row(sec, "Intensité", "Opacité du liseré.", intensity.el);
-    const debug = new Segmented<boolean>("Vue des bords", yesNo(), (v) => controller.setOutlineDebug(v), sounds);
-    this.row(sec, "Vue des bords", "Montre seulement les bords détectés (pour régler ; non enregistré).", debug.el);
+    this.row(sec, "Outline intensity", "Opacity of the outline.", intensity.el);
+    const debug = new Segmented<boolean>("Edge debug", yesNo(), (v) => controller.setOutlineDebug(v), sounds);
+    this.row(sec, "Edge debug", "Shows the detected edges only (for tuning; not saved).", debug.el);
     return () => {
       const o = this.record.outline;
       on.set(o.enabled);
@@ -901,7 +892,7 @@ export class SettingsPage {
     const running = controller.detecting;
     this.graphicsFieldset.classList.toggle("gs-busy", running);
     // The options are not editable while candidates are measured on screen
-    // (inert: neither clickable nor focusable; the Annuler button stays live).
+    // (inert: neither clickable nor focusable; the Cancel button stays live).
     for (const node of this.graphicsFieldset.querySelectorAll<HTMLElement>(".gs-row, .gs-presets, .gs-detect-target")) {
       node.inert = running;
       node.classList.toggle("gs-locked", running);
@@ -913,30 +904,27 @@ export class SettingsPage {
       const total = Math.max(1, p?.total ?? 1);
       setText(
         this.detectText,
-        `Mesure ${Math.min(total, done + 1)} sur ${total} : l'image change pendant les essais, la caméra reste immobile. Quelques secondes.`,
+        `Test ${Math.min(total, done + 1)} of ${total}: the image changes during the tests while the camera holds still. Just a few seconds.`,
       );
-      setText(this.detectMeta, `Objectif : ${controller.detectionTarget()} FPS sur cette carte.`);
+      setText(this.detectMeta, `Target: ${controller.detectionTarget()} FPS on this map.`);
       this.detectFill.style.transform = `scaleX(${Math.min(1, done / total)})`;
       this.detectProgress.setAttribute("aria-valuenow", String(Math.round((100 * done) / total)));
-      setText(this.detectBtn, "Annuler");
+      setText(this.detectBtn, "Cancel");
       return;
     }
     const auto = controller.autoResult();
-    setText(this.detectBtn, auto ? "Relancer la détection" : "Lancer la détection");
+    setText(this.detectBtn, auto ? "Run again" : "Run detection");
     if (auto) {
-      setText(this.detectText, auto.summary || "Réglages mesurés sur ce PC.");
-      const when = new Date(auto.at);
-      const date = Number.isFinite(when.getTime())
-        ? when.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })
-        : "";
-      const stale = auto.targetFps !== controller.detectionTarget() ? " — objectif changé depuis : relance-la" : "";
-      setText(this.detectMeta, `Mesuré${date ? ` le ${date}` : ""} pour ${auto.targetFps} FPS${stale}.`);
+      setText(this.detectText, auto.summary || "Settings measured on this PC.");
+      const date = isoDate(auto.at);
+      const stale = auto.targetFps !== controller.detectionTarget() ? " — the target changed since, run it again" : "";
+      setText(this.detectMeta, `Measured${date ? ` on ${date}` : ""} for ${auto.targetFps} FPS${stale}.`);
     } else {
       setText(
         this.detectText,
-        "Mesure ce PC sur la carte en cours et choisit le plus beau rendu qui tient l'objectif, avec de la marge pour les combats : 60 FPS au moins, et la fréquence de l'écran tant que l'image reste au moins celle d'origine. Jamais sous le plancher de qualité (l'ancien préréglage LOW).",
+        "Tests this PC on the current map and picks the best look that holds the target, with headroom for fights: 60 FPS at least, plus your screen's refresh rate as long as the image stays at least as good as the original. Never below the quality floor (the old LOW preset).",
       );
-      setText(this.detectMeta, `Objectif : ${controller.detectionTarget()} FPS. Quelques secondes ; l'image change pendant les essais.`);
+      setText(this.detectMeta, `Target: ${controller.detectionTarget()} FPS. Takes a few seconds; the image changes during the tests.`);
     }
   }
 
@@ -947,7 +935,7 @@ export class SettingsPage {
     const update = (change: (c: CrosshairSettings) => void): void => {
       store.update((d) => change(d.crosshair));
     };
-    const sec = this.section(pane, "Réticule", "Le réticule du jeu est caché dans les menus : voici son aperçu, sur un décor clair et sur un décor sombre.");
+    const sec = this.section(pane, "Crosshair", "The game's crosshair is hidden in menus, so here is a preview on a light and on a dark background.");
     const preview = el("div", "gs-ch-preview");
     preview.setAttribute("aria-hidden", "true");
     const sample = (bg: string): HTMLElement => {
@@ -965,32 +953,33 @@ export class SettingsPage {
     const previews = [sample("light"), sample("dark")];
     sec.appendChild(preview);
 
-    const shape = new Segmented<CrosshairShape>("Forme", SHAPES, (v) => update((c) => void (c.shape = v)), sounds);
-    this.row(sec, "Forme", "Sticker : point et quatre traits qui bougent au tir. Point ou croix : classiques, fixes.", shape.el);
+    const shape = new Segmented<CrosshairShape>("Crosshair shape", SHAPES, (v) => update((c) => void (c.shape = v)), sounds);
+    this.row(sec, "Shape", "Sticker: a dot and four ticks that react when you shoot. Dot or cross: classic and static.", shape.el);
     const size = new Slider(
-      "Taille du réticule",
+      "Crosshair size",
       { min: CROSSHAIR_SCALE_MIN * 100, max: CROSSHAIR_SCALE_MAX * 100, step: 5 },
-      (v) => frPercent(v),
+      (v) => formatPercent(v),
       (v) => update((c) => void (c.scale = v / 100)),
     );
-    this.row(sec, "Taille", "Taille du réticule et des marqueurs d'impact.", size.el);
+    this.row(sec, "Crosshair size", "Size of the crosshair and hit markers.", size.el);
     const colorWrap = el("div", "gs-color");
     const color = el("input", "gs-color-input");
     color.type = "color";
-    color.setAttribute("aria-label", "Couleur du réticule");
-    const reset = el("button", "gs-btn gs-btn-small", "Couleur d'origine");
+    color.setAttribute("aria-label", "Crosshair color");
+    const reset = el("button", "gs-btn gs-btn-small", "Reset");
     reset.type = "button";
+    reset.title = "Back to the default cream";
     colorWrap.append(color, reset);
     color.addEventListener("input", () => update((c) => void (c.color = color.value)));
     reset.addEventListener("click", () => {
       sounds.click();
       update((c) => void (c.color = DEFAULT_CROSSHAIR.color));
     });
-    this.row(sec, "Couleur", "La couleur du point et des traits.", colorWrap);
-    const contrast = new Segmented<boolean>("Contraste élevé", yesNo(), (v) => update((c) => void (c.highContrast = v)), sounds);
-    this.row(sec, "Contraste élevé", "Contour plus épais, pour les décors clairs ou chargés.", contrast.el);
-    const motion = new Segmented<boolean>("Mouvements réduits", yesNo(), (v) => update((c) => void (c.reducedMotion = v)), sounds);
-    this.row(sec, "Mouvements réduits", "Le réticule ne bouge plus au tir ni à la visée : de simples fondus.", motion.el);
+    this.row(sec, "Crosshair color", "Color of the dot and the ticks.", colorWrap);
+    const contrast = new Segmented<boolean>("High contrast", yesNo(), (v) => update((c) => void (c.highContrast = v)), sounds);
+    this.row(sec, "High contrast", "A thicker outline, for bright or busy backgrounds.", contrast.el);
+    const motion = new Segmented<boolean>("Reduced motion", yesNo(), (v) => update((c) => void (c.reducedMotion = v)), sounds);
+    this.row(sec, "Reduced motion", "The crosshair stops moving when you shoot or aim: simple fades instead.", motion.el);
 
     this.refreshers.push(() => {
       const c = this.record.crosshair;
@@ -1012,12 +1001,12 @@ export class SettingsPage {
 
   private buildAudio(pane: HTMLElement): void {
     const { sounds } = this.deps;
-    const sec = this.section(pane, "Volumes");
+    const sec = this.section(pane, "Volume");
     for (const def of VOLUME_ROWS) {
       const slider = new Slider(
         def.label,
         { min: 0, max: 100, step: 1 },
-        (v) => frPercent(v),
+        (v) => formatPercent(v),
         (v) => {
           audio.setUserVolume(def.bus, v / 100);
           for (const linked of def.linked ?? []) audio.setUserVolume(linked, v / 100);
@@ -1039,21 +1028,21 @@ export class SettingsPage {
     this.reloadBar.classList.toggle("hidden", changes.length === 0);
     if (changes.length === 0) {
       this.reloadArmed = false;
-      setText(this.reloadBtn, "Appliquer et recharger");
+      setText(this.reloadBtn, "Apply & reload");
       return;
     }
-    const list = changes.map((c) => `${SETTING_NAMES[c.key]} : ${valueLabel(c.key, c.to as never).toLowerCase()}`).join(", ");
-    setText(this.reloadText, `Au prochain chargement de la page — ${list}. Ces réglages changent les shaders : ils ne s'appliquent pas en direct.`);
+    const list = changes.map((c) => `${SETTING_NAMES[c.key]}: ${valueLabel(c.key, c.to as never).toLowerCase()}`).join(", ");
+    setText(this.reloadText, `On the next page load: ${list}. These settings change the shaders, so they can't apply live.`);
     const inMatch = this.deps.isInMatch();
     this.reloadWarn.classList.toggle("hidden", !inMatch);
-    if (!this.reloadArmed) setText(this.reloadBtn, "Appliquer et recharger");
+    if (!this.reloadArmed) setText(this.reloadBtn, "Apply & reload");
   }
 
   private onReload(): void {
     this.deps.sounds.click();
     if (this.deps.isInMatch() && !this.reloadArmed) {
       this.reloadArmed = true;
-      setText(this.reloadBtn, "Quitter la partie et recharger");
+      setText(this.reloadBtn, "Leave match & reload");
       return;
     }
     try {
@@ -1062,7 +1051,7 @@ export class SettingsPage {
       /* no session storage: the page simply does not reopen */
     }
     this.reloadBtn.disabled = true;
-    setText(this.reloadBtn, "Rechargement…");
+    setText(this.reloadBtn, "Reloading…");
     window.setTimeout(() => window.location.reload(), 120);
   }
 
@@ -1074,12 +1063,12 @@ export class SettingsPage {
     const target = controller.detectionTarget();
     const cap = controller.capFps();
     const goal = Math.min(target, cap);
-    setText(this.meterTarget, `objectif ${goal}`);
-    setText(this.meterDevice, this.deps.game.gpuName || "Carte graphique inconnue");
+    setText(this.meterTarget, `target ${goal}`);
+    setText(this.meterDevice, this.deps.game.gpuName || "Unknown graphics card");
     this.meterGpuRow.classList.toggle("hidden", !perf || perf.gpuMs === null);
     if (!perf) {
       setText(this.meterNum, "—");
-      setText(this.meterStatus, "En attente d'images…");
+      setText(this.meterStatus, "Waiting for frames…");
       this.meter.dataset.state = "idle";
       return;
     }
@@ -1090,12 +1079,12 @@ export class SettingsPage {
     this.meter.dataset.state = detecting ? "busy" : ok ? "ok" : "below";
     setText(
       this.meterStatus,
-      detecting ? "Détection en cours : mesures sous charge" : ok ? "Objectif tenu" : `Sous l'objectif (${goal} FPS)`,
+      detecting ? "Detection running: testing under load" : ok ? "On target" : `Below target (${goal} FPS)`,
     );
-    setText(this.meterFrame, `${frNumber(perf.frameMs, 1)} ms`);
-    setText(this.meterSlow, `${frNumber(perf.frameP95, 1)} ms`);
-    setText(this.meterCpu, `${frNumber(perf.cpuMs, 1)} ms`);
-    if (perf.gpuMs !== null) setText(this.meterGpu, `≈ ${frNumber(perf.gpuMs, 1)} ms`);
+    setText(this.meterFrame, `${formatNumber(perf.frameMs, 1)} ms`);
+    setText(this.meterSlow, `${formatNumber(perf.frameP95, 1)} ms`);
+    setText(this.meterCpu, `${formatNumber(perf.cpuMs, 1)} ms`);
+    if (perf.gpuMs !== null) setText(this.meterGpu, `≈ ${formatNumber(perf.gpuMs, 1)} ms`);
     setText(this.meterSize, `${perf.width} × ${perf.height}`);
   }
 
@@ -1107,9 +1096,17 @@ export class SettingsPage {
 
 function yesNo(): Option<boolean>[] {
   return [
-    { value: true, label: "Oui" },
-    { value: false, label: "Non" },
+    { value: true, label: "On" },
+    { value: false, label: "Off" },
   ];
+}
+
+/** Locale-neutral date of a stored detection: "2026-10-21" ("" when unknown). */
+function isoDate(at: number): string {
+  const d = new Date(at);
+  if (!Number.isFinite(d.getTime())) return "";
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function chip(row: Row, on: boolean): void {

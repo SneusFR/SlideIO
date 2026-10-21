@@ -12,7 +12,7 @@ import {
   type GraphicsValues,
   type ShadowQuality,
 } from "./GraphicsSettings";
-import { describeValues, frNumber } from "./labels";
+import { describeValues, formatNumber } from "./labels";
 
 /**
  * AUTOMATIC DETECTION — pure logic, fed with the frames the game renders.
@@ -238,7 +238,7 @@ export function sortedPercentile(sorted: ArrayLike<number>, p: number): number {
 
 /**
  * Index of the DEFAULT LOOK in the ladder: the first rung no costlier than
- * `look` (the old preset of this GPU: Élevé, or Bas on integrated GPUs) in
+ * `look` (the old preset of this GPU: High, or Low on integrated GPUs) in
  * any knob that costs time per frame — resolution, anti-aliasing, filtering,
  * snow, and the shadow map size when it is re-rendered every frame. The
  * high-refresh goal never takes the image below it (see Calibration).
@@ -700,51 +700,49 @@ export interface SummaryContext {
   software: boolean;
 }
 
-/** The French message shown after a detection. */
+/** The message shown after a detection (settings page, under "Auto-detect"). */
 export function summarize(o: TuneOutcome, ctx: SummaryContext): string {
   const desc = describeValues(o.values, ctx.caps);
   if (ctx.software) {
     return (
-      "Rendu logiciel détecté : le navigateur dessine sans la carte graphique (accélération matérielle " +
-      `désactivée). Réglages du plancher (${desc}) — active l'accélération matérielle du navigateur.`
+      "Software rendering detected: your browser is drawing without the graphics card (hardware acceleration is off). " +
+      `Floor settings for now (${desc}). Turn on hardware acceleration in your browser.`
     );
   }
-  const partial = o.complete ? "" : " Détection interrompue : réglages prudents, elle reprendra au prochain lancement.";
+  const partial = o.complete ? "" : " Detection was interrupted: safe settings for now, it runs again at the next launch.";
   // The margin this answer was really measured with (the floor: as is).
   const reserve =
     o.marginPixels > 1 + 1e-6
-      ? ` avec ${frNumber((o.marginPixels - 1) * 100, 0)} % de pixels en réserve pour les combats`
-      : " (le plancher de qualité, sans réserve mesurée pour les combats)";
+      ? ` with ${formatNumber((o.marginPixels - 1) * 100, 0)}% extra pixels as headroom for fights`
+      : " (the quality floor, with no measured headroom for fights)";
   if (o.mode === "gpu") {
-    const fps = o.floorFps !== null ? `environ ${Math.round(o.floorFps)} FPS` : "moins";
+    const fps = o.floorFps !== null ? `about ${Math.round(o.floorFps)} FPS` : "less";
     return (
-      `Même au plancher de qualité (${desc}), ce PC tient ${fps} au lieu de ${Math.min(60, ctx.targetFps)} : ` +
-      `c'est la carte graphique qui limite. Le plancher garde un rendu propre ; tu peux descendre plus bas à la main.${partial}`
+      `Even at the quality floor (${desc}), this PC gets ${fps} instead of ${Math.min(60, ctx.targetFps)}: ` +
+      `the graphics card is the limit. The floor keeps the image clean; you can go lower by hand.${partial}`
     );
   }
   if (o.mode === "cpu") {
-    const fps = o.floorFps !== null ? `environ ${Math.round(o.floorFps)} FPS` : "moins que l'objectif";
+    const fps = o.floorFps !== null ? `about ${Math.round(o.floorFps)} FPS` : "less than the target";
     return (
-      `Ce PC plafonne à ${fps} quels que soient les graphismes : c'est le processeur ou le navigateur qui limite, ` +
-      `pas la carte graphique. Les graphismes restent donc beaux : ${desc}.${partial}`
+      `This PC tops out at ${fps} whatever the graphics: the processor or the browser is the limit, ` +
+      `not the graphics card. So the graphics stay sharp: ${desc}.${partial}`
     );
   }
   const lowered = o.index > o.defaultIndex;
   if (o.mode === "hard") {
     if (lowered) {
       return (
-        `Le rendu d'origine de cette carte graphique ne tient pas ${o.goalFps} FPS ici avec assez de réserve : ` +
-        `réglages choisis pour ${o.goalFps} FPS au moins${reserve} : ${desc}.${partial}`
+        `This graphics card's original look can't hold ${o.goalFps} FPS here with enough headroom: ` +
+        `settings picked for at least ${o.goalFps} FPS${reserve}: ${desc}.${partial}`
       );
     }
     return (
-      `Tenir ${ctx.targetFps} FPS demanderait de passer sous le rendu d'origine de cette carte graphique : ` +
-      `il est gardé, pour ${o.goalFps} FPS au moins${reserve} : ${desc}. ` +
-      `Pour plus d'images, baisse la résolution ou l'anticrénelage à la main.${partial}`
+      `Holding ${ctx.targetFps} FPS would mean going below this graphics card's original look, so it is kept, ` +
+      `for at least ${o.goalFps} FPS${reserve}: ${desc}. ` +
+      `For more frames, lower the resolution or the anti-aliasing by hand.${partial}`
     );
   }
-  const below = lowered
-    ? ` Le rendu d'origine de cette carte graphique ne gardait pas assez de réserve à ${ctx.targetFps} FPS.`
-    : "";
-  return `Réglages choisis pour tenir ${ctx.targetFps} FPS${reserve} : ${desc}.${below}${partial}`;
+  const below = lowered ? ` This graphics card's original look didn't keep enough headroom at ${ctx.targetFps} FPS.` : "";
+  return `Settings picked to hold ${ctx.targetFps} FPS${reserve}: ${desc}.${below}${partial}`;
 }

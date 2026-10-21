@@ -139,7 +139,7 @@ async function main(): Promise<void> {
   let entering = false;
   let inMultiplayerGame = false;
 
-  // ---- SETTINGS PAGE (nav PARAMÈTRES, main menu and pause menu) ----
+  // ---- SETTINGS PAGE (nav SETTINGS, main menu and pause menu) ----
   // One settings record (src/settings/SettingsStore); the controller applies
   // every change to the game (live when possible) and runs the automatic
   // detection; the page edits the record.
@@ -174,7 +174,7 @@ async function main(): Promise<void> {
     // Headless checks / console: the settings of this page.
     (window as unknown as Record<string, unknown>).__settings = { store, controller: graphics, page: settingsPage, game };
   }
-  // « Appliquer et recharger »: back on the page after the reload.
+  // "Apply & reload": back on the page after the reload.
   try {
     if (sessionStorage.getItem(REOPEN_KEY)) {
       sessionStorage.removeItem(REOPEN_KEY);
@@ -193,7 +193,7 @@ async function main(): Promise<void> {
   // back, it runs again at the next launch. A small notice says what is going on.
   graphics.subscribe((e) => {
     if (e.kind === "start" && e.reason === "first") {
-      menu.showGraphicsToast("Réglage automatique des graphismes pour ce PC… l'image change quelques secondes.", { busy: true });
+      menu.showGraphicsToast("Tuning the graphics for this PC… the image will change for a few seconds.", { busy: true });
     } else if (e.kind === "done" && e.reason === "first") {
       menu.showGraphicsToast(toastSummary(e.result, game.softwareRenderer), {
         action: () => settingsPage.open("graphics"),
@@ -379,18 +379,18 @@ async function main(): Promise<void> {
 /** One line for the menu's notice after the first-launch detection. */
 function toastSummary(result: AutoResult, softwareRenderer: boolean): string {
   // Not measured: the browser draws without the graphics card.
-  if (softwareRenderer) return "Rendu logiciel détecté : graphismes au plancher. Active l'accélération matérielle du navigateur.";
+  if (softwareRenderer) return "Software rendering detected: graphics set to the floor. Turn on hardware acceleration in your browser.";
   switch (result.mode) {
     case "cpu":
-      return "Graphismes réglés : c'est le processeur qui limite ce PC, le rendu reste beau.";
+      return "Graphics tuned: this PC is limited by its processor, so the graphics stay sharp.";
     case "gpu": {
-      const fps = result.measuredFps !== null ? ` (environ ${result.measuredFps} FPS)` : "";
-      return `Graphismes réglés au plancher de qualité${fps} : ce PC ne tient pas ${Math.min(60, result.targetFps)} FPS.`;
+      const fps = result.measuredFps !== null ? ` (about ${result.measuredFps} FPS)` : "";
+      return `Graphics set to the quality floor${fps}: this PC can't hold ${Math.min(60, result.targetFps)} FPS.`;
     }
     case "hard":
-      return `Graphismes réglés pour tenir ${result.measuredFps ?? Math.min(60, result.targetFps)} FPS au moins (${result.targetFps} demanderaient de baisser l'image).`;
+      return `Graphics tuned to hold at least ${result.measuredFps ?? Math.min(60, result.targetFps)} FPS (${result.targetFps} would need a lower image quality).`;
     default:
-      return `Graphismes réglés pour tenir ${result.targetFps} FPS sur ce PC.`;
+      return `Graphics tuned to hold ${result.targetFps} FPS on this PC.`;
   }
 }
 

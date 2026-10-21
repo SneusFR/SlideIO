@@ -43,7 +43,7 @@ export const LEGACY_KEYS = {
 /**
  * The old quality / frame-cap keys as this store last saw or wrote them. The
  * store keeps them in step with the record (an older build after a rollback
- * reads the player's choice; Bas ⇄ LOW, Élevé ⇄ HIGH, the rest ⇄ AUTO) and a
+ * reads the player's choice; Low ⇄ LOW, High ⇄ HIGH, the rest ⇄ AUTO) and a
  * value someone else wrote since — an older build, a test or bench script —
  * is taken over at the next load, like a choice made in that build.
  */
@@ -91,7 +91,7 @@ export function defaultRecord(): SettingsRecord {
 const pick = <T>(allowed: readonly T[], value: unknown, fallback: T): T =>
   allowed.includes(value as T) ? (value as T) : fallback;
 
-/** Fallback for stored values that miss fields: Élevé at DPR 1 (only fills holes). */
+/** Fallback for stored values that miss fields: High at DPR 1 (only fills holes). */
 const HOLE_FILLER: GraphicsValues = presetValues("eleve", { dpr: 1 });
 
 /** At most this many maps keep a stored detection (more is not plausible: dropped). */
@@ -165,7 +165,7 @@ function sanitizeLegacy(raw: unknown): LegacyMirror {
 
 /**
  * The old keys' values that stand for this record (what an older build would
- * read). Null = the old build has no such value (Moyen, Ultra, Personnalisé;
+ * read). Null = the old build has no such value (Medium, Ultra, Custom;
  * a 144 cap…): the key keeps what it holds.
  */
 export function legacyMirrorOf(rec: SettingsRecord): LegacyMirror {
@@ -179,8 +179,8 @@ export function legacyMirrorOf(rec: SettingsRecord): LegacyMirror {
 
 /**
  * Takes over the old keys' values written by someone else since this store
- * last wrote them (an older build, a test script): LOW / HIGH / AUTO → Bas /
- * Élevé / Automatique, FPS LIMIT AUTO / 60 / OFF → auto / 60 / unlimited.
+ * last wrote them (an older build, a test script): LOW / HIGH / AUTO → Low /
+ * High / Auto, FPS LIMIT AUTO / 60 / OFF → auto / 60 / unlimited.
  * Returns true when the record changed.
  */
 export function adoptLegacyChanges(rec: SettingsRecord, current: LegacyMirror): boolean {
@@ -222,12 +222,12 @@ const parseJson = (raw: string | null): unknown => {
 /**
  * The record built from the keys of earlier versions (first run of this
  * version). An explicit old choice is kept EXACTLY:
- *   - quality LOW / HIGH → Bas / Élevé (the same presets);
- *   - a snow level other than the default → "Personnalisé" = that preset (or
+ *   - quality LOW / HIGH → Low / High (the same presets);
+ *   - a snow level other than the default → "Custom" = that preset (or
  *     what AUTO resolved to on this GPU: `autoBase`) with this snow — the
  *     player picked something, the game looks the same, no first-launch
  *     detection overrides it;
- *   - quality AUTO (or never set) and nothing else → "Automatique": the
+ *   - quality AUTO (or never set) and nothing else → "Auto": the
  *     detection runs on the first launch;
  *   - FPS LIMIT AUTO / 60 / OFF → auto / 60 / unlimited; outline and
  *     crosshair records → validated as before.
@@ -244,7 +244,7 @@ export function migrateLegacy(storage: StorageLike, autoBase: () => PresetId, dp
   if (snow !== null && snow !== "normale") {
     const base: PresetId = explicit ?? autoBase();
     rec.graphics = { preset: "custom", custom: { ...presetValues(base, { dpr }), snow }, auto: {} };
-    // The old AUTO frame cap followed the preset (LOW → 60). "Personnalisé"
+    // The old AUTO frame cap followed the preset (LOW → 60). "Custom"
     // resolves "auto" to uncapped: pin the 60 the player was running at.
     if (rec.fpsCap === "auto" && base === "bas") rec.fpsCap = 60;
   } else {

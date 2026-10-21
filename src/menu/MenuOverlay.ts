@@ -29,7 +29,7 @@ function setTextIfChanged(el: HTMLElement, text: string): void {
  *
  * Owns all menu widgets:
  *   - profile card (top-left): editable guest name + level / XP / coins
- *   - nav bar (top-right): INVENTORY / SHOP / PARAMÈTRES (→ SettingsPage)
+ *   - nav bar (top-right): INVENTORY / SHOP / SETTINGS (→ SettingsPage)
  *   - CLICK TO PLAY (center)
  *   - server panel (bottom-left): region / lobby / mode / live ping
  *   - LOADOUT + CUSTOMIZE (bottom-center)
@@ -53,7 +53,7 @@ export class MenuOverlay {
   onChangeLobby: (() => void) | null = null;
   /** LEAVE GAME (pause menu, multiplayer only). */
   onLeaveGame: (() => void) | null = null;
-  /** PARAMÈTRES (nav) → the settings page (main menu and pause menu alike). */
+  /** SETTINGS (nav) → the settings page (main menu and pause menu alike). */
   onSettings: (() => void) | null = null;
 
   /** Current display name (persisted guest identity). */
@@ -332,7 +332,7 @@ export class MenuOverlay {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "gfx-toast-btn";
-      btn.textContent = "Voir les réglages";
+      btn.textContent = "SEE SETTINGS";
       const action = opts.action;
       btn.addEventListener("click", () => {
         this.sounds.click();

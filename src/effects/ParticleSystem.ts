@@ -23,8 +23,8 @@ interface Particle {
  */
 export class ParticleSystem {
   /**
-   * Share of each burst / ring really spawned (settings page « Particules » :
-   * 1 = Normales, 0.5 = Réduites). Bursts of one particle stay one.
+   * Share of each burst / ring really spawned (settings page "Particles":
+   * 1 = Normal, 0.5 = Reduced). Bursts of one particle stay one.
    */
   density = 1;
   private readonly max = MAX_PARTICLES;

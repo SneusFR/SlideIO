@@ -105,7 +105,7 @@ export function probeGpu(): GpuHint {
 }
 
 // The settings migration asks what the old AUTO picked on this GPU (an explicit
-// snow level kept as "Personnalisé" from that preset).
+// snow level kept as "Custom" from that preset).
 setLegacyAutoBase(() => (probeGpu().weak ? "bas" : "eleve"));
 
 export function currentDisplayEnv(): DisplayEnv {

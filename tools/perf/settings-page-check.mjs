@@ -2,9 +2,9 @@
 // option): the page opens from the main menu and from the pause menu, each live option really
 // changes the renderer (MSAA samples / FXAA pass, render scale, snow, halos, anisotropy, shadow map
 // size, particles, frame cap) WITHOUT compiling a single program, a reload-only option is flagged
-// (chip + « Appliquer et recharger » bar, the in-match warning), and the automatic detection
-// completes (software path, then the real probes forced on the software renderer) and stores its
-// result as « Automatique ». Screenshots of every state go to OUT.
+// (chip + "Apply & reload" bar, the in-match warning), the automatic detection completes (software
+// path, then the real probes forced on the software renderer) and stores its result as "Auto", and
+// no French is left in the UI (the game's UI is English). Screenshots of every state go to OUT.
 //
 //   BASE=http://127.0.0.1:5173 OUT=/tmp/shots node tools/perf/settings-page-check.mjs
 //   env: BASE   page URL of a DEV build (npm run dev, or an esbuild bench build) — it needs
@@ -51,8 +51,8 @@ async function open({ w = W, h = H, dsf = DSF, legacy = true } = {}) {
   page.on("pageerror", (e) => errors.push("pageerror " + e.message.slice(0, 240)));
   if (routeFonts) await routeFonts(page);
   await page.goto(`${BASE}/__out/blank.html`).catch(() => page.goto(`${BASE}/favicon.ico`));
-  // The old keys of a player who picked LOW in the old menu (migrated → Bas), FPS LIMIT OFF —
-  // or a first launch (no key at all: « Automatique », measured at the first menu).
+  // The old keys of a player who picked LOW in the old menu (migrated → Low), FPS LIMIT OFF —
+  // or a first launch (no key at all: "Auto", measured at the first menu).
   await page.evaluate((legacy) => {
     localStorage.clear();
     localStorage.setItem("slideio.mapId", "GIVRE");
@@ -114,7 +114,7 @@ async function pick(page, row, label) {
     },
     { row, label },
   );
-  if (!ok) throw new Error(`option « ${label} » of « ${row} » not found`);
+  if (!ok) throw new Error(`option "${label}" of "${row}" not found`);
   await sleep(400); // a frame or two with the new value
 }
 
@@ -134,6 +134,30 @@ async function slide(page, row, value) {
   await sleep(500);
 }
 
+/**
+ * Any French left in the settings page, the nav and the menu notice: text nodes (hidden tabs
+ * and rows included) and the aria-label / title / aria-valuetext attributes.
+ */
+async function noFrench(page, when) {
+  const found = await page.evaluate(() => {
+    const FR = /[àâçéèêëîïôûùüœ«»]|\b(réglages|Paramètres|Objectif|Mesure|Annuler|Lancer|Relancer|Oui|Non|les|des|avec|pour|sans|dans|une)\b/i;
+    const out = [];
+    const roots = ["settings-page", "menu-nav", "menu-gfx-toast"].map((id) => document.getElementById(id)).filter(Boolean);
+    for (const root of roots) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) if (FR.test(n.textContent)) out.push(n.textContent.trim().slice(0, 80));
+      for (const el of [root, ...root.querySelectorAll("*")]) {
+        for (const a of ["aria-label", "title", "aria-valuetext"]) {
+          const v = el.getAttribute(a);
+          if (v && FR.test(v)) out.push(`${a}=${v.slice(0, 80)}`);
+        }
+      }
+    }
+    return out;
+  });
+  check(found.length === 0, `no French in the UI (${when})${found.length ? `: ${found.slice(0, 4).join(" | ")}` : ""}`);
+}
+
 const shot = async (page, name) => {
   await gc(page);
   await sleep(300);
@@ -145,9 +169,11 @@ try {
   const { page, errors } = await open();
   log("menu up");
   let s = await state(page);
-  check(s.preset === "bas", `old « LOW » migrated to the Bas preset (${s.preset})`);
-  check(s.samples === 0 && s.fxaa === true, `Bas on Givre: FXAA pass, no MSAA buffers (samples ${s.samples}, FXAA ${s.fxaa})`);
-  check(s.frameInterval === 0, `old « FPS LIMIT: OFF » migrated (frame interval ${s.frameInterval})`);
+  check(s.preset === "bas", `old "LOW" migrated to the Low preset (${s.preset})`);
+  check(s.samples === 0 && s.fxaa === true, `Low on Givre: FXAA pass, no MSAA buffers (samples ${s.samples}, FXAA ${s.fxaa})`);
+  check(s.frameInterval === 0, `old "FPS LIMIT: OFF" migrated (frame interval ${s.frameInterval})`);
+  const nav = await page.evaluate(() => document.querySelector('[data-menu="settings"]')?.textContent.trim());
+  check(nav === "SETTINGS", `the top bar entry reads SETTINGS (${nav})`);
   const programs0 = s.programs;
   const ratio0 = s.ratio;
   log(`programs after load: ${programs0}, pixel ratio ${ratio0}, DPR ${s.dpr}`);
@@ -157,63 +183,71 @@ try {
   await sleep(800);
   s = await state(page);
   const layout = await page.evaluate(() => ({
+    title: document.getElementById("gs-title")?.textContent,
     tabs: [...document.querySelectorAll("#settings-page .gs-tab")].map((t) => t.textContent),
     presets: [...document.querySelectorAll("#settings-page .gs-presets .gs-seg-btn")].map((b) => b.textContent),
     menuHidden: document.getElementById("main-menu-root").classList.contains("settings-open"),
     rows: [...document.querySelectorAll("#gs-pane-graphics .gs-row-name")].map((n) => n.textContent),
+    // Short labels shown in uppercase like the rest of the menu (CSS), the DOM text stays readable.
+    upper: [".gs-tab", ".gs-row-name", ".gs-seg-btn", ".gs-btn", ".gs-section-title"].every(
+      (sel) => getComputedStyle(document.querySelector(`#settings-page ${sel}`)).textTransform === "uppercase",
+    ),
   }));
-  check(s.pageOpen && layout.menuHidden, "« PARAMÈTRES » opens the page over the live map (menu UI steps aside)");
-  check(layout.tabs.join("|") === "Graphismes|Réticule|Audio", `tabs: ${layout.tabs.join(", ")}`);
-  check(layout.presets.join("|") === "Automatique|Bas|Moyen|Élevé|Ultra|Personnalisé", `presets: ${layout.presets.join(", ")}`);
-  for (const name of ["Résolution de rendu", "Anticrénelage", "Ombres", "Qualité des ombres", "Ombres des personnages", "Neige", "Halos des lumières", "Empreintes dans la neige", "Particules", "Filtrage anisotrope", "Limite d'images par seconde", "Panneau de performances"]) {
-    check(layout.rows.includes(name), `row « ${name} »`);
+  check(s.pageOpen && layout.menuHidden, "SETTINGS opens the page over the live map (menu UI steps aside)");
+  check(layout.title === "Settings", `page title: ${layout.title}`);
+  check(layout.tabs.join("|") === "Graphics|Crosshair|Audio", `tabs: ${layout.tabs.join(", ")}`);
+  check(layout.presets.join("|") === "Auto|Low|Medium|High|Ultra|Custom", `presets: ${layout.presets.join(", ")}`);
+  check(layout.upper, "short labels (tabs, option names, choices, buttons, section titles) shown in uppercase");
+  for (const name of ["Render resolution", "Anti-aliasing", "Shadows", "Shadow quality", "Character shadows", "Snow", "Light halos", "Snow footprints", "Particles", "Anisotropic filtering", "FPS limit", "Performance panel"]) {
+    check(layout.rows.includes(name), `row "${name}"`);
   }
-  check(!layout.rows.some((r) => /Lumières des effets|dynamique/i.test(r)), "no « Lumières des effets » / « Résolution dynamique » row");
+  check(!layout.rows.some((r) => /effect light|dynamic resolution/i.test(r)), 'no "Effect lights" / "Dynamic resolution" row');
+  await noFrench(page, "main menu, every tab");
   await sleep(1200); // the live card fills
   await shot(page, "01-menu-graphismes.png");
 
   // ---- Live options ----
-  await pick(page, "Anticrénelage", "MSAA 4×");
+  await pick(page, "Anti-aliasing", "MSAA 4×");
   s = await state(page);
   check(s.samples >= 2 && s.fxaa === false && s.preset === "custom", `MSAA 4× live: ${s.samples} samples, FXAA off, preset ${s.preset}`);
-  await pick(page, "Anticrénelage", "MSAA 2×");
+  await pick(page, "Anti-aliasing", "MSAA 2×");
   s = await state(page);
   check(s.samples === 2 && s.fxaa === false, `MSAA 2× live: ${s.samples} samples`);
-  await pick(page, "Anticrénelage", "Aucun");
+  await pick(page, "Anti-aliasing", "Off");
   s = await state(page);
   check(s.samples === 0 && s.fxaa === false, "no anti-aliasing live: no MSAA, FXAA off");
-  await pick(page, "Anticrénelage", "FXAA");
+  await pick(page, "Anti-aliasing", "FXAA");
   s = await state(page);
-  check(s.samples === 0 && s.fxaa === true && s.preset === "bas", `back to FXAA: the Bas preset again (${s.preset})`);
+  check(s.samples === 0 && s.fxaa === true && s.preset === "bas", `back to FXAA: the Low preset again (${s.preset})`);
 
-  await slide(page, "Résolution de rendu", 70);
+  await slide(page, "Render resolution", 70);
   s = await state(page);
   check(Math.abs(s.ratio - ratio0 * 0.7) < 0.01 && Math.abs(s.canvas[0] - Math.floor(W * ratio0 * 0.7)) <= 1, `render scale 70 % live: pixel ratio ${s.ratio.toFixed(3)}, canvas ${s.canvas.join(" × ")}`);
-  await slide(page, "Résolution de rendu", 100);
+  await slide(page, "Render resolution", 100);
   s = await state(page);
   check(Math.abs(s.ratio - ratio0) < 1e-6, "render scale back to 100 %");
 
   const snowBefore = (await state(page)).snowCount;
-  await pick(page, "Neige", "Dense");
+  await pick(page, "Snow", "Dense");
   s = await state(page);
-  check(s.snowCount > snowBefore, `snow « Dense » live: ${snowBefore} → ${s.snowCount} flakes`);
-  await pick(page, "Neige", "Désactivée");
+  check(s.snowCount > snowBefore, `snow "Dense" live: ${snowBefore} → ${s.snowCount} flakes`);
+  await pick(page, "Snow", "Off");
   s = await state(page);
   check(s.snowVisible === false, "snow off live");
-  await pick(page, "Halos des lumières", "Non");
+  await pick(page, "Light halos", "Off");
   s = await state(page);
   check(s.halosVisible === false, "halos off live");
-  await pick(page, "Filtrage anisotrope", "8×");
+  await pick(page, "Anisotropic filtering", "8×");
   s = await state(page);
   check(s.aniso === 8, `anisotropic filtering 8× live (texture: ${s.aniso})`);
   const shadowBefore = (await state(page)).shadowSize;
-  await pick(page, "Qualité des ombres", "Haute");
+  await pick(page, "Shadow quality", "High");
   s = await state(page);
-  check(s.shadowSize && s.shadowSize[0] === shadowBefore[0] * 2, `shadow quality « Haute » live: ${shadowBefore.join("×")} → ${s.shadowSize.join("×")}`);
-  await pick(page, "Particules", "Réduites");
+  check(s.shadowSize && s.shadowSize[0] === shadowBefore[0] * 2, `shadow quality "High" live: ${shadowBefore.join("×")} → ${s.shadowSize.join("×")}`);
+  await pick(page, "Particles", "Reduced");
   s = await state(page);
   check(s.particles === 0.5, "particles reduced live");
-  await pick(page, "Limite d'images par seconde", "60");
+  await pick(page, "FPS limit", "60");
   s = await state(page);
   check(Math.abs(s.frameInterval - 1000 / 60) < 1e-6, "frame cap 60 live");
   await sleep(1000);
@@ -223,26 +257,27 @@ try {
 
   // Back to a preset: everything at once.
   await page.evaluate(() => {
-    for (const b of document.querySelectorAll("#settings-page .gs-presets .gs-seg-btn")) if (b.textContent === "Bas") b.click();
+    for (const b of document.querySelectorAll("#settings-page .gs-presets .gs-seg-btn")) if (b.textContent === "Low") b.click();
   });
   await sleep(600);
   s = await state(page);
-  check(s.preset === "bas" && s.snowVisible && s.halosVisible && s.aniso === 1 && s.particles === 1, "« Bas » puts every option back at once");
+  check(s.preset === "bas" && s.snowVisible && s.halosVisible && s.aniso === 1 && s.particles === 1, '"Low" puts every option back at once');
 
   // ---- Reload-only option ----
-  await pick(page, "Ombres", "Dynamiques");
+  await pick(page, "Shadows", "Dynamic");
   s = await state(page);
   const chipShown = await page.evaluate(() => {
     for (const r of document.querySelectorAll("#settings-page .gs-row")) {
-      if (r.querySelector(".gs-row-name")?.textContent?.trim() === "Ombres") return !r.querySelector(".gs-chip-reload").classList.contains("hidden");
+      if (r.querySelector(".gs-row-name")?.textContent?.trim() === "Shadows") return !r.querySelector(".gs-chip-reload").classList.contains("hidden");
     }
     return false;
   });
-  check(s.reloadVisible && /Ombres\s*:\s*dynamiques/.test(s.reloadText) && chipShown, `reload-only change flagged: « ${s.reloadText.slice(0, 90)}… »`);
+  check(s.reloadVisible && /Shadows:\s*dynamic/.test(s.reloadText) && chipShown, `reload-only change flagged: "${s.reloadText.slice(0, 90)}…"`);
   check(!s.reloadWarnVisible, "no in-match warning in the main menu");
+  await noFrench(page, "reload bar");
   await page.evaluate(() => document.querySelector(".gs-reload")?.scrollIntoView());
   await shot(page, "03-rechargement.png");
-  await pick(page, "Ombres", "Statiques");
+  await pick(page, "Shadows", "Static");
   s = await state(page);
   check(!s.reloadVisible, "reload bar gone once the change is undone");
 
@@ -261,7 +296,7 @@ try {
     const r = await window.__settings.controller.runDetection("manual");
     return { summary: r?.summary ?? "", preset: window.__settings.store.get().graphics.preset, complete: r?.complete };
   });
-  check(soft.preset === "auto" && /Rendu logiciel/.test(soft.summary), `software renderer: floor chosen at once (« ${soft.summary.slice(0, 70)}… »)`);
+  check(soft.preset === "auto" && /^Software rendering detected/.test(soft.summary), `software renderer: floor chosen at once ("${soft.summary.slice(0, 70)}…")`);
 
   // ---- Detection: the real probes (forced on the software renderer) ----
   const programsBefore = (await state(page)).programs;
@@ -290,9 +325,10 @@ try {
   });
   log(`detection running (focus ${started.focus})`);
   check(
-    /Mesure \d+ sur \d+/.test(started.text) && started.button === "Annuler" && started.locked && started.progressShown,
-    `detection in progress shown (« ${started.text.slice(0, 40)}… », button ${started.button}, options locked, progress bar)`,
+    /^Test \d+ of \d+/.test(started.text) && started.button === "Cancel" && started.locked && started.progressShown,
+    `detection in progress shown ("${started.text.slice(0, 40)}…", button ${started.button}, options locked, progress bar)`,
   );
+  await noFrench(page, "detection running");
   await shot(page, "06-detection.png");
   const orbit1 = await page.evaluate(() => (window.__detection.done ? null : window.__settings.game.menuPreview?.orbit ?? null));
   check(orbit1 === null || orbit1 === started.orbit, "the menu camera holds still while the detection measures");
@@ -303,7 +339,7 @@ try {
     return { r, preset: rec.graphics.preset, stored: rec.graphics.auto.GIVRE ?? null, text: document.querySelector(".gs-detect-text")?.textContent ?? "" };
   });
   log(`detection: ${JSON.stringify({ mode: det.r?.mode, measuredFps: det.r?.measuredFps, complete: det.r?.complete, values: det.r?.values })}`);
-  check(det.r && det.preset === "auto" && det.stored && det.stored.version >= 1 && det.stored.summary.length > 20, `detection completed and stored as « Automatique » (complete ${det.r?.complete})`);
+  check(det.r && det.preset === "auto" && det.stored && det.stored.version >= 1 && det.stored.summary.length > 20, `detection completed and stored as Auto (complete ${det.r?.complete})`);
   s = await state(page);
   const floor = Math.max(50, Math.min(100, 100 / s.dpr));
   check(det.r && det.r.values.renderScale >= floor - 1e-6, `result never under the beauty floor (${det.r?.values.renderScale} % ≥ ${floor} %)`);
@@ -311,6 +347,9 @@ try {
   check(plain(det.text) === plain(det.stored?.summary), "the page shows the detection's summary");
   s = await state(page);
   check(s.programs === programsBefore, `no program compiled by the detection's probes (${programsBefore} → ${s.programs})`);
+  const meta = await page.evaluate(() => document.querySelector(".gs-detect-meta")?.textContent ?? "");
+  check(/^Measured on \d{4}-\d{2}-\d{2} for \d+ FPS/.test(meta), `detection date, locale-neutral ("${meta}")`);
+  await noFrench(page, "detection done");
   await sleep(1500);
   await shot(page, "07-detection-terminee.png");
 
@@ -341,14 +380,22 @@ try {
   await page.evaluate(() => document.querySelector('[data-menu="settings"]').click());
   await sleep(1500);
   s = await state(page);
-  check(s.pageOpen, "« PARAMÈTRES » opens the page from the pause menu");
+  check(s.pageOpen, "SETTINGS opens the page from the pause menu");
   await shot(page, "08-pause.png");
-  await pick(page, "Ombres", "Dynamiques");
+  await pick(page, "Shadows", "Dynamic");
   s = await state(page);
   check(s.reloadVisible && s.reloadWarnVisible, "in a match, the reload bar warns that reloading leaves the match");
+  // First click in a match: the button asks to confirm (leaving the match).
+  const armed = await page.evaluate(() => {
+    const b = document.querySelector(".gs-reload .gs-btn");
+    b.click();
+    return b.textContent;
+  });
+  check(armed === "Leave match & reload", `in a match, the first click asks to confirm ("${armed}")`);
+  await noFrench(page, "pause menu, reload armed");
   await page.evaluate(() => document.querySelector(".gs-reload")?.scrollIntoView());
   await shot(page, "09-pause-rechargement.png");
-  await pick(page, "Ombres", "Statiques");
+  await pick(page, "Shadows", "Static");
   // Escape closes the page.
   await page.keyboard.press("Escape");
   await sleep(400);
@@ -358,24 +405,30 @@ try {
   check(fatal.length === 0, `no console error (${fatal.slice(0, 3).join(" | ")})`);
   await page.close();
 
-  // ---- First launch (no old key): « Automatique », measured a few seconds after the menu appears;
+  // ---- First launch (no old key): "Auto", measured a few seconds after the menu appears;
   // narrow window: the panel takes the width ----
   {
     const { page: first, errors: firstErrors } = await open({ w: 960, h: 540, dsf: 1, legacy: false });
     const before = await first.evaluate(() => ({ preset: window.__settings.store.get().graphics.preset, detecting: window.__settings.controller.detecting }));
-    check(before.preset === "auto", `first launch: « Automatique » (${before.preset})`);
+    check(before.preset === "auto", `first launch: Auto (${before.preset})`);
     await first.waitForFunction(() => !!window.__settings.store.get().graphics.auto.GIVRE, null, { timeout: 180000, polling: 500 });
     const toast = await first.evaluate(() => {
       const t = document.getElementById("menu-gfx-toast");
-      return { text: t?.textContent ?? "", shown: !!t && !t.classList.contains("hidden"), action: !!t?.querySelector("button") };
+      return {
+        text: t?.querySelector(".gfx-toast-text")?.textContent ?? "",
+        shown: !!t && !t.classList.contains("hidden"),
+        action: t?.querySelector("button")?.textContent ?? null,
+      };
     });
-    // (SwiftShader: the software-rendering notice; a real GPU: « Graphismes réglés… ».)
+    // Right away: the notice hides by itself 12 s after the detection (and software frames are slow).
+    await shot(first, "10-premier-lancement.png");
+    // (SwiftShader: the software-rendering notice; a real GPU: "Graphics tuned…" / "Graphics set…".)
     const software = await first.evaluate(() => window.__settings.game.softwareRenderer === true);
     check(
-      toast.shown && (software ? /Rendu logiciel détecté/ : /Graphismes réglés/).test(toast.text) && toast.action,
-      `first launch: detected by itself, the menu says so (« ${toast.text.slice(0, 80)}… »)`,
+      toast.shown && (software ? /^Software rendering detected/ : /^Graphics (tuned|set)/).test(toast.text) && toast.action === "SEE SETTINGS",
+      `first launch: detected by itself, the menu says so ("${toast.text.slice(0, 80)}…", button ${toast.action})`,
     );
-    await shot(first, "10-premier-lancement.png");
+    await noFrench(first, "first-launch notice");
     await first.evaluate(() => document.querySelector('[data-menu="settings"]').click());
     await sleep(2000);
     await shot(first, "11-fenetre-etroite.png");

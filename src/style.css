@@ -196,8 +196,8 @@ body.game-paused > #debug {
   display: none;
 }
 
-/* Settings page → Graphismes → Performances → « Panneau de performances :
-   Masqué » (both HUD modes: in the inline fallback the panel sits inside
+/* Settings page → Graphics → Performance → "Performance panel: Hidden"
+   (both HUD modes: in the inline fallback the panel sits inside
    #hud, same document). */
 body.perf-panel-off #debug {
   display: none !important;

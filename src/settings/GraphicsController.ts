@@ -29,7 +29,7 @@ export interface AutoTuneOptions {
   /** Measure even on a software renderer (headless tests only). */
   allowSoftware?: boolean;
   /**
-   * The look this GPU always had (its old preset: Élevé, Bas on integrated
+   * The look this GPU always had (its old preset: High, Low on integrated
    * GPUs): a high-refresh screen's frame rate never takes the image below it.
    */
   defaultLook?: GraphicsValues;
@@ -75,8 +75,8 @@ export type WeakGpuTest = (name: string) => boolean;
  * Settings → game, once and for all: every change of the record (settings
  * page, detection result, preset, display density) applies what the session
  * can apply live; reload-only changes are listed for the page. Also runs the
- * automatic detection (first launch of a map, « Lancer la détection ») and
- * stores its result as the "Automatique" choice of that map.
+ * automatic detection (first launch of a map, "Run detection") and
+ * stores its result as the "Auto" choice of that map.
  */
 export class GraphicsController {
   private outlineDebug = false;
@@ -123,7 +123,7 @@ export class GraphicsController {
     return effectivePreset(this.record.graphics, this.gpu, this.mapId);
   }
 
-  /** The stored detection "Automatique" uses here (null = none yet: the heuristic preset). */
+  /** The stored detection "Auto" uses here (null = none yet: the heuristic preset). */
   autoResult(): AutoResult | null {
     return autoResultFor(this.record.graphics, this.gpu, this.mapId);
   }
@@ -174,7 +174,7 @@ export class GraphicsController {
     return this.outlineDebug;
   }
 
-  /** "Automatique" has no up-to-date measurement of this machine and map. */
+  /** "Auto" has no up-to-date measurement of this machine and map. */
   needsDetection(): boolean {
     return needsDetection(this.record.graphics, this.gpu, this.mapId, this.detectionTarget(), this.host.graphicsBoot.shadows);
   }
@@ -198,8 +198,8 @@ export class GraphicsController {
 
   /**
    * Runs the automatic detection now (menu or pause: the frames on screen are
-   * measured) and stores its result as the "Automatique" choice of this map
-   * (the preset becomes "Automatique"). Resolves with the result, or null
+   * measured) and stores its result as the "Auto" choice of this map
+   * (the preset becomes "Auto"). Resolves with the result, or null
    * when cancelled.
    */
   runDetection(reason: DetectionReason = "manual", opts: Omit<AutoTuneOptions, "onProgress"> = {}): Promise<AutoResult | null> {
@@ -237,7 +237,7 @@ export class GraphicsController {
         return result;
       });
     this.detection = run;
-    // Only now: the listeners (the page's locked options, its Annuler button)
+    // Only now: the listeners (the page's locked options, its Cancel button)
     // see the detection running from its very first probe.
     this.emit({ kind: "start", reason });
     return run;
@@ -250,7 +250,7 @@ export class GraphicsController {
     this.host.cancelAutoTune();
   }
 
-  /** Detection outcome → stored "Automatique" result (with its French summary). */
+  /** Detection outcome → stored "Auto" result (with its summary for the page). */
   private resultOf(o: TuneOutcome, target: number, caps: GraphicsCaps, map: string, boot: GraphicsValues): AutoResult {
     const values = { ...o.values };
     const software = this.host.softwareRenderer;
@@ -262,7 +262,7 @@ export class GraphicsController {
     if (o.mode === "gpu" && boot.shadows === "dynamic" && !software) {
       values.shadows = "static";
       values.characterShadows = false;
-      summary += " Les ombres passent en statiques au prochain chargement pour gagner encore (« Appliquer et recharger »).";
+      summary += " Shadows switch to static at the next page load to gain more (\"Apply & reload\").";
     }
     const measuredFps =
       o.mode === "target" || o.mode === "hard" ? o.goalFps : o.floorFps !== null ? Math.round(o.floorFps) : null;

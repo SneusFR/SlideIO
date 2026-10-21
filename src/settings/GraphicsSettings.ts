@@ -9,13 +9,13 @@
  * Render scale is a percentage of the NATIVE resolution (CSS size ×
  * devicePixelRatio, per axis). The old presets capped the pixel ratio instead
  * (LOW: 1, HIGH: 2): a preset therefore resolves its scale for the display it
- * runs on — Bas renders exactly one pixel per CSS pixel on every screen
- * (80 % of native at Windows 125 %, 50 % on a Retina screen), Élevé two at
+ * runs on — Low renders exactly one pixel per CSS pixel on every screen
+ * (80 % of native at Windows 125 %, 50 % on a Retina screen), High two at
  * most — the very images the old LOW / HIGH presets produced.
  */
 
 export type PresetId = "bas" | "moyen" | "eleve" | "ultra";
-/** What the player picked in the preset row ("custom" = Personnalisé). */
+/** What the player picked in the preset row (ids: "bas" = Low, "moyen" = Medium, "eleve" = High). */
 export type PresetChoice = "auto" | PresetId | "custom";
 export type AntiAliasing = "none" | "fxaa" | "msaa2" | "msaa4";
 export type ShadowMode = "off" | "static" | "dynamic";
@@ -270,7 +270,7 @@ export interface AutoResult {
 
 export interface GraphicsChoice {
   preset: PresetChoice;
-  /** Values of "Personnalisé" (null until the player edits something). */
+  /** Values of "Custom" (null until the player edits something). */
   custom: GraphicsValues | null;
   /** Last automatic detection of each map (kept when the player picks another preset). */
   auto: Record<string, AutoResult>;
@@ -293,7 +293,7 @@ export function autoResultFor(choice: GraphicsChoice, gpu: GpuHint, map: string)
   return r && r.version === AUTO_TUNE_VERSION && r.gpu === gpu.name ? r : null;
 }
 
-/** The old AUTO behaviour: Bas on weak GPUs, Élevé elsewhere. */
+/** The old AUTO behaviour: Low on weak GPUs, High elsewhere. */
 export function heuristicPreset(gpu: GpuHint): PresetId {
   return gpu.weak ? "bas" : "eleve";
 }
@@ -315,8 +315,8 @@ export function effectiveValues(choice: GraphicsChoice, env: DisplayEnv, gpu: Gp
 
 /**
  * The preset a choice really stands for: "auto" before any usable detection
- * IS the old heuristic preset (Bas on weak GPUs) — for the frame cap too
- * ("auto" cap: Bas → 60), exactly like the old AUTO + AUTO cap.
+ * IS the old heuristic preset (Low on weak GPUs) — for the frame cap too
+ * ("auto" cap: Low → 60), exactly like the old AUTO + AUTO cap.
  */
 export function effectivePreset(choice: GraphicsChoice, gpu: GpuHint, map: string): PresetChoice {
   if (choice.preset === "auto" && !autoResultFor(choice, gpu, map)) return heuristicPreset(gpu);
@@ -325,7 +325,7 @@ export function effectivePreset(choice: GraphicsChoice, gpu: GpuHint, map: strin
 }
 
 /**
- * The choice after the player edited one value: "Personnalisé" with the
+ * The choice after the player edited one value: "Custom" with the
  * current effective values and the edit — or, when the result is exactly a
  * named preset (an edit undone), that preset. The detections stay stored.
  */
@@ -344,7 +344,7 @@ export function editChoice<K extends GraphicsKey>(
 }
 
 /**
- * True when "Automatique" should measure this machine now: no detection of
+ * True when "Auto" should measure this machine now: no detection of
  * this GPU / map / target yet, an interrupted one, an older logic, or a
  * result that changed the shadow mode (measured again once it is in effect).
  */
@@ -492,13 +492,13 @@ export function liveValues(boot: GraphicsValues, next: GraphicsValues, caps: Pic
 
 // ------------------------------------------------------------- FPS cap
 
-/** Frame-rate cap: "auto" follows the preset (Bas → 60, the rest → uncapped), 0 = unlimited. */
+/** Frame-rate cap: "auto" follows the preset (Low → 60, the rest → uncapped), 0 = unlimited. */
 export type FpsCapSetting = "auto" | 0 | 30 | 60 | 120 | 144 | 165 | 240;
 export const FPS_CAPS: readonly FpsCapSetting[] = ["auto", 30, 60, 120, 144, 165, 240, 0];
 
 /**
  * Frames per second the loop is capped at (Infinity = uncapped). "auto" =
- * the old AUTO mode: the Bas preset (old LOW) caps at 60 to spare laptops
+ * the old AUTO mode: the Low preset (old LOW) caps at 60 to spare laptops
  * running on battery, everything else runs at the display's own rate.
  */
 export function resolveFpsCap(cap: FpsCapSetting, preset: PresetChoice): number {

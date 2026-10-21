@@ -1,9 +1,9 @@
 // GRAPHICS SETTINGS MODEL — headless checks of src/settings (GraphicsSettings, SettingsStore, labels)
 // and the legacy facade of src/game/GraphicsQuality:
-//   - the presets Bas / Élevé are EXACTLY the old LOW / HIGH on every display density (pixel ratio,
+//   - the presets Low / High are EXACTLY the old LOW / HIGH on every display density (pixel ratio,
 //     MSAA, shadow sizes, static vs live shadows, frame cap, anisotropy);
 //   - the "auto" choice before / after a detection (per GPU, per map, per target), editing →
-//     Personnalisé, live vs reload-only changes, the beauty floor, the frame cap and the target;
+//     Custom, live vs reload-only changes, the beauty floor, the frame cap and the target;
 //   - validation of untrusted storage, the migration of every old key, persistence round trips,
 //     storage failures, and the two-way bridge with the old quality / FPS-cap keys.
 // Usage (repo root):  npx tsx scripts/test-graphics-settings.mts
@@ -55,7 +55,7 @@ const OLD_GIVRE_SHADOW = { HIGH: 4096, LOW: 2048 } as const;
 
 console.log("graphics settings model");
 
-await test("Bas / Élevé = the old LOW / HIGH on every display density (renderer pixel ratio, MSAA, shadows, cap, anisotropy)", () => {
+await test("Low / High = the old LOW / HIGH on every display density (renderer pixel ratio, MSAA, shadows, cap, anisotropy)", () => {
   for (const dpr of DPRS) {
     for (const [id, level] of [
       ["bas", "LOW"],
@@ -84,7 +84,7 @@ await test("Bas / Élevé = the old LOW / HIGH on every display density (rendere
   }
 });
 
-await test("presets: Moyen sits between Bas and Élevé, Ultra above Élevé; every preset matches itself", () => {
+await test("presets: Medium sits between Low and High, Ultra above High; every preset matches itself", () => {
   for (const dpr of DPRS) {
     const env = { dpr };
     const bas = G.presetValues("bas", env);
@@ -174,16 +174,16 @@ await test("needsDetection: missing / other target / interrupted / older logic /
   assert.equal(G.needsDetection(choice(advised), STRONG, MAP, 240, "static"), true);
 });
 
-await test("editing a value → Personnalisé; undoing it → the preset again; detections kept", () => {
+await test("editing a value → Custom; undoing it → the preset again; detections kept", () => {
   const env = { dpr: 1.25 };
   const start = { preset: "eleve" as const, custom: null, auto: {} };
   const edited = G.editChoice(start, "snow", "dense", env, STRONG, MAP);
   assert.equal(edited.preset, "custom");
   assert.equal(edited.custom!.snow, "dense");
-  assert.equal(edited.custom!.antialiasing, "msaa4"); // the rest of Élevé
+  assert.equal(edited.custom!.antialiasing, "msaa4"); // the rest of High
   const undone = G.editChoice(edited, "snow", "normale", env, STRONG, MAP);
   assert.equal(undone.preset, "eleve");
-  // From "auto" (heuristic Bas on a weak GPU).
+  // From "auto" (heuristic Low on a weak GPU).
   const fromAuto = G.editChoice({ preset: "auto", custom: null, auto: {} }, "renderScale", 100, env, WEAK, MAP);
   assert.equal(fromAuto.preset, "custom");
   assert.equal(fromAuto.custom!.antialiasing, "fxaa");
@@ -208,7 +208,7 @@ await test("live vs reload-only: shadow mode, character shadows and the context 
   assert.equal(G.liveValues(bas, eleve, { composer: false }).antialiasing, "fxaa");
 });
 
-await test("frame cap: auto follows the preset (Bas → 60), explicit values, unlimited", () => {
+await test("frame cap: auto follows the preset (Low → 60), explicit values, unlimited", () => {
   assert.equal(G.resolveFpsCap("auto", "bas"), 60);
   for (const p of ["auto", "moyen", "eleve", "ultra", "custom"] as const) assert.equal(G.resolveFpsCap("auto", p), Infinity);
   assert.equal(G.resolveFpsCap(144, "bas"), 144);
@@ -246,20 +246,37 @@ await test("validation of untrusted values: bad / missing fields take the fallba
   for (const raw of [null, undefined, 42, "x", []]) assert.equal(G.sameValues(G.sanitizeGraphicsValues(raw, fb), fb), true);
 });
 
-await test("labels: every option value has a French label, descriptions name what the map uses", () => {
+await test("labels: every option value has an English label, descriptions name what the map uses", () => {
   for (const a of G.ANTIALIASING) assert.ok(L.AA_LABELS[a]);
   for (const s of G.SHADOW_MODES) assert.ok(L.SHADOW_LABELS[s]);
   for (const q of G.SHADOW_QUALITIES) assert.ok(L.SHADOW_QUALITY_LABELS[q]);
   for (const s of G.SNOW_LEVELS) assert.ok(L.SNOW_LABELS[s]);
   for (const p of G.PRESET_CHOICES) assert.ok(L.PRESET_LABELS[p]);
-  assert.equal(L.frNumber(16.666, 1), "16,7");
+  assert.equal(L.formatNumber(16.666, 1), "16.7");
+  assert.equal(L.formatPercent(80), "80%");
   const d = L.describeValues(G.presetValues("bas", { dpr: 1.25 }), G.DEFAULT_CAPS);
-  assert.match(d, /résolution 80\u202f%/);
+  assert.match(d, /^80% resolution/);
   assert.match(d, /FXAA/);
-  assert.match(d, /ombres statiques \(moyenne\)/);
-  assert.equal(/neige/.test(L.describeValues(G.presetValues("bas", { dpr: 1 }), { ...G.DEFAULT_CAPS, snow: false })), false);
+  assert.match(d, /static shadows \(medium\)/);
+  assert.match(d, /normal snow/);
+  assert.equal(/snow/.test(L.describeValues(G.presetValues("bas", { dpr: 1 }), { ...G.DEFAULT_CAPS, snow: false })), false);
   assert.equal(L.fpsCapLabel("auto", "bas"), "Auto (60)");
-  assert.equal(L.fpsCapLabel(0, "bas"), "Aucune");
+  assert.equal(L.fpsCapLabel("auto", "eleve"), "Auto (off)");
+  assert.equal(L.fpsCapLabel(0, "bas"), "Off");
+  assert.equal(L.fpsTargetLabel("display", 143.9), "Screen (144)");
+  assert.deepEqual(
+    G.PRESET_CHOICES.map((p) => L.PRESET_LABELS[p]),
+    ["Auto", "Low", "Medium", "High", "Ultra", "Custom"],
+  );
+  assert.equal(L.valueLabel("shadows", "dynamic"), "Dynamic");
+  assert.equal(L.valueLabel("characterShadows", true), "On");
+  // The game's UI is English: no French left in any label.
+  const every = [
+    ...Object.values(L.PRESET_LABELS), ...Object.values(L.AA_LABELS), ...Object.values(L.SHADOW_LABELS),
+    ...Object.values(L.SHADOW_QUALITY_LABELS), ...Object.values(L.SNOW_LABELS), ...Object.values(L.PARTICLE_LABELS),
+    ...Object.values(L.SETTING_NAMES), d,
+  ];
+  for (const text of every) assert.doesNotMatch(text, /[àâçéèêëîïôûùüœ«»]/i, text);
 });
 
 console.log("settings store");
@@ -267,7 +284,7 @@ console.log("settings store");
 const autoWeak = () => "bas" as const;
 const autoStrong = () => "eleve" as const;
 
-await test("migration: LOW / HIGH → Bas / Élevé, AUTO or nothing → Automatique, FPS LIMIT kept", () => {
+await test("migration: LOW / HIGH → Low / High, AUTO or nothing → Auto, FPS LIMIT kept", () => {
   const cases: [Record<string, string>, string, unknown][] = [
     [{}, "auto", "auto"],
     [{ "beanzo.graphicsQuality": "AUTO" }, "auto", "auto"],
@@ -284,12 +301,12 @@ await test("migration: LOW / HIGH → Bas / Élevé, AUTO or nothing → Automat
   }
 });
 
-await test("migration: an explicit snow level → Personnalisé = the same preset with that snow (the game looks the same)", () => {
+await test("migration: an explicit snow level → Custom = the same preset with that snow (the game looks the same)", () => {
   const r1 = S.migrateLegacy(memoryStorage({ "beanzo.graphicsQuality": "HIGH", "slideio.givreSnow": "dense" }), autoWeak, 1.25);
   assert.equal(r1.graphics.preset, "custom");
   assert.equal(G.sameValues(r1.graphics.custom!, { ...G.presetValues("eleve", { dpr: 1.25 }), snow: "dense" }), true);
   assert.equal(r1.fpsCap, "auto");
-  // AUTO on a weak GPU was LOW (capped at 60): Personnalisé from Bas, the 60 cap pinned.
+  // AUTO on a weak GPU was LOW (capped at 60): Custom from Low, the 60 cap pinned.
   const r2 = S.migrateLegacy(memoryStorage({ "slideio.givreSnow": "off" }), autoWeak, 1.25);
   assert.equal(r2.graphics.preset, "custom");
   assert.equal(G.sameValues(r2.graphics.custom!, { ...G.presetValues("bas", { dpr: 1.25 }), snow: "off" }), true);
@@ -383,7 +400,7 @@ await test("old keys bridge: the record keeps LOW / HIGH / AUTO and the FPS limi
   assert.equal(storage.map.get("beanzo.graphicsQuality"), "LOW");
   store.update((d) => void (d.fpsCap = 0));
   assert.equal(storage.map.get("beanzo.fpsCap"), "OFF");
-  // Ultra / Personnalisé / a 144 cap have no old equivalent: the keys keep their value.
+  // Ultra / Custom / a 144 cap have no old equivalent: the keys keep their value.
   store.update((d) => {
     d.graphics.preset = "ultra";
     d.fpsCap = 144;
@@ -394,7 +411,7 @@ await test("old keys bridge: the record keeps LOW / HIGH / AUTO and the FPS limi
 
 await test("old keys bridge: a value written by someone else since (older build, bench script) is taken over at the next load", () => {
   const storage = memoryStorage({ "beanzo.graphicsQuality": "LOW" });
-  new S.SettingsStore(storage, autoStrong).get(); // migrated: Bas
+  new S.SettingsStore(storage, autoStrong).get(); // migrated: Low
   // Same store, nobody else wrote: no change.
   assert.equal(new S.SettingsStore(storage, autoStrong).get().graphics.preset, "bas");
   storage.map.set("beanzo.graphicsQuality", "HIGH");

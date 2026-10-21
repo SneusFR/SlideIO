@@ -643,16 +643,16 @@ export class Game {
     // (four round trips to the GPU process each) only while developing.
     this.renderer.debug.checkShaderErrors = import.meta.env.DEV;
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    // Render scale = % of the native resolution (Bas: one pixel per CSS
-    // pixel, exactly the old LOW cap; Élevé: two at most, the old HIGH cap).
+    // Render scale = % of the native resolution (Low: one pixel per CSS
+    // pixel, exactly the old LOW cap; High: two at most, the old HIGH cap).
     // (`?diag=scaleNN`: the 3D at NN % of that — a what-if, never in play.)
     this.renderer.setPixelRatio(pixelRatioFor(gfx.values.renderScale, gfx.env.dpr) * this.diagScale);
     this.gfxDpr = gfx.env.dpr;
     // Shadows OFF: no shadow code in any shader (cheaper pixels) — fixed for
-    // the session (the settings page offers « Appliquer et recharger »).
+    // the session (the settings page offers "Apply & reload").
     this.renderer.shadowMap.enabled = gfx.values.shadows !== "off";
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    // STATIC shadows (Bas): the shadow map is BAKED (autoUpdate off) — the
+    // STATIC shadows (Low): the shadow map is BAKED (autoUpdate off) — the
     // map and its single shadow light are fully static, so one render at
     // load time (see warmUpRendering) serves every frame afterwards.
     this.staticShadows = gfx.values.shadows !== "dynamic";
@@ -3299,7 +3299,7 @@ export class Game {
   }
 
   /**
-   * Live frame-rate cap (settings page « Limite d'images par seconde »):
+   * Live frame-rate cap (settings page "FPS limit"):
    * pure loop pacing — it applies instantly to the menu preview, the play
    * transition and gameplay. Infinity/0 = uncapped.
    */
@@ -3736,7 +3736,7 @@ export class Game {
     return this.tuning !== null;
   }
 
-  /** Settings page « Panneau de performances » (the debug panel of this page). */
+  /** Settings page "Performance panel" (the debug panel of this page). */
   setPerfPanel(mode: "full" | "fps" | "off"): void {
     this.hud.setMode(mode);
     document.body.classList.toggle("perf-panel-off", mode === "off");

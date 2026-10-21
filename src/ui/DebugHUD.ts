@@ -170,7 +170,7 @@ export class DebugHUD {
   private readonly refreshHistory: number[] = [];
   private refreshMs = 0;
   /**
-   * Settings page « Panneau de performances »: every line, the frame-rate
+   * Settings page "Performance panel": every line, the frame-rate
    * lines only, or nothing (no text written at all: the panel costs nothing).
    * The measurements go on either way (Hitch console lines, GPU timer).
    */
