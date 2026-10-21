@@ -623,6 +623,14 @@
   overflow: visible;
   animation: buddy-idle 3.2s ease-in-out infinite;
   transform-origin: 50% 92%;
+  /* PERF (measured on an Intel Iris Xe, production, solo match at 1920 × 1080):
+     without it, Chrome re-rasterised the bean at the animated scale on EVERY
+     frame (buddy-idle never stops) — raster that runs in the browser's GPU
+     process next to the game's WebGL and made the frame miss its vsync:
+     45-49 FPS with the HUD on screen against 60 with it hidden, the game's own
+     GPU / CPU time unchanged. With it: rastered once, the compositor animates
+     the layer — 60 FPS, 0 late frame, same image. */
+  will-change: transform;
 }
 
 /* The sprout leaves sway gently. */

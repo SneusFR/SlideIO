@@ -104,6 +104,7 @@ opérations de skinning par rayon).
 35. **Nouvelle option graphique** (page SETTINGS) : sa valeur dans `GraphicsValues` (`settings/GraphicsSettings.ts` : presets, validation, libellé dans `settings/labels.ts`), son application dans `Game.applyLiveValues` — **en direct seulement si elle ne change aucun programme** (taille, échantillons, visibilité, paramètre de texture, uniform) ; sinon elle va dans `reloadChanges` (« Apply & reload »). Une option qui active / coupe une passe ou une variante (FXAA ⇄ MSAA) : les deux variantes compilées au chargement (`warmAlternateOutput`), vérifié par `tools/perf/settings-page-check.mjs` (aucun programme compilé par un changement en direct). Low et High restent **exactement** les anciens LOW et HIGH (`scripts/test-graphics-settings.mts`). L'interface du jeu est en anglais : libellés dans `settings/labels.ts`, en casse normale (les majuscules viennent du CSS).
 36. **Détection automatique** : elle juge sur les **intervalles entre images** sous charge (+30 % de pixels), jamais sur des requêtes de chronométrage GPU (elles comptent les temps morts du GPU et font flusher Chrome : elles changent ce qu'elles mesurent). Une option ne rejoint l'échelle (`settings/AutoTune.ts`) que si elle s'applique en direct, à sa place dans l'ordre « le moins visible d'abord », et jamais sous le plancher (l'ancien LOW). Changer la logique de la détection = incrémenter `AUTO_TUNE_VERSION` (chaque joueur « Auto » est mesuré à nouveau, une fois).
 37. **Anciennes clés** `beanzo.graphicsQuality` / `beanzo.fpsCap` : toujours lues et écrites (pont avec un build plus ancien et avec les scripts de banc) — une valeur écrite par quelqu'un d'autre depuis le dernier passage du jeu est reprise au chargement suivant (`adoptLegacyChanges`). Les réglages du joueur vivent dans **un** enregistrement, `slideio.settings`.
+38. **Animation CSS infinie dans le HUD** (respiration, balancement, rotation, clignotement) : `will-change: transform` (ou `opacity`) sur l'élément animé — sans lui, Chrome peut le re-rastériser **à chaque frame** à l'échelle animée (le portrait `buddy-idle` : 60 → 45-49 FPS en 1080p sur Iris Xe, voir la 12ᵉ passe). Pas d'animation CSS continue sur un enfant de SVG (`<path>`, `<g>` : repeint à chaque frame) hors d'une petite couche à lui (`will-change` sur le `<svg>`). Le banc headless ne chiffre pas ce coût (pas de vrai GPU) : y compter les rastérisations par frame (traces), et mesurer les FPS en partie sur une vraie machine, HUD normal contre élément masqué (`?hud=inline`, puis `visibility: hidden` dans la console).
 
 ## Mesures (banc headless, avant → après)
 
@@ -355,6 +356,32 @@ Les dômes de ciel de Jungle et Yard sont aussi dessinés en dernier (`skyDome.t
 banc (`givreDebug.perf.skyFirst / clears / deadLights / passClears` : l'ancien chemin, bascule par
 bascule) : mêmes pixels RGBA, au bit près, avant / après — chaque changement seul et tous ensemble,
 sur Givre LOW et HIGH, Jungle et Yard.
+
+## Le portrait du HUD qui se re-rastérisait (12ᵉ passe)
+
+Même portable (Iris Xe), production, **partie solo qui tourne** (bots, HUD, arme en main), réglage
+Custom 100 % = 1920 × 1080 natif : **45-49 FPS**, alors que le jeu tient dans l'image (GPU de la
+page ≈ 12 ms, CPU 6-8 ms ; 4 ms de CPU ajoutés avant ou après la frame ne changent rien : ni le
+thread principal ni le GPU du jeu ne sont la limite). A/B, cadence mesurée aux timestamps rAF :
+
+| Partie Givre, 1080p natif | FPS (5 s) |
+|---|---|
+| HUD normal (iframe) | 45-46 |
+| `#hud-frame` masqué | **59,9** |
+| `?hud=inline`, HUD normal | 48-52 |
+| … sans `#bean-buddy` (le portrait) | **60,1** (0 image en retard) |
+| … sans le classement, l'arme, l'horloge, les vignettes, le panneau debug | 49-52 (aucun effet) |
+| … portrait, seulement l'animation `buddy-idle` du `<svg>` coupée | **60,1** |
+| … seulement les chevrons du dash / les feuilles et les yeux / la touche coupés | 56,5 / 52,8 / 49,8 |
+| … `will-change: transform` sur `.buddy-art` (même animation) | **60,1** (0 image en retard) |
+
+Sans émulation (fenêtre réelle, rendu 1147 × 1393, GPU du jeu 9,5 ms) : 54,2-54,6 FPS contre
+**60,1** avec `will-change`, en alternance A/B/A/B. La respiration du haricot (`scale` sur le
+`<svg>`, infinie) obligeait Chrome à le **re-rastériser à chaque frame** à l'échelle animée — un
+travail fait dans le processus GPU du navigateur, à côté du WebGL du jeu, qui faisait rater le
+rafraîchissement. Avec `will-change: transform`, il est rastérisé une fois et le compositeur
+l'anime : même image. C'est aussi ce qui sépare le plus Beanzo de Krunker sur cette machine : le
+jeu tenait, son HUD non (règle 38).
 
 ## Réglages graphiques et détection automatique (page SETTINGS)
 
