@@ -15,6 +15,16 @@ import {
   type StaticEntry,
 } from "./GivreRenderOptim";
 import { applyUberMaterial, batchAnimatedMeshes, freezeStaticTransforms } from "./MapBatching";
+import {
+  applyMapShader,
+  collectMapShaderTargets,
+  mapShaderKey,
+  mapShaderOptionsFor,
+  type MapShaderOptions,
+  type MapShaderTarget,
+  type ShaderPatch,
+} from "./GivreMapMaterial";
+import { perfExperiments } from "../ui/perfDiag";
 import mapModelUrl from "../assets/MAP/Givre/givre_01.glb?url";
 import backdropModelUrl from "../assets/MAP/Givre/givre_01_fond.glb?url";
 
@@ -99,6 +109,16 @@ export class GivreMap {
   readonly materials = new Map<string, THREE.Material>();
   /** Animated décor (mixer root, clip, nodes, instanced puffs). */
   readonly animated: GivreAnimatedDecor;
+  /**
+   * Options of the map's specialised shader this session (GivreMapMaterial):
+   * the exact set by default, null with `?diag=nomapshader` (three's stock
+   * shader), + the near-exact part with `?diag=mapshaderfast`.
+   */
+  readonly mapShader: Readonly<MapShaderOptions> | null;
+  /** The meshes the specialised shader applies to, with their stock materials. */
+  private readonly mapShaderTargets: MapShaderTarget[];
+  /** Specialised clones by stock material + option set (one each, reused). */
+  private readonly mapShaderMaterials = new Map<string, THREE.Material | null>();
 
   private constructor(
     physics: PhysicsWorld,
@@ -125,6 +145,38 @@ export class GivreMap {
       mesh.raycast = () => {}; // purely visual
     });
     this.backdrop = backdrop;
+
+    // PERF: the map's shader specialised for what the map really uses
+    // (GivreMapMaterial: no image-based light, metalness 0, one lightmap uv —
+    // same pixels). Decided here, at load: the specialised materials are the
+    // ones the GPU warm-up compiles. GIV_Feu keeps its shared instance (its
+    // emissive flickers through it — GivreEffects).
+    this.mapShaderTargets = collectMapShaderTargets([this.group, backdrop], DECOR_KEEP_MATERIALS);
+    this.mapShader = mapShaderOptionsFor(perfExperiments());
+    const specialised = applyMapShader(this.mapShaderTargets, this.mapShader, this.mapShaderMaterials);
+    // One line on every build (the A/B on a real GPU reads which shader ran).
+    console.info(
+      this.mapShader
+        ? `[CARTE] shader spécialisé (${mapShaderKey(this.mapShader)}) sur ${specialised} / ${this.mapShaderTargets.length} maillages`
+        : "[CARTE] shader d'origine de three (?diag=nomapshader)",
+    );
+    if (import.meta.env.DEV) {
+      // Bench / console A/B (DEV builds only — it compiles on first use):
+      //   givreMapShader.set(null)              three's stock shader
+      //   givreMapShader.set({ noIbl: true, … }) any option set (GivreMapMaterial)
+      //   givreMapShader.list()                  mesh → option key
+      (window as unknown as Record<string, unknown>).givreMapShader = {
+        session: this.mapShader,
+        set: (options: MapShaderOptions | null, extra?: { key: string; patch: ShaderPatch }) =>
+          applyMapShader(this.mapShaderTargets, options, this.mapShaderMaterials, extra),
+        list: () =>
+          this.mapShaderTargets.map(
+            (t) => `${t.mesh.name}: ${(t.mesh.material as THREE.Material).userData.mapShader ?? "stock"}`,
+          ),
+        key: mapShaderKey,
+        chunks: THREE.ShaderChunk,
+      };
+    }
 
     // PERF: the map never moves — only the clip TARGETS animate (mixer).
     // Every other node (batches, holders, empties, the meshes riding an

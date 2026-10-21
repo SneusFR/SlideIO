@@ -39,6 +39,14 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *            by as much = they wait for each other (something serializes)
  *   noflush  no gl.flush() at the pass boundaries (Game.flushGpu): the old
  *            submission, to compare
+ *   nomapshader    Givre: the map drawn with three's stock MeshStandardMaterial
+ *            shader instead of the specialised one (world/GivreMapMaterial:
+ *            no image-based light, metalness folded to 0, one lightmap uv —
+ *            the same pixels, fewer instructions per map pixel): to compare
+ *   mapshaderfast  Givre: the specialised map shader + its NEAR-EXACT part
+ *            (no multiple-scattering compensation on the sun, PCF rotation
+ *            with one cos / sin pair): ≤ 1 level of difference on a few
+ *            pixels — a visual trade-off, off by default
  *
  * Several at once: `?diag=noflush,scale50`. Never for normal play.
  */
