@@ -1,0 +1,440 @@
+import { cheaperPerFrame, noCostlier } from "./AutoTune";
+import { sameValues, type GraphicsValues } from "./GraphicsSettings";
+
+/**
+ * AUTO GUARD — the "Auto" preset's promise kept in MATCHES: at least 60 FPS
+ * (or the display's own rate when it is lower). Pure logic, fed with the
+ * frames the game renders (GraphicsController wires it).
+ *
+ * The detection (settings/AutoTune) measures the menu: a fixed view, a cool
+ * chip in its turbo window, a main thread with nothing to simulate. A match
+ * is something else — 8 bots and their effects in view, the HUD, a busy
+ * processor sharing the laptop's power budget with the GPU, and, minutes
+ * later, the chip at its sustained clocks (battery, office power plans). On
+ * the owner's work laptop Auto held 60 FPS at first, then not. So the
+ * guard watches the real frames of FOCUSED PLAY (pointer locked, page
+ * visible, the match running) and, when 60 FPS stop holding for a sustained
+ * stretch, steps the answer DOWN the detection's own ladder:
+ *   - live (only settings applied without a shader compile are on the
+ *     ladder), one significant rung at a time (guardStepIndex);
+ *   - judged again after each step: KEPT (stored as the Auto result of this
+ *     map and GPU) only when it helped; a step that changed nothing means
+ *     the graphics are not the limit (a browser frame cap, the processor, the
+ *     browser's GPU process): the guard stops for the session and that step
+ *     is not stored;
+ *   - never back up by itself (no oscillation: only a new detection raises
+ *     the image again), never below the beauty floor (the ladder's last
+ *     rung), never for an explicit preset (Low, High, Custom…).
+ *
+ * Signal: the intervals between rendered frames — as the detection, no GPU
+ * timer queries. When the GPU is the limit, Chrome delivers ≈ 1000 / (GPU ms
+ * per frame) frames per second (a 18 ms frame → ~55 FPS: a 33 ms interval
+ * now and then among 16.7 ms ones), so the delivered frame rate of a
+ * stretch measures how far it is short — short when it is under the line
+ * on average AND in most of its seconds (a burst of action is not a machine
+ * short of 60). Left out of it:
+ *   - frames the PROCESSOR made late (the main thread alone took ~ a whole
+ *     frame: AI, a kill, garbage collection) — lowering the graphics would
+ *     not help them; a stretch mostly made of them is not judged at all;
+ *   - the slowest 1.5 % of the rest (lone hitches: the browser's GPU process,
+ *     an upload);
+ *   - stalls (> 250 ms), and the seconds that follow entering / resuming play
+ *     or a step (re-allocation, the HUD's big first frame, clocks ramping).
+ */
+
+/** Every threshold of the guard, with its reason. */
+export const AUTO_GUARD = {
+  /**
+   * The promise holds while the delivered frame rate of a stretch stays at
+   * ≥ 95 % of the goal (57 FPS for 60). With the trimming below, a 60 Hz
+   * laptop triggers from ≈ 17.8 ms of GPU per frame (≈ 56 FPS delivered:
+   * a missed refresh every ~15 frames, judder you see), while 58-59 FPS
+   * (a GPU at 16.9-17.2 ms) or lone hitches never cost the image a step.
+   */
+  holdRatio: 0.95,
+  /**
+   * SUSTAINED = the last 10 s of focused play: longer than a burst of action
+   * (an explosion, a pile-up of bots: 1-5 s) — reacting to those would lower
+   * the image for a moment's frames — and short against the minutes a laptop
+   * takes to settle at its sustained clocks. ≈ 600 frames at 60 FPS.
+   */
+  windowMs: 10_000,
+  /**
+   * After a step, the stretch that judges it: shorter (the machine is known
+   * to be short in this match), so that two or three steps, when a throttled
+   * laptop needs them, take ≈ 30 s and not a minute.
+   */
+  followUpMs: 6_000,
+  /** A stretch needs at least this many counted frames to be judged (a very slow machine too: 10 FPS × 6 s). */
+  minFrames: 60,
+  /**
+   * …and SUSTAINED means most of it, not its average: at least 70 % of its
+   * seconds (7 of the last 10) must be below the line too. 8 s at 60 FPS
+   * plus 2 s at 30 (an explosion, a pile-up) average 54 FPS — that is a
+   * burst, not a machine short of 60.
+   */
+  sustainShare: 0.7,
+  /** Length of those seconds: buckets of focused-play time (ms). */
+  bucketMs: 1000,
+  /** Slowest share of a stretch's counted intervals left out (lone hitches: ≈ 9 frames of 600). */
+  trimShare: 0.015,
+  /**
+   * An interval that follows a frame whose main-thread time took ≥ 90 % of
+   * the goal's budget (15 ms at 60) was late because of the PROCESSOR — not
+   * the graphics: left out of the frame rate.
+   */
+  cpuLateShare: 0.9,
+  /** A stretch with more than half its frames processor-late is the processor's: no verdict. */
+  maxCpuShare: 0.5,
+  /** An interval longer than this is a stall (tab switch, long task, collection), not a GPU frame: ignored, and play settles again. */
+  stallMs: 250,
+  /** Focused play ignored after entering / resuming it (the HUD's first big frame, clocks ramping up after the menu). */
+  resumeSettleMs: 3_000,
+  /** …and after a step (render targets re-allocated, a shadow map re-baked). */
+  stepSettleMs: 2_000,
+  /**
+   * A step that did not fully restore the goal is still KEPT when the next
+   * stretch is ≥ 2 % faster than the one that triggered it (a rung of this
+   * ladder removes ≥ 10 % of the pixels, or MSAA: several % of a GPU-bound
+   * frame); otherwise the graphics were not the limit — the guard stops.
+   */
+  minGain: 0.02,
+  /** Verdicts are looked at every 0.5 s of focused play (the per-frame work is a few additions). */
+  checkEveryMs: 500,
+  /** Histogram resolution of the intervals (trimmed frame rate without sorting anything). */
+  binMs: 0.25,
+  /** Intervals kept per stretch (10 s at 400 FPS). */
+  capacity: 4096,
+};
+
+export type AutoGuardConfig = typeof AUTO_GUARD;
+
+/**
+ * A sliding stretch of focused-play frame intervals: the processor-late ones
+ * counted apart, the others in a histogram (trimmed frame rate without a
+ * sort). Fixed memory; nothing allocated per frame.
+ */
+export class FrameStretch {
+  /** Intervals, oldest first from `head` (negative = processor-late). */
+  private readonly ring: Float32Array;
+  private head = 0;
+  private size = 0;
+  private totalMs = 0;
+  private countedN = 0;
+  private countedMs = 0;
+  private cpuLateN = 0;
+  private readonly bins: Uint32Array;
+  private readonly binSums: Float64Array;
+  /** The last seconds' frame rates (NaN: a second the processor made mostly late), oldest first from `bucketHead`. */
+  private readonly buckets = new Float32Array(32);
+  private bucketHead = 0;
+  private bucketCount = 0;
+  /** The second being filled: all its time, and its counted frames / time. */
+  private openMs = 0;
+  private openCountedN = 0;
+  private openCountedMs = 0;
+
+  constructor(private readonly cfg: AutoGuardConfig = AUTO_GUARD) {
+    this.ring = new Float32Array(cfg.capacity);
+    const n = Math.ceil(cfg.stallMs / cfg.binMs) + 1;
+    this.bins = new Uint32Array(n);
+    this.binSums = new Float64Array(n);
+  }
+
+  clear(): void {
+    this.head = 0;
+    this.size = 0;
+    this.totalMs = 0;
+    this.countedN = 0;
+    this.countedMs = 0;
+    this.cpuLateN = 0;
+    this.bins.fill(0);
+    this.binSums.fill(0);
+    this.bucketHead = 0;
+    this.bucketCount = 0;
+    this.openMs = 0;
+    this.openCountedN = 0;
+    this.openCountedMs = 0;
+  }
+
+  /**
+   * Share of the last `n` seconds whose frame rate was under `fps` — among the
+   * seconds with frames to judge (null when fewer than half of them have).
+   */
+  shareBelow(n: number, fps: number): number | null {
+    const k = Math.min(n, this.bucketCount);
+    let judged = 0;
+    let below = 0;
+    for (let i = this.bucketCount - k; i < this.bucketCount; i++) {
+      const f = this.buckets[(this.bucketHead + i) % this.buckets.length];
+      if (Number.isNaN(f)) continue;
+      judged++;
+      if (f < fps) below++;
+    }
+    return judged * 2 >= n && judged > 0 ? below / judged : null;
+  }
+
+  /** Focused-play time the stretch covers (ms). */
+  get durationMs(): number {
+    return this.totalMs;
+  }
+
+  /** Intervals counted in the frame rate (not processor-late). */
+  get frames(): number {
+    return this.countedN;
+  }
+
+  /** Share of the stretch's intervals the processor made late. */
+  get cpuShare(): number {
+    const n = this.countedN + this.cpuLateN;
+    return n > 0 ? this.cpuLateN / n : 0;
+  }
+
+  /** Adds an interval; the oldest ones go while the rest still covers `spanMs`. */
+  push(ms: number, cpuLate: boolean, spanMs: number): void {
+    if (this.size === this.ring.length) this.dropOldest();
+    const tail = (this.head + this.size) % this.ring.length;
+    this.ring[tail] = cpuLate ? -ms : ms;
+    this.size++;
+    this.totalMs += ms;
+    if (cpuLate) this.cpuLateN++;
+    else {
+      const b = this.bin(ms);
+      this.bins[b]++;
+      this.binSums[b] += ms;
+      this.countedN++;
+      this.countedMs += ms;
+      this.openCountedN++;
+      this.openCountedMs += ms;
+    }
+    while (this.size > 1 && this.totalMs - Math.abs(this.ring[this.head]) >= spanMs) this.dropOldest();
+    // The second being filled: closed once it covers bucketMs of focused play.
+    this.openMs += ms;
+    if (this.openMs >= this.cfg.bucketMs) {
+      const judged = this.openCountedMs * 2 >= this.openMs && this.openCountedN > 0;
+      const fps = judged ? (this.openCountedN * 1000) / this.openCountedMs : NaN;
+      if (this.bucketCount === this.buckets.length) {
+        this.bucketHead = (this.bucketHead + 1) % this.buckets.length;
+        this.bucketCount--;
+      }
+      this.buckets[(this.bucketHead + this.bucketCount) % this.buckets.length] = fps;
+      this.bucketCount++;
+      this.openMs = 0;
+      this.openCountedN = 0;
+      this.openCountedMs = 0;
+    }
+  }
+
+  /**
+   * Frames per second of the counted intervals, without the slowest `share`
+   * of them (0 when none).
+   */
+  trimmedFps(share: number): number {
+    const n = this.countedN;
+    if (n === 0) return 0;
+    const dropN = Math.floor(n * share);
+    let left = dropN;
+    let sum = this.countedMs;
+    for (let b = this.bins.length - 1; b >= 0 && left > 0; b--) {
+      const c = this.bins[b];
+      if (c === 0) continue;
+      if (c <= left) {
+        sum -= this.binSums[b];
+        left -= c;
+      } else {
+        sum -= (this.binSums[b] / c) * left;
+        left = 0;
+      }
+    }
+    return sum > 0 ? ((n - dropN) * 1000) / sum : 0;
+  }
+
+  private bin(ms: number): number {
+    return Math.min(this.bins.length - 1, Math.max(0, Math.floor(ms / this.cfg.binMs)));
+  }
+
+  private dropOldest(): void {
+    const v = this.ring[this.head];
+    this.head = (this.head + 1) % this.ring.length;
+    this.size--;
+    const ms = Math.abs(v);
+    this.totalMs -= ms;
+    if (v < 0) this.cpuLateN--;
+    else {
+      const b = this.bin(ms);
+      this.bins[b]--;
+      this.binSums[b] -= ms;
+      this.countedN--;
+      this.countedMs -= ms;
+    }
+  }
+}
+
+/**
+ *   step       — 60 FPS no longer hold: step one rung down now (then applied() / stop());
+ *   keep       — the last step restored the goal: store it;
+ *   keep-step  — it helped, not enough: store it and step once more (then applied() / stop());
+ *   useless    — it changed nothing: the graphics are not the limit, the guard
+ *                stops for the session (the step stays on screen, NOT stored).
+ */
+export type GuardAction = "step" | "keep" | "keep-step" | "useless";
+
+export interface GuardVerdict {
+  action: GuardAction;
+  /** Delivered frame rate of the stretch just judged (trimmed, processor-late frames left out). */
+  fps: number;
+  /** Frame rate of the stretch that triggered the step being judged (null for a first step). */
+  before: number | null;
+  /** Share of the stretch's frames the processor made late. */
+  cpuShare: number;
+}
+
+/**
+ *   watch  — judging the last windowMs of focused play;
+ *   wait   — a step was asked for: frames ignored until the host applied it;
+ *   verify — the stretch after the step (followUpMs), judged against the one before;
+ *   off    — done for this session (the floor, or a useless step).
+ */
+export type GuardPhase = "watch" | "wait" | "verify" | "off";
+
+/** The guard of one session and one detection result (see the module comment). */
+export class AutoGuard {
+  private phase_: GuardPhase = "watch";
+  private readonly stretch: FrameStretch;
+  private lastT: number | null = null;
+  private lastCpu = 0;
+  /** Focused-play time still to ignore (settling). The first frames of a session settle too. */
+  private settleLeft: number;
+  private sinceCheck = 0;
+  /** Frame rate of the stretch that triggered the step being judged. */
+  private before = 0;
+  /** Steps applied this session. */
+  steps = 0;
+
+  constructor(
+    /** The frame rate the promise is about: 60, or the display's rate when lower. */
+    readonly goalFps: number,
+    private readonly cfg: AutoGuardConfig = AUTO_GUARD,
+  ) {
+    this.stretch = new FrameStretch(cfg);
+    this.settleLeft = cfg.resumeSettleMs;
+  }
+
+  get phase(): GuardPhase {
+    return this.phase_;
+  }
+
+  /** False once done for the session. */
+  get active(): boolean {
+    return this.phase_ !== "off";
+  }
+
+  /**
+   * A frame was rendered: `t` = its start (performance.now, ms), `cpuMs` =
+   * its main-thread time, `play` = focused play (pointer locked, page
+   * visible, the match running, no detection). A verdict now and then.
+   */
+  onFrame(t: number, cpuMs: number, play: boolean): GuardVerdict | null {
+    if (this.phase_ === "off") return null;
+    if (!play) {
+      // Menu, pause, end screen, hidden page: the interval across it means nothing.
+      this.lastT = null;
+      return null;
+    }
+    const prevT = this.lastT;
+    const prevCpu = this.lastCpu;
+    this.lastT = t;
+    this.lastCpu = cpuMs;
+    if (prevT === null) {
+      this.settleLeft = Math.max(this.settleLeft, this.cfg.resumeSettleMs);
+      return null;
+    }
+    const dt = t - prevT;
+    if (!(dt > 0)) return null;
+    if (dt > this.cfg.stallMs) {
+      this.settleLeft = Math.max(this.settleLeft, this.cfg.resumeSettleMs);
+      return null;
+    }
+    if (this.phase_ === "wait") return null;
+    if (this.settleLeft > 0) {
+      this.settleLeft -= dt;
+      return null;
+    }
+    const span = this.phase_ === "verify" ? this.cfg.followUpMs : this.cfg.windowMs;
+    // The interval that ends now followed the previous frame: ITS main-thread time.
+    this.stretch.push(dt, prevCpu >= this.cfg.cpuLateShare * (1000 / this.goalFps), span);
+    this.sinceCheck += dt;
+    if (this.sinceCheck < this.cfg.checkEveryMs) return null;
+    this.sinceCheck = 0;
+    return this.judge(span);
+  }
+
+  /** The asked step is on screen from the next frame: settle, then judge it. */
+  applied(): void {
+    if (this.phase_ !== "wait") return;
+    this.steps++;
+    this.phase_ = "verify";
+    this.stretch.clear();
+    this.settleLeft = this.cfg.stepSettleMs;
+    this.sinceCheck = 0;
+  }
+
+  /** No rung left below (the floor), or the host could not step: done for this session. */
+  stop(): void {
+    this.phase_ = "off";
+  }
+
+  private judge(span: number): GuardVerdict | null {
+    const s = this.stretch;
+    if (s.durationMs < span || s.frames < this.cfg.minFrames) return null;
+    const cpuShare = s.cpuShare;
+    // The processor's stretch: lowering the graphics would not change it — no verdict.
+    if (cpuShare > this.cfg.maxCpuShare) return null;
+    const fps = s.trimmedFps(this.cfg.trimShare);
+    const line = this.goalFps * this.cfg.holdRatio;
+    const lowSeconds = s.shareBelow(Math.round(span / this.cfg.bucketMs), line);
+    if (lowSeconds === null) return null; // mostly the processor's seconds: no verdict
+    // Short of the goal = on average (lone hitches trimmed) AND for most of the stretch (not a burst).
+    const holds = fps >= line || lowSeconds < this.cfg.sustainShare;
+    if (this.phase_ === "watch") {
+      if (holds) return null;
+      this.before = fps;
+      this.phase_ = "wait";
+      return { action: "step", fps, before: null, cpuShare };
+    }
+    // verify
+    const before = this.before;
+    if (holds) {
+      this.phase_ = "watch";
+      s.clear();
+      return { action: "keep", fps, before, cpuShare };
+    }
+    if (fps >= before * (1 + this.cfg.minGain)) {
+      this.before = fps;
+      this.phase_ = "wait";
+      return { action: "keep-step", fps, before, cpuShare };
+    }
+    this.phase_ = "off";
+    return { action: "useless", fps, before, cpuShare };
+  }
+}
+
+/**
+ * The rung the guard steps to from the values on screen: the first one
+ * down the ladder (no costlier in any knob) that is cheaper in a knob that
+ * really moves the frame time (resolution, anti-aliasing, a live shadow
+ * map — cheaperPerFrame), the finer rungs above it (filtering, snow
+ * density: ≈ 1-3 % each, a step of them alone would cost another stretch of
+ * missed frames for a gain lost in the noise) taken with it. Only fine
+ * knobs left: the floor. Null at the floor: nothing below.
+ */
+export function guardStepIndex(ladder: readonly GraphicsValues[], current: GraphicsValues): number | null {
+  let lowest: number | null = null;
+  for (let j = 0; j < ladder.length; j++) {
+    const r = ladder[j];
+    if (!noCostlier(r, current) || sameValues(r, current)) continue;
+    if (cheaperPerFrame(r, current)) return j;
+    lowest = j;
+  }
+  return lowest;
+}

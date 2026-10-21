@@ -42,7 +42,9 @@ import { describeValues, formatNumber } from "./labels";
  *    vsync-locked display shows 60 FPS at 10 ms and at 16 ms of work alike;
  *    with that load on top, a rung that still holds 60 keeps ≈ 23 % of the
  *    frame free for the fights (8 bots, effects, the HUD's own drawing). The
- *    default look (point 4) is kept with half that margin.
+ *    default look (point 4) is kept with half that margin. Integrated GPUs
+ *    get +50 % (see AUTO_TUNE.integratedMarginPixels: on them the margin in
+ *    pixels buys less frame time, and matches run hotter than the menu).
  * 4. Two goals (TuneGoals): 60 FPS must hold — for it the image may go down
  *    to the floor; the display's rate is wanted — for it the image never goes
  *    below the DEFAULT LOOK (the old preset of this GPU): a machine that
@@ -51,6 +53,10 @@ import { describeValues, formatNumber } from "./labels";
  *    probe), then a binary search. One answer, stored: the detection never
  *    runs again by itself on the same machine and map (it never
  *    oscillates), and the player can always override it.
+ * 6. In matches, the AUTO GUARD (settings/AutoGuard) watches the real frames:
+ *    if 60 FPS stop holding for a sustained stretch of focused play (fights,
+ *    a throttled laptop), it steps this answer down the same ladder — live,
+ *    stored, never back up by itself, never below the floor.
  */
 
 /** Every threshold of the detection, with its reason. */
@@ -90,9 +96,45 @@ export const AUTO_TUNE = {
   maxSamples: 1024,
   /** Slowest share of a probe's frames left out of its frame rate (lone hitches: 1 at least). */
   outlierShare: 0.02,
+  /**
+   * INTEGRATED GPUs (Intel, AMD APUs, mobile chips — the old "weak" list):
+   * every rung above the floor is measured with +50 % pixels instead of
+   * +30 % (≈ +22 % per axis). The +30 % margin let Auto pass in the menu and
+   * still miss 60 FPS in matches on the owner's Iris Xe laptops:
+   *   - a good part of an iGPU frame does not scale with pixels (vertices of
+   *     ~190 k map triangles, the depth clear, submission): +30 % pixels was
+   *     only ≈ +15-25 % of frame time;
+   *   - the menu is measured on a cool chip in its turbo window, with the
+   *     main thread nearly idle (no AI, no physics); a match adds bots,
+   *     effects and the HUD, keeps the processor busy (processor and GPU share
+   *     ONE power budget on these chips) and, minutes later, the chip settles
+   *     at its sustained power (battery, office power plans: lower still);
+   *   - on a 60 Hz screen, 5 % over the 16.7 ms budget already costs ≈ 3 FPS.
+   * +50 % keeps ≈ 30-45 % of the frame time free in the menu's view; the
+   * in-match guard (settings/AutoGuard) corrects what is left. Auto never
+   * picks more than 100 % of native on any GPU (the ladder's top).
+   */
+  integratedMarginPixels: 1.5,
+  /** …and the DEFAULT LOOK with half that margin, as on other GPUs (on iGPUs the default look is the floor). */
+  integratedKeepMarginPixels: 1.25,
 };
 
 export type AutoTuneConfig = typeof AUTO_TUNE;
+
+/**
+ * The detection's thresholds for this GPU: integrated GPUs get the larger
+ * margin (see AUTO_TUNE.integratedMarginPixels). `marginPercent` (the
+ * `?diag=tunemarginNN` A/B switch) forces the margin to NN % extra pixels
+ * (keep margin: half of it) on any GPU — `tunemargin30` = the old rule.
+ */
+export function tuneConfigFor(gpu: { integrated: boolean }, marginPercent: number | null = null): AutoTuneConfig {
+  if (marginPercent !== null && Number.isFinite(marginPercent) && marginPercent >= 0) {
+    const m = Math.min(300, marginPercent) / 100;
+    return { ...AUTO_TUNE, marginPixels: 1 + m, keepMarginPixels: 1 + m / 2 };
+  }
+  if (!gpu.integrated) return AUTO_TUNE;
+  return { ...AUTO_TUNE, marginPixels: AUTO_TUNE.integratedMarginPixels, keepMarginPixels: AUTO_TUNE.integratedKeepMarginPixels };
+}
 
 const qRank = (q: ShadowQuality): number => SHADOW_QUALITIES.indexOf(q);
 const minQuality = (q: ShadowQuality, cap: ShadowQuality): ShadowQuality => (qRank(q) > qRank(cap) ? cap : q);
@@ -244,22 +286,40 @@ export function sortedPercentile(sorted: ArrayLike<number>, p: number): number {
  * high-refresh goal never takes the image below it (see Calibration).
  */
 export function defaultRungIndex(ladder: readonly GraphicsValues[], look: GraphicsValues): number {
-  const aa: Record<AntiAliasing, number> = { none: 0, fxaa: 1, msaa2: 2, msaa4: 3 };
-  const snow: Record<string, number> = { off: 0, legere: 1, normale: 2, dense: 3 };
-  for (let i = 0; i < ladder.length; i++) {
-    const v = ladder[i];
-    const liveShadows = v.shadows === "dynamic";
-    if (
-      v.renderScale <= look.renderScale + 1e-6 &&
-      aa[v.antialiasing] <= aa[look.antialiasing] &&
-      v.anisotropy <= look.anisotropy &&
-      snow[v.snow] <= snow[look.snow] &&
-      (!liveShadows || qRank(v.shadowQuality) <= qRank(look.shadowQuality))
-    ) {
-      return i;
-    }
-  }
+  for (let i = 0; i < ladder.length; i++) if (noCostlier(ladder[i], look)) return i;
   return ladder.length - 1;
+}
+
+const AA_RANK: Record<AntiAliasing, number> = { none: 0, fxaa: 1, msaa2: 2, msaa4: 3 };
+const SNOW_RANK: Record<string, number> = { off: 0, legere: 1, normale: 2, dense: 3 };
+
+/**
+ * `v` costs no more time per frame than `than` in any knob: resolution,
+ * anti-aliasing, filtering, snow, and the shadow map size when it is
+ * re-rendered every frame (live shadows; a static map is baked once).
+ */
+export function noCostlier(v: GraphicsValues, than: GraphicsValues): boolean {
+  return (
+    v.renderScale <= than.renderScale + 1e-6 &&
+    AA_RANK[v.antialiasing] <= AA_RANK[than.antialiasing] &&
+    v.anisotropy <= than.anisotropy &&
+    SNOW_RANK[v.snow] <= SNOW_RANK[than.snow] &&
+    (v.shadows !== "dynamic" || qRank(v.shadowQuality) <= qRank(than.shadowQuality))
+  );
+}
+
+/**
+ * `v` is cheaper than `than` in a knob that moves an integrated GPU's frame
+ * time by several % on its own: fewer pixels, lighter anti-aliasing (MSAA
+ * resolves), a smaller LIVE shadow map. Filtering and snow density alone
+ * weigh ≈ 1-3 % (11th pass: snow 0.08-0.18 ms of a ~10 ms frame).
+ */
+export function cheaperPerFrame(v: GraphicsValues, than: GraphicsValues): boolean {
+  return (
+    v.renderScale < than.renderScale - 0.5 ||
+    AA_RANK[v.antialiasing] < AA_RANK[than.antialiasing] ||
+    (v.shadows === "dynamic" && qRank(v.shadowQuality) < qRank(than.shadowQuality))
+  );
 }
 
 // ---------------------------------------------------------- calibration

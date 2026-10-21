@@ -114,6 +114,8 @@ function sanitizeAuto(raw: unknown, map: string): AutoResult | null {
     measuredShadows: pick(SHADOW_MODES, r.measuredShadows, sanitizeGraphicsValues(r.values, HOLE_FILLER).shadows),
     summary: typeof r.summary === "string" ? r.summary.slice(0, 600) : "",
     version: num(r.version, 0),
+    guardSteps: Math.max(0, Math.min(64, Math.floor(num(r.guardSteps, 0)))),
+    guardAt: typeof r.guardAt === "number" && Number.isFinite(r.guardAt) ? r.guardAt : null,
   };
 }
 

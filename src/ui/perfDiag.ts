@@ -39,6 +39,14 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *            by as much = they wait for each other (something serializes)
  *   noflush  no gl.flush() at the pass boundaries (Game.flushGpu): the old
  *            submission, to compare
+ *   noguard  no in-match Auto guard (settings/AutoGuard): "Auto" keeps the
+ *            detection's answer whatever the match's frame rate (the old
+ *            behaviour)
+ *   tunemarginNN  the automatic detection measures every rung with NN %
+ *            extra pixels on any GPU (tunemargin30 = the old rule; default:
+ *            50 on integrated GPUs, 30 elsewhere); tunemargin0 = no margin —
+ *            an answer too heavy for matches on purpose, to watch the guard
+ *            step it down. Only the next detection ("Run again") uses it.
  *
  * Several at once: `?diag=noflush,scale50`. Never for normal play.
  */

@@ -262,10 +262,18 @@ export interface AutoResult {
   complete: boolean;
   /** Shadow mode of the session that measured (a result that changes it is checked again after the reload). */
   measuredShadows: ShadowMode;
-  /** French summary shown in the page. */
+  /** Summary shown in the page (English; rewritten by the in-match guard when it lowers the values). */
   summary: string;
   /** Algorithm version (a newer detection logic detects again). */
   version: number;
+  /**
+   * In-match guard (settings/AutoGuard): rungs it has taken these values down
+   * since the detection, each one kept because it helped (0 / absent = the
+   * detection's answer as is). Only a new detection raises them again.
+   */
+  guardSteps?: number;
+  /** Date.now() of the guard's last kept step (null / absent = none). */
+  guardAt?: number | null;
 }
 
 export interface GraphicsChoice {
@@ -276,8 +284,11 @@ export interface GraphicsChoice {
   auto: Record<string, AutoResult>;
 }
 
-/** Version of the detection logic: bump it to detect again for every "auto" player once. */
-export const AUTO_TUNE_VERSION = 1;
+/**
+ * Version of the detection logic: bump it to detect again for every "auto" player once.
+ * 2: integrated GPUs measured with +50 % pixels instead of +30 % (AUTO_TUNE.integratedMarginPixels).
+ */
+export const AUTO_TUNE_VERSION = 2;
 
 /** What the "auto" choice resolves to before (or without) a usable detection. */
 export interface GpuHint {
@@ -328,6 +339,8 @@ export function effectivePreset(choice: GraphicsChoice, gpu: GpuHint, map: strin
  * The choice after the player edited one value: "Custom" with the
  * current effective values and the edit — or, when the result is exactly a
  * named preset (an edit undone), that preset. The detections stay stored.
+ * `base`: the values on screen when they differ from the stored choice's (a
+ * step of the in-match guard not stored yet — GraphicsController.effective).
  */
 export function editChoice<K extends GraphicsKey>(
   choice: GraphicsChoice,
@@ -336,8 +349,9 @@ export function editChoice<K extends GraphicsKey>(
   env: DisplayEnv,
   gpu: GpuHint,
   map: string,
+  base: GraphicsValues = effectiveValues(choice, env, gpu, map),
 ): GraphicsChoice {
-  const values = { ...effectiveValues(choice, env, gpu, map), [key]: value } as GraphicsValues;
+  const values = { ...base, [key]: value } as GraphicsValues;
   const named = matchPreset(values, env);
   if (named) return { ...choice, preset: named };
   return { ...choice, preset: "custom", custom: values };

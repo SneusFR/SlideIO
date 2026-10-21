@@ -86,7 +86,7 @@ type Cost = 1 | 2 | 3;
 const COST_WORDS: Record<Cost, string> = { 1: "Light", 2: "Medium", 3: "Heavy" };
 
 const PRESET_HINTS: Record<PresetChoice, string> = {
-  auto: "Measured on this PC and this map: the best look that holds your FPS target, with headroom for fights.",
+  auto: "Measured on this PC and this map: the best look that holds your FPS target, with headroom for fights. If a match still drops below 60 FPS, Auto lowers the graphics a step.",
   bas: "The old LOW preset: FXAA, static shadows, one pixel per screen pixel. For integrated graphics.",
   moyen: "MSAA 2×, medium dynamic shadows, 4× filtering. For entry-level graphics cards.",
   eleve: "The old HIGH preset: MSAA 4×, detailed dynamic shadows, 8× filtering.",
@@ -566,8 +566,10 @@ export class SettingsPage {
   private edit<K extends GraphicsKey>(key: K, value: GraphicsValues[K]): void {
     const { controller, store } = this.deps;
     const env = this.deps.env();
+    // From the values on screen (with "Auto", a step of the in-match guard may not be stored yet).
+    const base = controller.effective();
     store.update((d) => {
-      d.graphics = editChoice(d.graphics, key, value, env, controller.gpu, controller.mapId);
+      d.graphics = editChoice(d.graphics, key, value, env, controller.gpu, controller.mapId, base);
     });
   }
 
@@ -922,7 +924,7 @@ export class SettingsPage {
     } else {
       setText(
         this.detectText,
-        "Tests this PC on the current map and picks the best look that holds the target, with headroom for fights: 60 FPS at least, plus your screen's refresh rate as long as the image stays at least as good as the original. Never below the quality floor (the old LOW preset).",
+        "Tests this PC on the current map and picks the best look that holds the target, with headroom for fights: 60 FPS at least, plus your screen's refresh rate as long as the image stays at least as good as the original. In matches, if 60 FPS stop holding for a while, Auto lowers the graphics a step. Never below the quality floor (the old LOW preset).",
       );
       setText(this.detectMeta, `Target: ${controller.detectionTarget()} FPS. Takes a few seconds; the image changes during the tests.`);
     }

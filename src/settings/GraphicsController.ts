@@ -8,6 +8,7 @@ import {
   presetValues,
   reloadChanges,
   resolveFpsCap,
+  sameValues,
   targetFps as computeTargetFps,
   type AutoResult,
   type DisplayEnv,
@@ -17,10 +18,13 @@ import {
   type PresetChoice,
   type ReloadChange,
 } from "./GraphicsSettings";
-import { summarize, type TuneOutcome } from "./AutoTune";
+import { buildLadder, summarize, tuneConfigFor, type AutoTuneConfig, type TuneOutcome } from "./AutoTune";
+import { AUTO_GUARD, AutoGuard, guardStepIndex, type AutoGuardConfig, type GuardVerdict } from "./AutoGuard";
+import { guardNoticeText, guardSummaryText } from "./labels";
 import type { PerfPanelMode, SettingsRecord, SettingsStore } from "./SettingsStore";
 import type { OutlineSettings } from "../game/OutlineSettings";
 import type { CrosshairSettings } from "../ui/CrosshairSettings";
+import { perfExperiments } from "../ui/perfDiag";
 
 /** Options of one detection run. */
 export interface AutoTuneOptions {
@@ -33,7 +37,12 @@ export interface AutoTuneOptions {
    * GPUs): a high-refresh screen's frame rate never takes the image below it.
    */
   defaultLook?: GraphicsValues;
+  /** Thresholds of the detection (integrated GPUs: the larger margin — tuneConfigFor). */
+  config?: AutoTuneConfig;
 }
+
+/** A rendered frame: its start, its main-thread time, and whether it was focused play. */
+export type PlayFrameListener = (t: number, cpuMs: number, play: boolean) => void;
 
 /** What the controller drives (the Game; a fake in the tests). */
 export interface GraphicsHost {
@@ -52,6 +61,43 @@ export interface GraphicsHost {
   startAutoTune(targetFps: number, opts: AutoTuneOptions): Promise<TuneOutcome | null>;
   /** Stops a running detection (its promise resolves with the best known rung, or null). */
   cancelAutoTune(): void;
+  /**
+   * Every rendered frame, with whether it was FOCUSED PLAY — the match under
+   * the player's hands: pointer locked, page visible, match not over, no
+   * detection measuring. The Auto guard's input (absent: no guard).
+   */
+  addFrameListener?(listener: PlayFrameListener): () => void;
+  /** A short, non-intrusive notice over the game (the Auto guard's step). */
+  showGraphicsNotice?(text: string): void;
+}
+
+/** Wiring options of the controller (tests; production uses the defaults). */
+export interface GraphicsControllerOptions {
+  /** `?diag=` switches (default: the address bar's): `noguard`, `tunemarginNN`. */
+  experiments?: ReadonlySet<string>;
+  /**
+   * Runs `fn` once the current frame is over (default: a 0 ms timeout). The
+   * guard decides at the END of a frame; resizing the canvas there would show
+   * a blank image (see Game.pendingProbe), and storage writes have no place
+   * in a frame either.
+   */
+  defer?: (fn: () => void) => void;
+  /** Thresholds of the in-match guard (tests). */
+  guardConfig?: AutoGuardConfig;
+}
+
+/** The in-match guard of one detection result, for this session. */
+interface GuardSession {
+  map: string;
+  /** Date of the detection result it works on (a new detection = a new session of the guard). */
+  at: number;
+  guard: AutoGuard;
+  /**
+   * Values on screen below the stored ones: a step not kept yet (being
+   * judged), or one judged useless (kept on screen for the session, never
+   * stored). Null = the stored values.
+   */
+  live: GraphicsValues | null;
 }
 
 export interface DetectionProgress {
@@ -76,7 +122,8 @@ export type WeakGpuTest = (name: string) => boolean;
  * page, detection result, preset, display density) applies what the session
  * can apply live; reload-only changes are listed for the page. Also runs the
  * automatic detection (first launch of a map, "Run detection") and
- * stores its result as the "Auto" choice of that map.
+ * stores its result as the "Auto" choice of that map — and, in matches, the
+ * Auto GUARD (settings/AutoGuard) that keeps that choice's promise.
  */
 export class GraphicsController {
   private outlineDebug = false;
@@ -87,6 +134,15 @@ export class GraphicsController {
   private progressState: DetectionProgress | null = null;
   private cancelled = false;
   private readonly listeners: ((e: DetectionEvent) => void)[] = [];
+  /** `?diag=noguard`: no in-match guard (Auto = the detection's answer only). */
+  private readonly guardDisabled: boolean;
+  /** `?diag=tunemarginNN`: the detection's margin forced to NN % extra pixels (null = the rule). */
+  private readonly marginOverride: number | null;
+  private readonly defer: (fn: () => void) => void;
+  private readonly guardConfig: AutoGuardConfig;
+  private guardSession: GuardSession | null = null;
+  /** The guard gets the frames (recomputed at every sync: cheap per frame). */
+  private guardArmed = false;
 
   constructor(
     private readonly store: SettingsStore,
@@ -95,9 +151,16 @@ export class GraphicsController {
     private readonly refreshHz: () => number,
     private readonly applyCrosshair: (settings: CrosshairSettings) => void,
     private readonly isWeakGpu: WeakGpuTest,
+    options: GraphicsControllerOptions = {},
   ) {
+    const experiments = options.experiments ?? perfExperiments();
+    this.guardDisabled = experiments.has("noguard");
+    this.marginOverride = marginSwitch(experiments);
+    this.defer = options.defer ?? ((fn) => void setTimeout(fn, 0));
+    this.guardConfig = options.guardConfig ?? AUTO_GUARD;
     store.subscribe(() => this.sync());
     host.onDisplayDensityChange = () => this.sync();
+    host.addFrameListener?.((t, cpuMs, play) => this.onFrame(t, cpuMs, play));
     this.sync();
   }
 
@@ -113,9 +176,12 @@ export class GraphicsController {
     return this.host.mapId;
   }
 
-  /** Values the stored choice stands for on this display and map. */
+  /**
+   * Values the stored choice stands for on this display and map — or, with
+   * "Auto", the in-match guard's step below them when it is not stored (yet).
+   */
   effective(): GraphicsValues {
-    return effectiveValues(this.record.graphics, this.env(), this.gpu, this.mapId);
+    return this.guardLive() ?? effectiveValues(this.record.graphics, this.env(), this.gpu, this.mapId);
   }
 
   /** The preset the choice really is ("auto" before any detection = the heuristic preset). */
@@ -194,6 +260,7 @@ export class GraphicsController {
       this.lastPanel = r.perfPanel;
       this.host.setPerfPanel(r.perfPanel);
     }
+    this.refreshGuard();
   }
 
   /**
@@ -211,10 +278,13 @@ export class GraphicsController {
     const map = this.mapId;
     const boot = this.host.graphicsBoot;
     this.progressState = { done: 0, total: 5, values: null };
+    // While it measures, the guard sleeps (the detection owns the knobs).
+    this.guardArmed = false;
     const run = this.host
       .startAutoTune(target, {
         ...opts,
         defaultLook: presetValues(heuristicPreset(this.gpu), this.env()),
+        config: opts.config ?? tuneConfigFor({ integrated: this.gpu.weak }, this.marginOverride),
         onProgress: (p) => {
           this.progressState = p;
           this.emit({ kind: "progress", progress: p });
@@ -278,10 +348,156 @@ export class GraphicsController {
       measuredShadows: boot.shadows,
       summary,
       version: AUTO_TUNE_VERSION,
+      guardSteps: 0,
+      guardAt: null,
     };
   }
 
   private emit(e: DetectionEvent): void {
     for (const l of [...this.listeners]) l(e);
   }
+
+  // ------------------------------------------------------------ Auto guard
+
+  /** Steps the in-match guard applied this session (diagnostics, tests). */
+  get guardSteps(): number {
+    return this.guardSession?.guard.steps ?? 0;
+  }
+
+  /** The guard's phase this session, null when it does not run (not "Auto", nothing measured, `?diag=noguard`…). */
+  get guardPhase(): string | null {
+    return this.guardArmed && this.guardSession ? this.guardSession.guard.phase : null;
+  }
+
+  /** The guard's values on screen when they are below the stored "Auto" ones (and still apply). */
+  private guardLive(): GraphicsValues | null {
+    const s = this.guardSession;
+    if (!s || !s.live || this.record.graphics.preset !== "auto" || s.map !== this.mapId) return null;
+    const r = this.autoResult();
+    return r && r.at === s.at ? s.live : null;
+  }
+
+  /** The promise the guard keeps: 60 FPS, or the target when lower (a 50 Hz screen, a 30 FPS cap). */
+  private guardGoal(): number {
+    return Math.min(60, this.detectionTarget());
+  }
+
+  /**
+   * Whether the guard gets the frames: "Auto" with a usable detection of this
+   * GPU and map, no detection running, and something below the values on
+   * screen — or a step still being judged. Never for an explicit preset.
+   */
+  private refreshGuard(): void {
+    this.guardArmed = false;
+    if (this.guardDisabled || !this.host.addFrameListener) return;
+    if (this.record.graphics.preset !== "auto" || this.detection) return;
+    const auto = this.autoResult();
+    if (!auto) return;
+    let s = this.guardSession;
+    if (!s || s.at !== auto.at || s.map !== this.mapId) {
+      s = { map: this.mapId, at: auto.at, guard: new AutoGuard(this.guardGoal(), this.guardConfig), live: null };
+      this.guardSession = s;
+    }
+    if (!s.guard.active) return;
+    if (s.guard.phase === "watch" && this.guardStepTarget() === null) return; // the floor: nothing below
+    this.guardArmed = true;
+  }
+
+  /** The rung the guard would step to from the values on screen (null: the floor). */
+  private guardStepTarget(): GraphicsValues | null {
+    const ladder = buildLadder(this.host.graphicsBoot, this.env(), this.host.graphicsCaps);
+    const j = guardStepIndex(ladder, this.effective());
+    return j === null ? null : ladder[j];
+  }
+
+  private onFrame(t: number, cpuMs: number, play: boolean): void {
+    if (!this.guardArmed) return;
+    const s = this.guardSession!;
+    const v = s.guard.onFrame(t, cpuMs, play);
+    if (v) this.onGuardVerdict(s, v);
+  }
+
+  private onGuardVerdict(s: GuardSession, v: GuardVerdict): void {
+    switch (v.action) {
+      case "step":
+        this.defer(() => this.guardStep(s));
+        return;
+      case "keep": {
+        const values = this.effective();
+        this.defer(() => this.guardKeep(s, values, v));
+        return;
+      }
+      case "keep-step": {
+        const values = this.effective();
+        this.defer(() => {
+          this.guardKeep(s, values, v);
+          this.guardStep(s);
+        });
+        return;
+      }
+      case "useless":
+        // The frame rate does not follow the graphics here (a browser frame
+        // cap, the processor, the browser's GPU process): no more steps this
+        // session. The one on screen stays (never back up by itself) but is
+        // not stored: the next session starts from the stored values.
+        this.guardArmed = false;
+        console.info(
+          `[graphics] Auto guard: ${Math.round(v.before ?? 0)} → ${Math.round(v.fps)} FPS after a step — the graphics are not the limit, guard off for this session.`,
+        );
+        return;
+    }
+  }
+
+  /** One rung down, live (between two frames: see `defer`). */
+  private guardStep(s: GuardSession): void {
+    if (this.guardSession !== s || !s.guard.active) return;
+    const from = this.effective();
+    const to = this.guardStepTarget();
+    if (!to || this.record.graphics.preset !== "auto" || this.detection) {
+      s.guard.stop();
+      this.refreshGuard();
+      return;
+    }
+    s.live = { ...to };
+    s.guard.applied();
+    this.sync(); // → the game applies it (no shader compile: ladder rungs only)
+    const goal = s.guard.goalFps;
+    this.host.showGraphicsNotice?.(guardNoticeText(from, to, goal, this.host.graphicsCaps));
+  }
+
+  /** The judged step helped: it becomes the stored "Auto" result of this map (its summary says so). */
+  private guardKeep(s: GuardSession, values: GraphicsValues, v: GuardVerdict): void {
+    if (this.guardSession !== s) return;
+    const map = s.map;
+    const caps = this.host.graphicsCaps;
+    const goal = s.guard.goalFps;
+    this.store.update((d) => {
+      const r = d.graphics.auto[map];
+      if (!r || r.at !== s.at) return; // replaced meanwhile (a new detection)
+      const steps = (r.guardSteps ?? 0) + 1;
+      d.graphics.auto[map] = {
+        ...r,
+        values: { ...values },
+        guardSteps: steps,
+        guardAt: Date.now(),
+        summary: guardSummaryText(values, steps, v.before ?? v.fps, goal, caps),
+      };
+    });
+    // Stored = on screen: nothing left to override (same values: nothing changes on screen).
+    const r = this.store.get().graphics.auto[map];
+    if (r && r.at === s.at && s.live && sameValues(s.live, values) && sameValues(r.values, values)) {
+      s.live = null;
+      this.refreshGuard();
+    }
+  }
+}
+
+/** `?diag=tunemarginNN` → NN (0 allowed: no margin at all), null when absent. */
+function marginSwitch(experiments: ReadonlySet<string>): number | null {
+  for (const e of experiments) {
+    if (!e.startsWith("tunemargin")) continue;
+    const n = Number(e.slice("tunemargin".length));
+    if (e.length > "tunemargin".length && Number.isFinite(n) && n >= 0) return n;
+  }
+  return null;
 }
