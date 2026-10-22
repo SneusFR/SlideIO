@@ -60,7 +60,7 @@ export interface AutoTuneOptions {
  * A rendered frame: its start, its main-thread time, whether it was focused
  * play, and whether NO match was under way (the menu, a match's end screen).
  */
-export type PlayFrameListener = (t: number, cpuMs: number, play: boolean, between: boolean) => void;
+export type PlayFrameListener = (t: number, cpuMs: number, play: boolean, between: boolean, renderMs?: number) => void;
 
 /** What the controller drives (the Game; a fake in the tests). */
 export interface GraphicsHost {
@@ -121,10 +121,11 @@ interface GuardSession {
   guard: AutoGuard;
   /**
    * Values on screen other than the stored ones: a step not kept yet (being
-   * judged), one judged useless (kept on screen for the session, never
-   * stored), or the rung one step up tried this session. Null = the stored values.
+   * judged), or the rung one step up tried this session. Null = the stored values.
    */
   live: GraphicsValues | null;
+  /** What `live` was before the guard's last step: put back when that step is judged useless. */
+  beforeStep?: GraphicsValues | null;
   /**
    * This session tries ONE rung back up (since its start, or since the
    * charger was plugged in between two matches: `power`): kept after a whole
@@ -214,7 +215,7 @@ export class GraphicsController {
     this.power = experiments.has("nopowerguard") ? UNKNOWN_POWER : (options.power ?? browserPower());
     store.subscribe(() => this.sync());
     host.onDisplayDensityChange = () => this.sync();
-    host.addFrameListener?.((t, cpuMs, play, between) => this.onFrame(t, cpuMs, play, between));
+    host.addFrameListener?.((t, cpuMs, play, between, renderMs) => this.onFrame(t, cpuMs, play, between, renderMs ?? 0));
     this.power.subscribe((state) => this.onPowerChange(state));
     this.sync();
     this.starting = false;
@@ -508,7 +509,7 @@ export class GraphicsController {
     return this.guardSession?.trial != null && this.guardLive() !== null;
   }
 
-  private onFrame(t: number, cpuMs: number, play: boolean, between: boolean): void {
+  private onFrame(t: number, cpuMs: number, play: boolean, between: boolean, renderMs = 0): void {
     this.between = between === true;
     if (this.powerTrialWanted && this.between) {
       this.powerTrialWanted = false;
@@ -516,7 +517,7 @@ export class GraphicsController {
     }
     if (!this.guardArmed) return;
     const s = this.guardSession!;
-    const v = s.guard.onFrame(t, cpuMs, play);
+    const v = s.guard.onFrame(t, cpuMs, play, renderMs);
     if (v) {
       this.onGuardVerdict(s, v);
       return;
@@ -584,16 +585,23 @@ export class GraphicsController {
         });
         return;
       }
-      case "useless":
+      case "useless": {
         // The frame rate does not follow the graphics here (a browser frame
         // cap, the processor, the browser's GPU process): no more steps this
-        // session. The one on screen stays (never back up inside a session)
-        // but is not stored: the next session starts from the stored values.
+        // session — and the step is UNDONE (it bought nothing: < minGain), the
+        // values before it back on screen between two frames. Never stored.
         this.guardArmed = false;
+        const back = s.beforeStep ?? null;
+        this.defer(() => {
+          if (this.guardSession !== s) return;
+          s.live = back ? { ...back } : null;
+          this.sync();
+        });
         console.info(
-          `[graphics] Auto guard: ${Math.round(v.before ?? 0)} → ${Math.round(v.fps)} FPS after a step — the graphics are not the limit, guard off for this session.`,
+          `[graphics] Auto guard: ${Math.round(v.before ?? 0)} → ${Math.round(v.fps)} FPS after a step — the graphics are not the limit: step undone, guard off for this session.`,
         );
         return;
+      }
     }
   }
 
@@ -613,6 +621,7 @@ export class GraphicsController {
       return;
     }
     s.stepPower = this.power.state;
+    s.beforeStep = s.live ? { ...s.live } : null;
     s.live = { ...to };
     s.guard.applied();
     this.sync(); // → the game applies it (no shader compile: ladder rungs only)

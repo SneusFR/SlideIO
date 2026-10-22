@@ -1437,7 +1437,44 @@ await test("processor-limited laptop (AI and physics take ~18 ms a frame in figh
   assert.equal(G.sameValues(run.ctl.effective(), v), true);
 });
 
-await test("Chrome's energy saver (frames capped at 30 on battery, mid-match): one step that changes nothing → judged useless, guard off, NOT stored", async () => {
+await test("GPU-bound fight where the render submission WAITS for the GPU process (main thread 16.5 ms, 10 of them submission against its usual 2): the graphics' frames → a step; the same main-thread time really spent by the processor: no verdict", () => {
+  /** [ms since the previous frame, main-thread ms, focused play, render submission ms]. */
+  const run = (frames: [number, number, boolean, number][]): Verdicts => {
+    const guard = new GD.AutoGuard(60);
+    const verdicts: Verdicts = [];
+    let t = 1000;
+    let focused = 0;
+    for (const [dt, cpu, play, render] of frames) {
+      t += dt;
+      if (play) focused += dt;
+      const v = guard.onFrame(t, cpu, play, render);
+      if (v) {
+        verdicts.push({ at: focused / 1000, v });
+        if (v.action === "step" || v.action === "keep-step") guard.applied();
+      }
+    }
+    return verdicts;
+  };
+  const calm: [number, number, boolean, number][] = Array.from({ length: 300 }, () => [P60, 6, true, 2]); // 5 s at 60 FPS
+  // The owner's laptop in a GPU-bound fight: 20 ms frames (50 FPS) for 20 s, the submission blocked 8 ms more.
+  const gpuBound: [number, number, boolean, number][] = Array.from({ length: 1000 }, (_, i) => [20, 16.5 + (i % 3) * 0.2, true, 10 + (i % 3) * 0.2]);
+  const a = run([...calm, ...gpuBound]);
+  assert.equal(a[0]?.v.action, "step", JSON.stringify(a));
+  assert.ok(a[0].at > 5 && a[0].at < 20, `${a[0].at}`);
+  assert.ok(a[0].v.cpuShare < 0.1, `${a[0].v.cpuShare}`);
+  // A whole match GPU-bound from its first frame: the level is still found (the odd frame with room in the command buffer).
+  const fromStart = run(Array.from({ length: 1200 }, (_, i) => [20, i % 40 === 0 ? 8.5 : 16.5, true, i % 40 === 0 ? 2 : 10]));
+  assert.equal(fromStart[0]?.v.action, "step", JSON.stringify(fromStart));
+  // Without the split (0 = unknown, the guard before): processor-late → no verdict at all.
+  assert.equal(run([...calm, ...gpuBound].map(([dt, cpu, play]) => [dt, cpu, play, 0])).length, 0);
+  // Really the processor's: the submission at its usual level, 14.5 ms of game JS.
+  assert.equal(run([...calm, ...gpuBound.map(([dt, cpu, play]): [number, number, boolean, number] => [dt, cpu, play, 2])]).length, 0);
+  // An odd near-empty frame (0.1 ms of submission) does not pass for the usual level.
+  const odd = run([...calm, [P60, 4, true, 0.1], ...gpuBound.map(([dt, cpu, play]): [number, number, boolean, number] => [dt, cpu, play, 2])]);
+  assert.equal(odd.length, 0, JSON.stringify(odd));
+});
+
+await test("Chrome's energy saver (frames capped at 30 on battery, mid-match): one step that changes nothing → judged useless, UNDONE, guard off, NOT stored", async () => {
   const m = { ...irisXeField(), gpuName: INTEL };
   const run = session(m, G.presetValues("bas", { dpr: 1.25 }));
   await run.ctl.runDetection("first");
@@ -1445,8 +1482,8 @@ await test("Chrome's energy saver (frames capped at 30 on battery, mid-match): o
   const r = run.sim.match({ load: fights(9, 1.1), cap: { hz: 30, from: 60 } }, 300, 9);
   assert.equal(r.steps.length, 1, fmtMatch(r));
   assert.equal(run.ctl.guardPhase, null); // off for the session
-  // On screen: the step stays (never back up by itself); stored: untouched.
-  assert.ok(run.ctl.effective().renderScale < stored.renderScale);
+  // On screen: the useless step undone (the stored values again); stored: untouched.
+  assert.equal(G.sameValues(run.ctl.effective(), stored), true);
   assert.equal(G.sameValues(run.store.get().graphics.auto.GIVRE.values, stored), true);
   assert.equal(run.store.get().graphics.auto.GIVRE.guardSteps, 0);
   // Next session: the stored values.

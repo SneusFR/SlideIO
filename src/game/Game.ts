@@ -541,6 +541,8 @@ export class Game {
   private nextFrameAt = 0;
   /** performance.now() at the start of the current processed frame (debug HUD CPU split). */
   private frameCpuStart = 0;
+  /** This frame's render submission (ms; 0 when nothing was rendered) — the Auto guard's processor test (FrameMeter). */
+  private frameRenderMs = 0;
   /** Performance diagnostics of this session (DEV, or `?gpu` in the address: ui/perfDiag.ts). */
   private readonly diag = perfDiag();
   /** `?diag=` what-if experiments (ui/perfDiag.ts) — none in normal play. */
@@ -3898,10 +3900,10 @@ export class Game {
    * match was under way at all (the menu, a match's end screen: where the
    * guard may try a rung back up once the charger is plugged in).
    */
-  addFrameListener(listener: (t: number, cpuMs: number, play: boolean, between: boolean) => void): () => void {
-    return this.gfxMeter.addListener((t, cpuMs) => {
+  addFrameListener(listener: (t: number, cpuMs: number, play: boolean, between: boolean, renderMs: number) => void): () => void {
+    return this.gfxMeter.addListener((t, cpuMs, renderMs) => {
       const between = this.menuPreview !== null || this.matchOver;
-      listener(t, cpuMs, !between && this.tuning === null && this.input.pointerLocked && !document.hidden, between);
+      listener(t, cpuMs, !between && this.tuning === null && this.input.pointerLocked && !document.hidden, between, renderMs);
     });
   }
 
@@ -4621,6 +4623,7 @@ export class Game {
       if (this.worldCovered || this.experiments.has("empty")) {
         // `?diag=empty`: no 3D at all — what is left is the page's own cost.
         // End screen up: its opaque snapshot hides the world (setWorldCovered).
+        this.frameRenderMs = 0;
         this.hud.sampleCpu(performance.now() - this.frameCpuStart, 0);
       } else if (this.composer && !this.experiments.has("nopost")) {
         // GIVRE: world + outline + FP overlay + FP outline + sRGB output in
@@ -4631,7 +4634,8 @@ export class Game {
         this.gpuTimer?.beginFrame("monde");
         this.renderComposer();
         this.gpuTimer?.endFrame();
-        this.hud.sampleCpu(renderStart - this.frameCpuStart, performance.now() - renderStart);
+        this.frameRenderMs = performance.now() - renderStart;
+        this.hud.sampleCpu(renderStart - this.frameCpuStart, this.frameRenderMs);
         this.hud.sampleRenderInfo(this.renderer);
       } else {
         const renderStart = performance.now();
@@ -4656,7 +4660,8 @@ export class Game {
         inSkeletonFrame(() => this.viewmodelSystem.render(this.renderer));
         this.gpuTimer?.endFrame();
         this.flushGpu();
-        this.hud.sampleCpu(renderStart - this.frameCpuStart, performance.now() - renderStart);
+        this.frameRenderMs = performance.now() - renderStart;
+        this.hud.sampleCpu(renderStart - this.frameCpuStart, this.frameRenderMs);
       }
     } finally {
       if (spinning) {
@@ -4685,7 +4690,7 @@ export class Game {
     // the session: never compiled twice (see ProgramPin). Free when none.
     pinNewPrograms(this.renderer);
     // Settings: the automatic detection (pause view) and the live card measure these frames.
-    this.gfxMeter.record(now, performance.now() - now);
+    this.gfxMeter.record(now, performance.now() - now, this.frameRenderMs);
     this.input.endFrame();
     sections?.commit();
     // This frame's HUD commands, as ONE message to the HUD document (frame

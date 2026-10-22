@@ -100,6 +100,21 @@ export const AUTO_GUARD = {
    * the graphics: left out of the frame rate.
    */
   cpuLateShare: 0.9,
+  /**
+   * …but not all of that main-thread time is the processor's. The render
+   * submission WAITS when the browser's GPU process falls behind (its command
+   * buffer is full): on the owner's laptop, a GPU-bound fight showed
+   * 4-8 ms of submission against 1.5-3 ms at 60 FPS, and the guard took those
+   * frames for the processor's — no verdict, the match stayed at 45-55 FPS.
+   * The processor's part of a frame = its main-thread time with the
+   * submission counted at its usual level only — the lowest one seen in
+   * focused play (a GPU-bound stretch can last the whole match: the level
+   * must be remembered, not averaged), creeping up 2 % per second (the scene
+   * changes), a sample under a quarter of it ignored (an odd near-empty
+   * frame). The surplus is the graphics'.
+   */
+  renderFloorCreepPerS: 0.02,
+  renderFloorOutlier: 0.25,
   /** A stretch with more than half its frames processor-late is the processor's: no verdict. */
   maxCpuShare: 0.5,
   /** An interval longer than this is a stall (tab switch, long task, collection), not a GPU frame: ignored, and play settles again. */
@@ -338,6 +353,8 @@ export class AutoGuard {
   private readonly stretch: FrameStretch;
   private lastT: number | null = null;
   private lastCpu = 0;
+  /** The usual level of the render submission in focused play (ms; 0 = none seen yet — see renderFloorCreepPerS). */
+  private renderFloor = 0;
   /** Focused-play time still to ignore (settling). The first frames of a session settle too. */
   private settleLeft: number;
   private sinceCheck = 0;
@@ -371,9 +388,11 @@ export class AutoGuard {
   /**
    * A frame was rendered: `t` = its start (performance.now, ms), `cpuMs` =
    * its main-thread time, `play` = focused play (pointer locked, page
-   * visible, the match running, no detection). A verdict now and then.
+   * visible, the match running, no detection), `renderMs` = the render
+   * submission within `cpuMs` (0: unknown — all of it is the processor's).
+   * A verdict now and then.
    */
-  onFrame(t: number, cpuMs: number, play: boolean): GuardVerdict | null {
+  onFrame(t: number, cpuMs: number, play: boolean, renderMs = 0): GuardVerdict | null {
     if (this.phase_ === "off") return null;
     if (!play) {
       // Menu, pause, end screen, hidden page: the interval across it means nothing.
@@ -383,7 +402,7 @@ export class AutoGuard {
     const prevT = this.lastT;
     const prevCpu = this.lastCpu;
     this.lastT = t;
-    this.lastCpu = cpuMs;
+    this.lastCpu = this.processorMs(cpuMs, renderMs, prevT === null ? 0 : Math.min(t - prevT, this.cfg.stallMs));
     if (prevT === null) {
       this.settleLeft = Math.max(this.settleLeft, this.cfg.resumeSettleMs);
       return null;
@@ -407,6 +426,24 @@ export class AutoGuard {
     if (this.sinceCheck < this.cfg.checkEveryMs) return null;
     this.sinceCheck = 0;
     return this.judge(span);
+  }
+
+  /**
+   * The processor's part of a frame's main-thread time: the render submission
+   * counted at its usual level (see renderFloorCreepPerS), the surplus being
+   * the wait for a GPU process that fell behind. `dtMs`: time since the
+   * previous frame (the level's creep).
+   */
+  private processorMs(cpuMs: number, renderMs: number, dtMs: number): number {
+    if (!(renderMs > 0)) return cpuMs;
+    let floor = this.renderFloor;
+    if (floor === 0) floor = renderMs;
+    else {
+      floor *= 1 + this.cfg.renderFloorCreepPerS * (dtMs / 1000);
+      if (renderMs < floor && renderMs >= floor * this.cfg.renderFloorOutlier) floor = renderMs;
+    }
+    this.renderFloor = floor;
+    return cpuMs - renderMs + Math.min(renderMs, floor);
   }
 
   /** The asked step is on screen from the next frame: settle, then judge it. */

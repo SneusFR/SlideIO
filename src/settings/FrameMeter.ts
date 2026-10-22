@@ -1,5 +1,9 @@
-/** A rendered frame: its start (performance.now, ms) and its main-thread time (ms). */
-export type FrameListener = (t: number, cpuMs: number) => void;
+/**
+ * A rendered frame: its start (performance.now, ms), its main-thread time
+ * (ms) and, within it, the render submission (ms: 0 when unknown) — the part
+ * that also waits for the browser's GPU process when the graphics fall behind.
+ */
+export type FrameListener = (t: number, cpuMs: number, renderMs: number) => void;
 
 export interface LiveStats {
   /** Frames delivered per second over the window. */
@@ -47,14 +51,14 @@ export class FrameMeter {
     };
   }
 
-  /** The frame is done: `t` = its start, `cpuMs` = its main-thread time. */
-  record(t: number, cpuMs: number): void {
+  /** The frame is done: `t` = its start, `cpuMs` = its main-thread time, `renderMs` = its render submission (part of it). */
+  record(t: number, cpuMs: number, renderMs = 0): void {
     const k = this.frameCount % RING;
     this.frameT[k] = t;
     this.frameCpu[k] = cpuMs;
     this.frameCount++;
     const listeners = this.listeners;
-    for (let i = 0; i < listeners.length; i++) listeners[i](t, cpuMs);
+    for (let i = 0; i < listeners.length; i++) listeners[i](t, cpuMs, renderMs);
   }
 
   /** A frame's GPU time from the debug GPU timer (see LiveStats.gpuMs). */
