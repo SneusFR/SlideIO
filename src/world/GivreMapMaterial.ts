@@ -28,6 +28,19 @@ import * as THREE from "three";
  *    lookups inside the branch use an explicit LOD 0 (the shadow map and the
  *    DFG LUT have a single level: the same texels, the same filter).
  *
+ * EXACT ON THE BENCH, OPT-IN — `?diag=mapshaderao` (also in mapshaderfast):
+ *  - `packedAo`: the AO lightmap's texels in the ALPHA of the emissive
+ *    lightmap (packed once at load, every mip level, byte for byte): one
+ *    texture fetch instead of two (and up to one 2048² texture less in
+ *    video memory). Same pixels on the bench; on a real GPU the alpha of an
+ *    sRGB texture and the red of a linear one are both 8-bit linear values
+ *    filtered with the same weights, but that is not provable everywhere.
+ *    Packing reads both images back through a 2D canvas at load (+21 MB of
+ *    JS memory), a readback that anti-fingerprinting deliberately noises
+ *    (Brave by default, Safari private windows, Firefox
+ *    resistFingerprinting): opt-in until measured — as a default it should
+ *    ship as a lightmap packed offline (mip levels included).
+ *
  * NEAR-EXACT — `?diag=mapshaderfast` (a visual trade-off for the owner to
  * decide, ≤ 1 level on 8-bit output before anti-aliasing, on a few pixels):
  *  - `noDirectMs`: the sun's multiple-scattering energy compensation
@@ -52,6 +65,8 @@ export interface MapShaderOptions {
   sharedUv: boolean;
   /** Sun shadow + BRDF skipped where they add exactly 0 (exact). */
   sunSkip: boolean;
+  /** AO read from the alpha of a packed emissive lightmap: one fetch instead of two. */
+  packedAo?: boolean;
   /** No multiple-scattering compensation on the sun (near-exact). */
   noDirectMs: boolean;
   /** PCF Vogel disk rotated with one cos / sin pair (near-exact). */
@@ -68,24 +83,29 @@ export const MAP_SHADER_EXACT: Readonly<MapShaderOptions> = Object.freeze({
   pcfRotate: false,
 });
 
-/** Exact + near-exact (`?diag=mapshaderfast`). */
+/** The exact set + the packed AO lightmap (`?diag=mapshaderao`). */
+export const MAP_SHADER_AO: Readonly<MapShaderOptions> = Object.freeze({ ...MAP_SHADER_EXACT, packedAo: true });
+
+/** Everything: exact + packed AO + near-exact (`?diag=mapshaderfast`). */
 export const MAP_SHADER_FAST: Readonly<MapShaderOptions> = Object.freeze({
   noIbl: true,
   dielectric: true,
   sharedUv: true,
   sunSkip: true,
+  packedAo: true,
   noDirectMs: true,
   pcfRotate: true,
 });
 
 /**
  * Options of this session from the `?diag=` experiments (ui/perfDiag.ts):
- * `nomapshader` → null (three's stock shader), `mapshaderfast` → exact +
- * near-exact, otherwise the exact set.
+ * `nomapshader` → null (three's stock shader), `mapshaderfast` → everything,
+ * `mapshaderao` → exact + packed AO lightmap, otherwise the exact set.
  */
 export function mapShaderOptionsFor(experiments: ReadonlySet<string>): Readonly<MapShaderOptions> | null {
   if (experiments.has("nomapshader")) return null;
   if (experiments.has("mapshaderfast")) return MAP_SHADER_FAST;
+  if (experiments.has("mapshaderao")) return MAP_SHADER_AO;
   return MAP_SHADER_EXACT;
 }
 
@@ -96,6 +116,7 @@ export function mapShaderKey(o: Readonly<MapShaderOptions>): string {
     o.dielectric ? "die" : "",
     o.sharedUv ? "uv1" : "",
     o.sunSkip ? "sun0" : "",
+    o.packedAo ? "aoA" : "",
     o.noDirectMs ? "ms0" : "",
     o.pcfRotate ? "pcfR" : "",
   ]
@@ -175,6 +196,8 @@ export function restrictOptions(wanted: Readonly<Partial<MapShaderOptions>>, all
     dielectric: !!wanted.dielectric && allowed.dielectric,
     sharedUv: !!wanted.sharedUv && allowed.sharedUv,
     sunSkip: !!wanted.sunSkip && allowed.sunSkip,
+    // One shared fetch needs the shared coordinates (and a packed texture: checked by the caller).
+    packedAo: !!wanted.packedAo && !!wanted.sharedUv && allowed.sharedUv,
     noDirectMs: !!wanted.noDirectMs && allowed.noDirectMs,
     pcfRotate: !!wanted.pcfRotate && allowed.pcfRotate,
   };
@@ -182,7 +205,108 @@ export function restrictOptions(wanted: Readonly<Partial<MapShaderOptions>>, all
 
 /** True when at least one option is on. */
 export function anyOption(o: Readonly<MapShaderOptions>): boolean {
-  return o.noIbl || o.dielectric || o.sharedUv || o.sunSkip || o.noDirectMs || o.pcfRotate;
+  return o.noIbl || o.dielectric || o.sharedUv || o.sunSkip || !!o.packedAo || o.noDirectMs || o.pcfRotate;
+}
+
+// ---------------------------------------------------------------------------
+// Packed lightmap: AO in the alpha of the emissive lightmap
+// ---------------------------------------------------------------------------
+
+/** The packed lightmap and the two textures it was built from. */
+export interface PackedLightmap {
+  emissive: THREE.Texture;
+  ao: THREE.Texture;
+  texture: THREE.DataTexture;
+}
+
+/**
+ * One level of the packed lightmap: RGB = the emissive texels, A = the AO
+ * texels' red channel (what the AO lookup reads), byte for byte. Null when
+ * the two levels differ in size or when one is not opaque (the emissive
+ * alpha would be overwritten; and a 2D canvas stores premultiplied alpha:
+ * the readback of a translucent image is not byte-exact).
+ */
+export function packLightmapLevel(emissive: ArrayLike<number>, ao: ArrayLike<number>): Uint8Array | null {
+  if (emissive.length !== ao.length || emissive.length % 4 !== 0) return null;
+  const out = new Uint8Array(emissive.length);
+  for (let i = 0; i < emissive.length; i += 4) {
+    if (emissive[i + 3] !== 255 || ao[i + 3] !== 255) return null;
+    out[i] = emissive[i];
+    out[i + 1] = emissive[i + 1];
+    out[i + 2] = emissive[i + 2];
+    out[i + 3] = ao[i];
+  }
+  return out;
+}
+
+type Level = { width: number; height: number };
+
+/** Same sampling of the same coordinates: filters, wrap, channel, flip, uv transform. */
+function sameSampling(a: THREE.Texture, b: THREE.Texture): boolean {
+  return (
+    a.channel === b.channel &&
+    a.minFilter === b.minFilter &&
+    a.magFilter === b.magFilter &&
+    a.wrapS === b.wrapS &&
+    a.wrapT === b.wrapT &&
+    a.flipY === b.flipY &&
+    a.anisotropy === b.anisotropy &&
+    a.offset.equals(b.offset) &&
+    a.repeat.equals(b.repeat) &&
+    a.center.equals(b.center) &&
+    a.rotation === b.rotation
+  );
+}
+
+/**
+ * The packed lightmap of an emissive + AO pair: every level of their (short)
+ * mip chains packed with packLightmapLevel, in a DataTexture with the
+ * emissive's colour space (sRGB: the alpha of SRGB8_ALPHA8 is stored and
+ * filtered linearly, like the AO texture's red channel) and sampling setup.
+ * `read` returns the RGBA bytes of one level (a canvas readback in the
+ * browser). Null when the two chains differ or a level cannot be read.
+ */
+export function buildPackedLightmap(
+  emissive: THREE.Texture,
+  ao: THREE.Texture,
+  read: (image: unknown) => ArrayLike<number> | null,
+): PackedLightmap | null {
+  const levelsOf = (t: THREE.Texture): unknown[] => (t.mipmaps && t.mipmaps.length > 0 ? [...t.mipmaps] : [t.image]);
+  const eLevels = levelsOf(emissive);
+  const aLevels = levelsOf(ao);
+  if (eLevels.length !== aLevels.length || !sameSampling(emissive, ao)) return null;
+  const mipmaps: { data: Uint8Array; width: number; height: number }[] = [];
+  for (let i = 0; i < eLevels.length; i++) {
+    const e = eLevels[i] as Level;
+    const a = aLevels[i] as Level;
+    if (!e || !a || e.width !== a.width || e.height !== a.height) return null;
+    const eData = read(eLevels[i]);
+    const aData = read(aLevels[i]);
+    if (!eData || !aData || eData.length !== e.width * e.height * 4) return null;
+    const data = packLightmapLevel(eData, aData);
+    if (!data) return null;
+    mipmaps.push({ data, width: e.width, height: e.height });
+  }
+  const level0 = mipmaps[0];
+  const texture = new THREE.DataTexture(level0.data, level0.width, level0.height, THREE.RGBAFormat, THREE.UnsignedByteType);
+  texture.name = `${emissive.name || "emissive"}+${ao.name || "ao"}`;
+  if (mipmaps.length > 1) texture.mipmaps = mipmaps as unknown as THREE.DataTexture["mipmaps"];
+  texture.generateMipmaps = false;
+  texture.colorSpace = emissive.colorSpace;
+  texture.minFilter = emissive.minFilter;
+  texture.magFilter = emissive.magFilter;
+  texture.wrapS = emissive.wrapS;
+  texture.wrapT = emissive.wrapT;
+  texture.flipY = emissive.flipY;
+  texture.anisotropy = emissive.anisotropy;
+  texture.channel = emissive.channel;
+  texture.offset.copy(emissive.offset);
+  texture.repeat.copy(emissive.repeat);
+  texture.center.copy(emissive.center);
+  texture.rotation = emissive.rotation;
+  texture.unpackAlignment = 4;
+  texture.needsUpdate = true;
+  return { emissive, ao, texture };
 }
 
 // ---------------------------------------------------------------------------
@@ -368,7 +492,10 @@ export function specialiseMapShader(
       "#ifdef USE_AOMAP\n#undef USE_AOMAP\n#include <uv_pars_fragment>\n#define USE_AOMAP\n#else\n#include <uv_pars_fragment>\n#endif",
       "uv_pars_fragment",
     );
-    const ao = replaceOnce(chunks.aomap_fragment, "texture2D( aoMap, vAoMapUv )", "texture2D( aoMap, vEmissiveMapUv )", "aomap uv");
+    const ao = o.packedAo
+      ? // The AO texel is the alpha of the emissive texel already fetched (packed lightmap).
+        replaceOnce(chunks.aomap_fragment, "texture2D( aoMap, vAoMapUv ).r", "emissiveColor.a", "aomap packed")
+      : replaceOnce(chunks.aomap_fragment, "texture2D( aoMap, vAoMapUv )", "texture2D( aoMap, vEmissiveMapUv )", "aomap uv");
     fs = replaceOnce(fs, "#include <aomap_fragment>", ao, "aomap_fragment include");
   }
 
@@ -406,12 +533,25 @@ export function createMapShaderMaterial(
   geometries: readonly THREE.BufferGeometry[],
   wanted: Readonly<MapShaderOptions>,
   extra?: { key: string; patch: ShaderPatch },
+  packed?: PackedLightmap | null,
 ): THREE.Material | null {
   const options = restrictOptions(wanted, mapShaderEligibility(source, geometries));
+  // The packed lightmap stands for THIS material's two maps only (same images, same sampling).
+  const s = source as THREE.MeshStandardMaterial;
+  const packedFits =
+    !!packed &&
+    !!s.emissiveMap &&
+    !!s.aoMap &&
+    s.emissiveMap.source === packed.emissive.source &&
+    s.aoMap.source === packed.ao.source &&
+    sameSampling(s.emissiveMap, packed.texture) &&
+    sameSampling(s.aoMap, packed.texture);
+  if (options.packedAo && !packedFits) options.packedAo = false;
   if (!anyOption(options) && !extra) return null;
   const uber = (source as MapMaterial).isMapUberMaterial === true;
   const material = source.clone();
   material.name = source.name;
+  if (options.packedAo && packed) (material as THREE.MeshStandardMaterial).emissiveMap = packed.texture;
   material.userData = { ...source.userData, mapShader: mapShaderKey(options) };
   const base = material.onBeforeCompile;
   const baseKey = source.customProgramCacheKey();
@@ -470,6 +610,7 @@ export function applyMapShader(
   options: Readonly<MapShaderOptions> | null,
   cache: Map<string, THREE.Material | null>,
   extra?: { key: string; patch: ShaderPatch },
+  packed?: () => PackedLightmap | null,
 ): number {
   const byStock = new Map<THREE.Material, THREE.BufferGeometry[]>();
   for (const t of targets) {
@@ -486,7 +627,7 @@ export function applyMapShader(
     const cacheKey = `${t.stock.uuid}|${mapShaderKey(options)}|${extra?.key ?? ""}`;
     let material = cache.get(cacheKey);
     if (material === undefined) {
-      material = createMapShaderMaterial(t.stock, byStock.get(t.stock)!, options, extra);
+      material = createMapShaderMaterial(t.stock, byStock.get(t.stock)!, options, extra, options.packedAo ? packed?.() : null);
       cache.set(cacheKey, material);
     }
     t.mesh.material = material ?? t.stock;

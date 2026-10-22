@@ -38,13 +38,16 @@ import { GivreSky } from "../src/world/GivreSky.ts";
 import { fxLights } from "../src/effects/FXLightPool.ts";
 import { applyUberMaterial } from "../src/world/MapBatching.ts";
 import {
+  MAP_SHADER_AO,
   MAP_SHADER_EXACT,
   MAP_SHADER_FAST,
   applyMapShader,
+  buildPackedLightmap,
   collectMapShaderTargets,
   createMapShaderMaterial,
   mapShaderEligibility,
   mapShaderOptionsFor,
+  packLightmapLevel,
   specialiseMapShader,
   vogelTaps,
   type MapShaderOptions,
@@ -341,6 +344,9 @@ console.log(`INFO buildStaticBatches load-time cost: ${(performance.now() - t0).
   assert.equal(mapShaderOptionsFor(new Set(["nomapshader"])), null);
   assert.equal(mapShaderOptionsFor(new Set(["mapshaderfast"])), MAP_SHADER_FAST);
   assert.equal(mapShaderOptionsFor(new Set(["mapshaderfast", "nomapshader"])), null, "off wins");
+  assert.equal(mapShaderOptionsFor(new Set(["mapshaderao"])), MAP_SHADER_AO);
+  assert.ok(MAP_SHADER_AO.packedAo && MAP_SHADER_AO.sunSkip && !MAP_SHADER_AO.noDirectMs, "ao = exact + packed AO");
+  assert.ok(!MAP_SHADER_EXACT.packedAo && MAP_SHADER_FAST.packedAo, "packed AO opt-in, in the fast set");
   assert.ok(MAP_SHADER_EXACT.noIbl && MAP_SHADER_EXACT.dielectric && MAP_SHADER_EXACT.sharedUv && MAP_SHADER_EXACT.sunSkip);
   assert.ok(!MAP_SHADER_EXACT.noDirectMs && !MAP_SHADER_EXACT.pcfRotate, "near-exact parts off by default");
   assert.ok(MAP_SHADER_FAST.noDirectMs && MAP_SHADER_FAST.pcfRotate);
@@ -528,6 +534,70 @@ console.log(`INFO buildStaticBatches load-time cost: ${(performance.now() - t0).
   assert.ok(a.material === texturedUber && b.material === texturedUber && (feu.material as THREE.Material).name === "GIV_Feu");
   applyMapShader(targets, MAP_SHADER_EXACT, cache);
   assert.equal(a.material, first, "clone reused (no new program)");
+
+  // Packed lightmap: AO bytes in the alpha of the emissive ones, same sampling, one fetch.
+  {
+    const e = [10, 20, 30, 255, 40, 50, 60, 255];
+    const o = [200, 200, 200, 255, 7, 7, 7, 255];
+    assert.deepEqual([...packLightmapLevel(e, o)!], [10, 20, 30, 200, 40, 50, 60, 7], "RGB = emissive, A = AO red");
+    assert.equal(packLightmapLevel([1, 2, 3, 128], [9, 9, 9, 255]), null, "translucent emissive refused");
+    assert.equal(packLightmapLevel([1, 2, 3, 255], [9, 9, 9, 128]), null, "translucent AO refused (premultiplied readback)");
+    assert.equal(packLightmapLevel(e, o.slice(4)), null, "size mismatch refused");
+    const img = (w: number, h: number, fill: number[]) => ({ width: w, height: h, fill });
+    const tex = (name: string, fill: number[]) => {
+      const t = new THREE.Texture(img(4, 4, fill) as never);
+      t.name = name;
+      t.mipmaps = [img(4, 4, fill), img(2, 2, fill), img(1, 1, fill)] as never;
+      t.minFilter = THREE.LinearMipmapLinearFilter;
+      t.colorSpace = name === "lum" ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      t.anisotropy = 4;
+      return t;
+    };
+    const lum = tex("lum", [1, 2, 3, 255]);
+    const aoTex = tex("ao", [77, 77, 77, 255]);
+    const read = (i: unknown) => {
+      const { width, height, fill } = i as { width: number; height: number; fill: number[] };
+      return Array.from({ length: width * height }, () => fill).flat();
+    };
+    const packed = buildPackedLightmap(lum, aoTex, read)!;
+    assert.ok(packed && packed.texture.isDataTexture);
+    assert.equal(packed.texture.colorSpace, THREE.SRGBColorSpace, "sRGB like the emissive (alpha stays linear)");
+    assert.equal(packed.texture.mipmaps.length, 3);
+    assert.deepEqual([...(packed.texture.mipmaps[2] as unknown as { data: Uint8Array }).data], [1, 2, 3, 77]);
+    assert.equal(packed.texture.minFilter, THREE.LinearMipmapLinearFilter);
+    assert.equal(packed.texture.anisotropy, 4);
+    assert.equal(packed.texture.generateMipmaps, false);
+    const other = tex("ao", [77, 77, 77, 255]);
+    other.anisotropy = 1;
+    assert.equal(buildPackedLightmap(lum, other, read), null, "different sampling refused");
+    // GLSL: the AO lookup becomes the alpha of the emissive texel.
+    const s = { vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader };
+    texturedUber.onBeforeCompile(s as never, null as never);
+    specialiseMapShader(s, { ...MAP_SHADER_EXACT, packedAo: true }, true);
+    const fsPacked = finish(s.fragmentShader);
+    assert.ok(fsPacked.includes("float ambientOcclusion = ( emissiveColor.a - 1.0 ) * aoMapIntensity + 1.0;"));
+    assert.ok(!fsPacked.includes("texture2D( aoMap"), "no AO fetch left");
+    // The specialised clone swaps its emissive map for the packed one — only for ITS two maps.
+    const src = texturedUber as THREE.MeshStandardMaterial;
+    const realPacked = { emissive: src.emissiveMap!, ao: src.aoMap!, texture: packed.texture };
+    const pt = packed.texture;
+    const em = src.emissiveMap!;
+    Object.assign(pt, { minFilter: em.minFilter, magFilter: em.magFilter, wrapS: em.wrapS, wrapT: em.wrapT, flipY: em.flipY, anisotropy: em.anisotropy, channel: em.channel, rotation: em.rotation });
+    pt.offset.copy(em.offset);
+    pt.repeat.copy(em.repeat);
+    pt.center.copy(em.center);
+    const withAo = createMapShaderMaterial(texturedUber, geometriesOf(texturedUber), { ...MAP_SHADER_EXACT, packedAo: true }, undefined, realPacked) as THREE.MeshStandardMaterial;
+    assert.equal(withAo.emissiveMap, packed.texture, "emissive map = packed lightmap");
+    assert.equal(withAo.aoMap, src.aoMap, "AO map kept (aoMapIntensity), never sampled");
+    assert.ok(withAo.customProgramCacheKey().endsWith(":ibl0,die,uv1,sun0,aoA"));
+    pt.offset.x += 0.5; // a packed lightmap sampled elsewhere than this material's maps: not used
+    const shifted = createMapShaderMaterial(texturedUber, geometriesOf(texturedUber), { ...MAP_SHADER_EXACT, packedAo: true }, undefined, realPacked) as THREE.MeshStandardMaterial;
+    assert.equal(shifted.emissiveMap, src.emissiveMap, "packed lightmap with another uv transform: not used");
+    pt.offset.copy(em.offset);
+    const foreign = createMapShaderMaterial(texturedUber, geometriesOf(texturedUber), { ...MAP_SHADER_EXACT, packedAo: true }, undefined, { emissive: lum, ao: aoTex, texture: packed.texture }) as THREE.MeshStandardMaterial;
+    assert.equal(foreign.emissiveMap, src.emissiveMap, "packed lightmap of other images: not used");
+    assert.ok(foreign.customProgramCacheKey().endsWith(":ibl0,die,uv1,sun0"));
+  }
   ok(
     `map shader: ${ubers.length} uber materials (${vertices} vertices, metalness 0 everywhere) eligible; ` +
       "GLSL rewrite applied on three's chunks (IBL / metalness / AO varying gone, PCF taps rotated exactly); clones + swap",
