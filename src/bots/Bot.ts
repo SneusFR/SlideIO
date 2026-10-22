@@ -18,6 +18,7 @@ import { BotModel, BotModelEnv, BotPose } from "./BotModel";
 import { BotAI } from "./BotAI";
 import { BotWeapon, BotWeaponWorld, BotShooter, randomBotWeapon } from "./BotWeapons";
 import { freshSkip, markMatrixFresh } from "../effects/matrixFresh";
+import { cancelKillPrep, requestKillPrep, type KillPrepGpu, type KillPrepJob } from "../effects/KillPrep";
 import type { RemoteWeaponController } from "../network/remote/RemoteWeaponController";
 
 /** Shared context handed to every bot each frame. */
@@ -57,7 +58,7 @@ function corpseSpareDelay(id: number): number {
  * re-rolled at every respawn (same rules / visuals as the player's weapons,
  * see BotWeapons), the shared Potato model and an AI brain.
  */
-export class Bot implements Combatant, BotShooter {
+export class Bot implements Combatant, BotShooter, KillPrepJob {
   readonly health = new Health(cc.botMaxHealth);
   readonly velocity = new THREE.Vector3();
   readonly model: BotModel;
@@ -200,6 +201,8 @@ export class Bot implements Combatant, BotShooter {
 
     this.model = new BotModel(id, modelEnv);
     this.corpseSpareTimer = corpseSpareDelay(id);
+    // KILLPREP: paint swapped the body's materials → their fade clones too.
+    this.model.onCorpseSurfacesChanged = () => requestKillPrep(this);
     this.model.group.position.copy(spawn.pos);
     this.model.group.userData.combatant = this;
     scene.add(this.model.group);
@@ -505,6 +508,7 @@ export class Bot implements Combatant, BotShooter {
     if (this.corpseSpareTimer <= 0) {
       this.corpseSpareTimer = CORPSE_SPARE_RECHECK;
       this.model.prepareCorpseVisual();
+      requestKillPrep(this); // its GPU side: end of a coming frame (one bot per frame)
     }
 
     // RAGDOLLED: no AI, no locomotion — the physics owns the body. The
@@ -735,7 +739,13 @@ export class Bot implements Combatant, BotShooter {
     );
   }
 
+  /** KILLPREP job (effects/KillPrep.ts): this life's next corpse, GPU side. */
+  runKillPrep(gpu: KillPrepGpu): void {
+    if (!this.disposed && this.health.alive) this.model.prepareCorpseGpu(gpu, this.corpses);
+  }
+
   dispose(): void {
+    cancelKillPrep(this);
     this.getPosition(this.lastPos);
     this.disposed = true;
     this.targetable = false;

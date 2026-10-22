@@ -64,6 +64,7 @@ import { fxLights } from "../effects/FXLightPool";
 import { StaticShadowCache, findStaticShadowSetup } from "../effects/StaticShadowCache";
 import { nextSkinnedRaycastFrame } from "../effects/SkinnedRaycast";
 import { markFrozenMapsFresh } from "../effects/matrixFresh";
+import { runKillPrep, setKillPrepGpu } from "../effects/KillPrep";
 import { warmUpEnemyHealthBars } from "../bots/BotModel";
 
 import { HammerWeapon, HammerState } from "../weapons/HammerWeapon";
@@ -1350,6 +1351,13 @@ export class Game {
     // ---- Death ragdolls (corpses): one sink for bots AND remote players.
     // Owned by the Game — updated right after each physics step.
     this.corpses = new CorpseManager(this.scene, this.physics);
+    // Their kill frame prepared ahead (effects/KillPrep.ts): same programs as the world pass.
+    setKillPrepGpu({
+      renderer: this.renderer,
+      scene: this.scene,
+      camera: this.fpsCamera.camera,
+      target: () => (this.composer ? this.composer.renderTarget1 : null),
+    });
 
     // ---- Bots ----
     this.botManager = new BotManager(
@@ -4504,6 +4512,9 @@ export class Game {
         // busy: the point is to keep this thread busy
       }
     }
+    // The next corpses' first-use work, one bot per frame, right after the
+    // render that fixed this frame's lights (see KillPrep). Free when none.
+    if (!this.experiments.has("empty")) runKillPrep();
     // A program compiled this frame (first use of a variant) stays cached for
     // the session: never compiled twice (see ProgramPin). Free when none.
     pinNewPrograms(this.renderer);

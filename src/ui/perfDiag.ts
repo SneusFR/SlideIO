@@ -63,6 +63,8 @@ export function perfExperiments(search: string = typeof location === "undefined"
  *   nouniformcache  three.js's own uniform caches and setters (effects/UniformCacheKinds.ts)
  *   nofreshskip     the renderer's second pass over the map and the FP arms runs again, and
  *                   the frame's pass over the dead bots (effects/matrixFresh.ts)
+ *   nokillprep      a corpse's bone textures and fade clones are created in the kill frame
+ *                   again, at its first draw (effects/KillPrep.ts)
  *
  * DEV builds expose the live switches as `window.__cpuOpt` (`__cpuOpt.hudskip.on = false`): a
  * headless check compares both paths in the SAME session, on the same frame.
