@@ -16,7 +16,7 @@ import { type GivreDepthPrepass, logPrepassCheck } from "../world/GivreDepthPrep
 import { GIVRE_SKY_RENDER_ORDER, GivreSky } from "../world/GivreSky";
 import { GivreConfig as givreCfg } from "../world/GivreConfig";
 import { GivreEffects } from "../world/GivreEffects";
-import { frontToBackOpaqueSort } from "../world/GivreRenderOptim";
+import { frontToBackOpaqueSort, programFirstOpaqueSort } from "../world/GivreRenderOptim";
 import type { GivreSnowLevel } from "../world/GivreSnow";
 import { loadMapSelection } from "../world/MapSelection";
 import { MapId, MAP_REGISTRY, type MapEnvelope } from "../../shared/map/MapRegistry";
@@ -77,6 +77,7 @@ import { fxLights } from "../effects/FXLightPool";
 import { StaticShadowCache, findStaticShadowSetup } from "../effects/StaticShadowCache";
 import { nextSkinnedRaycastFrame } from "../effects/SkinnedRaycast";
 import { markFrozenMapsFresh } from "../effects/matrixFresh";
+import { runKillPrep, setKillPrepGpu } from "../effects/KillPrep";
 import { warmUpEnemyHealthBars } from "../bots/BotModel";
 
 import { HammerWeapon, HammerState } from "../weapons/HammerWeapon";
@@ -1369,6 +1370,13 @@ export class Game {
     // ---- Death ragdolls (corpses): one sink for bots AND remote players.
     // Owned by the Game — updated right after each physics step.
     this.corpses = new CorpseManager(this.scene, this.physics);
+    // Their kill frame prepared ahead (effects/KillPrep.ts): same programs as the world pass.
+    setKillPrepGpu({
+      renderer: this.renderer,
+      scene: this.scene,
+      camera: this.fpsCamera.camera,
+      target: () => (this.composer ? this.composer.renderTarget1 : null),
+    });
 
     // ---- Bots ----
     this.botManager = new BotManager(
@@ -1603,7 +1611,10 @@ export class Game {
     // split in spatial chunks, so early-Z can reject the rooms hidden behind
     // the walls instead of shading them. Depth-tested opaque output does not
     // depend on draw order — only the overdraw does.
-    this.renderer.setOpaqueSort(frontToBackOpaqueSort);
+    // (`?diag=programsort`: the program-first experiment, see programFirstOpaqueSort.)
+    this.renderer.setOpaqueSort(
+      this.experiments.has("programsort") ? programFirstOpaqueSort(this.renderer, this.scene) : frontToBackOpaqueSort,
+    );
 
     // DEV builds only (`npm run dev`): live tuning / verification handle —
     //   givreDebug.world.normalThreshold = 0.3   (any GivreOutlinePass knob)
@@ -1798,7 +1809,11 @@ export class Game {
         }
         return `MSAA depth/stencil resolve ${on ? "ON (old, slow)" : "OFF"} (samples ${samples})`;
       },
-      sort: (frontToBack: boolean) => {
+      sort: (frontToBack: boolean | "program") => {
+        if (frontToBack === "program") {
+          this.renderer.setOpaqueSort(programFirstOpaqueSort(this.renderer, this.scene));
+          return "program first (experiment)";
+        }
         this.renderer.setOpaqueSort(frontToBack ? frontToBackOpaqueSort : null);
         return frontToBack ? "front-to-back" : "three default (material first)";
       },
@@ -4609,6 +4624,9 @@ export class Game {
         // busy: the point is to keep this thread busy
       }
     }
+    // The next corpses' first-use work, one bot per frame, right after the
+    // render that fixed this frame's lights (see KillPrep). Free when none.
+    if (!this.experiments.has("empty")) runKillPrep();
     // A program compiled this frame (first use of a variant) stays cached for
     // the session: never compiled twice (see ProgramPin). Free when none.
     pinNewPrograms(this.renderer);

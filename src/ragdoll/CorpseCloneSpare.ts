@@ -3,6 +3,7 @@ import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.j
 import { shareOutlineSkeletons, stripEnemyOutline } from "../characters/PotatoCharacter";
 import { adoptSkinnedBounds } from "../effects/skinnedBounds";
 import { isRigidPartsBatch } from "../effects/RigidPartsBatch";
+import { prepareBoneTexture } from "../effects/KillPrep";
 
 /**
  * The corpse copy of a living character model: an independent
@@ -79,6 +80,11 @@ interface SpareSkin {
  * had when the spare was built (same nodes, same parents, same skeletons,
  * supported node classes only); anything else (weapon swapped, outfit
  * changed…) and `take` returns null: the caller clones as before.
+ *
+ * KILLPREP (effects/KillPrep.ts): the spare's skeletons may get their bone
+ * textures ahead (prepareBoneTextures) — handed over with the corpse
+ * (CorpseManager disposes its skeletons), disposed with a spare that is
+ * dropped instead.
  */
 export class CorpseCloneSpare {
   private clone: THREE.Object3D | null = null;
@@ -88,6 +94,38 @@ export class CorpseCloneSpare {
 
   get ready(): boolean {
     return this.clone !== null;
+  }
+
+  /**
+   * KILLPREP: the bone texture of each skeleton of the spare, created and
+   * uploaded now (three does it at the corpse's first draw otherwise).
+   * The kill frame's skeleton update rewrites every matrix of it before
+   * that first draw uploads it again — same texture content. Returns the
+   * number of textures created.
+   */
+  prepareBoneTextures(renderer: THREE.WebGLRenderer): number {
+    let made = 0;
+    for (const skin of this.skins) if (prepareBoneTexture(skin.skeleton, renderer)) made++;
+    return made;
+  }
+
+  /**
+   * KILLPREP: the spare showing what `take` will copy onto it from the live
+   * model — materials, geometries, visibility (paint and outfits swap
+   * them during a life) — or null without a spare. `take` copies them
+   * again: nothing else of the spare changes.
+   */
+  showLiveSurfaces(): THREE.Object3D | null {
+    if (!this.clone) return null;
+    for (const { spare, live } of this.pairs) {
+      spare.visible = live.visible;
+      const drawable = spare as THREE.Mesh;
+      if (drawable.material !== undefined) {
+        drawable.material = (live as THREE.Mesh).material;
+        drawable.geometry = (live as THREE.Mesh).geometry;
+      }
+    }
+    return this.clone;
   }
 
   /** Build the spare for `model` now (a fresh clone, kept off-scene). */
@@ -180,11 +218,24 @@ export class CorpseCloneSpare {
     adoptSkinnedBounds(clone);
     let intact = true;
     for (const pair of this.pairs) if (pair.spare.children.length !== pair.children) intact = false;
-    this.reset();
-    return intact ? clone : null;
+    if (!intact) {
+      this.reset();
+      return null;
+    }
+    this.forget(); // handed over: its skeletons (and bone textures) are the corpse's now
+    return clone;
   }
 
+  /** Drop the spare (its prepared bone textures with it). */
   reset(): void {
+    for (const skin of this.skins) {
+      // (only KILLPREP creates one on a spare: free when there is none)
+      if (skin.skeleton.boneTexture !== null) skin.skeleton.dispose();
+    }
+    this.forget();
+  }
+
+  private forget(): void {
     this.clone = null;
     this.source = null;
     this.pairs = [];

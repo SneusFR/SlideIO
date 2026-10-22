@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { compileLikeWorldPass, killPrep, type KillPrepGpu } from "../effects/KillPrep";
 import { markMatrixFresh, skipFreshMatrixUpdate } from "../effects/matrixFresh";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { RagdollController, RagdollPartDef, RagdollImpact } from "./RagdollController";
@@ -22,6 +23,13 @@ interface CorpseMaterialEntry {
 
 /** Cap of parked fade clones from evicted ephemeral sources (see orphanClones). */
 const MAX_ORPHAN_CLONES = 16;
+
+/** A fade clone made ahead of the kill (see CorpseManager.prewarm). */
+interface ReadyClone {
+  mat: THREE.Material;
+  /** Its source was disposed: the clone goes too. */
+  onSourceDispose: () => void;
+}
 
 interface Corpse {
   visual: THREE.Object3D;
@@ -71,6 +79,12 @@ export class CorpseManager {
    * gone). Oldest entries are disposed past MAX_ORPHAN_CLONES.
    */
   private readonly orphanClones: THREE.Material[] = [];
+  /**
+   * KILLPREP: at most ONE initialized fade clone per source whose pool is
+   * empty, made on an ordinary frame (prewarm) and handed out by the next
+   * kill that would have cloned the source (acquireMaterial).
+   */
+  private readonly ready = new Map<THREE.Material, ReadyClone>();
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -119,6 +133,66 @@ export class CorpseManager {
       for (const { mesh, previous } of hooked) mesh.onBeforeRender = previous;
       for (const entry of materials) this.releaseMaterial(entry);
     };
+  }
+
+  /**
+   * PERF (KILLPREP, see effects/KillPrep.ts) — the fade clones the NEXT
+   * corpse of `visual` would create, made and initialized now: for every
+   * material on a visible mesh whose pool is empty (the kill would clone
+   * it), one clone with the kill's settings, run through three's program
+   * selection on `visual`'s own meshes (both looks, as in warmUp: the fade,
+   * then the opaque life), no draw. `visual` = the corpse clone prepared
+   * ahead (CorpseCloneSpare), showing the live materials. Returns the
+   * number of clones made.
+   */
+  prewarm(visual: THREE.Object3D, gpu: KillPrepGpu): number {
+    if (!killPrep.on) return 0;
+    const made = new Map<THREE.Material, THREE.Material>(); // source → its new clone
+    const shown = new Set<THREE.Object3D>();
+    visual.traverseVisible((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      shown.add(mesh);
+      for (const source of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        if (made.has(source) || this.ready.has(source) || !canPrepare(source)) continue;
+        if ((this.materialPool.get(source)?.length ?? 0) > 0) continue; // the kill pops that one
+        const entry: ReadyClone = {
+          mat: createFadeClone(source),
+          onSourceDispose: () => this.dropReady(source),
+        };
+        source.addEventListener("dispose", entry.onSourceDispose);
+        this.ready.set(source, entry);
+        made.set(source, entry.mat);
+      }
+    });
+    if (made.size === 0) return 0;
+    // Every drawable of `visual` shows only the NEW clones of its sources
+    // (or no material: compile() skips it) — nothing else is touched.
+    const saved: { obj: THREE.Mesh; material: THREE.Material | THREE.Material[] }[] = [];
+    visual.traverse((obj) => {
+      const o = obj as THREE.Mesh & { isPoints?: boolean; isLine?: boolean; isSprite?: boolean };
+      if (!(o.isMesh || o.isPoints || o.isLine || o.isSprite)) return;
+      saved.push({ obj: o, material: o.material });
+      const clones: THREE.Material[] = [];
+      if (shown.has(o)) {
+        for (const source of Array.isArray(o.material) ? o.material : [o.material]) {
+          const clone = made.get(source);
+          if (clone && !clones.includes(clone)) clones.push(clone);
+        }
+      }
+      o.material = (clones.length === 0 ? null : clones.length === 1 ? clones[0] : clones) as unknown as THREE.Material;
+    });
+    try {
+      // The fade look first, the opaque life last: the kill's first draw
+      // then finds its program already current (three's early out).
+      for (const [source, clone] of made) clone.forceSinglePass = source.forceSinglePass;
+      compileLikeWorldPass(visual, gpu);
+      for (const [source, clone] of made) clone.forceSinglePass = singlePassWhileOpaque(source);
+      compileLikeWorldPass(visual, gpu);
+    } finally {
+      for (const { obj, material } of saved) obj.material = material;
+    }
+    return made.size;
   }
 
   /**
@@ -194,6 +268,7 @@ export class CorpseManager {
     this.materialPool.clear();
     for (const mat of this.orphanClones) mat.dispose();
     this.orphanClones.length = 0;
+    for (const source of [...this.ready.keys()]) this.dropReady(source);
   }
 
   // ------------------------------------------------------------------
@@ -290,20 +365,24 @@ export class CorpseManager {
       pooled.forceSinglePass = singlePassWhileOpaque(source);
       return pooled;
     }
-    const clone = source.clone();
-    // Transparent FROM CREATION: the program is compiled once with the
-    // final cache key — starting the fade later never recompiles anything.
-    clone.transparent = true;
-    // Depth rule inherited from the source: opaque body pieces write depth
-    // until their fade; already-transparent sources (helmet glass) keep
-    // depthWrite=false so the eyes and smile stay readable through them.
-    clone.depthWrite = source.depthWrite;
-    clone.forceSinglePass = singlePassWhileOpaque(source);
-    // Corpses are NOT threats: never write the enemy-outline stencil mask
-    // (inherited from living enemy materials via clone) — a corpse behind
-    // a living enemy must not punch holes in that enemy's red contour.
-    clone.stencilWrite = false;
-    return clone;
+    // KILLPREP: the clone made ahead (prewarm), brought to the source's
+    // state of NOW — the very clone the next line would create.
+    const ready = killPrep.on ? this.ready.get(source) : undefined;
+    if (ready) {
+      this.ready.delete(source);
+      source.removeEventListener("dispose", ready.onSourceDispose);
+      return refreshFadeClone(ready.mat, source);
+    }
+    return createFadeClone(source);
+  }
+
+  /** A ready clone whose source went away (disposed / manager torn down). */
+  private dropReady(source: THREE.Material): void {
+    const ready = this.ready.get(source);
+    if (!ready) return;
+    this.ready.delete(source);
+    source.removeEventListener("dispose", ready.onSourceDispose);
+    ready.mat.dispose();
   }
 
   /**
@@ -336,6 +415,46 @@ export class CorpseManager {
     }
     pool.push(entry.mat);
   }
+}
+
+/** A corpse's fade clone of `source`, created now. */
+export function createFadeClone(source: THREE.Material): THREE.Material {
+  return applyFadeSettings(source.clone(), source);
+}
+
+/**
+ * KILLPREP: `clone` (a fade clone of `source` made earlier, never drawn)
+ * brought to what createFadeClone(source) returns NOW: same values
+ * (Material.clone() is `new constructor().copy(source)`), same settings.
+ */
+export function refreshFadeClone(clone: THREE.Material, source: THREE.Material): THREE.Material {
+  return applyFadeSettings(clone.copy(source), source);
+}
+
+function applyFadeSettings(clone: THREE.Material, source: THREE.Material): THREE.Material {
+  // Transparent FROM CREATION: the program is compiled once with the
+  // final cache key — starting the fade later never recompiles anything.
+  clone.transparent = true;
+  // Depth rule inherited from the source: opaque body pieces write depth
+  // until their fade; already-transparent sources (helmet glass) keep
+  // depthWrite=false so the eyes and smile stay readable through them.
+  clone.depthWrite = source.depthWrite;
+  clone.forceSinglePass = singlePassWhileOpaque(source);
+  // Corpses are NOT threats: never write the enemy-outline stencil mask
+  // (inherited from living enemy materials via clone) — a corpse behind
+  // a living enemy must not punch holes in that enemy's red contour.
+  clone.stencilWrite = false;
+  return clone;
+}
+
+/**
+ * Can a fade clone of `source` be made ahead? Not for shader materials:
+ * copy() replaces their `uniforms` object, while three keeps using the one
+ * it was initialized with — the ready clone would draw stale values.
+ */
+function canPrepare(source: THREE.Material): boolean {
+  const s = source as THREE.Material & { isShaderMaterial?: boolean; isRawShaderMaterial?: boolean; isNodeMaterial?: boolean };
+  return !s.isShaderMaterial && !s.isRawShaderMaterial && !s.isNodeMaterial;
 }
 
 /**

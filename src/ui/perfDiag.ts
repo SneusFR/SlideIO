@@ -85,6 +85,9 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *            — NOT the same pixels (less supersampling), an experiment only
  *   paintfpsNN  that paint drawn at most NN times per second while it moves
  *            (default: at every display frame) — a jerkier jelly, an experiment
+ *   programsort  Givre: opaques sorted by program, then material, near → far
+ *            inside (EXPERIMENT, see world/GivreRenderOptim.ts
+ *            programFirstOpaqueSort — meant with the depth prepass)
  *
  * The HUD's own switches reach its document (the HUD iframe has its own
  * address: src/hud/host/HudHost.ts hudDocumentUrl passes `?diag=` on).
@@ -152,6 +155,8 @@ export function diagSwitch(experiments: ReadonlySet<string>, name: string, defau
  *   nouniformcache  three.js's own uniform caches and setters (effects/UniformCacheKinds.ts)
  *   nofreshskip     the renderer's second pass over the map and the FP arms runs again, and
  *                   the frame's pass over the dead bots (effects/matrixFresh.ts)
+ *   nokillprep      a corpse's bone textures and fade clones are created in the kill frame
+ *                   again, at its first draw (effects/KillPrep.ts)
  *
  * DEV builds expose the live switches as `window.__cpuOpt` (`__cpuOpt.hudskip.on = false`): a
  * headless check compares both paths in the SAME session, on the same frame.

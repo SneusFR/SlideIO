@@ -3,6 +3,8 @@ import { EnemyHealthBars, type EnemyHealthBarSlot } from "./EnemyHealthBars";
 import { skipFreshMatrixUpdate } from "../effects/matrixFresh";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { CorpseCloneSpare, cloneCorpseModel } from "../ragdoll/CorpseCloneSpare";
+import type { CorpseManager } from "../ragdoll/CorpseManager";
+import type { KillPrepGpu } from "../effects/KillPrep";
 import { MovementConfig as mc } from "../player/MovementConfig";
 import { CombatConfig as cc } from "../combat/CombatConfig";
 import { HitZone } from "../combat/HitZone";
@@ -155,6 +157,8 @@ export class BotModel {
   private model: THREE.Object3D | null = null;
   /** Corpse clone built ahead of the kill frame (see prepareCorpseVisual). */
   private readonly corpseSpare = new CorpseCloneSpare();
+  /** The body's materials changed (paint): the corpse prep has new work (set by Bot). */
+  onCorpseSurfacesChanged: (() => void) | null = null;
   private anim: RemotePlayerAnimationController | null = null;
   /** Red contour hull meshes of THIS clone (visibility follows setSeen). */
   private readonly outlineMeshes: THREE.Object3D[] = [];
@@ -556,6 +560,18 @@ export class BotModel {
   }
 
   /**
+   * KILLPREP (effects/KillPrep.ts, end of a frame of this life): the GPU
+   * first-use work of the next corpse, now — its bone textures, and the
+   * fade clones CorpseManager would create for its current materials.
+   */
+  prepareCorpseGpu(gpu: KillPrepGpu, corpses: CorpseManager | null): void {
+    if (!this.model || !this.corpseSpare.matches(this.model)) return; // rebuilt at the next check
+    this.corpseSpare.prepareBoneTextures(gpu.renderer);
+    const visual = corpses ? this.corpseSpare.showLiveSurfaces() : null;
+    if (visual) corpses!.prewarm(visual, gpu);
+  }
+
+  /**
    * EXPLICIT cosmetic outfit for this bot (product rule: bots do NOT
    * automatically wear the local player's selection — nothing is applied
    * unless a caller asks). Empty selection = base look. Kept across the
@@ -589,6 +605,7 @@ export class BotModel {
       this.registerFlashMaterial(mat);
       if (!this.ownedMats.includes(mat)) this.ownedMats.push(mat);
     }
+    this.onCorpseSurfacesChanged?.();
   }
 
   /** Join the damage-flash list (authored emissive remembered). */
@@ -611,6 +628,8 @@ export class BotModel {
 
   dispose(): void {
     this.disposed = true;
+    this.corpseSpare.reset(); // (KILLPREP: its prepared bone textures)
+    this.onCorpseSurfacesChanged = null;
     // Outfit first: its hooks unregister its hulls / materials, then the
     // handle disposes ITS OWN material clones (never touched below).
     this.outfit.dispose();
