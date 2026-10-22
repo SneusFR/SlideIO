@@ -1,11 +1,9 @@
 import { MedalType } from "../medals/MedalType";
-import { MedalStyles, MedalConfig as mc } from "../medals/MedalConfig";
+import { MedalConfig as mc } from "../medals/MedalConfig";
 import { MedalDisplay } from "../medals/MedalManager";
+import { medalLook } from "../medals/medalLooks";
 import { medalIconSvg, medalRaysSvg, MEDAL_STAR_SVG, ribbonTailSvg } from "./hudIcons";
 import { replayAnim } from "./hudKit";
-
-/** Chain length from which the badge goes "hype" (faster rays, bigger pop). */
-const HYPE_CHAIN = 2;
 
 /**
  * The parts painted with the medal's accent colour (`--md`, a NON-inherited
@@ -72,24 +70,25 @@ export class MedalHUD implements MedalDisplay {
   }
 
   show(medal: MedalType, chainIndex: number): void {
-    const style = MedalStyles[medal];
+    // One rule for the badge and the HUD warm-up (medals/medalLooks.ts).
+    const look = medalLook(medal, chainIndex);
 
     if (medal !== this.current) {
       if (this.current !== null) this.arts.get(this.current)?.classList.remove("on");
       this.arts.get(medal)?.classList.add("on");
       this.current = medal;
-      this.label.textContent = style.label;
-      for (const el of this.accents) el.style.setProperty("--md", style.color);
+      this.label.textContent = look.label;
+      for (const el of this.accents) el.style.setProperty("--md", look.color);
     }
 
-    if (style.stars !== this.lastStars) {
+    if (look.stars !== this.lastStars) {
       if (this.lastStars > 0) this.root.classList.remove(`stars-${this.lastStars}`);
-      if (style.stars > 0) this.root.classList.add(`stars-${style.stars}`);
-      this.lastStars = style.stars;
+      if (look.stars > 0) this.root.classList.add(`stars-${look.stars}`);
+      this.lastStars = look.stars;
     }
 
     // The badge gets louder as the chain of medals grows.
-    const hype = chainIndex >= HYPE_CHAIN;
+    const hype = look.hype;
     if (hype !== this.lastHype) {
       this.root.classList.toggle("hype", hype);
       this.lastHype = hype;

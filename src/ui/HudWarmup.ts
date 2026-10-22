@@ -1,5 +1,5 @@
-import { MedalStyles } from "../medals/MedalConfig";
 import { MedalType } from "../medals/MedalType";
+import { medalLook } from "../medals/medalLooks";
 import { displayFrameMs, measureDisplayFrames } from "./displayFrames";
 import { hudFeed } from "./HudFeed";
 import { MEDAL_ACCENT_PARTS } from "./MedalHUD";
@@ -34,8 +34,10 @@ export interface HudWarmupHook {
  * rest (axis-aligned, in the HUD's layer, under its parents' rounded
  * clips), alone or under a filter (the grey "dead" bean wraps the whole
  * portrait), partly filled (a bar's scaleX). So the warm-up replays real
- * situations one after the other — the plain first kill, a fight, the rare
- * looks, death — each with the exact classes / fills the game sets, and
+ * situations one after the other — the plain first kill, the second kill of
+ * a combo, the medal after the combo medal (each star count of the badge:
+ * medals/medalLooks.ts), a fight, the rare looks, death — each with the
+ * exact classes / fills the game sets, and
  * every animation they start is drawn running and paused at several points
  * of its timeline, then at rest, then through its exit (medal leaving,
  * sticker leaving, combo tag falling). Each of those states is held until
@@ -69,6 +71,11 @@ export async function warmUpHud(
     });
     root.add(document.documentElement, "hud-warm");
     await warmPass(killLook, killExit, hooks, true);
+    // Every star count of the badge (medals/medalLooks.ts WARM_MEDAL_LOOKS):
+    // the first look of a kind cost ~12-14 ms of GPU process at its first
+    // appearance in a match (the first HEADSHOT: no star).
+    await warmPass(chainLook, killExit, [], false);
+    await warmPass(specialLook, killExit, [], false);
     await warmPass(hurtLook, hurtExit, [], false);
     await warmPass(rareLooks, killExit, [], false);
     await warmPass(deadLook, null, [], false);
@@ -171,14 +178,7 @@ function endTouchedAnimations(touched: Touched): void {
  * through its hook).
  */
 function killLook(p: DomPatch): void {
-  const kill = MedalStyles[MedalType.KILL];
-  const medal = byId("medal-display");
-  p.remove(medal, "hidden");
-  p.add(medal, `stars-${kill.stars}`);
-  medalAccent(p, medal, kill.color);
-  p.add(medal?.querySelector(".md-body"), "pop-a");
-  p.add(medal?.querySelector(`.md-icon[data-medal="${MedalType.KILL}"]`), "on");
-  p.text(medal?.querySelector(".md-label"), kill.label);
+  medalOn(p, MedalType.KILL, 0, "pop-a");
 
   const sticker = document.querySelector("#event-feed .feed-sticker");
   p.add(sticker, "show", "feed-kill", "in-a");
@@ -194,6 +194,39 @@ function killLook(p: DomPatch): void {
   p.add(byId("hitmarker"), "hm-kill");
   p.add(byId("crosshair"), "cx-firing");
   damageNumber(p, "dmg-num dmg-kill", 44);
+}
+
+/**
+ * The SECOND kill of a combo: the DOUBLE KILL medal (two stars, second medal
+ * of its chain: no hype yet, the other pop twin), the combo tag at x2 (tier
+ * 2: gold rope) swinging again, the KILL hitmarker, a kill number.
+ */
+function chainLook(p: DomPatch): void {
+  medalOn(p, MedalType.DOUBLE_KILL, 1, "pop-b");
+  const combo = byId("combo-hud");
+  p.add(combo, "show", "tier-2");
+  p.add(byId("combo-tag"), "swing-b");
+  p.text(byId("combo-count"), "x2");
+  p.style(byId("combo-fill"), "transform", "scaleX(0.9)");
+  p.add(byId("hitmarker"), "hm-kill");
+  damageNumber(p, "dmg-num dmg-kill", 44);
+}
+
+/**
+ * The medal that follows the combo medal of the same kill — HEADSHOT (the
+ * paintball's), SMASHED, HOME RUN, MOLED, IMPALED: no star at all, its own
+ * art and colour, the other pop twin; the combo tag at x1 burning down, the
+ * BEANED! sticker still up (MedalManager: shown ~1.4 s after the kill).
+ */
+function specialLook(p: DomPatch): void {
+  medalOn(p, MedalType.HEADSHOT, 1, "pop-b");
+  const sticker = document.querySelector("#event-feed .feed-sticker");
+  p.add(sticker, "show", "feed-kill", "in-a");
+  p.text(sticker?.querySelector(".feed-title"), "BEANED!");
+  p.text(sticker?.querySelector(".feed-sub"), "");
+  p.add(byId("combo-hud"), "show");
+  p.text(byId("combo-count"), "x1");
+  p.style(byId("combo-fill"), "transform", "scaleX(0.3)");
 }
 
 /**
@@ -264,14 +297,8 @@ function hpTube(p: DomPatch, band: "mid" | "low", fill: number, ghost: number, v
  * kill number.
  */
 function rareLooks(p: DomPatch): void {
-  const triple = MedalStyles[MedalType.TRIPLE_KILL];
-  const medal = byId("medal-display");
-  p.remove(medal, "hidden");
-  p.add(medal, "stars-3", "hype");
-  medalAccent(p, medal, triple.color);
-  p.add(medal?.querySelector(".md-body"), "pop-a");
-  medal?.querySelectorAll(".md-icon").forEach((el) => p.add(el, "on"));
-  p.text(medal?.querySelector(".md-label"), triple.label);
+  medalOn(p, MedalType.TRIPLE_KILL, 2, "pop-a");
+  byId("medal-display")?.querySelectorAll(".md-icon").forEach((el) => p.add(el, "on"));
 
   const feed: [string, string, string][] = [
     ["kill", "BEANED!", ""],
@@ -320,6 +347,23 @@ function deadLook(p: DomPatch): void {
   const buddy = byId("bean-buddy");
   p.remove(buddy, "mood-happy");
   p.add(buddy, "mood-dead");
+}
+
+/**
+ * The badge showing `medal` at `chainIndex` of its chain, with the classes
+ * MedalHUD.show sets (same rule: medals/medalLooks.ts) — tier stars, hype,
+ * accent colour, art, label — popping with `pop` (replayAnim's twins).
+ */
+function medalOn(p: DomPatch, medal: MedalType, chainIndex: number, pop: "pop-a" | "pop-b"): void {
+  const look = medalLook(medal, chainIndex);
+  const el = byId("medal-display");
+  p.remove(el, "hidden");
+  if (look.stars > 0) p.add(el, `stars-${look.stars}`);
+  if (look.hype) p.add(el, "hype");
+  medalAccent(p, el, look.color);
+  p.add(el?.querySelector(".md-body"), pop);
+  p.add(el?.querySelector(`.md-icon[data-medal="${medal}"]`), "on");
+  p.text(el?.querySelector(".md-label"), look.label);
 }
 
 /** The medal's accent colour, written where MedalHUD.show writes it. */
