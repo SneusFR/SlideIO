@@ -10,9 +10,11 @@ import { MapId, isMapId } from "../../shared/map/MapRegistry";
 import type { MatchResults } from "../../shared/match/MatchResultsTracker";
 import { MAP_VOTE_SECONDS } from "../../shared/match/MatchRules";
 import { buildEndScreenData } from "./EndScreenData";
+import { endScreenPerf } from "./EndScreenPerf";
 
 /** Every map is offered in the vote (registry order). */
 const VOTE_MAPS: readonly MapId[] = Object.values(MapId);
+const FONTS = { display: displayFontUrl, body: bodyFontUrl };
 
 /**
  * End-of-match flow (5-minute FFA clock ran out):
@@ -37,6 +39,7 @@ export class MatchEndController {
   onShown: (() => void) | null = null;
   /** Hook fired when a SOLO replay resumes gameplay on the same map. */
   onSoloReplay: (() => void) | null = null;
+  private readonly perf = endScreenPerf();
 
   constructor(
     private readonly game: Game,
@@ -50,6 +53,29 @@ export class MatchEndController {
 
   get isShowing(): boolean {
     return this.screen !== null;
+  }
+
+  /**
+   * PERF: the end screen's first-time work (style sheet, fonts, audio and
+   * WebGL contexts, programs, title geometry) in the idle slots of the menu —
+   * never in the frames where a match ends (PERFORMANCE.md rule 24).
+   */
+  prewarm(): void {
+    if (this.perf.warm) void EndScreen.prewarm({ fonts: FONTS });
+  }
+
+  /** What the warm-up has not done yet, now (PLAY, or a measurement about to start). */
+  flushPrewarm(): void {
+    if (this.perf.warm) EndScreen.flushPrewarm();
+  }
+
+  /**
+   * The end screen's snapshot of the frozen world turned out opaque everywhere
+   * (EndScreen `onBackdropOpaque`): nothing of the world shows through any
+   * more — no need to draw it (see Game.setWorldCovered).
+   */
+  private coverWorld(screen: EndScreen): void {
+    if (this.screen === screen) this.game.setWorldCovered(true);
   }
 
   // ------------------------------------------------------------------ solo
@@ -154,15 +180,23 @@ export class MatchEndController {
     onVote: (mapId: string) => void;
     onVoteEnd: (mapId: string) => void;
   }): EndScreen {
-    this.screen?.dispose();
+    if (this.screen) {
+      this.game.setWorldCovered(false);
+      this.screen.dispose();
+    }
     const screen = new EndScreen({
-      fonts: { display: displayFontUrl, body: bodyFontUrl },
+      fonts: FONTS,
       voteDuration: opts.voteDuration ?? MAP_VOTE_SECONDS,
       autoEndVote: opts.autoEndVote,
       zIndex: 120,
       onVote: opts.onVote,
       onVoteEnd: opts.onVoteEnd,
       onQuit: () => this.quit(),
+      warmIntro: this.perf.warm,
+      skipEmptyDraws: this.perf.skip,
+      fastSnapshot: this.perf.snap,
+      earlyLayout: this.perf.layout,
+      onBackdropOpaque: this.perf.cover ? () => this.coverWorld(screen) : null,
     });
     this.screen = screen;
     if (document.pointerLockElement) document.exitPointerLock();
@@ -175,6 +209,8 @@ export class MatchEndController {
     this.screen = null;
     this.clearBotVotes();
     if (!screen) return;
+    // The frozen world shows through the fade-out: drawn again from this frame on.
+    this.game.setWorldCovered(false);
     await screen.hide();
     screen.dispose();
   }

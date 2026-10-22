@@ -458,6 +458,8 @@ export class Game {
   private simFrame = 0;
   /** The match is over: simulation frozen, inputs ignored (end screen). */
   private matchOver = false;
+  /** End screen up over its opaque snapshot of the frozen world: no world to draw (setWorldCovered). */
+  private worldCovered = false;
   /**
    * SOLO: the clock ran out. Fired once with the final results — the
    * owner (main.ts) shows the end screen.
@@ -3355,7 +3357,8 @@ export class Game {
    */
   captureFrame(): HTMLCanvasElement | null {
     const src = this.renderer.domElement;
-    if (!src.width || !src.height) return null;
+    // (a lost context draws nothing: no capture, the end screen goes without glass as before)
+    if (!src.width || !src.height || this.renderer.getContext().isContextLost()) return null;
     this.renderWorld(this.fpsCamera.camera);
     const c = document.createElement("canvas");
     c.width = src.width;
@@ -3365,12 +3368,29 @@ export class Game {
   }
 
   /**
+   * PERF (end screen) — the end screen lays a copy of the last frame (its
+   * snapshot) over the whole canvas: the frozen world behind it was still
+   * drawn every frame (a full GPU frame, 7-10 ms on the Iris Xe laptop, next to
+   * the end screen's own 3D). Once that copy is known to be opaque everywhere
+   * (MatchEndController, EndScreen `onBackdropOpaque`), no pixel of the world
+   * can show: no world render. The canvas keeps its last image and stays in
+   * the page as it was (the same layers as before for the browser to
+   * composite; hiding it as well would only save compositing one covered
+   * quad). Uncovered before the end screen fades away. `?diag=noendcover`
+   * keeps drawing it.
+   */
+  setWorldCovered(covered: boolean): void {
+    this.worldCovered = covered;
+  }
+
+  /**
    * SOLO replay on the voted map when it is ALREADY loaded: fresh match
    * (0/0/0, full clock), every combatant respawned, no page reload.
    */
   restartSoloMatch(): void {
     if (this.multiplayer) return;
     this.matchOver = false;
+    this.setWorldCovered(false); // (already uncovered by the end screen's fade-out)
     document.body.classList.remove("match-over");
     this.hudApi.setDocClass("body", "match-over", false);
     this.soloMatchTime = 0;
@@ -4565,8 +4585,9 @@ export class Game {
       // warmUpRendering). No per-frame refresh: the caster re-render was the
       // single most expensive fixed pass AND its every-other-frame cadence
       // created the short/long frame judder that felt like 30 FPS.
-      if (this.experiments.has("empty")) {
+      if (this.worldCovered || this.experiments.has("empty")) {
         // `?diag=empty`: no 3D at all — what is left is the page's own cost.
+        // End screen up: its opaque snapshot hides the world (setWorldCovered).
         this.hud.sampleCpu(performance.now() - this.frameCpuStart, 0);
       } else if (this.composer && !this.experiments.has("nopost")) {
         // GIVRE: world + outline + FP overlay + FP outline + sRGB output in

@@ -2,12 +2,49 @@
 // passez `sfx: (name, opts) => monAudio.play(name)` à EndScreen : ce module est alors ignoré.
 // Noms émis : crack, shatter, whoosh, slam, thud, pop, tick, fanfare, defeat, stamp, vote, reveal, countdown, tink
 
+// PERF (EndScreen `warmIntro`) — ONE audio context for every end screen of the session,
+// opened before the match ends (prewarmSfx: an idle slot of the menu once the page has had a
+// user gesture, at the latest the click on PLAY) instead of in the frame where it ends — and
+// not one more per replay (they were never closed). Same graph, same sounds.
+let shared = null;
+
+function openAudio(volume) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  let ctx;
+  try {
+    ctx = new AC();
+  } catch {
+    return null;
+  }
+  const master = ctx.createGain();
+  master.gain.value = volume;
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -14;
+  comp.ratio.value = 6;
+  master.connect(comp).connect(ctx.destination);
+  const len = ctx.sampleRate;
+  const noise = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = noise.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  return { ctx, master, noise };
+}
+
+// Opens the shared context now, unless the page has had no user gesture yet (it would start
+// suspended, with a console warning): then the end screen opens it, as before.
+export function prewarmSfx() {
+  if (shared && shared.ctx.state !== 'closed') return;
+  if (typeof window === 'undefined' || navigator.userActivation?.hasBeenActive === false) return;
+  shared = openAudio(0.55);
+}
+
 export class Sfx {
   constructor(option = true, volume = 0.55) {
     this.handler = typeof option === 'function' ? option : null;
     this.enabled = option !== false;
     this.volume = volume;
     this.ctx = null;
+    this.shared = false; // (EndScreen warmIntro: the session's context, see prewarmSfx)
   }
 
   setEnabled(on) {
@@ -24,25 +61,23 @@ export class Sfx {
       if (this.ctx.state === 'suspended') this.ctx.resume?.().catch(() => {});
       return this.ctx;
     }
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return null;
-    try {
-      this.ctx = new AC();
-    } catch {
-      return null;
+    if (!this.shared) {
+      const audio = openAudio(this.volume);
+      if (!audio) return null;
+      this.ctx = audio.ctx;
+      this.master = audio.master;
+      this.noise = audio.noise;
+      return this.ctx;
     }
-    const ctx = this.ctx;
-    this.master = ctx.createGain();
+    if (!shared || shared.ctx.state === 'closed') shared = openAudio(this.volume);
+    if (!shared) return null;
+    this.ctx = shared.ctx;
+    this.master = shared.master;
     this.master.gain.value = this.volume;
-    const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -14;
-    comp.ratio.value = 6;
-    this.master.connect(comp).connect(ctx.destination);
-    const len = ctx.sampleRate;
-    this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
-    const d = this.noise.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-    return ctx;
+    this.noise = shared.noise;
+    // (opened earlier — maybe before any gesture, or suspended by a previous end screen)
+    if (this.ctx.state === 'suspended') this.ctx.resume?.().catch(() => {});
+    return this.ctx;
   }
 
   play(name, opts = {}) {

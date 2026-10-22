@@ -382,6 +382,8 @@ void main() {
 // ---------------------------------------------------------------- géométrie : titre
 
 let glyphCache = null;
+// `${glyph}|${segments}|main|marks` → [3 plates, extruded letter] (Intro3D.keepWarm)
+const titleGeometry = new Map();
 
 function glyphShapes(ch) {
   glyphCache ??= new Map();
@@ -646,6 +648,95 @@ function buildGlass({ hw, hh, impact, mode, R, density, thickness }) {
   return { geo, polys, maxR, ex, ey, count: polys.length };
 }
 
+// PERF (Intro3D.fastGlass) — buildGlass written into typed arrays of the exact size (counted
+// first) instead of growing JS arrays then converting them: the same values, bit for bit (the
+// same expressions, the same R() draws in the same order, the same float32 rounding, the same
+// index type), 3× less CPU — built in the frame where the match ends.
+// Equivalence test: scripts/test-endscreen-glass.mts.
+function buildGlassFast({ hw, hh, impact, mode, R, density, thickness }) {
+  const { polys, maxR, ex, ey } = fracture({ hw, hh, impact, mode, R, density });
+  let nv = 0; let ni = 0;
+  for (const poly of polys) { nv += 6 * poly.length; ni += 12 * poly.length - 12; }
+  const P = new Float32Array(nv * 3); const N = new Float32Array(nv * 3); const UV = new Float32Array(nv * 2);
+  const F = new Float32Array(nv); const CEN = new Float32Array(nv * 3); const VEL = new Float32Array(nv * 3);
+  const AX = new Float32Array(nv * 3); const SP = new Float32Array(nv); const DL = new Float32Array(nv);
+  const PRE = new Float32Array(nv * 3);
+  // (three's setIndex(array) picks 32 bits as soon as an index reaches 65535)
+  const idx = nv - 1 >= 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
+  let vb = 0; let ib = 0;
+  const z0 = thickness / 2; const z1 = -thickness / 2;
+  const axis = new THREE.Vector3();
+  let cx = 0; let cy = 0; let vel = null; let spin = 0; let delay = 0; let pre = null;
+  const put = (x, y, z, nx, ny, nz, face) => {
+    const v = vb++;
+    let j = v * 3;
+    P[j] = x; P[j + 1] = y; P[j + 2] = z;
+    N[j] = nx; N[j + 1] = ny; N[j + 2] = nz;
+    CEN[j] = cx; CEN[j + 1] = cy; CEN[j + 2] = 0;
+    VEL[j] = vel[0]; VEL[j + 1] = vel[1]; VEL[j + 2] = vel[2];
+    AX[j] = axis.x; AX[j + 1] = axis.y; AX[j + 2] = axis.z;
+    PRE[j] = pre[0]; PRE[j + 1] = pre[1]; PRE[j + 2] = pre[2];
+    j = v * 2;
+    UV[j] = (x + hw) / (2 * hw); UV[j + 1] = (y + hh) / (2 * hh);
+    F[v] = face; SP[v] = spin; DL[v] = delay;
+    return v;
+  };
+  for (const poly of polys) {
+    const c = centroid(poly);
+    const dx = c[0] - impact[0]; const dy = c[1] - impact[1];
+    const d = Math.hypot(dx, dy);
+    const dir = d > 1e-4 ? [dx / d, dy / d] : [R() - 0.5, R() - 0.5];
+    const near = 1 - smoothstep(0, maxR * 0.75, d);
+    if (mode === 'victory') {
+      const sp = (3 + 10 * near) * (0.6 + 0.8 * R());
+      vel = [dir[0] * sp, dir[1] * sp + 1.2 * R(), (7 + 24 * near) * (0.5 + 0.75 * R())];
+      spin = (2.5 + 9 * R()) * (R() < 0.5 ? -1 : 1);
+      delay = (d / maxR) * 0.07;
+    } else {
+      vel = [dir[0] * (0.3 + 1.3 * R()), dir[1] * (0.2 + 0.7 * R()) + 0.8 * R(), 0.5 + 2.8 * R()];
+      spin = (0.6 + 3.4 * R()) * (R() < 0.5 ? -1 : 1);
+      delay = (d / maxR) * 0.4 + R() * 0.12;
+    }
+    axis.set(R() - 0.5, R() - 0.5, (R() - 0.5) * 0.4).normalize();
+    pre = [dir[0] * (0.006 + 0.035 * near * R()), dir[1] * (0.006 + 0.035 * near * R()), -0.08 * near * R()];
+    cx = c[0]; cy = c[1];
+    const n = poly.length;
+    const f0 = vb;
+    for (const p of poly) put(p[0], p[1], z0, 0, 0, 1, 0);
+    for (let i = 1; i < n - 1; i++) { idx[ib++] = f0; idx[ib++] = f0 + i; idx[ib++] = f0 + i + 1; }
+    const b0 = vb;
+    for (const p of poly) put(p[0], p[1], z1, 0, 0, -1, 1);
+    for (let i = 1; i < n - 1; i++) { idx[ib++] = b0; idx[ib++] = b0 + i + 1; idx[ib++] = b0 + i; }
+    for (let i = 0; i < n; i++) {
+      const p = poly[i]; const q = poly[(i + 1) % n];
+      const lx = q[0] - p[0]; const ly = q[1] - p[1]; const len = Math.hypot(lx, ly) || 1;
+      const nx = ly / len; const ny = -lx / len;
+      const s0 = put(p[0], p[1], z0, nx, ny, 0, 2);
+      put(q[0], q[1], z0, nx, ny, 0, 2);
+      put(q[0], q[1], z1, nx, ny, 0, 2);
+      put(p[0], p[1], z1, nx, ny, 0, 2);
+      idx[ib++] = s0; idx[ib++] = s0 + 3; idx[ib++] = s0 + 2; idx[ib++] = s0; idx[ib++] = s0 + 2; idx[ib++] = s0 + 1;
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(P, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(UV, 2));
+  geo.setAttribute('aFace', new THREE.BufferAttribute(F, 1));
+  geo.setAttribute('aCenter', new THREE.BufferAttribute(CEN, 3));
+  geo.setAttribute('aVel', new THREE.BufferAttribute(VEL, 3));
+  geo.setAttribute('aAxis', new THREE.BufferAttribute(AX, 3));
+  geo.setAttribute('aSpin', new THREE.BufferAttribute(SP, 1));
+  geo.setAttribute('aDelay', new THREE.BufferAttribute(DL, 1));
+  geo.setAttribute('aPre', new THREE.BufferAttribute(PRE, 3));
+  geo.setIndex(new THREE.BufferAttribute(idx, 1));
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
+  return { geo, polys, maxR, ex, ey, count: polys.length };
+}
+
+// (equivalence test of the two glass builders: scripts/test-endscreen-glass.mts)
+export { buildGlass as buildGlassReference, buildGlassFast };
+
 function buildCracks({ polys, impact, ex, ey, halfWidth, R }) {
   const seen = new Set();
   const P = []; const SIDE = []; const DIST = []; const RAND = []; const STR = []; const idx = [];
@@ -699,6 +790,75 @@ function buildCracks({ polys, impact, ex, ey, halfWidth, R }) {
   return geo;
 }
 
+// PERF (Intro3D.fastGlass) — buildCracks with numeric edge keys (two integer point codes in a
+// map of sets, instead of three strings per edge) and typed arrays: the same edges kept, in
+// the same order, with the same R() draws — the same geometry, bit for bit.
+function buildCracksFast({ polys, impact, ex, ey, halfWidth, R }) {
+  let maxEdges = 0;
+  for (const poly of polys) maxEdges += poly.length;
+  const P = new Float32Array(maxEdges * 12); const SIDE = new Float32Array(maxEdges * 4);
+  const DIST = new Float32Array(maxEdges * 4); const RAND = new Float32Array(maxEdges * 4); const STR = new Float32Array(maxEdges * 4);
+  const seen = new Map(); // point code → codes of the points it is already joined to
+  const eps = 1e-3;
+  const onBorder = (a, b) =>
+    (Math.abs(a[0] + ex) < eps && Math.abs(b[0] + ex) < eps) || (Math.abs(a[0] - ex) < eps && Math.abs(b[0] - ex) < eps) ||
+    (Math.abs(a[1] + ey) < eps && Math.abs(b[1] + ey) < eps) || (Math.abs(a[1] - ey) < eps && Math.abs(b[1] - ey) < eps);
+  // same rounding as buildCracks' `${x},${y}` key, packed in one exact integer (< 2^42)
+  const code = (p) => (Math.round(p[0] * 500) + 1048576) * 2097152 + (Math.round(p[1] * 500) + 1048576);
+  let vb = 0;
+  for (const poly of polys) {
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i]; const b = poly[(i + 1) % poly.length];
+      if (onBorder(a, b)) continue;
+      const ca = code(a); const cb = code(b);
+      const lo = ca < cb ? ca : cb; const hi = ca < cb ? cb : ca;
+      let joined = seen.get(lo);
+      if (!joined) { joined = new Set(); seen.set(lo, joined); }
+      if (joined.has(hi)) continue;
+      joined.add(hi);
+      const lx = b[0] - a[0]; const ly = b[1] - a[1]; const len = Math.hypot(lx, ly);
+      if (len < 1e-4) continue;
+      const ux = lx / len; const uy = ly / len;
+      const mx = (a[0] + b[0]) / 2 - impact[0]; const my = (a[1] + b[1]) / 2 - impact[1];
+      const ml = Math.hypot(mx, my) || 1;
+      const radial = Math.abs((ux * mx + uy * my) / ml);
+      let str;
+      if (radial > 0.86) str = 1;
+      else if (radial < 0.4) { if (R() > 0.72) continue; str = 0.7; } else { if (R() > 0.45) continue; str = 0.5; }
+      const nx = -uy * halfWidth; const ny = ux * halfWidth;
+      const ax = a[0] - ux * halfWidth * 0.6; const ay = a[1] - uy * halfWidth * 0.6;
+      const bx = b[0] + ux * halfWidth * 0.6; const by = b[1] + uy * halfWidth * 0.6;
+      const da = Math.hypot(a[0] - impact[0], a[1] - impact[1]);
+      const db = Math.hypot(b[0] - impact[0], b[1] - impact[1]);
+      const rr = R();
+      const o = vb * 3;
+      P[o] = ax - nx; P[o + 1] = ay - ny; P[o + 2] = 0; P[o + 3] = ax + nx; P[o + 4] = ay + ny; P[o + 5] = 0;
+      P[o + 6] = bx + nx; P[o + 7] = by + ny; P[o + 8] = 0; P[o + 9] = bx - nx; P[o + 10] = by - ny; P[o + 11] = 0;
+      SIDE[vb] = -1; SIDE[vb + 1] = 1; SIDE[vb + 2] = 1; SIDE[vb + 3] = -1;
+      DIST[vb] = da; DIST[vb + 1] = da; DIST[vb + 2] = db; DIST[vb + 3] = db;
+      RAND[vb] = rr; RAND[vb + 1] = rr; RAND[vb + 2] = rr; RAND[vb + 3] = rr;
+      STR[vb] = str; STR[vb + 1] = str; STR[vb + 2] = str; STR[vb + 3] = str;
+      vb += 4;
+    }
+  }
+  const idx = vb - 1 >= 65535 ? new Uint32Array((vb / 4) * 6) : new Uint16Array((vb / 4) * 6);
+  for (let v = 0, i = 0; v < vb; v += 4) {
+    idx[i++] = v; idx[i++] = v + 1; idx[i++] = v + 2; idx[i++] = v; idx[i++] = v + 2; idx[i++] = v + 3;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(P.slice(0, vb * 3), 3));
+  geo.setAttribute('aSide', new THREE.BufferAttribute(SIDE.slice(0, vb), 1));
+  geo.setAttribute('aDist', new THREE.BufferAttribute(DIST.slice(0, vb), 1));
+  geo.setAttribute('aRand', new THREE.BufferAttribute(RAND.slice(0, vb), 1));
+  geo.setAttribute('aStr', new THREE.BufferAttribute(STR.slice(0, vb), 1));
+  geo.setIndex(new THREE.BufferAttribute(idx, 1));
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
+  return geo;
+}
+
+// (equivalence test of the two crack builders: scripts/test-endscreen-glass.mts)
+export { buildCracks as buildCracksReference, buildCracksFast };
+
 // ---------------------------------------------------------------- particules CPU (points)
 
 class PointPool {
@@ -738,6 +898,22 @@ class PointPool {
     });
     this.points = new THREE.Points(geo, this.mat);
     this.points.frustumCulled = false;
+  }
+
+  // Same state as a freshly constructed pool — including its Math.random() draws (the
+  // phases), in the same order: a reused pool behaves exactly like a new one.
+  renew() {
+    this.cursor = 0;
+    for (const a of [this.pos, this.vel, this.size, this.alpha, this.life, this.maxLife, this.grow, this.baseSize, this.baseAlpha, this.drag]) a.fill(0);
+    for (let i = 0; i < this.count; i++) this.phase[i] = Math.random() * 6.283;
+    this.points.geometry.attributes.aPhase.needsUpdate = true;
+    this.aPos.needsUpdate = true; this.aSize.needsUpdate = true; this.aAlpha.needsUpdate = true;
+  }
+
+  // Draws nothing at all: every point has alpha 0 (STAR_FRAG adds 0, DUST_FRAG discards).
+  get blank() {
+    for (let i = 0; i < this.count; i++) if (this.alpha[i] !== 0) return false;
+    return true;
   }
 
   spawn(x, y, z, vx, vy, vz, { size = 20, alpha = 1, life = 1, grow = 0, drag = 0 } = {}) {
@@ -827,6 +1003,12 @@ class Confetti {
     this.alive[i] = 1;
   }
 
+  // Draws nothing at all: no live piece (the others are zero-scale matrices, no fragment).
+  get blank() {
+    for (let i = 0; i < this.count; i++) if (this.alive[i]) return false;
+    return true;
+  }
+
   burst(n, origin, dir, spread, speed) {
     let made = 0;
     for (let i = 0; i < this.count && made < n; i++) {
@@ -909,7 +1091,40 @@ export class Intro3D {
     this.dock = null;
     this.mode = 'victory';
     this.slotFn = null;
+    // PERF (see EndScreen `warmIntro` / `skipEmptyDraws`): keepWarm = programs and title
+    // geometry kept from one build to the next (warm-up → end screen → replay); skipEmpty =
+    // draws that cannot change a pixel left out of the render.
+    this.keepWarm = false;
+    this.skipEmpty = false;
+    this.fastGlass = false; // (EndScreen `fastSnapshot`) buildGlassFast / buildCracksFast: same geometry, less CPU
+    this._hidden = new Array(16).fill(null);
+    this._nHidden = 0;
+    this._pinnedCount = 0;
+    this._anchors = {}; // (keepWarm, see _retire)
     this._buildStatic();
+  }
+
+  // A pooled instance (prewarmIntro3D) taken by a new end screen: exactly the state of a
+  // freshly constructed one — including its Math.random() draws, in the same order (shake
+  // seed, then the particle phases of _buildStatic) — on the already warm context.
+  adopt({ pixelRatio = Math.min(window.devicePixelRatio || 1, 2), reducedMotion = false, onCue = () => {} } = {}) {
+    this.clear();
+    this.reducedMotion = reducedMotion;
+    this.onCue = onCue;
+    this.renderer.setPixelRatio(this.quality === 'low' ? Math.min(1, pixelRatio) : pixelRatio);
+    this.camera.position.set(0, 0, CAM_Z);
+    this.camera.rotation.set(0, 0, 0);
+    this.w = 1; this.h = 1; this.aspect = 1;
+    this.t = 0;
+    this.running = false;
+    this.trauma = 0;
+    this.shakeSeed = Math.random() * 100;
+    this.cues = [];
+    this.dock = null;
+    this.mode = 'victory';
+    this.slotFn = null;
+    for (const pool of [this.sparkles, this.dust, this.puffs]) pool.renew();
+    return this;
   }
 
   _buildStatic() {
@@ -1184,24 +1399,31 @@ export class Intro3D {
       { mat: m.plateMid, d: bevelS * S + 0.16, z: zBack - 0.03, order: 2 },
       { mat: m.plateOut, d: bevelS * S + 0.205, z: zBack - 0.05, order: 1 },
     ];
-    const meshesFor = (shapes) => {
+    const meshesFor = (shapes, key) => {
       const g = new THREE.Group();
+      // PERF (keepWarm): the geometry of a glyph only depends on the glyph and the
+      // quality — built once (warm-up), shared by every later title, never disposed.
+      const cached = this.keepWarm ? titleGeometry.get(key) : undefined;
       const geos = [];
-      for (const r of rings) {
-        const pg = buildPlate(shapes, r.d / S, segs);
-        pg.scale(S, S, 1);
-        pg.translate(0, 0, r.z);
+      rings.forEach((r, i) => {
+        let pg = cached?.[i];
+        if (!pg) {
+          pg = buildPlate(shapes, r.d / S, segs);
+          pg.scale(S, S, 1);
+          pg.translate(0, 0, r.z);
+        }
         geos.push(pg);
         const pm = new THREE.Mesh(pg, r.mat);
         pm.renderOrder = r.order;
         g.add(pm);
-      }
-      const geo = extrude(shapes);
+      });
+      const geo = cached?.[3] ?? extrude(shapes);
       geos.push(geo);
       const fill = new THREE.Mesh(geo, [m.face, m.side]);
       fill.renderOrder = 4;
       g.add(fill);
-      g.userData.geos = geos;
+      if (this.keepWarm) titleGeometry.set(key, geos);
+      g.userData.geos = this.keepWarm ? [] : geos;
       return g;
     };
 
@@ -1221,14 +1443,14 @@ export class Intro3D {
       const pivot = new THREE.Group();
       const cx = x + adv / 2;
       pivot.position.set(cx, 0, 0);
-      const body = meshesFor(main);
+      const body = meshesFor(main, `${ch}|${segs}|main`);
       body.position.x = -adv / 2; // la géométrie est en coordonnées locales du glyphe
       pivot.add(body);
       let accentGroup = null;
       if (marks.length) {
         // accent séparé : il peut tomber tout seul (gag de la défaite)
         accentGroup = new THREE.Group();
-        const mk = meshesFor(marks);
+        const mk = meshesFor(marks, `${ch}|${segs}|marks`);
         const mb = shapeBox(marks[0]);
         const ax = ((mb.x0 + mb.x1) / 2) * S;
         const ay = mb.y0 * S;
@@ -1297,7 +1519,7 @@ export class Intro3D {
     this.snapTex = tex;
     const R = rng((Math.random() * 1e9) | 0);
     const density = this.quality === 'low' ? 0.75 : 1;
-    const glass = buildGlass({ hw, hh, impact, mode: this.mode, R, density, thickness: 0.07 });
+    const glass = (this.fastGlass ? buildGlassFast : buildGlass)({ hw, hh, impact, mode: this.mode, R, density, thickness: 0.07 });
     this.glassInfo = glass;
     this.glassMat = new THREE.ShaderMaterial({
       vertexShader: SHARD_VERT,
@@ -1328,7 +1550,7 @@ export class Intro3D {
     this.scene.add(this.backing);
 
     const pxWorld = (2 * hh) / this.h;
-    const crackGeo = buildCracks({ polys: glass.polys, impact, ex: glass.ex, ey: glass.ey, halfWidth: pxWorld * 2.2, R });
+    const crackGeo = (this.fastGlass ? buildCracksFast : buildCracks)({ polys: glass.polys, impact, ex: glass.ex, ey: glass.ey, halfWidth: pxWorld * 2.2, R });
     this.crackMat = new THREE.ShaderMaterial({
       vertexShader: CRACK_VERT,
       fragmentShader: CRACK_FRAG,
@@ -1490,7 +1712,48 @@ export class Intro3D {
     this.confetti.update(dt, t, this);
     this.confetti.mesh.visible = V;
 
-    if (render) this.renderer.render(this.scene, this.camera);
+    if (render) this._render();
+  }
+
+  // PERF (skipEmpty): the objects whose draw cannot change a single pixel of this frame stay
+  // out of the render — full-screen quads at opacity / amount 0 (the backdrop once the title
+  // is docked, the speed lines outside the slam, the impact flash), particle pools without a
+  // visible point, the title shadow before the dock, fully faded or not yet grown cracks.
+  // Each would only blend zero or discard every fragment, and none of them writes depth:
+  // same image, without their fragment work (two full-screen passes per frame once docked).
+  _render() {
+    if (this.skipEmpty) {
+      this._hideIfBlank(this.bg, this.bgMat.uniforms.uOpacity.value === 0);
+      this._hideIfBlank(this.speed, this.speedMat.uniforms.uAmount.value === 0);
+      this._hideIfBlank(this.impactFlash, this.flashMat.uniforms.uOpacity.value === 0);
+      if (this.sparkles.points.visible) this._hideIfBlank(this.sparkles.points, this.sparkles.blank);
+      if (this.puffs.points.visible) this._hideIfBlank(this.puffs.points, this.puffs.blank);
+      if (this.dust.points.visible) this._hideIfBlank(this.dust.points, this.dust.blank);
+      if (this.confetti.mesh.visible) this._hideIfBlank(this.confetti.mesh, this.confetti.blank);
+      if (this.shadow) this._hideIfBlank(this.shadow, this.shadowMat.uniforms.uOpacity.value === 0);
+      if (this.cracks) {
+        const cu = this.crackMat.uniforms;
+        this._hideIfBlank(this.cracks, cu.uAlpha.value === 0 || cu.uGrow.value === 0);
+      }
+    }
+    this.renderer.render(this.scene, this.camera);
+    const hidden = this._hidden;
+    for (let i = 0; i < this._nHidden; i++) {
+      hidden[i].visible = true;
+      hidden[i] = null;
+    }
+    this._nHidden = 0;
+    if (this.keepWarm) {
+      // a program compiled here (no warm-up ran) is kept for the next end screen too
+      const n = this.renderer.info.programs?.length ?? 0;
+      if (n !== this._pinnedCount) { pinPrograms(this.renderer); this._pinnedCount = n; }
+    }
+  }
+
+  _hideIfBlank(obj, blank) {
+    if (!blank || !obj.visible) return;
+    obj.visible = false;
+    this._hidden[this._nHidden++] = obj;
   }
 
   _updateDust(dt) {
@@ -1659,13 +1922,13 @@ export class Intro3D {
     if (this.word) {
       this.word.traverse((o) => { if (o.userData.geos) o.userData.geos.forEach((g) => g.dispose()); });
       this.scene.remove(this.word);
-      this.shadowMat?.dispose();
+      this._retire(this.shadowMat, 'shadow');
       this.word = null;
     }
     if (this.glass) {
-      this.scene.remove(this.glass); this.glass.geometry.dispose(); this.glassMat.dispose(); this.glass = null;
-      this.scene.remove(this.cracks); this.cracks.geometry.dispose(); this.crackMat.dispose(); this.cracks = null;
-      this.scene.remove(this.backing); this.backingMat.dispose(); this.backing = null;
+      this.scene.remove(this.glass); this.glass.geometry.dispose(); this._retire(this.glassMat, 'glass'); this.glass = null;
+      this.scene.remove(this.cracks); this.cracks.geometry.dispose(); this._retire(this.crackMat, 'crack'); this.cracks = null;
+      this.scene.remove(this.backing); this._retire(this.backingMat, 'backing'); this.backing = null;
     }
     this.snapTex?.dispose();
     this.snapTex = null;
@@ -1679,8 +1942,26 @@ export class Intro3D {
     this.speedMat.uniforms.uAmount.value = 0;
   }
 
+  // A material rebuilt at every start (glass, its backing, cracks, title shadow) going away.
+  // PERF (keepWarm): three numbers each shader source only while a material uses it — once
+  // the last one is disposed, the next material gets a new number, hence a new program key,
+  // and its program compiled again in the middle of the next intro (3 programs per end
+  // screen, the pinned ones never reused). The first material of each kind is kept instead
+  // (never drawn again, its snapshot texture let go): the numbers, so the programs, stay.
+  _retire(mat, kind) {
+    if (!mat) return;
+    if (this.keepWarm && !this._anchors[kind]) {
+      if (mat.uniforms.uSnap) mat.uniforms.uSnap.value = null;
+      this._anchors[kind] = mat;
+      return;
+    }
+    mat.dispose();
+  }
+
   dispose() {
     this.clear();
+    for (const k of Object.keys(this._anchors)) this._anchors[k].dispose();
+    this._anchors = {};
     this.sparkles.dispose(); this.dust.dispose(); this.puffs.dispose(); this.confetti.dispose();
     this.bgMat.dispose(); this.speedMat.dispose(); this.flashMat.dispose();
     for (const r of this.rings) r.material.dispose();
@@ -1688,4 +1969,163 @@ export class Intro3D {
     this.quadGeo.dispose();
     this.renderer.dispose();
   }
+}
+
+// ---------------------------------------------------------------- instance préchauffée
+//
+// PERF — at the end of a match the end screen used to create its WebGL context, compile its
+// programs (each one waited for by three's checkShaderErrors), upload its buffers and build the
+// extruded title, all in the frames where the match ends — then compile again mid-intro (the
+// letters, the rings: invisible at first). The warm-up does all of it beforehand, in the idle
+// time of the menu, on a 16 × 9 drawing buffer, and the instance is kept from one end screen to
+// the next (replays). Nothing is drawn on screen: the canvas is not in the page meanwhile.
+
+const pool = { spare: null, job: null };
+
+const nextIdle = (fn) => (typeof requestIdleCallback === 'function'
+  ? requestIdleCallback(fn, { timeout: 1500 })
+  : setTimeout(fn, 30));
+
+function programsReady(renderer) {
+  for (const p of renderer.info.programs ?? []) if (typeof p.isReady === 'function' && !p.isReady()) return false;
+  return true;
+}
+
+// Pinned: a program whose last material is disposed (the glass, cracks and title shadow are
+// rebuilt at every start) would otherwise be destroyed by three, then compiled again.
+function pinPrograms(renderer) {
+  for (const p of renderer.info.programs ?? []) {
+    if (!p.__endscreenPinned) { p.__endscreenPinned = true; p.usedTimes++; }
+  }
+}
+
+// Every object drawn, in view or not (programs and their draw-time variants), then restored.
+function forceVisible(root) {
+  const saved = [];
+  root.traverse((o) => { saved.push(o, o.visible, o.frustumCulled); o.visible = true; o.frustumCulled = false; });
+  return () => { for (let i = 0; i < saved.length; i += 3) { saved[i].visible = saved[i + 1]; saved[i].frustumCulled = saved[i + 2]; } };
+}
+
+class WarmJob {
+  constructor({ pixelRatio, quality, titles }) {
+    this.opts = { pixelRatio, quality };
+    this.titles = titles;
+    this.intro = null;
+    this.step = 0;
+    this.restore = null;
+    this.done = false;
+    this.promise = new Promise((resolve) => { this.resolve = resolve; });
+    this.snap = null;
+  }
+
+  // One step (one idle slot each); `sync` = run to completion now.
+  run(sync = false) {
+    if (this.done) return;
+    try {
+      switch (this.step) {
+        case 0: {
+          this.intro = new Intro3D(document.createElement('canvas'), this.opts);
+          this.intro.keepWarm = true;
+          this.intro.fastGlass = true;
+          this.intro.resize(16, 9);
+          const snap = document.createElement('canvas');
+          snap.width = 8; snap.height = 8;
+          const g = snap.getContext('2d');
+          g.fillStyle = '#5a6f8c';
+          g.fillRect(0, 0, 8, 8);
+          this.snap = snap;
+          break;
+        }
+        case 1: {
+          // Victory: extruded title + glass + every pool forced visible; the programs go to
+          // the GPU process (linked in parallel where the browser can, polled below).
+          const it = this.intro;
+          it.start('victory', this.snap, { titleText: this.titles[0] });
+          this.restore = forceVisible(it.scene);
+          it.renderer.compile(it.scene, it.camera);
+          break;
+        }
+        case 2: {
+          const it = this.intro;
+          if (!sync && !programsReady(it.renderer)) { setTimeout(() => this.run(), 16); return; }
+          it.renderer.render(it.scene, it.camera);
+          this.restore();
+          pinPrograms(it.renderer);
+          break;
+        }
+        case 3: {
+          // Defeat: the other title (accent), the dust; same programs, its own buffers.
+          const it = this.intro;
+          it.start('defeat', this.snap, { titleText: this.titles[1] });
+          const restore = forceVisible(it.scene);
+          it.renderer.render(it.scene, it.camera);
+          restore();
+          break;
+        }
+        default: {
+          const it = this.intro;
+          pinPrograms(it.renderer);
+          it.clear();
+          it.renderer.setSize(1, 1, false);
+          this.snap = null;
+          this.done = true;
+          pool.job = null;
+          if (!pool.spare) pool.spare = it; else it.dispose();
+          this.resolve();
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('[EndScreen] warm-up skipped', err);
+      this.done = true;
+      pool.job = null;
+      try { this.intro?.dispose(); } catch { /* */ }
+      this.resolve();
+      return;
+    }
+    this.step++;
+    if (sync) this.run(true);
+    else nextIdle(() => this.run());
+  }
+}
+
+// Starts the warm-up (idle slots of the page); resolves when the instance is ready.
+export function prewarmIntro3D({ pixelRatio = Math.min(window.devicePixelRatio || 1, 2), quality = 'high', titles = ['VICTOIRE', 'DÉFAITE'] } = {}) {
+  if (pool.spare) return Promise.resolve();
+  if (pool.job) return pool.job.promise;
+  const job = new WarmJob({ pixelRatio, quality, titles });
+  pool.job = job;
+  nextIdle(() => job.run());
+  return job.promise;
+}
+
+// Finishes the warm-up now (PLAY, a measurement about to start): nothing left for later.
+export function flushIntro3DWarmUp() {
+  pool.job?.run(true);
+}
+
+// The warm instance (removed from the pool), or null: the caller builds a new one as before.
+export function takeIntro3D(quality = 'high') {
+  if (pool.job) flushIntro3DWarmUp();
+  const it = pool.spare;
+  if (!it || it.quality !== quality) return null;
+  pool.spare = null;
+  if (it.renderer.getContext().isContextLost()) {
+    try { it.dispose(); } catch { /* */ }
+    return null;
+  }
+  return it;
+}
+
+// Back to the pool for the next end screen (its context, programs and buffers stay warm).
+export function releaseIntro3D(intro) {
+  if (!intro) return;
+  if (pool.spare || intro.renderer.getContext().isContextLost()) { intro.dispose(); return; }
+  pinPrograms(intro.renderer);
+  intro.keepWarm = true;
+  intro.clear();
+  intro.renderer.setSize(1, 1, false);
+  intro.onCue = () => {}; // (no reference kept to the end screen that is going away)
+  intro.slotFn = null;
+  pool.spare = intro;
 }
