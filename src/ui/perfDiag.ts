@@ -40,6 +40,27 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *   noflush  no gl.flush() at the pass boundaries (Game.flushGpu): the old
  *            submission, to compare
  *
+ * End of match (src/match/EndScreenPerf.ts) — on by default, these turn ONE
+ * change off (same image either way):
+ *
+ *   noendwarm     the end screen's first use (style sheet, fonts, audio
+ *                 context, WebGL context, programs, extruded title) when the
+ *                 match ends, as before — no warm-up in the menu's idle slots,
+ *                 nothing kept from one end screen to the next
+ *   noendcover    the frozen world still drawn (and composited) every frame
+ *                 behind the end screen's snapshot of it, even once that
+ *                 snapshot is known opaque everywhere
+ *   noendskip     every 3D draw of the end screen, even those that cannot
+ *                 change a pixel (backdrop and speed lines at opacity 0, empty
+ *                 particle pools, faded cracks)
+ *   noendsnap     the snapshot of the frozen world copied whole (8 MB at
+ *                 1080p) to test 64 of its pixels, and its glass built
+ *                 through growing JS arrays, as before
+ *   noendlayout   the results styled and laid out at the default unit first,
+ *                 then again at the real one (twice the style + layout of the
+ *                 whole end screen in the frame where the match ends)
+ *   oldendscreen  all of them: the old end of match, to compare
+ *
  * Several at once: `?diag=noflush,scale50`. Never for normal play.
  */
 export function perfExperiments(search: string = typeof location === "undefined" ? "" : location.search): ReadonlySet<string> {

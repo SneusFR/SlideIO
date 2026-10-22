@@ -155,6 +155,11 @@ export class UI {
 
   build(match) {
     this.destroy();
+    // PERF (EndScreen `earlyLayout`): the unit (--u) and the layout mode first, measured on
+    // the root alone (nothing inside it to lay out yet) — the content is then styled and laid
+    // out once, at its final size, instead of once at the default unit (focus, layout() below)
+    // and again after layout() changed --u (EndScreen._resize).
+    if (this.host.opts.earlyLayout) this.layout();
     this.match = match;
     this.mode = match.outcome;
     this.f = makeFormatters(this.host.opts.locale);

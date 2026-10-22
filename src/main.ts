@@ -217,7 +217,9 @@ async function main(): Promise<void> {
         await new Promise((r) => window.setTimeout(r, 1000));
       }
       if (inGame || entering || otherMenuOpen() || graphics.detecting || !graphics.needsDetection()) return;
-      flushMapBvhs();
+      // (the same preparation as a detection started from the settings page:
+      // BVH builds, the end screen's warm-up — never under the measure)
+      settingsPage.beforeDetection?.();
       void graphics.runDetection("first");
     })();
   }
@@ -240,6 +242,16 @@ async function main(): Promise<void> {
     setHudMenuActive(true);
   };
   matchEnd.onSoloReplay = () => setHudMenuActive(false);
+  // The end screen's first-time work (styles, fonts, audio and WebGL contexts,
+  // programs, title) in the menu's idle slots — finished before a detection
+  // measures the menu (beforeDetection), at the latest when the match starts
+  // (enterGameplay).
+  matchEnd.prewarm();
+  const detectionPrep = settingsPage.beforeDetection;
+  settingsPage.beforeDetection = () => {
+    detectionPrep?.();
+    matchEnd.flushPrewarm();
+  };
 
   // Player card name tag: the persisted name (the lobby / menu rename save
   // it) — refreshed on every entry / resume, the HUD change-detects it.
@@ -258,8 +270,9 @@ async function main(): Promise<void> {
     stopDetection();
     settingsPage.close();
     // Raycast BVHs not built yet (PLAY right after the menu appeared): now,
-    // before the camera flight — never during it.
+    // before the camera flight — never during it. Same for the end screen.
     flushMapBvhs();
+    matchEnd.flushPrewarm();
 
     sounds.fadeOutMusic(0.8);
     menu.fadeOut();
