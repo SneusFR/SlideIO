@@ -47,9 +47,9 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *                 context, WebGL context, programs, extruded title) when the
  *                 match ends, as before — no warm-up in the menu's idle slots,
  *                 nothing kept from one end screen to the next
- *   noendcover    the frozen world still drawn (and composited) every frame
- *                 behind the end screen's snapshot of it, even once that
- *                 snapshot is known opaque everywhere
+ *   noendcover    the frozen world still drawn every frame behind the end
+ *                 screen's snapshot of it, even once that snapshot is known
+ *                 opaque everywhere
  *   noendskip     every 3D draw of the end screen, even those that cannot
  *                 change a pixel (backdrop and speed lines at opacity 0, empty
  *                 particle pools, faded cracks)

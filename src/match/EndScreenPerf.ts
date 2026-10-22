@@ -12,9 +12,9 @@ import { perfExperiments } from "../ui/perfDiag";
  *          (EndScreen.prewarm: style sheet, fonts, audio context, 3D intro),
  *          then kept from one end screen to the next (replays)
  *                                                         — off: `noendwarm`
- *   cover  no world render (and no compositing of the game canvas) once
- *          the snapshot covering it is known opaque everywhere (read band
- *          by band over the first frames of the intro)   — off: `noendcover`
+ *   cover  no world render once the snapshot covering it is known opaque
+ *          everywhere (read band by band over the first frames of the
+ *          intro)                                         — off: `noendcover`
  *   skip   no 3D draw of the intro that cannot change a pixel (backdrop and
  *          speed lines at opacity 0, empty particle pools…) — off: `noendskip`
  *   snap   the snapshot of the frozen world and its glass: no copy of the

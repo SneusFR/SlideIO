@@ -443,7 +443,7 @@ export class Game {
   private simFrame = 0;
   /** The match is over: simulation frozen, inputs ignored (end screen). */
   private matchOver = false;
-  /** End screen up over its opaque snapshot of the frozen world: nothing to draw (setWorldCovered). */
+  /** End screen up over its opaque snapshot of the frozen world: no world to draw (setWorldCovered). */
   private worldCovered = false;
   /**
    * SOLO: the clock ran out. Fired once with the final results — the
@@ -3274,16 +3274,16 @@ export class Game {
    * PERF (end screen) — the end screen lays a copy of the last frame (its
    * snapshot) over the whole canvas: the frozen world behind it was still
    * drawn every frame (a full GPU frame, 7-10 ms on the Iris Xe laptop, next to
-   * the end screen's own 3D) and composited under it. Once that copy is known
-   * to be opaque everywhere (MatchEndController, EndScreen `onBackdropOpaque`),
-   * no pixel of the world can show: no world render, the canvas out of the
-   * compositing (same image). Uncovered before the end screen fades away.
-   * `?diag=noendcover` keeps drawing it (A/B).
+   * the end screen's own 3D). Once that copy is known to be opaque everywhere
+   * (MatchEndController, EndScreen `onBackdropOpaque`), no pixel of the world
+   * can show: no world render. The canvas keeps its last image and stays in
+   * the page as it was (the same layers as before for the browser to
+   * composite; hiding it as well would only save compositing one covered
+   * quad). Uncovered before the end screen fades away. `?diag=noendcover`
+   * keeps drawing it.
    */
   setWorldCovered(covered: boolean): void {
-    if (this.worldCovered === covered) return;
     this.worldCovered = covered;
-    this.renderer.domElement.style.visibility = covered ? "hidden" : "";
   }
 
   /**
