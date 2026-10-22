@@ -94,3 +94,30 @@ Mesurer sur le PC gamer lui-même (panneau navigateur de Claude sur l'écran 244
 
 Toujours : sauvegarder puis remettre les réglages du joueur (`slideio.settings`), ne pas mesurer
 pendant qu'il joue sur la même machine, le prévenir avant chaque test.
+
+## 22/10 au soir — mesures sur le PC gamer lui-même (conversation reliée au PC)
+
+Panneau navigateur de l'application Claude sur le PC gamer (RTX 2080 Super, D3D11, 239,8 Hz),
+build de production, Ultra (ligne `Setup` identique à celle du propriétaire), Givre, 8 bots, joueur
+scripté au paintball ; panneau 1826 × 1278 (lui : 2559 × 1440). Détail : PERFORMANCE.md, « Les chutes
+au kill, mesurées sur le PC gamer (20ᵉ passe) » ; outils : `tools/perf/pane/killwatch.js`,
+`segprobe.js`, `firsts.js`, `hudinject.js` et les pièges du README.
+
+- **L'attente GPU de 14 ms au kill = la première HEADSHOT** (ou tout premier aspect de badge jamais
+  dessiné) : 16,7 ms = jeu 3,4 + navigateur 0,6 + attente ~12, reproduit sans kill en reposant la seule
+  commande `medal.show` dans le vrai HUD ; une fois par processus GPU. Le préchauffage ne dessinait pas
+  les badges sans étoile ni à 2 étoiles. **Correctif prêt** (branche `pc/medal-warmup`, commit 277e751 :
+  `medals/medalLooks.ts`, deux passes de préchauffage, `scripts/test-hud-warmup-medals.mts`), **pas
+  encore livré ni vérifié** : il faut le déployer puis le vérifier au PC gamer avec un cache GPU froid
+  (fermer l'appli Claude, vider son cache GPU, rouvrir), et relever l'étape `HUD` de la ligne `[BOOT]`.
+- **Les chutes à chaque kill (tout préparé)** : 0-7 images manquées par kill (3-4 en moyenne) avec le
+  HUD, 0-2 (0,4) HUD masqué pour le même CPU d'image du kill (4,4-6,2 ms) : la somme du pic de CPU et du
+  travail du HUD dans le processus GPU au même moment. **À mesurer** : A/B HUD affiché / masqué en
+  alternance dans une même partie chaude (~20 kills), chaque image manquée classée CPU ou attente ; puis
+  `?diag=paintfps30` / `paintss100` (peinture de plaque).
+- **La pause « navigateur 50 ms » au tir : pas reproduite** en 4 min (57 000 images) ; ramasse-miettes
+  ~1/s, +16,8 Mo/s à 240 FPS, pire image liée à une collection 20,9 ms ; plancher du tas +3 Mo/min.
+  Demander au propriétaire la ligne `[hitch]` de la console (F12) si elle revient.
+- Le profil du panneau (localStorage du site) a été rendu **vide**, comme au départ.
+- perf-16 (autre conversation) pas encore reçu : le vérifier au PC gamer, kill par kill, avant toute
+  livraison ; rebaser `pc/medal-warmup` dessus s'il ne couvre pas déjà les badges.
