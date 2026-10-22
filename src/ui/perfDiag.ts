@@ -45,7 +45,10 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *   hudanim  the HUD's previous animation CSS + Bean Buddy markup: the idle
  *            motions that repainted / re-rasterized at every frame (SVG-child
  *            animations, clip-path / mask on animated elements, the FAMAS
- *            wave's background-position…) — hud.css « PERF — animations »
+ *            wave's background-position, the K.O. banner's translateX(-50%)
+ *            keyframes…) and the medal ribbon tails' filtered shadow (the
+ *            ribbon repainted at every frame of a medal's pop) — hud.css
+ *            « PERF — animations »
  *   paintssNN  the weapon plate's 3D paint rendered at NN % of the screen's
  *            pixel density per axis instead of 200 % (src/ui/paint/PaintLayer.ts):
  *            its GPU cost on a real GPU (paintss100 ≈ 3× fewer pixels at 1080p)

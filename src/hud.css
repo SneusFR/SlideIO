@@ -1987,28 +1987,33 @@
    rasterizes, and its raster runs in the browser's GPU process — the one the
    game's own frames need. A motion stays off the main thread and off the
    rasterizer only when it is a transform / opacity animation of an element
-   with a CSS box, which nothing inside repaints. Three patterns broke that at
-   EVERY frame, at rest:
-     - CSS animations of SVG CHILDREN (Bean Buddy's leaves, eyes, sweat drop):
-       the drop's, even hidden (an SVG element under a display:none group
-       keeps its animation, which no compositor can run), asked for a main
-       frame at every refresh; each one re-ran the SVG's style and layout,
-       and the portrait's layer was rasterized again (bench: ~6 tiles per
-       frame at rest);
+   with a CSS box, which nothing inside repaints. Patterns that broke that
+   at EVERY frame:
+     - CSS animations of SVG CHILDREN (Bean Buddy's leaves, eyes, sweat drop)
+       and of the portrait's <svg> root (its breathing): Chrome leaves them
+       on the main thread (TransformCannotBeAcceleratedOnTarget) — a main
+       frame at every refresh, the SVG's style and layout re-run, the
+       portrait's layer rasterized again (bench: ~6 tiles per frame at rest);
      - clip-path / mask ON the animated element (dash chevrons, heal
        sparkles, the reload ring): the compositor needs a mask layer and an
        offscreen pass per element at every frame — on a static child, the
        clip is painted once into the moving layer instead;
-     - background-position keyframes (the FAMAS wave): a repaint by design.
+     - background-position keyframes (the FAMAS wave): a repaint by design;
+     - a percentage in transform keyframes (the K.O. banner's
+       translateX(-50%)): it depends on the box size, main thread again;
+     - a pixel-moving filter (drop-shadow) inside a layer whose ancestors
+       animate (the medal ribbon's tails): the whole ribbon repainted at
+       every frame of a medal's pop.
    And the portrait's idle scale on its own layer (real Iris Xe, production
    HUD iframe, 1080p: 45-46 FPS → 60.1, 0 late frame, with only
    `will-change: transform` on .buddy-art).
    `?diag=hudanim` (src/ui/perfDiag.ts) puts .diag-hudanim on <html> (the HUD
    iframe's, or the game page's with ?hud=inline): every override below keys
    on its ABSENCE and CombatHUD builds the one-SVG portrait — the previous
-   CSS and markup, to A/B on a real GPU. Same pictures at rest; while they
-   move, a turned / slid LAYER is resampled by the compositor where the old
-   code re-rasterized the shape (sub-pixel edge differences).
+   CSS and markup, to A/B on a real GPU. Same pictures but for edge
+   anti-aliasing: a layer kept at a fixed raster scale, or turned / slid by
+   the compositor, is resampled where the old code re-rasterized the shape
+   (Bean Buddy's outline, the FAMAS wave's rounded end, the medal ribbon).
    ========================================================================== */
 
 /* Bean Buddy portrait as stacked SVG layers (hudIcons BEAN_BUDDY_LAYERS,
@@ -2106,3 +2111,30 @@ html:not(.diag-hudanim) #knockdown-hint.can-get-up {
   0%, 100% { transform: translateY(0) rotate(-1.5deg); }
   50% { transform: translateY(-4px) rotate(1.5deg); }
 }
+
+/* Medal ribbon tails: their hard shadow is a copy of the tail
+   (hudIcons.ribbonTailSvg), filled with the shadow's colour and 3 px lower,
+   instead of `filter: drop-shadow(0 3px 0 rgba(40, 27, 12, 0.85))` on the
+   tail. Under the pop's animated transforms, that filter had the whole
+   ribbon (stroked label included) repainted and re-rasterized at every
+   frame of a medal's entrance. The shadow itself is the same: the tail's
+   coverage, offset by 3 px, in that colour at 85 % (group opacity of the
+   opaque copy). The ribbon, now rasterized once per pop (at the pop's
+   largest scale, its `will-change: transform`), is resampled by the
+   compositor where it used to be re-rasterized at every frame: its edges
+   and label differ by anti-aliasing while a medal shows (bench: ≤ 1.4 %
+   of the screen, max 82 / 255). */
+.md-tail-shadow {
+  position: absolute;
+  top: 12px; /* .md-tail's 9 px + the shadow's 3 px */
+  width: 24px;
+  height: calc(100% - 6px);
+  z-index: 0;
+  overflow: visible;
+  opacity: 0.85;
+}
+.md-tail-shadow path { fill: rgb(40, 27, 12); stroke: rgb(40, 27, 12); }
+.md-tail-shadow-l { left: -16px; }
+.md-tail-shadow-r { right: -16px; }
+html:not(.diag-hudanim) .md-tail { filter: none; }
+html.diag-hudanim .md-tail-shadow { display: none; }

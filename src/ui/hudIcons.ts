@@ -420,12 +420,19 @@ export function medalRaysSvg(): string {
   </svg>`;
 }
 
-/** Notched ribbon tail tucked behind the medal ribbon (fill from CSS). */
+/**
+ * Notched ribbon tail tucked behind the medal ribbon (fill from CSS), after
+ * its hard shadow: the same tail in the shadow's colour, 3 px lower
+ * (hud.css `.md-tail-shadow`). The `filter: drop-shadow` it stands for
+ * (kept under `?diag=hudanim`) had the whole ribbon repainted and
+ * re-rasterized at every frame of a medal's pop.
+ */
 export function ribbonTailSvg(side: "l" | "r"): string {
   const d = side === "l" ? "M25 2H2l7 13-7 13h23z" : "M1 2h23l-7 13 7 13H1z";
-  return `<svg class="md-tail md-tail-${side}" viewBox="0 0 26 30" preserveAspectRatio="none" aria-hidden="true">
+  const tail = (cls: string): string => `<svg class="${cls}" viewBox="0 0 26 30" preserveAspectRatio="none" aria-hidden="true">
     <path d="${d}" stroke="${INK}" stroke-width="3" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
   </svg>`;
+  return tail(`md-tail-shadow md-tail-shadow-${side}`) + tail(`md-tail md-tail-${side}`);
 }
 
 /** Tier star above the medal disc (KILL = 1, DOUBLE = 2, TRIPLE = 3…). */
