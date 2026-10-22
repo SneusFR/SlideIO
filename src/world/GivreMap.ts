@@ -180,6 +180,10 @@ export class GivreMap {
     };
     this.packedLightmap = packedLightmap;
     const specialised = applyMapShader(this.mapShaderTargets, this.mapShader, this.mapShaderMaterials, undefined, packedLightmap);
+    // The specialised materials are clones (Material.copy never copies
+    // onBeforeCompile): the depth prepass's `invariant gl_Position` goes back
+    // on, or the batches would no longer compute the proxies' exact depth.
+    this.depthPrepass?.repatch();
     // One line on every build (the A/B on a real GPU reads which shader ran).
     console.info(
       this.mapShader
@@ -194,8 +198,11 @@ export class GivreMap {
       //   givreMapShader.list()                  mesh → option key
       (window as unknown as Record<string, unknown>).givreMapShader = {
         session: this.mapShader,
-        set: (options: MapShaderOptions | null, extra?: { key: string; patch: ShaderPatch }) =>
-          applyMapShader(this.mapShaderTargets, options, this.mapShaderMaterials, extra, this.packedLightmap),
+        set: (options: MapShaderOptions | null, extra?: { key: string; patch: ShaderPatch }) => {
+          const swapped = applyMapShader(this.mapShaderTargets, options, this.mapShaderMaterials, extra, this.packedLightmap);
+          this.depthPrepass?.repatch();
+          return swapped;
+        },
         list: () =>
           this.mapShaderTargets.map(
             (t) => `${t.mesh.name}: ${(t.mesh.material as THREE.Material).userData.mapShader ?? "stock"}`,

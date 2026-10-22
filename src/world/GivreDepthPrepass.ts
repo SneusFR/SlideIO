@@ -391,6 +391,18 @@ export class GivreDepthPrepass {
     for (const batch of this.covered) patchInvariantPosition(batch.material as THREE.Material);
   }
 
+  /**
+   * Puts `invariant gl_Position` back on the covered meshes' CURRENT
+   * materials. A material swapped in after the prepass was built — the map's
+   * specialised shader (GivreMapMaterial) is a CLONE, and Material.copy never
+   * copies onBeforeCompile — has lost the patch, and only the patch makes the
+   * main pass compute the same depth as the proxies (GLSL ES 3.00 §4.6.1).
+   * Idempotent (a material already patched is left as it is).
+   */
+  repatch(): void {
+    for (const mesh of this.covered) patchInvariantPosition(mesh.material as THREE.Material);
+  }
+
   /** Hidden proxies = the frame without prepass (DEV / bench A/B; the batches keep their invariant patch, a no-op). */
   set enabled(on: boolean) {
     this.group.visible = on;

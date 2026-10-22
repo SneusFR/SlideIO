@@ -9,7 +9,8 @@
 //      shadow caster / shot target, and EXACTLY the covered meshes' triangles per side (bit
 //      patterns of the positions, vertex order kept; ≥ minArea); the covered materials declare
 //      `invariant gl_Position` (new program cache key), the refused ones are left untouched;
-//      the load-time check (verify) with a fake renderer;
+//      the load-time check (verify) with a fake renderer; the map's specialised shader swapped in
+//      afterwards (clones: the invariant patch is lost) and put back by repatch;
 //   5. same position computation: the proxy's vertex shader is three's begin_vertex +
 //      project_vertex, and between those two chunks the standard / physical shader only has
 //      chunks that are inactive for a plain mesh (morph targets, skinning, displacement) + the
@@ -35,6 +36,7 @@ import {
   unpatchInvariantPosition,
   weldedPositions,
 } from "../src/world/GivreDepthPrepass.ts";
+import { applyMapShader, MAP_SHADER_EXACT, type MapShaderTarget } from "../src/world/GivreMapMaterial.ts";
 
 let passed = 0;
 const ok = (label: string) => {
@@ -356,6 +358,52 @@ for (const minArea of [0, 0.1]) {
   assert.equal(prepass.enabled, false, "any difference → off for the session");
   assert.ok(camera.matrixWorld.equals(before), "camera restored");
   ok("verify: logarithmic depth refused; identical → on; any differing pixel → off for the session; camera restored");
+}
+
+// ---------------------------------------------------------------- 4c. map shader swapped in after the prepass (as GivreMap)
+{
+  // GivreMap builds the prepass (buildVisual), THEN swaps the map's specialised
+  // shader in (GivreMapMaterial: clones — Material.copy never copies
+  // onBeforeCompile): without `repatch` the batches lose `invariant gl_Position`.
+  const prepass = new GivreDepthPrepass(occluders, grid, { knownPatch: isUber, minArea: 0.1 });
+  const targets: MapShaderTarget[] = prepass.covered.map((mesh) => ({ mesh, stock: mesh.material as THREE.Material }));
+  const cache = new Map<string, THREE.Material | null>();
+  const swapped = applyMapShader(targets, MAP_SHADER_EXACT, cache);
+  assert.ok(swapped > 0, "the specialised shader replaces covered materials");
+  const lost = prepass.covered.filter((b) => !hasInvariantPosition(b.material as THREE.Material)).length;
+  assert.ok(lost > 0, "a specialised clone has lost the invariant patch (what repatch is for)");
+  prepass.repatch();
+  const real = () =>
+    ({
+      vertexShader: THREE.ShaderLib.physical.vertexShader,
+      fragmentShader: THREE.ShaderLib.physical.fragmentShader,
+      uniforms: {},
+    }) as unknown as THREE.WebGLProgramParametersWithUniforms;
+  let specialisedSeen = 0;
+  for (const b of prepass.covered) {
+    const m = b.material as THREE.Material;
+    assert.equal(hasInvariantPosition(m), true, `${m.name}: invariant again`);
+    const shader = real();
+    m.onBeforeCompile(shader, undefined as unknown as THREE.WebGLRenderer);
+    assert.ok(shader.vertexShader.startsWith("invariant gl_Position;\n"), `${m.name}: invariant first`);
+    assert.equal(shader.vertexShader.split("invariant gl_Position;").length, 2, `${m.name}: declared once`);
+    if (m.userData.mapShader) {
+      specialisedSeen++;
+      // the specialisation itself still runs under the patch (noIbl: RE_IndirectSpecular behind USE_ENVMAP)
+      assert.ok(shader.fragmentShader.includes("#ifdef USE_ENVMAP\n#define RE_IndirectSpecular"), `${m.name}: still specialised`);
+      assert.ok(m.customProgramCacheKey().includes("givre-map-shader-v1") && m.customProgramCacheKey().endsWith("+invariant-position"));
+    }
+  }
+  assert.equal(specialisedSeen, swapped);
+  // DEV `givreMapShader.set(null)` (stock back) and set(options) again: still patched.
+  applyMapShader(targets, null, cache);
+  prepass.repatch();
+  for (const b of prepass.covered) assert.equal(hasInvariantPosition(b.material as THREE.Material), true);
+  applyMapShader(targets, MAP_SHADER_EXACT, cache);
+  prepass.repatch();
+  for (const b of prepass.covered) assert.equal(hasInvariantPosition(b.material as THREE.Material), true);
+  applyMapShader(targets, null, cache); // (stock materials again for the next section)
+  ok(`map shader swapped in after the prepass: ${lost} of ${swapped} specialised clones had lost invariant gl_Position, repatch puts it back (specialisation kept, own program keys)`);
 }
 
 // ---------------------------------------------------------------- 5. same position computation
