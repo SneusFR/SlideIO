@@ -13,6 +13,11 @@ AVANT le code du jeu, ce qui donne la scène, la caméra et les personnages au j
 | `match.js` | Menu → partie avec N bots → faux verrouillage du pointeur → calibrage de la souris de `__rp`. |
 | `glcensus.js` | `window.__gc` : appels WebGL lourds ou synchrones PAR IMAGE (compilations, téléversements, readPixels, getError…), liés aux kills / morts / réapparitions, + Long Animation Frames (scripts) + chutes du tas JS (ramasse-miettes). |
 | `heaprate.js` | Déchets mémoire produits par image (`performance.memory`, Chromium). |
+| `killwatch.js` | `window.__kw` (PC gamer, 22/10) : CHAQUE image du jeu avec la découpe de la ligne `Hitch` (`lead` = retard du callback du jeu sur l'horodatage rAF, `jeu`, `navigateur` = message posté en fin d'image, `attente` = le reste), l'état du joueur, le tir, les commandes envoyées au HUD, les appels WebGL notables, les Long Animation Frames. `__kw.report()` : pires images avec leur contexte, images autour de chaque kill / mort / réapparition. |
+| `segprobe.js` | `window.__sp` : temps GPU de CHAQUE PASSE (une requête TIME_ELAPSED par liaison de framebuffer). **À lire avec prudence** : une requête de temps mesure l'horloge du GPU entre deux points, donc le travail d'un AUTRE client du processus GPU (HUD, compositeur) qui s'intercale après un `gl.flush()` du jeu y est compté. Un « pic GPU du jeu » sans attente côté jeu = du travail de quelqu'un d'autre. Avec `__bz.mode = "off"` (deux requêtes de temps ne se chevauchent pas). |
+| `firsts.js` | `window.__fd` : premières fois (programme, formats d'attributs du VAO, framebuffer) PAR DESSIN — ce qu'ANGLE / D3D11 compile paresseusement dans le processus GPU au premier dessin. À évaluer AVANT `boot.js` (dans la même fenêtre) pour voir aussi le préchauffage ; `__fd.start()` ne garde ensuite que les nouvelles. 22/10 : 0 en partie (le préchauffage 3D est complet). |
+| `hudinject.js` | `window.__hi` : garde le port du HUD, capture les vraies commandes (avec leurs arguments) et en reposte une seule, sans kill (`__hi.send([["medal.show", "HEADSHOT", 1]])`), pour isoler le coût d'un effet du HUD dans le vrai HUD (iframe). `__hi.effect()` : pire image et images manquées après chaque injection. C'est ce qui a trouvé l'attente GPU de 14 ms au kill (première médaille sans étoile). |
+| `analyze.js` | Rapport d'un passage `killwatch.js` joint à `segprobe.js` et `firsts.js`. |
 
 ## Déroulé (panneau navigateur de Claude, outils `Claude_Browser__*`)
 
@@ -28,6 +33,22 @@ Pièges : le panneau doit être **affiché et au premier plan** (sinon le naviga
 `requestAnimationFrame` à ~1/s) ; `javascript_exec` abandonne après 45 s → lancer en asynchrone puis
 interroger ; l'émulation de taille (`resize_window`) réduit l'image à l'écran du panneau, donc sous-estime
 le coût du compositeur ; ne jamais mesurer pendant que le propriétaire joue sur la même machine.
+
+Pièges vus sur le PC gamer (22/10) :
+- **Une partie solo dure 5 min** : à la fin, l'écran de fin fait voter les bots et peut **changer de carte**
+  (`slideio.mapId`, rechargement). Repartir d'une page légère avant les 5 min, et remettre `slideio.mapId`
+  avant chaque `boot.js`.
+- Le profil du panneau est **vierge** pour ce site : `boot.js` ne règle le preset que si `slideio.settings`
+  existe — l'écrire avant (`{ v: 1, graphics: { preset: "ultra" }, perfPanel: "full" }`), avec
+  `slideio.mapId` et `slideio.loadout.v1`. À la fin, tout effacer (localStorage, sessionStorage) pour
+  rendre le profil tel qu'il était.
+- `performance.memory` lu dans un callback rAF reste figé : l'échantillonner par `setInterval`.
+- **Les « premières fois » du processus GPU** (un aspect du HUD jamais dessiné) se paient une seule fois
+  par processus GPU du navigateur — et le panneau partage celui de l'application Claude. Après une première
+  partie, elles ne se voient plus, même en rechargeant la page : pour les mesurer, injecter des aspects
+  encore jamais montrés (`hudinject.js`), ou repartir d'un cache GPU froid.
+- L'interface de l'application Claude passe par le même processus GPU que le panneau : pendant une mesure,
+  personne ne doit faire défiler la conversation ni taper dedans.
 
 ## Ce que dit le panneau de debug (en partie)
 
