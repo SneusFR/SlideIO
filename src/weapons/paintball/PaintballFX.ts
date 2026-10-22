@@ -4,7 +4,7 @@ import { PaintSplats, hitBarycentric } from "./PaintSplats";
 import type { PaintHit } from "./PaintballProjectiles";
 import { PaintJets, type PaintballAnchor } from "./PaintJets";
 import { paintPaletteColors } from "./PaintJetSettings";
-import { raycastSkinnedMesh, type SkinnedHit } from "../../effects/SkinnedRaycast";
+import { nextSkinnedRaycastFrame, raycastSkinnedMesh, type SkinnedHit } from "../../effects/SkinnedRaycast";
 
 /** Surface splat diameter (m): 3× the pack's 0.32 m, matching the 3× ball. */
 const SPLAT_SIZE = 0.96;
@@ -147,6 +147,31 @@ export class PaintballFX {
   warmCharacter(root: THREE.Object3D): void {
     const body = this.bodyOf(root);
     if (body) this.prepare(body);
+  }
+
+  /**
+   * CPU warm-up of the character hit path (load time, on a warm clone): the
+   * visual skinned raycast, the barycentric lookup and the paint spread run a
+   * few times, so the FIRST real character hit of the session runs compiled
+   * code instead of cold, interpreted loops over the body's vertices and
+   * triangles (a one-off hitch while shooting). The clone's paint is
+   * cleared again; nothing is drawn differently.
+   */
+  warmHitPath(root: THREE.Object3D, runs = 6): void {
+    const body = this.bodyOf(root);
+    if (!body || !this.prepare(body)) return;
+    root.updateMatrixWorld(true);
+    const center = root.getWorldPosition(new THREE.Vector3());
+    center.y += 0.9;
+    const origin = center.clone().add(new THREE.Vector3(0.3, 0.2, 4));
+    const dir = new THREE.Vector3().subVectors(center, origin).normalize();
+    const color = new THREE.Color(1, 1, 1);
+    for (let i = 0; i < runs; i++) {
+      nextSkinnedRaycastFrame(); // a real skinning pass each time (per-frame cache)
+      const hit = this.characterHit(root, origin, dir, center);
+      if (hit?.mesh && hit.faceIndex !== undefined && hit.bary) this.splats.paintHit(hit.mesh, hit.faceIndex, hit.bary, color);
+    }
+    this.splats.clearCharacter(body);
   }
 
   /**

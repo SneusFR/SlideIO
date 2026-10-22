@@ -75,7 +75,7 @@ import { ParticleSystem } from "../effects/ParticleSystem";
 import { Shockwave } from "../effects/Shockwave";
 import { fxLights } from "../effects/FXLightPool";
 import { StaticShadowCache, findStaticShadowSetup } from "../effects/StaticShadowCache";
-import { nextSkinnedRaycastFrame } from "../effects/SkinnedRaycast";
+import { nextSkinnedRaycastFrame, warmSkinnedRaycast } from "../effects/SkinnedRaycast";
 import { markFrozenMapsFresh } from "../effects/matrixFresh";
 import { runKillPrep, setKillPrepGpu } from "../effects/KillPrep";
 import { warmUpEnemyHealthBars } from "../bots/BotModel";
@@ -186,7 +186,7 @@ import { GpuTimer, gpuLabel, timeDraws, timePasses } from "../ui/GpuTimer";
 import { pinNewPrograms } from "../effects/ProgramPin";
 import { inSkeletonFrame } from "../effects/SkeletonFrameDedupe";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
-import { loadCharacterAsset, stripEnemyOutline } from "../characters/PotatoCharacter";
+import { POTATO_BODY_MESH, loadCharacterAsset, stripEnemyOutline } from "../characters/PotatoCharacter";
 
 /**
  * PERF (loading): every asset the loading phase needs, requested at its very
@@ -2022,7 +2022,36 @@ export class Game {
       this.fpOutfit.setSelection(outfit);
       this.sendNetworkOutfit(outfit);
     }
+    this.warmHitLoops();
     this.input.requestPointerLock();
+  }
+
+  /** Last run of warmHitLoops (performance.now()). */
+  private hitLoopsWarmAt = -Infinity;
+
+  /**
+   * PLAY / resume (a user gesture, between two frames): the visual raycast of
+   * the paint / water hits on a character compiled again before the fight —
+   * its code goes cold in a long menu, and the first hit of the match then
+   * paid ≈ 12-20 ms (bench) on its frame (see warmSkinnedRaycast). On the
+   * cached template's body; at most every 20 s.
+   */
+  private warmHitLoops(): void {
+    const now = performance.now();
+    if (now - this.hitLoopsWarmAt < 20000) return;
+    this.hitLoopsWarmAt = now;
+    void loadCharacterAsset()
+      .then((asset) => {
+        const bodies: THREE.SkinnedMesh[] = [];
+        asset.template.traverse((o) => {
+          const sm = o as THREE.SkinnedMesh;
+          if (sm.isSkinnedMesh && sm.name === POTATO_BODY_MESH && !sm.userData.enemyOutline) bodies.push(sm);
+        });
+        if (bodies[0]) warmSkinnedRaycast(bodies[0]);
+      })
+      .catch(() => {
+        /* no character asset: nothing to warm */
+      });
   }
 
   /**
@@ -2130,6 +2159,9 @@ export class Game {
       const painted = skeletonClone(asset.template);
       painted.position.copy(far);
       this.paintballRifle.fx.warmCharacter(painted);
+      // FIRST CHARACTER HIT (CPU): the visual skinned raycast + paint spread
+      // ran cold at the first paint hit of the session — compiled now.
+      this.paintballRifle.fx.warmHitPath(painted);
       paintedWarm = painted;
       temp.push(painted);
       // WATER FAMAS: the wet skin is another program, and so is each
@@ -2141,6 +2173,7 @@ export class Game {
         clone.position.copy(far);
         if (order === "paint+wet") this.paintballRifle.fx.warmCharacter(clone);
         this.waterFamas.fx.warmCharacter(clone);
+        if (order === "wet") this.waterFamas.fx.warmHitPath(clone); // (CPU: first wet hit, as the paint above)
         if (order === "wet+paint") this.paintballRifle.fx.warmCharacter(clone);
         skinWarm.push({ root: clone, order });
         temp.push(clone);

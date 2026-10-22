@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { WetMarks, waterHitBarycentric } from "./WetMarks";
 import { WaterJets, type WaterJetHit } from "./WaterJets";
 import { WaterFamasConfig } from "../../../shared/combat/WaterFamasRules";
-import { raycastSkinnedMesh, type SkinnedHit } from "../../effects/SkinnedRaycast";
+import { nextSkinnedRaycastFrame, raycastSkinnedMesh, type SkinnedHit } from "../../effects/SkinnedRaycast";
 
 /** Name of the Potato body SkinnedMesh (the wettable skin). */
 const BODY_MESH = "Potato";
@@ -89,6 +89,28 @@ export class WaterFamasFX {
   warmCharacter(root: THREE.Object3D): void {
     const body = this.bodyOf(root);
     if (body) this.marks.attach(body);
+  }
+
+  /**
+   * CPU warm-up of the character hit path (load time, on a warm clone): the
+   * visual skinned raycast, the barycentric lookup and the soak spread run a
+   * few times — the FIRST real character hit of the session then runs
+   * compiled code (see PaintballFX.warmHitPath). The clone is dried again.
+   */
+  warmHitPath(root: THREE.Object3D, runs = 6): void {
+    const body = this.bodyOf(root);
+    if (!body) return;
+    root.updateMatrixWorld(true);
+    const center = root.getWorldPosition(new THREE.Vector3());
+    center.y += 0.9;
+    const origin = center.clone().add(new THREE.Vector3(-0.3, 0.2, 4));
+    const dir = new THREE.Vector3().subVectors(center, origin).normalize();
+    for (let i = 0; i < runs; i++) {
+      nextSkinnedRaycastFrame(); // a real skinning pass each time (per-frame cache)
+      const hit = this.characterHit(root, origin, dir, center);
+      if (hit?.mesh && hit.faceIndex !== undefined && hit.bary) this.marks.wetHit(hit.mesh, hit.faceIndex, hit.bary);
+    }
+    this.marks.dryUnder(root);
   }
 
   /** DEATH / respawn: the player is dry again (every client). */
