@@ -56,6 +56,7 @@ opérations de skinning par rayon).
 | 240 Hz (10ᵉ passe : le HUD dans son propre processus) | **Le HUD ne passe plus par le thread du jeu.** Mesuré d'abord sur le PC gamer avec le prototype (`/perf/prototype-240hz.html`, Edge 155, RTX 2080 Super, 238 Hz, zoom 90 %) — même charge 3D et même HUD simulé dans trois architectures : tout sur le thread principal (comme le jeu jusqu'ici) **239 FPS au calme, 158 pendant les kills** (50 % de frames en retard, pire frame 20,8 ms) ; 3D dans un worker 240 / 237 ; **HUD dans une iframe isolée 240 / 240** (0 % de frames en retard, pire frame 4,4 ms ; l'iframe tourne bien dans son propre processus). C'est cette dernière qui est en place : le HUD vit dans `hud.html`, chargé dans une iframe `sandbox="allow-scripts"` posée sur le canvas (sans pointeur, jamais de focus). Son origine est opaque, donc Chrome / Edge (isolation des sites) la font tourner **dans un autre processus** : son style, sa mise en page, sa peinture et ses animations se font en parallèle du jeu, plus après lui. Le jeu ne touche plus au DOM du HUD : il appelle `hudHost.api` (les mêmes méthodes que les anciens widgets), qui copie à l'appel l'état utile en données simples (« vues ») et l'envoie en **une liste de commandes par frame** (`postMessage`). Dans l'iframe, le runtime du HUD construit les mêmes widgets, dans le même ordre, avec le même balisage et les mêmes CSS, applique les commandes dans l'ordre et rejoue le warm-up du HUD dans son propre document. **Repli automatique** sur le HUD dans la page (le même runtime, chaque commande appliquée à l'appel : le comportement d'avant) si l'iframe ne répond pas en 8 s, ne tourne pas dans son propre processus (vérifié au chargement), ne voit pas la même taille ni le même zoom que la page, ou cesse de répondre avant la fin de son warm-up ; **et pendant la partie**, si son processus plante ou se fige (aucune nouvelle depuis 3 s alors que la page du jeu, elle, dessine : l'iframe — que Chrome remplacerait par un rectangle gris sur tout le jeu — est retirée et le HUD reconstruit dans la page avec son dernier état) ou si elle ne voit plus la même taille ou le même zoom que la page. En `npm run dev`, le HUD reste dans la page par défaut (`?hud=frame` pour l'iframe) ; `?hud=inline` force l'ancien chemin partout. Ligne `HUD:` du panneau de debug. Rendu : identique au pixel dans la page ; dans l'iframe, seul l'anticrénelage de quelques bords d'éléments animés diffère (≤ 22 niveaux sur 255, sur ≤ 1,2 % des pixels). | `hud.html`, `src/hud/protocol.ts`, `src/hud/host/*`, `src/hud/runtime/*`, `src/hud/hudMarkup.html`, `src/hud/hudFrame.css`, `index.html`, `style.css`, `ui/*HUD.ts` (types), `ui/displayFrames.ts`, `game/Game.ts`, `main.ts`, `combat/HitFeedbackManager.ts`, `killstreaks/mole/MoleStrikeVFX.ts`, `menu/MenuOverlay.ts`, `ui/DebugHUD.ts`, `vite.config.ts`, `vercel.json` |
 | GPU du portable (11ᵉ passe : mesurée sur la vraie carte graphique) | **La cause des 30-40 FPS du portable : le travail GPU de chaque image partait trop tard, et des passes / clears plein écran inutiles le gonflaient.** Mesuré dans un vrai navigateur sur l'Intel Iris Xe (Givre LOW, 1920 × 928 ; détails dans « La cause racine » plus bas). (1) `gl.flush()` après la passe monde et en fin d'image : sans lui, le GPU attendait une partie de l'image puis recevait tout d'un bloc — 36 → 60 FPS sur la même machine, +14 % quand le GPU est la limite. (2) Un seul clear profondeur + stencil de la cible HDR du monde au lieu de deux clears complets (le dôme du ciel, au plan lointain, écrit tous les pixels libres) : à 2560 × 1238, 49 → 57 FPS. (3) Ciel dessiné après les opaques au lieu de remplir tout l'écran en premier (Givre, Jungle, Yard). (4) Plus aucun clear avant les passes plein écran (sortie sRGB, FXAA), qui réécrivent chaque pixel de leur cible. (5) Les 2 lumières ponctuelles du pool FX, toujours éteintes (intensité 0) mais calculées dans chaque pixel éclairé, retirées. Même image, au bit près (vérifié au banc). `?diag=noflush` pour comparer. | `effects/FlushPass.ts`, `effects/SkyCoveredRenderPass.ts`, `effects/FullscreenPass.ts`, `effects/FXLightPool.ts`, `world/GivreSky.ts`, `world/skyDome.ts`, `world/SpaceSky.ts`, `world/YardSky.ts`, `game/Game.ts`, `ui/perfDiag.ts` |
 | CPU par image (12ᵉ passe : simulation + envoi du rendu) | **Moins de travail par image, résultat identique au bit près** (mesures plus bas). (1) **HUD** : le jeu renvoie à chaque frame l'état d'affichage de chaque widget — plaque d'arme visible / cachée et ses munitions, puces du dash et de la lance, combo, visée, bannière « KNOCKED DOWN », les deux `flush` des pulses — : 16 des 18 commandes d'une frame, au repos comme en combat, copiées, postées au processus du HUD et appliquées là-bas pour rien. Une commande identique à la dernière **envoyée** pour son widget n'est plus envoyée : c'est un no-op pour le widget (chacun compare ses arguments avec les derniers appliqués) ; après un changement de visibilité d'une plaque ou de la lance, la mise à jour suivante part toujours (le widget a pu oublier la sienne). Jamais sautés : ce qui avance avec le delta (`combat.update`, nombres de dégâts) et les événements (tirs, impacts, kills…). L'état rejoué au HUD reconstruit après une chute de l'iframe est le même (dernière commande de chaque clé). (2) **Uniforms** : les caches de valeurs d'uniform de three.js étaient tous des tableaux « génériques » pour V8 (un seul uniform booléen suffit à les faire tous basculer) : chaque nombre écrit allouait un objet — ~30 Ko par frame avec 8 bots, un quart des allocations. Ils redeviennent des tableaux de doubles bruts (mêmes valeurs, mêmes appels GL), écrits par une copie des setters de three (r185 : mêmes comparaisons, mêmes appels) — ceux de three, optimisés par V8 sur des tableaux génériques, rendaient génériques les tableaux qu'ils écrivaient. Les tableaux d'uniforms (matrice d'ombre du soleil, sonde de lumière…) n'avaient aucun cache : renvoyés à chaque changement de programme, soit à presque chaque draw avec le tri avant → arrière (45 à 70 `uniformMatrix4fv` de trop par frame à 8 bots). Chacun garde maintenant la dernière valeur envoyée (telle que le GPU la reçoit, en float32) et n'est renvoyé que s'il change. (3) **Matrices** : la passe de `renderer.render` ne recalcule plus la carte (140 nœuds animés recomposés à chaque passe, déjà calculés par la passe de Game.frame juste avant) ni les bras + l'arme FP (calculés, forcés, par `syncCamera` juste avant) ; la passe de Game.frame saute en plus les bots morts en attente de réapparition (dès leur 3ᵉ frame de mort : rien ne les anime ni ne les déplace). Vérifié à chaque frame d'un combat : chaque matrice sautée est identique au bit près à un recalcul forcé. `?diag=nohudskip`, `nouniformcache`, `nofreshskip` remettent l'ancien chemin. | `hud/host/HudProxies.ts`, `effects/UniformCacheKinds.ts`, `effects/ProgramPin.ts`, `effects/matrixFresh.ts`, `world/MapBatching.ts`, `weapons/viewmodel/ViewmodelSystem.ts`, `bots/Bot.ts`, `ui/perfDiag.ts`, `game/Game.ts` |
+| Image du kill (13ᵉ passe) | **Le premier dessin d'un cadavre ne fait plus, dans l'image du kill, le travail de « première fois » de three.js** (mesures plus bas). Ce dessin créait les textures d'os des squelettes du cadavre (2 à 4 : tableau, DataTexture, `createTexture` + `texStorage2D` + envoi) et initialisait chaque nouveau clone de fondu (premier cadavre de chaque bot, et chaque cadavre d'un bot peint : les clones de la peinture partent avec leur cadavre) : `material.clone()`, uniforms clonés, programme cherché, lumières branchées. C'est fait maintenant sur une image ordinaire de la vie du bot, un bot par image, à la fin de la frame juste après le rendu (jamais dans l'image qui le demande, un tir de peinture par exemple) : le clone de cadavre préparé reçoit ses textures d'os, et CorpseManager garde un clone de fondu initialisé (`renderer.compile` sur les mailles mêmes du clone préparé, la cible de la passe monde liée, les deux looks : fondu puis vie opaque) pour chaque matériau visible dont la réserve est vide. Au kill, ce clone est remis à l'état de la source par `copy()` + les mêmes réglages : exactement ce que `source.clone()` donnerait à cet instant (test propriété par propriété), et three redérive son programme au premier dessin comme pour un clone neuf. Même image (vérifiée au banc au kill et pendant le fondu). Reste dans l'image du kill : la vérification du programme de ces clones, le VAO d'une géométrie jamais dessinée avec le programme de fondu (pas de dessin d'avance : aucun draw de plus en jeu), les envois d'os de toute image. `?diag=nokillprep` remet l'ancien chemin. **Expérience, désactivée par défaut** : `?diag=programsort` trie les opaques par programme puis matériau (proche → lointain dans un matériau) au lieu du tri avant → arrière, pour la pré-passe de profondeur de la carte (`?diag=prepass`, branche gpu-overdraw) : un tiers de `useProgram` en moins, mais à profondeur exactement égale quelques pixels peuvent changer (1 à 9 pixels dans 6 des 68 vues comparées au banc). | `effects/KillPrep.ts`, `ragdoll/CorpseManager.ts`, `ragdoll/CorpseCloneSpare.ts`, `bots/BotModel.ts`, `bots/Bot.ts`, `world/GivreRenderOptim.ts`, `ui/perfDiag.ts`, `game/Game.ts` |
 | Qualité HIGH | Filtrage anisotrope ×8 sur les lightmaps (sols et murs nets en incidence rasante). | `game/GraphicsQuality.ts`, `world/GivreMap.ts` |
 
 ### Bugs corrigés au passage
@@ -108,6 +109,9 @@ opérations de skinning par rayon).
 38. **Commande d'état du HUD appelée à chaque frame** (visible, munitions, puce, combo, visée…) : la façade (`hud/host/HudProxies.ts`) ne renvoie pas une valeur identique à la dernière envoyée — seulement si c'est un no-op prouvé pour le widget (ses propres tests de « dernière valeur ») ; sa mémoire est oubliée chaque fois que le widget peut oublier la sienne (changement de visibilité d'une plaque, de la lance). Ce qui avance avec le delta ou raconte un événement part toujours. Nouvelle commande de ce genre : même règle, et un cas dans `scripts/test-hud-skip.mts`.
 39. **Sous-arbres « frais » (`effects/matrixFresh.ts`)** : la carte et les bras FP ne sont plus recalculés par la passe de `renderer.render`, ni un bot mort par celle de Game.frame. Du code qui déplace un nœud de carte après la passe de Game.frame, un nœud sous la caméra FP après `syncCamera`, ou le modèle d'un bot mort, doit le faire **avant** ces passes — ou appeler `updateMatrixWorld(true)` (forcé : jamais sauté). Ne pas accrocher d'objet sous la carte en cours de partie. `?diag=nofreshskip` remet les passes d'avant pour comparer.
 40. **Uniforms de three.js** : ne jamais remplacer le `cache` d'un uniform par un tableau d'une autre longueur, ni écrire un uniform d'un programme de three.js par un `gl.uniform*` direct : les caches (y compris ceux des tableaux d'uniforms, `effects/UniformCacheKinds.ts`) croiraient le GPU à jour. **Mise à jour de three.js** : `UniformCacheKinds.ts` est écrit pour r185 (ses objets d'uniforms, une copie de ses setters flottants) — avec une autre révision il ne touche à rien (rien ne casse, l'économie disparaît) ; comparer avec le nouveau `WebGLUniforms.js`, relancer `scripts/test-uniform-cache.mts`, puis monter `SETTERS_REVISION`.
+
+41. **Préparation du kill (`effects/KillPrep.ts`)** : une nouvelle pièce de cadavre (maillage, matériau, squelette) n'a rien à faire, elle est préparée avec les autres. Un paramètre de programme d'un matériau vivant (carte, define, `side`…) ne change qu'avec `needsUpdate` (la règle de three — le clone prêt la suit comme un clone neuf) ; un `ShaderMaterial` n'est jamais préparé (`copy()` remplace ses uniforms, three garderait les anciens). La préparation tourne à la fin de Game.frame, juste après le rendu : rien entre les deux ne doit changer le nombre de lumières visibles ni leurs ombres (une compilation qui verrait un autre nombre de lumières ferait re-sélectionner le programme de tous les matériaux éclairés à l'image suivante). Une réserve de cadavre abandonnée libère ses textures d'os (`CorpseCloneSpare.reset`) ; un clone prêt part avec sa source (`dispose`). `?diag=nokillprep` pour comparer.
+42. **Ordre des opaques** : le tri par défaut reste avant → arrière (`frontToBackOpaqueSort`). `?diag=programsort` (`programFirstOpaqueSort`) n'est **pas** la même image au bit près : avec le test LEQUAL, deux fragments opaques de profondeur exactement égale gardent le dernier dessiné, et l'ordre change — avec ou sans la pré-passe de profondeur, qui garde cette règle. Avant de l'activer par défaut : comparer les deux tris sur la même image figée, plusieurs vues et plusieurs états de combat (`givreDebug.perf.sort("program")` / `sort(true)` en DEV), et mesurer sur la vraie carte graphique le coût GPU (le tri avant → arrière sert le test précoce sans pré-passe).
 
 ## Mesures (banc headless, avant → après)
 
@@ -253,6 +257,71 @@ LOW 8 bots 7,56 → 7,08 ms (rendu −12 %) ; HIGH : rendu −3 à −5 %, le to
 Simulation par bot (8 bots − 0 bot, ÷ 8) : **≈ 0,3 ms** au banc, avant comme après (IA ≈ 0,09 ms,
 dont 87 % le contrôleur de personnage de Rapier ; animation ≈ 0,11 ; physique ≈ 0,04) — rien de
 ce qui reste n'y est compressible à résultat identique.
+
+13ᵉ passe (image du kill et tri par programme — build DEV, Givre, 8 bots, Paintball ; kills par le
+chemin de dégâts du Paintball lui-même, dans la frame ; préparation ON / OFF alternée dans la même
+session par l'interrupteur DEV, OFF = textures d'os préparées aussi retirées : l'ancien chemin) :
+
+| Mesure (par kill) | OFF (avant) | ON (après) |
+|---|---|---|
+| Textures créées au premier dessin du cadavre (`createTexture` + `texStorage2D`) | 1 à 4 | **0** |
+| Clones de fondu visibles initialisés par three au premier dessin | 1 à 9 (selon la réserve) | **0** (les clones prêts sont déjà initialisés) |
+| Nouveaux programmes / fuite (textures, programmes après 28 kills) | — | **0 / aucune** (textures 111 → 107, programmes 93 → 93) |
+
+Même image : le cadavre préparé contre celui de l'ancien chemin (clones faits à l'instant du kill,
+textures d'os créées au dessin), même image figée, rendu réel, RGBA — au kill et à mi-fondu,
+LOW et HIGH, 4 kills où le cadavre couvre 335 à 3 881 pixels : **0 pixel de différence**, 0 propriété
+de matériau différente (une comparaison avec des clones faits *plus tard* diffère, elle : la source
+change après le kill — remise à zéro de l'arme, séchage, lueur de protection à la réapparition).
+
+Ce travail, fait seul sur une image figée (12 répétitions), coûte au banc **0,5 ms** pour un
+cadavre de 5 matériaux et 1 squelette (LOW) et **0,6-0,8 ms** pour 8 matériaux et 4 squelettes (HIGH)
+au mieux, 0,6 à 2,8 ms en médiane avec le bruit du banc (0,07 ms par texture d'os, 0,1-0,15 ms par
+clone + ≈ 0,6 ms fixes par tâche). Premier rendu du cadavre sur la même image figée, ancien chemin
+contre préparé (médiane de l'excès sur un second rendu identique) : HIGH +3,7 → +1,2 ms et
++1,4 → +0,1 ms, LOW +2,5 → +0,7 ms et +0,5 → +0,9 ms — un rendu isolé varie de ± 3 à 9 ms au banc,
+ces écarts n'en sortent qu'à HIGH. Le temps total de l'image du kill ne bouge pas de façon mesurable
+au banc pour la même raison (LOW, 14 + 14 kills : médiane 14,4 → 13,8 ms, rendu 4,2 → 4,9 ms ; HIGH,
+8 + 8 : 18,5 → 13,9 ms, rendu 7,2 → 2,9 ms — chaque série est dans le bruit de l'autre). Le chemin
+du kill lui-même, côté simulation, est petit (80 kills) : `Bot.onDeath` ≈ 1,3 ms en médiane
+(réserve du cadavre 0,4, ragdoll Rapier 0,3-0,5), `onBotKilled` ≈ 0,3 ms (peinture, eau, HUD, combo,
+médailles, audio, butin ≈ 0,1 chacun). Un kill sur quatre environ monte à 2,4-12 ms, mais le surplus
+change de fonction d'un kill à l'autre (ragdoll Rapier, réserve, matériaux, son) : du bruit du banc
+(GC, ordonnancement), pas un travail fixe à déplacer — et créer les corps Rapier du ragdoll à
+l'avance changerait l'ordre des corps du monde physique : la simulation ne serait plus la même au
+bit près. Une tâche de préparation coûte 0,1 ms quand il n'y a rien à faire, 0,8 ms (médiane)
+quand elle crée des clones, 0,1 ms pour des textures d'os, une seule par image. Mort du joueur
+(6 morts, LOW + HIGH) : `player.onDeath` 0,2 à 1,2 ms, chaque remise à zéro d'arme ≤ 0,3 ms
+(`PopcornShotgunWeapon.reset` : 0,0 ms cinq fois, 0,2 ms une fois — les 4 ms d'un profil précédent
+ne se retrouvent pas en mesure directe : sans doute l'attribution de l'échantillonnage) ; l'image
+de la mort (5,0 à 13,1 ms) reste dans la plage de ses voisines (médianes 5,0 à 8,8 ms, voisines
+jusqu'à 23 ms). Le vrai pic de cette famille au banc est **le premier coup de peinture sur un
+personnage dans la session** : 10 à 22 ms dans `PaintballFX.characterHit` (3 sessions) — c'est
+lui qui gonfle « armes » au premier kill d'une session quand ce kill est aussi ce premier coup. Il
+se partage entre le rayon sur le corps skinné (5-7 ms au premier appel, ≈ 0,4 ms ensuite) et
+`PaintballFX.prepare` (≈ 8 ms sur une seule mesure, dont 0,2 ms seulement pour la géométrie peinte
+et sa topologie, déjà calculée au chargement ; le reste n'est pas attribué). Pas le chemin du kill.
+
+Tri par programme (`?diag=programsort`), même session, blocs de 30 images alternés (720 images par
+mode, 8 bots en combat) ; « pré » = la pré-passe de profondeur de la branche gpu-overdraw (build de
+test fusionné, `?diag=prepass`, vérifiée au chargement : 0 pixel de différence) :
+
+| Par image | Avant → arrière | Par programme | Avant → arrière + pré | Par programme + pré |
+|---|---|---|---|---|
+| `useProgram`, LOW | 65 | **45** | 68 | **48** |
+| `useProgram`, HIGH | 63 | **40** | 64 | **42** |
+| Rendu CPU (médiane), LOW | 3,9 ms | 3,7 ms | 3,8 ms | 3,5 ms |
+| Rendu CPU (médiane), HIGH | 4,0 ms | 3,7 ms | 3,7 ms | 4,1 ms |
+
+Gain CPU ≤ 0,3 ms (≈ 12 µs par `useProgram` évité), du même ordre que le bruit à HIGH. Pixels (image
+figée rendue avec chaque tri, RGBA) : build de test avec la pré-passe, 5 vues LOW + 5 HIGH, toutes
+les combinaisons → 0 pixel de différence ; build de la branche seule, d'autres états de combat :
+1 vue LOW sur 5 avec 9 pixels (écart max 60), 3 vues HIGH sur 5 avec 1 pixel (écart max 25) ;
+recherche systématique sur 24 vues par session : 2 images à 9 pixels dans une session, aucune dans
+une autre. Entre opaques testés et écrits en profondeur (LEQUAL) sans mélange, un autre ordre ne
+change que le gagnant d'une égalité exacte de profondeur (le `renderOrder`, comparé avant le
+programme, garde les contrats de stencil et de contour) : rare, quelques pixels, mais pas zéro.
+D'où : expérience, désactivée par défaut.
 
 ## Le HUD dans son propre processus (10ᵉ passe)
 
@@ -457,7 +526,10 @@ c'est le GPU (ou le processus GPU du navigateur).
   de nouveau à chaque frame les commandes d'état répétées ; `nouniformcache` = les caches et
   setters d'uniforms de three.js tels quels (tableaux d'uniforms renvoyés à chaque fois) ;
   `nofreshskip` = la carte et les bras FP recalculés par la passe du rendu, les bots morts par
-  celle de la frame. La ligne `CPU` doit monter un peu avec chacun.
+  celle de la frame. La ligne `CPU` doit monter un peu avec chacun. 13ᵉ passe : `nokillprep` =
+  textures d'os et clones de fondu d'un cadavre créés de nouveau dans l'image du kill ;
+  `programsort` = l'expérience du tri des opaques par programme (pas la même image au bit près,
+  voir la règle 42).
 - `Device:` : le GPU réellement utilisé par le navigateur. « SwiftShader »,
   « Basic Render Driver » ou « llvmpipe » = rendu logiciel (accélération matérielle
   désactivée) : aucune optimisation du jeu n'y changera rien.
