@@ -55,6 +55,7 @@ opérations de skinning par rayon).
 | 240 Hz (9ᵉ passe : tir à la tête en dash, 240 → 175 FPS) | **Ni la 3D ni le ragdoll : la somme jeu + navigateur sur un seul thread.** À 244 Hz, une frame dure 4,1 ms, et tout passe par le thread principal : le JS du jeu (~3 ms au repos sur le PC gamer) **puis** le travail du navigateur (~1 ms : style, mise en page, peinture du HUD, envoi au compositeur). Au kill, le JS du jeu ne monte que de 0,2-0,35 ms ; c'est le HUD qui fait passer `Browser` à 2,5 ms de moyenne (8,3 ms sur la frame du kill) : 3,3 + 2,5 = 5,8 ms → 175 FPS. Corrigé : (1) **Classement** : il relisait l'état dessiné de ses lignes (`getComputedStyle`, `getBoundingClientRect`) entre ses propres écritures — à chaque kill (bots compris), 5 recalculs de style + 4 mises en page forcés au milieu du JS du jeu ; les lectures sont regroupées avant la première écriture, et il n'y en a plus quand rien n'anime. (2) **Médaille** : la couleur d'accent `--md`, héritée, et `#medal-display.hidden *` restylaient tout le badge (~58 éléments, dessins SVG compris) à chaque apparition et disparition ; `--md` n'est plus héritée (`@property`), elle est posée sur les 13 éléments qui la peignent, et le masquage vise la liste des parties animées : 57 → 40 éléments restylés à l'apparition, 57 → 18 à la disparition. (3) **Menu caché en jeu** : endormi (`content-visibility: hidden`) une fois son fondu fini — ses deux boucles infinies étaient recalculées à chaque frame de la partie ; sa sonde de ping (requête HTTP + réécriture du ping et du salon toutes les 5 s) ne tourne plus que menu affiché. (4) **Panneau de debug** : une ligne = un nœud texte, réécrite seulement si elle change (il réécrivait tout 15 fois par seconde : le panneau qui sert à mesurer coûtait lui-même). (5) **Cadavre** : le clone du personnage (SkeletonUtils, ~50-70 nœuds) est préparé pendant la protection d'apparition du bot et seulement remis à l'état courant au kill (même objet ; repli sur le clonage si le corps a changé de forme). (6) **Rendu** : une seule mise à jour des os par squelette et par frame (three.js recalculait deux fois chaque personnage qui projette une ombre) ; fusil à popcorn FP sans re-sélection de 4 programmes par frame. **Ce qui restait** : la somme elle-même — réglée à la 10ᵉ passe (« Le HUD dans son propre processus » plus bas). | `ui/LeaderboardHUD.ts`, `ui/leaderboard/*`, `hud.css`, `ui/MedalHUD.ts`, `ui/HudWarmup.ts`, `menu/MenuOverlay.ts`, `style.css`, `ui/DebugHUD.ts`, `ragdoll/CorpseCloneSpare.ts`, `bots/Bot.ts`, `bots/BotModel.ts`, `effects/SkeletonFrameDedupe.ts`, `effects/TwoPassTransparentSplit.ts`, `weapons/popcorn/PopcornShotgunWeapon.ts`, `game/Game.ts` |
 | 240 Hz (10ᵉ passe : le HUD dans son propre processus) | **Le HUD ne passe plus par le thread du jeu.** Mesuré d'abord sur le PC gamer avec le prototype (`/perf/prototype-240hz.html`, Edge 155, RTX 2080 Super, 238 Hz, zoom 90 %) — même charge 3D et même HUD simulé dans trois architectures : tout sur le thread principal (comme le jeu jusqu'ici) **239 FPS au calme, 158 pendant les kills** (50 % de frames en retard, pire frame 20,8 ms) ; 3D dans un worker 240 / 237 ; **HUD dans une iframe isolée 240 / 240** (0 % de frames en retard, pire frame 4,4 ms ; l'iframe tourne bien dans son propre processus). C'est cette dernière qui est en place : le HUD vit dans `hud.html`, chargé dans une iframe `sandbox="allow-scripts"` posée sur le canvas (sans pointeur, jamais de focus). Son origine est opaque, donc Chrome / Edge (isolation des sites) la font tourner **dans un autre processus** : son style, sa mise en page, sa peinture et ses animations se font en parallèle du jeu, plus après lui. Le jeu ne touche plus au DOM du HUD : il appelle `hudHost.api` (les mêmes méthodes que les anciens widgets), qui copie à l'appel l'état utile en données simples (« vues ») et l'envoie en **une liste de commandes par frame** (`postMessage`). Dans l'iframe, le runtime du HUD construit les mêmes widgets, dans le même ordre, avec le même balisage et les mêmes CSS, applique les commandes dans l'ordre et rejoue le warm-up du HUD dans son propre document. **Repli automatique** sur le HUD dans la page (le même runtime, chaque commande appliquée à l'appel : le comportement d'avant) si l'iframe ne répond pas en 8 s, ne tourne pas dans son propre processus (vérifié au chargement), ne voit pas la même taille ni le même zoom que la page, ou cesse de répondre avant la fin de son warm-up ; **et pendant la partie**, si son processus plante ou se fige (aucune nouvelle depuis 3 s alors que la page du jeu, elle, dessine : l'iframe — que Chrome remplacerait par un rectangle gris sur tout le jeu — est retirée et le HUD reconstruit dans la page avec son dernier état) ou si elle ne voit plus la même taille ou le même zoom que la page. En `npm run dev`, le HUD reste dans la page par défaut (`?hud=frame` pour l'iframe) ; `?hud=inline` force l'ancien chemin partout. Ligne `HUD:` du panneau de debug. Rendu : identique au pixel dans la page ; dans l'iframe, seul l'anticrénelage de quelques bords d'éléments animés diffère (≤ 22 niveaux sur 255, sur ≤ 1,2 % des pixels). | `hud.html`, `src/hud/protocol.ts`, `src/hud/host/*`, `src/hud/runtime/*`, `src/hud/hudMarkup.html`, `src/hud/hudFrame.css`, `index.html`, `style.css`, `ui/*HUD.ts` (types), `ui/displayFrames.ts`, `game/Game.ts`, `main.ts`, `combat/HitFeedbackManager.ts`, `killstreaks/mole/MoleStrikeVFX.ts`, `menu/MenuOverlay.ts`, `ui/DebugHUD.ts`, `vite.config.ts`, `vercel.json` |
 | GPU du portable (11ᵉ passe : mesurée sur la vraie carte graphique) | **La cause des 30-40 FPS du portable : le travail GPU de chaque image partait trop tard, et des passes / clears plein écran inutiles le gonflaient.** Mesuré dans un vrai navigateur sur l'Intel Iris Xe (Givre LOW, 1920 × 928 ; détails dans « La cause racine » plus bas). (1) `gl.flush()` après la passe monde et en fin d'image : sans lui, le GPU attendait une partie de l'image puis recevait tout d'un bloc — 36 → 60 FPS sur la même machine, +14 % quand le GPU est la limite. (2) Un seul clear profondeur + stencil de la cible HDR du monde au lieu de deux clears complets (le dôme du ciel, au plan lointain, écrit tous les pixels libres) : à 2560 × 1238, 49 → 57 FPS. (3) Ciel dessiné après les opaques au lieu de remplir tout l'écran en premier (Givre, Jungle, Yard). (4) Plus aucun clear avant les passes plein écran (sortie sRGB, FXAA), qui réécrivent chaque pixel de leur cible. (5) Les 2 lumières ponctuelles du pool FX, toujours éteintes (intensité 0) mais calculées dans chaque pixel éclairé, retirées. Même image, au bit près (vérifié au banc). `?diag=noflush` pour comparer. | `effects/FlushPass.ts`, `effects/SkyCoveredRenderPass.ts`, `effects/FullscreenPass.ts`, `effects/FXLightPool.ts`, `world/GivreSky.ts`, `world/skyDome.ts`, `world/SpaceSky.ts`, `world/YardSky.ts`, `game/Game.ts`, `ui/perfDiag.ts` |
+| HUD au repos, aux tirs et au kill (12ᵉ passe : l'animation du Bean Buddy coûtait 15 FPS au portable) | **Plus aucune peinture ni rastérisation par image dans le HUD au repos ; aux événements, ce qui change seulement.** Mesuré par le chef sur l'Iris Xe (build de production, 1080p) : l'attente du Bean Buddy seule faisait tomber le jeu de 60 à 45-46 FPS (corrigé en production par `will-change: transform` sur le portrait). Au banc image par image (`tools/perf/hud-frame-bench.mjs`, le vrai document du HUD dans son iframe), avant : une image principale, ~6,4 tuiles rastérisées et 2 passes hors écran **à chaque image**, sans que rien ne bouge ; après : 0,02 image principale et 0,02 tuile (le chrono, une fois par seconde), aucune passe hors écran, dans chaque état durable (humeurs, dash, K.O., plaques au repos / basses / en recharge, combo, fin de partie). (1) Le portrait du Bean Buddy en **calques SVG empilés** : ses animations (feuilles, yeux, goutte : des enfants SVG ; respiration : la racine `<svg>`) tournaient sur le thread principal — chaque partie animée a maintenant son propre `<svg>`, dans une `<div>` que le compositeur anime seul ; `will-change: transform` sur `.buddy-art`. (2) `clip-path` / `mask` sortis des éléments animés (chevrons du dash : 2 passes hors écran par image ; étincelles du soin, anneau de recharge) : sur un enfant immobile. (3) La vague du réservoir du FAMAS glisse par `transform` au lieu d'un `background-position` repeint. (4) Bannière K.O. centrée par `translate` (un `translateX(-50%)` dans ses images clés la gardait sur le thread principal). (5) Médaille : l'ombre des pans du ruban sans `filter` (tout le ruban était repeint et re-rastérisé à chaque image de son entrée, ~30 fois par kill). (6) Le document du HUD ne demande plus d'image quand rien ne change (boucle `requestAnimationFrame` permanente → à la demande). Contre le build de production : en tirant, 3,3 → 1,3 passes par image et « rendu » du HUD 2,9 → 2,5 ms par image ; plus de mise en page par image. Contre l'ancien code : tirs 7,0 → 0,5 tuile par image, kill 6,1 → 1,2, dégâts 4,9 → 0,7, recharge 6,5 → 0,2. La peinture 3D des plaques (~3 ms de GPU par image en tirant sur l'Iris Xe) est inchangée par défaut : `?diag=paintss150` / `paintss100` / `paintfps30` pour la juger sur le vrai GPU. Même rendu à l'anticrénelage près (contour du portrait, bout de la vague du FAMAS, ruban de la médaille pendant qu'elle s'affiche : détails plus bas). `?diag=hudanim` remet l'ancien CSS, l'ancien portrait et l'ombre filtrée, `?diag=nohudidle` l'ancienne boucle. | `hud.css`, `hudWeapons.css`, `ui/hudIcons.ts`, `ui/CombatHUD.ts`, `hud/runtime/frameClock.ts`, `hud/runtime/frameEntry.ts`, `hud/runtime/HudRuntime.ts`, `hud/host/HudHost.ts`, `ui/framePulse.ts`, `ui/perfDiag.ts`, `ui/paint/*`, `tools/perf/hud-frame-bench.mjs` |
 | Qualité HIGH | Filtrage anisotrope ×8 sur les lightmaps (sols et murs nets en incidence rasante). | `game/GraphicsQuality.ts`, `world/GivreMap.ts` |
 
 ### Bugs corrigés au passage
@@ -100,10 +101,13 @@ opérations de skinning par rayon).
 31. **Le jeu ne touche jamais au DOM du HUD.** Tout passe par `hudHost.api` (`src/hud/host`). Une nouvelle information à afficher = une nouvelle commande dans `src/hud/protocol.ts`, avec des **données seulement** (nombres, chaînes, booléens, objets et tableaux simples — jamais un objet vivant du jeu, une fonction, une classe ou un élément DOM), copiées à l'appel par le proxy (`HudProxies.ts`) et appliquées par `src/hud/runtime/HudRuntime.ts`, **et sa ligne dans `STATE_KEY`** (`HudHost.ts`, vérifié par TypeScript) : un **état** (ce qu'elle laisse à l'écran, rejoué au HUD reconstruit dans la page si l'iframe tombe en pleine partie) ou un **événement** (un kill, un impact, une médaille : perdu avec l'iframe). Un widget lit une **vue** (`HealthView`, `AmmoView`…), pas l'objet du jeu.
 32. **Nouveau widget du HUD** : construit dans `HudRuntime.init` (l'ordre de construction = l'ordre d'empilement), son balisage dans `src/hud/hudMarkup.html`, sa feuille de style liée par `hud.html` **et** par `index.html` (le HUD dans la page reste le repli) ; ses états rares dans le warm-up (règles 15 et 18), qui tourne dans le document du HUD.
 33. **Le document du HUD a une origine opaque** : pas de `localStorage` ni de cookies (les réglages viennent de la page par commande, comme `crosshair.settings`) ; ses scripts, CSS et polices sont des requêtes CORS (`vercel.json` : `Access-Control-Allow-Origin` sur `/assets/*`). Il ne reçoit jamais d'entrée (clavier, souris, focus) : ce qui réagit au joueur reste dans la page du jeu. Ne jamais masquer `#hud-frame` (`display` / `visibility`) : le HUD masque son propre contenu.
-34. **Mesurer le HUD** : la ligne `HUD:` donne où il tourne (`iframe isolée` ou `dans la page (raison)`), ses FPS et son travail par frame (JS des commandes, rendu du navigateur) ; `Browser:` est maintenant celui de la page du jeu seule. `?hud=inline` compare avec l'ancien chemin. `tools/hud-preview/runtime-harness.mjs` compare l'iframe, la page et l'ancien HUD pixel par pixel.
+34. **Mesurer le HUD** : la ligne `HUD:` donne où il tourne (`iframe isolée` ou `dans la page (raison)`), les images que son document dessine par seconde (à la demande : ~1 au repos) et son travail par frame (JS des commandes, rendu du navigateur par image dessinée) ; `Browser:` est maintenant celui de la page du jeu seule. `?hud=inline` compare avec l'ancien chemin. `tools/hud-preview/runtime-harness.mjs` compare l'iframe, la page et l'ancien HUD pixel par pixel.
 35. **Nouvelle option graphique** (page SETTINGS) : sa valeur dans `GraphicsValues` (`settings/GraphicsSettings.ts` : presets, validation, libellé dans `settings/labels.ts`), son application dans `Game.applyLiveValues` — **en direct seulement si elle ne change aucun programme** (taille, échantillons, visibilité, paramètre de texture, uniform) ; sinon elle va dans `reloadChanges` (« Apply & reload »). Une option qui active / coupe une passe ou une variante (FXAA ⇄ MSAA) : les deux variantes compilées au chargement (`warmAlternateOutput`), vérifié par `tools/perf/settings-page-check.mjs` (aucun programme compilé par un changement en direct). Low et High restent **exactement** les anciens LOW et HIGH (`scripts/test-graphics-settings.mts`). L'interface du jeu est en anglais : libellés dans `settings/labels.ts`, en casse normale (les majuscules viennent du CSS).
 36. **Détection automatique** : elle juge sur les **intervalles entre images** sous charge (+30 % de pixels), jamais sur des requêtes de chronométrage GPU (elles comptent les temps morts du GPU et font flusher Chrome : elles changent ce qu'elles mesurent). Une option ne rejoint l'échelle (`settings/AutoTune.ts`) que si elle s'applique en direct, à sa place dans l'ordre « le moins visible d'abord », et jamais sous le plancher (l'ancien LOW). Changer la logique de la détection = incrémenter `AUTO_TUNE_VERSION` (chaque joueur « Auto » est mesuré à nouveau, une fois).
 37. **Anciennes clés** `beanzo.graphicsQuality` / `beanzo.fpsCap` : toujours lues et écrites (pont avec un build plus ancien et avec les scripts de banc) — une valeur écrite par quelqu'un d'autre depuis le dernier passage du jeu est reprise au chargement suivant (`adoptLegacyChanges`). Les réglages du joueur vivent dans **un** enregistrement, `slideio.settings`.
+38. **Animation CSS du HUD = compositeur seulement** : `transform` / `opacity` d'un élément qui a une boîte CSS et dans lequel rien ne se repeint. Jamais d'animation CSS sur un **enfant SVG** (`<path>`, `<g>`) — Chrome ne la compose pas et refait le style et la mise en page du SVG à chaque image — : lui donner son propre `<svg>` dans une `<div>` animée (le portrait du Bean Buddy, `hudIcons.BEAN_BUDDY_LAYERS` ; une racine `<svg>` animée peut rester, elle aussi, sur le thread principal). **Pas de pourcentage dans les images clés d'un `transform`** (`translateX(-50%)` dépend de la taille de la boîte : thread principal, « TransformDependsOnBoxSize ») : le centrage dans la propriété `translate`, que l'animation ne touche pas (la bannière K.O.). `visibility` dans des images clés garde toute l'animation sur le thread principal (« UnsupportedCSSProperty ») : seulement pour une sortie courte (la chute de l'étiquette du combo, 0,45 s — sa `visibility: hidden` finale fait aussi ignorer à Chrome le clignotement de la corde qu'elle cache, « NoVisibleChange »). Jamais de `clip-path` / `mask` sur l'élément animé (un calque de masque et une passe hors écran à chaque image) : sur un enfant immobile. Jamais de `background-position` animé (une peinture par image) : un enfant qui glisse. Un élément mis à l'échelle en continu et qui garde sa couche : `will-change: transform`. Chaque exception garde l'ancien CSS sous `?diag=hudanim` (`hud.css` « PERF — animations »).
+39. **Le document du HUD ne demande une image que s'il en a besoin** (`hud/runtime/frameClock.ts`) : un `requestAnimationFrame` qui se relance sans fin y coûte une image complète (rAF, style, mise en page, commit) à chaque rafraîchissement de l'écran, même quand rien ne bouge. Une boucle rAF dans un widget s'arrête quand il n'a plus rien à animer.
+40. **Mesurer le HUD image par image** : `node tools/perf/hud-frame-bench.mjs --base <rev> --set states` (états durables : humeurs, mort, dash, plaques au repos / basses / en recharge…) ou `--set events` (tirs, kill, dégâts, recharge) : par image du scénario, dans le processus du HUD, images principales, styles, mises en page, peintures, tuiles rastérisées (et par calque), passes du compositeur d'affichage. Au repos, la cible est **0 peinture et 0 tuile par image** ; un effet ponctuel ne rastérise qu'à son début. `--layers` : les couches repeintes / rastérisées une à une (qui repeint quoi) ; `--css "<règles>"` : un « et si » (cacher une partie du HUD, retirer un filtre) ; `--restart <sélecteur>` : les animations que Chrome laisse au thread principal, et pourquoi (« NOT composited »). Les pixels : `tools/hud-preview/runtime-harness.mjs --rest` (chaque point de contrôle aussi au repos : animations sans fin à leur début).
 
 ## Mesures (banc headless, avant → après)
 
@@ -356,6 +360,185 @@ banc (`givreDebug.perf.skyFirst / clears / deadLights / passClears` : l'ancien c
 bascule) : mêmes pixels RGBA, au bit près, avant / après — chaque changement seul et tous ensemble,
 sur Givre LOW et HIGH, Jungle et Yard.
 
+## Le HUD au repos, aux tirs et au kill (12ᵉ passe)
+
+Mesuré par le chef sur le portable de travail (Intel Iris Xe, build de production, HUD dans son
+iframe, Givre en solo, 1080p) : **l'animation d'attente du Bean Buddy, à elle seule, faisait rater
+les 60 FPS** — 45-46 FPS avec le HUD, 59,9 en cachant l'iframe, 60,1 en cachant le seul portrait.
+Animation par animation (les autres tournant) : feuilles + clignement 52,8 FPS, chevrons du dash
+56,5, touche du dash 49,8, **respiration du portrait (`scale` sur la racine `<svg>`) 60,1** ; et
+`will-change: transform` sur `.buddy-art` seul : 60,1 FPS, 0 image en retard (correctif mis en
+production). Avec lui, en tirant au Paintball : 52-53 FPS, `HUD: iframe isolée · 55 FPS · JS 0.2 ·
+rendu 4.5 ms`, une saccade de 30 ms dont 21 d'attente du GPU au tir ; HUD dans la page (`npm run
+dev`) : 8 à 10 ms de `Browser` en moyenne à la panique (HP bas) et au kill. Le HUD rastérise dans
+le processus GPU du navigateur, celui qui exécute aussi le WebGL du jeu.
+
+Le banc image par image (`node tools/perf/hud-frame-bench.mjs --base <rev> --set states|events` :
+le vrai document du HUD dans son iframe, piloté par un match scripté, une liste de commandes par
+image comme le jeu ; trace Chrome du processus du HUD) montrait, **au repos** : une image
+principale à chaque rafraîchissement (style, mise en page, pre-paint, layerize, commit), **~6,4
+tuiles rastérisées par image** (les couches des feuilles, des yeux et du corps du Bean Buddy,
+rastérisées de nouveau à chaque image) et **2 passes hors écran par image** (les chevrons du dash
+découpés par `clip-path`). Les causes et ce qui a changé :
+
+1. **Animations CSS d'enfants SVG et de la racine `<svg>`** (feuilles, yeux, goutte de sueur du
+   Bean Buddy ; sa respiration, sur la racine `<svg>` du portrait) : Chrome ne les confie pas au
+   compositeur (« TransformCannotBeAcceleratedOnTarget » dans la trace) — à chaque
+   rafraîchissement, une image principale, le style et la mise en page du SVG, et les couches du
+   portrait rastérisées de nouveau. Le portrait est maintenant un **empilement
+   de calques SVG** (`hudIcons.BEAN_BUDDY_LAYERS`) — tige, feuille gauche, feuille droite, corps +
+   visages, yeux, goutte : chaque partie animée a son propre `<svg>` (même boîte, même viewBox),
+   dans une `<div>` que l'animation fait tourner / cligner / tomber, une transformation que le
+   compositeur joue seul. Mêmes formes (les 40 du SVG, testées), même ordre
+   de dessin là où elles se touchent, mêmes pivots (ceux des enfants SVG, `transform-box:
+   fill-box`, convertis en px de la boîte), mêmes durées (`scripts/test-hud-buddy-layers.mts`). Les
+   yeux et la goutte gardent le groupe de leur visage (les règles d'humeur les montrent et les
+   cachent comme avant). Et le correctif du chef : `will-change: transform` sur `.buddy-art` (pas
+   pendant la pose figée de la mort) et sur chaque calque animé — composé dès sa première image,
+   à une échelle de rastérisation fixe (sans lui, la pose inclinée de la mort re-rastérisait les
+   feuilles à chaque image).
+2. **`clip-path` / `mask` sur un élément animé** (chevrons du dash prêt, étincelles du soin,
+   anneau de recharge qui tourne — toutes les armes) : un calque de masque et une passe hors écran
+   par élément et par image. La forme découpée est maintenant sur un enfant immobile (`::before`),
+   peinte une fois dans le calque qui bouge.
+3. **`background-position` animé** (la vague du réservoir du FAMAS, au repos aussi) : une peinture
+   par image. Le même motif sur un enfant d'une tuile plus haut, glissé par `transform`.
+4. **La boucle d'images permanente du document du HUD** (un `requestAnimationFrame` qui se
+   relançait toujours, pour compter les images) : à la demande (`hud/runtime/frameClock.ts`) — une
+   image quand un lot de commandes change le DOM ou qu'un widget en demande une ; FramePulse et les
+   nombres de dégâts dédoublonnent sur le numéro d'image (même sémantique,
+   `scripts/test-hud-frame-clock.mts`). La ligne `HUD:` compte maintenant les images que le
+   document dessine (`images/s`).
+
+5. **La bannière « K.O. »** (au sol) : `translateX(-50%)` dans ses images clés dépend de la taille
+   de la boîte (« TransformDependsOnBoxSize ») — une image principale à chaque rafraîchissement
+   tant qu'elle est affichée. Le centrage est passé dans la propriété `translate`, que l'animation
+   ne touche pas : mêmes matrices, images clés sans pourcentage.
+
+Les autres animations du HUD (humeurs, tremblement et rayons de panique, battements de la vie, du
+chrono et des munitions basses, plaques, combo, médailles, fil des kills, viseur, nombres de
+dégâts) sont des transformations / opacités jouées par le compositeur. Restent sur le thread
+principal, brèves et sans peinture ni rastérisation (leur élément a sa couche) : la chute de
+l'étiquette du combo (0,45 s, `visibility` dans ses images clés, voulu : règle 38) et la sortie de
+l'aide des commandes (une fois par partie, `translateX(-50%)` comme la bannière). Les avatars du
+classement n'ont pas d'animation.
+
+Banc (960 × 540, SwiftShader, rastérisation logicielle ; par image du scénario, dans le processus
+du HUD ; chaque état tenu 3 s ; `?diag=hudanim` redonne exactement les chiffres « avant ») :
+
+| État | Tuiles rastérisées / image | Peintures / image | Mises en page / image | Passes du compositeur / image |
+|---|---|---|---|---|
+| Au repos (content, dash prêt) | 6,42 → **0,02** | 0,29 → 0,03 | 1,07 → 0,02 | 3 → **1** |
+| Inquiet / K.O. puis « PRESS SPACE » / fin de partie | 4,2-6,4 → **0,02-0,03** | 0,03-0,31 → 0,03-0,05 | 1,06 → 0,02 | 3 → 1 |
+| Panique (rayons, tremblement, goutte) | 0,02 → 0,02 | **2,15 → 0,03** | 1,07 → 0,02 | 3 → 1 |
+| Mort (pose inclinée, compte à rebours) | 2,32 → **0,32** | 0,33 → 0,33 | 1,07 → 0,16 | 4 → 2 |
+| Dash en recharge (compte à rebours) | 6,67 → 0,26 | 0,61 → 0,36 | 1,07 → 0,16 | 1,47 → 1 |
+| Combo (la corde brûle) | 6,48 → 0,03 | 0,05 → 0,05 | 1,08 → 0,02 | 3 → 1 |
+| Paintball au repos / bas / en recharge | 6,3-6,4 → **0,03-0,07** | ≤ 0,31 → ≤ 0,07 | 1,06 → 0,02 | 3-3,5 → 1-1,5 |
+| Popcorn au repos · Frisbee au repos | 6,47 · 6,32 → 0,03 · 0 | 0,31 · 0,10 → 0,05 · 0 | 1,07 → ≤ 0,02 | 3 → 1 |
+| FAMAS au repos / bas / en recharge | 7,4-7,6 → **0-0,02** | **2,1-2,3 → 0-0,03** | 1,06 → 0-0,01 | 3 → 1-2 |
+
+Et le thread principal du document du HUD (sans l'agent LayerTree de DevTools, qui force à lui
+seul une image principale à chaque rafraîchissement) : **au repos, 1,06 image principale par image
+→ 0,02** (le chrono, une par seconde) — plus de style, de mise en page, de pre-paint ni de commit
+par image ; 2,1 → 0,5 ms de thread principal par image au banc (l'application des commandes du
+jeu comprise) ; à l'inquiétude, à la panique, au K.O. et à « PRESS SPACE TO GET UP » (comme dans le
+jeu : au sol d'abord, debout possible ensuite), au FAMAS au repos : pareil (0,02). Toutes les
+animations du HUD au repos tournent sur le compositeur (vérifié en les relançant pendant une
+trace : aucune « NOT composited » ; avant, les cinq animations du Bean Buddy l'étaient — y compris
+la respiration, sur la racine `<svg>` du portrait : « TransformCannotBeAcceleratedOnTarget »). Plaque Paintball / Popcorn : une image principale par
+rafraîchissement demeure, celle de la boucle de la peinture 3D (sans peinture ni rastérisation).
+
+### Aux événements
+
+Contre l'ancien code (plaque Paintball ; mêmes unités) :
+
+| Phase | Tuiles / image | Passes / image |
+|---|---|---|
+| Repos | 6,32 → 0,02 | 3,00 → 1,00 |
+| Tir continu, touches (15 tirs en 1,5 s) | 6,95 → **0,51** | 3,32 → **1,30** |
+| Kill à la tête (médaille, combo, BEANED!, classement, nombre) | 6,08 → **1,22** | 7,84 → 5,84 |
+| Dégâts reçus | 4,90 → 0,68 | 5,31 → 3,23 |
+| Recharge (anneau qui tourne) | 6,50 → **0,20** | 3,32 → 1,24 |
+
+**Contre le build de production** (l'ancien code + `will-change: transform` sur `.buddy-art`,
+injecté au banc ; deux runs alternés ; « rendu » = la stat de la ligne `HUD:`, du rappel d'image
+du document au message posté après son rendu, ici sans le tirage de la peinture 3D, que le banc
+saute) :
+
+| Phase | Passes / image | Mises en page / image | Peintures / image | « rendu » (ms / image) |
+|---|---|---|---|---|
+| Repos (plaque Paintball) | 3,01 → **1,00** | 1,06 → 0,02 | 0,23 → 0,03 | 1,96 → 1,44 |
+| Tir continu, touches | 3,33 → **1,31** | 1,08 → 0,13 | 0,99 → 0,70 | **2,87 → 2,45** |
+| Kill à la tête | 8,26 → 6,19 (5,84 avec la médaille) | 1,10 → 0,10 | 0,98 → 0,78 | 2,91 → 2,96 |
+| Dégâts reçus | 5,32 → 3,29 | 1,06 → 0,06 | 0,31 → 0,37 | 2,43 → 1,99 |
+| Recharge | 3,28 → 1,27 | 1,06 → 0,05 | 0,56 → 0,24 | 2,63 → 2,13 |
+
+Le correctif du portrait supprimait déjà la rastérisation par image (mêmes tuiles des deux
+côtés hors kill : 0,02 au repos, 0,51 en tirant) ; restaient, **à chaque image**, deux passes hors
+écran (les chevrons du dash), le style et la mise en page du SVG du portrait et, sans plaque à
+peinture 3D, une image principale complète — c'est ce que cette passe enlève, tirs compris.
+
+**À chaque tir** (couches rastérisées, `--layers`) : le chiffre des munitions (son texte change :
+une rastérisation de 32 × 36 px par tir), son « /max » (28 × 19 px : le saut du chiffre, joué par
+le compositeur, l'emmène dans une couche à part et « /max », peint après lui, doit suivre —
+peindre le chiffre par-dessus évite celle-là mais fait repeindre plus souvent la couche de la
+plaque : essayé, mesuré, pas gardé), le nombre de dégâts (il grandit à chaque touche : 133 × 95
+px), une bille toutes les ~3 balles, la couche de la plaque au début et à la fin d'une rafale. Une
+passe hors écran de plus pendant les 0,26 s du « flash » d'une bille dépensée (`brightness()`, joué
+par le compositeur sur sa propre couche). Et la peinture 3D, redessinée à chaque image tant
+qu'elle bouge (toute la rafale, voir plus bas).
+
+**Au kill** (passes par image sur la phase, en cachant une partie du HUD à la fois) : la médaille ≈
+1,9 (son entrée et sa sortie : une opacité animée sur un groupe de couches), le nombre de dégâts
+du kill ≈ 0,7 (le `brightness()` de son « slam », 0,5 s), l'étiquette du combo ≈ 0,6 (son entrée)
+— des effets de groupe qui ne se refont pas autrement à l'identique. Rastérisations : **l'ombre
+des pans du ruban de la médaille** (`filter: drop-shadow` sur ses deux petits SVG) faisait
+repeindre et re-rastériser tout le ruban, libellé à contour compris, à chaque image du pop — ~30
+fois par kill ; elle est maintenant une copie du pan dans la couleur de l'ombre, 3 px plus bas, à
+85 % d'opacité (`hudIcons.ribbonTailSvg`, `scripts/test-hud-medal-tails.mts`) : ruban 26 repeints
+/ 32 rastérisations → 1 / 3 par kill. Le classement : ~0,3 tuile par image au kill (ses lignes qui
+bougent prennent puis rendent leur couche).
+
+**Pixels** (`tools/hud-preview/runtime-harness.mjs --software --rest`, 1280 × 720, iframe : les
+14 points de contrôle du match scripté, chacun tel quel et **au repos** — animations sans fin à
+leur début ; bruit de l'ancien code d'un run à l'autre : 0 pixel) : **hors du portrait, de la
+plaque du FAMAS et de la médaille, 0 pixel de différence** (classement, chrono, combo, fil, viseur,
+nombres de dégâts, bannière K.O., écran de mort, plaques Paintball / Popcorn / Frisbee). Portrait : 1 800 à 2 500 pixels
+(0,2-0,3 % de l'image), dont 40 à 240 de plus de 32 niveaux (max 60-100) — l'anticrénelage du
+contour du Bean Buddy, que le compositeur rééchantillonne depuis une échelle de rastérisation fixée
+(`will-change`) et depuis des couches séparées, là où l'ancien code le rastérisait à chaque image ;
+invisible à l'œil. Plaque du FAMAS : ≤ 900 pixels, presque tous ≤ 8 niveaux, ≤ 17 de plus de 32
+(max 190) au bout arrondi du tube, où la couche de la vague rencontre la découpe arrondie.
+Médaille, pendant qu'elle est affichée (4 captures sur 28) : 5 200 à 13 100 pixels (0,6-1,4 % de
+l'image), max 61-82, dont 115 à 366 de plus de 32 niveaux — le ruban n'est plus re-rastérisé à
+chaque image de son entrée : rastérisé une fois (à la plus grande échelle du pop, son `will-change:
+transform`) puis rééchantillonné par le compositeur, ses bords et son libellé diffèrent d'un
+anticrénelage ; côte à côte, rien ne se voit. L'ombre des pans elle-même est la même (même forme,
+même décalage, même couleur, testés). **C'est le seul écart qui ne tient pas qu'aux bords de formes
+animées : à juger par le chef** (`?diag=hudanim` remet l'ombre filtrée). `?diag=hudanim` contre
+l'ancien code : identique sur 25 captures sur 28 (médaille comprise) ; 4 pixels (max 40) sur 3
+captures, à la vague du FAMAS (la remise à zéro de son animation par le harness).
+
+**La peinture 3D des plaques** (Paintball, Popcorn, Poison : son propre contexte WebGL ; `+
+peinture HUD` = son temps GPU avec `?gpu`) : une seule passe (un quad plein cadre), dessinée à
+chaque image tant qu'elle bouge (après chaque tir, ~1-2 s de gelée), 20 fois par seconde pendant
+la lente coulure, jamais quand elle est figée ; en 1080p (zoom de la plaque 1,66, DPR 1) son
+canvas fait 678 × 378 pixels pour 375 × 209 pixels d'écran (suréchantillonnage × 2 par axe,
+plafonné à 3 px par px de plaque : « l'aspect du rendu × 3 »), soit 3,3 fois les pixels affichés —
+le coût de ~3 ms par image en tirant vu sur l'Iris Xe. Rien d'exact à gagner : un « culling » par
+grappe du raymarch a été essayé (même champ au bit près, 64 états comparés, 0 valeur RGBA
+différente) mais il est **57 % plus lent** au banc (3,0 → 4,7 s de tirages) — pas gardé ;
+découper le tirage aux zones peintes n'enlèverait que les pixels déjà rejetés à bas coût par le
+shader. Trois expériences pour juger sur le vrai GPU — pas les mêmes pixels (comparés au banc sur
+64 états d'une rafale puis des coulures, image affichée en 375 × 209 filtrée comme le fait le
+compositeur) : `?diag=paintss150` (565 × 315 pixels : −32 % de temps de tirage ; 4,7 % des pixels
+peints diffèrent de plus de 32 niveaux, aux bords et aux reflets), `?diag=paintss100`
+(suréchantillonnage × 1 : 396 × 221 pixels, −64 % ; 12 % des pixels peints à plus de 32 niveaux) et
+`?diag=paintfps30` (gelée redessinée à 30 images/s au plus pendant qu'elle bouge : deux fois moins
+de tirages en tirant, un mouvement moins fluide). Plus aucune allocation par tirage
+(`PaintGL.draw`).
+
 ## Réglages graphiques et détection automatique (page SETTINGS)
 
 La page **SETTINGS** (menu principal et menu pause, `menu/SettingsPage.ts`) remplace le petit menu
@@ -425,7 +608,20 @@ c'est le GPU (ou le processus GPU du navigateur).
   doublés = l'image est limitée par les pixels) ; `cpu5` = 5 ms de CPU en plus par image (FPS
   inchangés = CPU et GPU travaillent en parallèle) ; `nopost` = Givre dessiné directement dans
   le canvas, sans cible HDR ni passe de sortie ; `empty` = plus aucun rendu 3D (ce qui reste =
-  le coût propre de la page). Jamais pour jouer.
+  le coût propre de la page). Pour le HUD (le paramètre est transmis à son iframe, et marche
+  aussi avec `?hud=inline`) : `hudanim` = l'ancien CSS des animations du HUD, l'ancien
+  portrait du Bean Buddy (un seul SVG) et l'ombre filtrée des pans du ruban de la médaille — ses
+  animations au repos repeignaient et re-rastérisaient à chaque image, la médaille à chaque
+  image de son entrée ; `nohudidle` = l'ancienne boucle d'images permanente du
+  document du HUD (`HUD: … images/s` revient à la fréquence de l'écran). Comparer les FPS
+  avec et sans, au repos (`?diag=hudanim,nohudidle` = tout l'ancien HUD). La peinture 3D de la
+  plaque (Paintball, Popcorn, Poison ; son temps GPU = `+ peinture HUD` avec `?gpu`) :
+  `paintss100` = rendue à 100 % de la densité de pixels de l'écran au lieu de 200 % (≈ 3 fois
+  moins de pixels en 1080p : 396 × 221 au lieu de 678 × 378 ; `paintss150` : 565 × 315, entre
+  les deux), `paintfps30` = redessinée au plus
+  30 fois par seconde quand elle bouge (au lieu de chaque image) — des expériences, pas les
+  mêmes pixels (moins de suréchantillonnage / gelée moins fluide) : à juger à l'œil avec le gain
+  mesuré. Jamais pour jouer.
 - `Device:` : le GPU réellement utilisé par le navigateur. « SwiftShader »,
   « Basic Render Driver » ou « llvmpipe » = rendu logiciel (accélération matérielle
   désactivée) : aucune optimisation du jeu n'y changera rien.
@@ -463,9 +659,14 @@ c'est le GPU (ou le processus GPU du navigateur).
   `soin`, `mort`, `réapparition`) : le déclencheur probable. La console (F12)
   reçoit une ligne `[hitch]` par saccade en `npm run dev` (deux par seconde au plus), à partir
   de 30 ms en production, avec les scripts en cause.
-- `HUD:` (10ᵉ passe) : `iframe isolée · 240 FPS · JS 0.1 · rendu 1.2 ms` = le HUD tourne dans son
-  propre processus (ses FPS, le temps d'application des commandes et le rendu du navigateur par
-  frame, dans SON processus) ; `dans la page (raison)` = repli sur l'ancien chemin, avec la raison
+- `HUD:` (10ᵉ passe) : `iframe isolée · 2 images/s · JS 0.1 · rendu 1.2 ms` = le HUD tourne dans son
+  propre processus : les images que SON document a dessinées par seconde (il ne dessine que quand
+  quelque chose change : ~1 par seconde au repos, le chrono ; ses animations tournent sur le
+  compositeur sans image du document ; une plaque à peinture 3D — Paintball, Popcorn, Poison —
+  en demande une à chaque rafraîchissement ; une animation CSS que seul le thread principal sait
+  jouer, comme celles que `?diag=hudanim` remet, fait dessiner des images que ce compte ne voit
+  pas), le temps d'application des commandes par frame du jeu et le rendu du navigateur par image
+  dessinée, dans SON processus ; `dans la page (raison)` = repli sur l'ancien chemin, avec la raison
   (iframe sans réponse, non isolée, viewport différent… ; « l'iframe ne répond plus » si son
   processus a planté en pleine partie). `?hud=inline` dans l'adresse force
   l'ancien chemin pour comparer. Avec l'iframe, `Browser:` ne compte plus que la page du jeu.
