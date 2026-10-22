@@ -55,6 +55,7 @@ opérations de skinning par rayon).
 | 240 Hz (9ᵉ passe : tir à la tête en dash, 240 → 175 FPS) | **Ni la 3D ni le ragdoll : la somme jeu + navigateur sur un seul thread.** À 244 Hz, une frame dure 4,1 ms, et tout passe par le thread principal : le JS du jeu (~3 ms au repos sur le PC gamer) **puis** le travail du navigateur (~1 ms : style, mise en page, peinture du HUD, envoi au compositeur). Au kill, le JS du jeu ne monte que de 0,2-0,35 ms ; c'est le HUD qui fait passer `Browser` à 2,5 ms de moyenne (8,3 ms sur la frame du kill) : 3,3 + 2,5 = 5,8 ms → 175 FPS. Corrigé : (1) **Classement** : il relisait l'état dessiné de ses lignes (`getComputedStyle`, `getBoundingClientRect`) entre ses propres écritures — à chaque kill (bots compris), 5 recalculs de style + 4 mises en page forcés au milieu du JS du jeu ; les lectures sont regroupées avant la première écriture, et il n'y en a plus quand rien n'anime. (2) **Médaille** : la couleur d'accent `--md`, héritée, et `#medal-display.hidden *` restylaient tout le badge (~58 éléments, dessins SVG compris) à chaque apparition et disparition ; `--md` n'est plus héritée (`@property`), elle est posée sur les 13 éléments qui la peignent, et le masquage vise la liste des parties animées : 57 → 40 éléments restylés à l'apparition, 57 → 18 à la disparition. (3) **Menu caché en jeu** : endormi (`content-visibility: hidden`) une fois son fondu fini — ses deux boucles infinies étaient recalculées à chaque frame de la partie ; sa sonde de ping (requête HTTP + réécriture du ping et du salon toutes les 5 s) ne tourne plus que menu affiché. (4) **Panneau de debug** : une ligne = un nœud texte, réécrite seulement si elle change (il réécrivait tout 15 fois par seconde : le panneau qui sert à mesurer coûtait lui-même). (5) **Cadavre** : le clone du personnage (SkeletonUtils, ~50-70 nœuds) est préparé pendant la protection d'apparition du bot et seulement remis à l'état courant au kill (même objet ; repli sur le clonage si le corps a changé de forme). (6) **Rendu** : une seule mise à jour des os par squelette et par frame (three.js recalculait deux fois chaque personnage qui projette une ombre) ; fusil à popcorn FP sans re-sélection de 4 programmes par frame. **Ce qui restait** : la somme elle-même — réglée à la 10ᵉ passe (« Le HUD dans son propre processus » plus bas). | `ui/LeaderboardHUD.ts`, `ui/leaderboard/*`, `hud.css`, `ui/MedalHUD.ts`, `ui/HudWarmup.ts`, `menu/MenuOverlay.ts`, `style.css`, `ui/DebugHUD.ts`, `ragdoll/CorpseCloneSpare.ts`, `bots/Bot.ts`, `bots/BotModel.ts`, `effects/SkeletonFrameDedupe.ts`, `effects/TwoPassTransparentSplit.ts`, `weapons/popcorn/PopcornShotgunWeapon.ts`, `game/Game.ts` |
 | 240 Hz (10ᵉ passe : le HUD dans son propre processus) | **Le HUD ne passe plus par le thread du jeu.** Mesuré d'abord sur le PC gamer avec le prototype (`/perf/prototype-240hz.html`, Edge 155, RTX 2080 Super, 238 Hz, zoom 90 %) — même charge 3D et même HUD simulé dans trois architectures : tout sur le thread principal (comme le jeu jusqu'ici) **239 FPS au calme, 158 pendant les kills** (50 % de frames en retard, pire frame 20,8 ms) ; 3D dans un worker 240 / 237 ; **HUD dans une iframe isolée 240 / 240** (0 % de frames en retard, pire frame 4,4 ms ; l'iframe tourne bien dans son propre processus). C'est cette dernière qui est en place : le HUD vit dans `hud.html`, chargé dans une iframe `sandbox="allow-scripts"` posée sur le canvas (sans pointeur, jamais de focus). Son origine est opaque, donc Chrome / Edge (isolation des sites) la font tourner **dans un autre processus** : son style, sa mise en page, sa peinture et ses animations se font en parallèle du jeu, plus après lui. Le jeu ne touche plus au DOM du HUD : il appelle `hudHost.api` (les mêmes méthodes que les anciens widgets), qui copie à l'appel l'état utile en données simples (« vues ») et l'envoie en **une liste de commandes par frame** (`postMessage`). Dans l'iframe, le runtime du HUD construit les mêmes widgets, dans le même ordre, avec le même balisage et les mêmes CSS, applique les commandes dans l'ordre et rejoue le warm-up du HUD dans son propre document. **Repli automatique** sur le HUD dans la page (le même runtime, chaque commande appliquée à l'appel : le comportement d'avant) si l'iframe ne répond pas en 8 s, ne tourne pas dans son propre processus (vérifié au chargement), ne voit pas la même taille ni le même zoom que la page, ou cesse de répondre avant la fin de son warm-up ; **et pendant la partie**, si son processus plante ou se fige (aucune nouvelle depuis 3 s alors que la page du jeu, elle, dessine : l'iframe — que Chrome remplacerait par un rectangle gris sur tout le jeu — est retirée et le HUD reconstruit dans la page avec son dernier état) ou si elle ne voit plus la même taille ou le même zoom que la page. En `npm run dev`, le HUD reste dans la page par défaut (`?hud=frame` pour l'iframe) ; `?hud=inline` force l'ancien chemin partout. Ligne `HUD:` du panneau de debug. Rendu : identique au pixel dans la page ; dans l'iframe, seul l'anticrénelage de quelques bords d'éléments animés diffère (≤ 22 niveaux sur 255, sur ≤ 1,2 % des pixels). | `hud.html`, `src/hud/protocol.ts`, `src/hud/host/*`, `src/hud/runtime/*`, `src/hud/hudMarkup.html`, `src/hud/hudFrame.css`, `index.html`, `style.css`, `ui/*HUD.ts` (types), `ui/displayFrames.ts`, `game/Game.ts`, `main.ts`, `combat/HitFeedbackManager.ts`, `killstreaks/mole/MoleStrikeVFX.ts`, `menu/MenuOverlay.ts`, `ui/DebugHUD.ts`, `vite.config.ts`, `vercel.json` |
 | GPU du portable (11ᵉ passe : mesurée sur la vraie carte graphique) | **La cause des 30-40 FPS du portable : le travail GPU de chaque image partait trop tard, et des passes / clears plein écran inutiles le gonflaient.** Mesuré dans un vrai navigateur sur l'Intel Iris Xe (Givre LOW, 1920 × 928 ; détails dans « La cause racine » plus bas). (1) `gl.flush()` après la passe monde et en fin d'image : sans lui, le GPU attendait une partie de l'image puis recevait tout d'un bloc — 36 → 60 FPS sur la même machine, +14 % quand le GPU est la limite. (2) Un seul clear profondeur + stencil de la cible HDR du monde au lieu de deux clears complets (le dôme du ciel, au plan lointain, écrit tous les pixels libres) : à 2560 × 1238, 49 → 57 FPS. (3) Ciel dessiné après les opaques au lieu de remplir tout l'écran en premier (Givre, Jungle, Yard). (4) Plus aucun clear avant les passes plein écran (sortie sRGB, FXAA), qui réécrivent chaque pixel de leur cible. (5) Les 2 lumières ponctuelles du pool FX, toujours éteintes (intensité 0) mais calculées dans chaque pixel éclairé, retirées. Même image, au bit près (vérifié au banc). `?diag=noflush` pour comparer. | `effects/FlushPass.ts`, `effects/SkyCoveredRenderPass.ts`, `effects/FullscreenPass.ts`, `effects/FXLightPool.ts`, `world/GivreSky.ts`, `world/skyDome.ts`, `world/SpaceSky.ts`, `world/YardSky.ts`, `game/Game.ts`, `ui/perfDiag.ts` |
+| Fin de partie (écran de fin) | **Plus rien de neuf dans l'image où le chrono tombe à 0:00, plus de monde dessiné sous l'écran de fin.** Mesuré sur le portable : une image de 133-166 ms à la fin du match, puis 52-54 FPS sur l'écran de fin. L'écran de fin créait son contexte WebGL, compilait ses programmes (9 au premier rendu de l'intro, 2-3 en pleine intro), extrudait son titre, injectait sa feuille de style, chargeait ses polices, copiait toute l'image (8 Mo) pour en tester 64 pixels et stylait / mettait en page ses résultats deux fois — tout dans cette image ; puis le jeu redessinait le monde gelé sous l'instantané qui le cache, et l'intro dessinait deux quads plein écran à opacité 0, à chaque image. Maintenant : le premier usage est fait dans les temps morts du menu et gardé d'un écran de fin au suivant (contexte, programmes et numéros de shaders, géométrie des lettres), le monde n'est plus dessiné dès que l'instantané est prouvé opaque, les draws sans contribution sont sautés, 64 pixels lus au lieu de toute l'image, la vitre construite en tableaux typés (au bit près), l'unité des résultats posée avant leur contenu. Même image (0 pixel de différence : intro 3D à 22 instants, instantané, écran composé à 8 instants). Détails, chiffres et interrupteurs (`?diag=oldendscreen`…) dans « La fin de partie » plus bas. | `endscreen/Intro3D.js`, `endscreen/EndScreen.js`, `endscreen/UI.js`, `match/MatchEndController.ts`, `match/EndScreenPerf.ts`, `game/Game.ts`, `main.ts`, `ui/perfDiag.ts` |
 | Qualité HIGH | Filtrage anisotrope ×8 sur les lightmaps (sols et murs nets en incidence rasante). | `game/GraphicsQuality.ts`, `world/GivreMap.ts` |
 
 ### Bugs corrigés au passage
@@ -104,6 +105,12 @@ opérations de skinning par rayon).
 35. **Nouvelle option graphique** (page SETTINGS) : sa valeur dans `GraphicsValues` (`settings/GraphicsSettings.ts` : presets, validation, libellé dans `settings/labels.ts`), son application dans `Game.applyLiveValues` — **en direct seulement si elle ne change aucun programme** (taille, échantillons, visibilité, paramètre de texture, uniform) ; sinon elle va dans `reloadChanges` (« Apply & reload »). Une option qui active / coupe une passe ou une variante (FXAA ⇄ MSAA) : les deux variantes compilées au chargement (`warmAlternateOutput`), vérifié par `tools/perf/settings-page-check.mjs` (aucun programme compilé par un changement en direct). Low et High restent **exactement** les anciens LOW et HIGH (`scripts/test-graphics-settings.mts`). L'interface du jeu est en anglais : libellés dans `settings/labels.ts`, en casse normale (les majuscules viennent du CSS).
 36. **Détection automatique** : elle juge sur les **intervalles entre images** sous charge (+30 % de pixels), jamais sur des requêtes de chronométrage GPU (elles comptent les temps morts du GPU et font flusher Chrome : elles changent ce qu'elles mesurent). Une option ne rejoint l'échelle (`settings/AutoTune.ts`) que si elle s'applique en direct, à sa place dans l'ordre « le moins visible d'abord », et jamais sous le plancher (l'ancien LOW). Changer la logique de la détection = incrémenter `AUTO_TUNE_VERSION` (chaque joueur « Auto » est mesuré à nouveau, une fois).
 37. **Anciennes clés** `beanzo.graphicsQuality` / `beanzo.fpsCap` : toujours lues et écrites (pont avec un build plus ancien et avec les scripts de banc) — une valeur écrite par quelqu'un d'autre depuis le dernier passage du jeu est reprise au chargement suivant (`adoptLegacyChanges`). Les réglages du joueur vivent dans **un** enregistrement, `slideio.settings`.
+38. **Un écran qui recouvre tout le monde d'une image opaque** (l'écran de fin et son instantané de la dernière image) : le monde n'est plus dessiné derrière (`Game.setWorldCovered`) ; le canvas garde sa dernière image et reste dans la page tel quel (les mêmes couches qu'avant pour le navigateur ; le masquer en plus n'économiserait que la composition d'un quad caché). Seulement une fois l'image du dessus **prouvée** opaque partout : three.js crée tous ses contextes WebGL avec un canal alpha (l'option `alpha: false` ne règle que la couleur d'effacement), le jeu ne peut donc pas le promettre — l'écran de fin lit son instantané par bandes, une par image, pendant les premières images de l'intro (`EndScreen._scanBackdrop` → `onBackdropOpaque` ; un seul pixel translucide et rien ne change). Le découvrir **avant** tout fondu qui le laisse voir (`MatchEndController.close`). Les mises à jour du décor (neige, ventilateurs…) continuent : le monde découvert est celui qu'on aurait vu.
+39. **2ᵉ contexte WebGL utilisé en jeu** (l'intro 3D de l'écran de fin) : créé, ses programmes compilés (`renderer.compile`, statut lu sans attente) **puis dessinés une fois** avec tous ses objets visibles, sur un tampon de 16 × 9, dans les temps morts du menu (`EndScreen.prewarm`) — terminé au plus tard au clic sur JOUER et avant une détection (`flushPrewarm`) ; gardé toute la session d'un écran de fin au suivant (`releaseIntro3D`), ses programmes épinglés (comme `ProgramPin`). Un objet invisible au premier rendu (les lettres, les anneaux) compilait au moment où il apparaissait, en pleine intro : le warm-up dessine **tout**. Un état repris d'un objet réutilisé doit être celui d'un objet neuf, tirages `Math.random()` compris (`Intro3D.adopt`).
+40. **Quad plein écran à opacité ou quantité 0** : three.js le dessine quand même — toute la passe de fragments, avec le MSAA. Le retirer du rendu quand sa contribution est **exactement** nulle (`Intro3D._render`) : seulement un objet qui n'écrit pas la profondeur et dont chaque fragment ajoute 0 (mélange additif), mélange un alpha 0, ou fait `discard`. Pas de test approché (« presque transparent ») : ce ne serait plus la même image.
+41. **Instantané d'un canvas WebGL** (copie dans un canvas 2D) : lire toute l'image (`getImageData`) pour tester quelques pixels coûte une copie et une conversion de 8 Mo à 1080p, au pire moment — lire les pixels testés seulement. Ce qui demande de tout lire (est-elle opaque partout ?) se lit par bandes, une par image, après l'image critique (règle 38).
+42. **Un écran construit d'un bloc** (les résultats de l'écran de fin) : poser ce qui fixe ses tailles (`--u`, le mode de mise en page) **avant** d'insérer son contenu, et ne lire aucune géométrie entre deux écritures (`focus()` force le style, `getBoundingClientRect` la mise en page) — sinon tout le contenu est stylé et mis en page une fois à la mauvaise taille, puis encore une fois (`UI.build`).
+43. **`ShaderMaterial` recréé à chaque usage** (vitre, fissures de l'écran de fin) : three.js numérote le code de chaque shader tant qu'un matériau l'utilise ; dès que le dernier est libéré (`dispose`), le suivant reçoit un nouveau numéro, donc une nouvelle clé de programme, et son programme est **recompilé** — même épinglé (`ProgramPin` ne garde que l'ancien, plus jamais choisi). Garder un matériau de chaque sorte en vie (`Intro3D._retire`), ou réutiliser le matériau. (Les matériaux intégrés — `MeshStandardMaterial`… — ne sont pas concernés : leur clé ne dépend pas de ces numéros.)
 
 ## Mesures (banc headless, avant → après)
 
@@ -397,6 +404,106 @@ carte qui tient 60 FPS en High avec peu de marge garde High — et sur un écran
 de High lui prend trois rafraîchissements (48 FPS), elle descend juste ce qu'il faut pour 60. Le résumé
 affiché dit la marge réellement mesurée et quand le rendu d'origine a dû baisser.
 
+## La fin de partie (écran de fin)
+
+Mesuré sur le portable (Iris Xe, Chrome Windows / ANGLE D3D11, 1920 × 1080, production, FFA solo à 8,
+Yard et Givre ; horodatage des rAF + requêtes de chronométrage GPU) : **une image de 133 à 166 ms** du
+thread principal là où le chrono tombe à 0:00, puis **52-54 FPS** sur l'écran de fin (43 à 63 images de
+plus de 25 ms par 10 s), alors que le WebGL du jeu n'y coûte que 2-7 ms de CPU et 7-10 ms de GPU. En
+partie, la même machine tient 60 FPS : la fin de partie était devenue le pire moment d'un match.
+
+**Ce qui coûtait.** L'écran de fin (`src/endscreen`, piloté par `match/MatchEndController.ts`) faisait
+tout pour la première fois **dans l'image où le match se termine** — banc (SwiftShader, Yard LOW,
+8 joueurs, 640 × 360), JS de cette image hors capture : ≈ 280 ms, dont :
+
+| Étape | Banc | |
+|---|---|---|
+| Contexte WebGL de l'intro 3D (`new WebGLRenderer`) | 59 ms | créé à chaque fin de partie |
+| Titre extrudé (VICTOIRE / DÉFAITE, chaque lettre en relief + 3 plaques) | 73 ms | |
+| Résultats : style puis mise en page de tout le DOM, **deux fois** (unité `--u` posée après coup) | 78 ms | `focus()` 47, `getBoundingClientRect` 22 |
+| Vitre brisée et fissures (tableaux JS qui grandissent, clés de chaînes) | 10 ms | |
+| Feuille de style (restyle de toute la page) et deux polices chargées à ce moment | — | le texte remis en page à leur arrivée |
+| Copie entière de l'instantané (`getImageData`, 8 Mo à 1080p) pour en tester 64 pixels | 1 ms au banc | ~10 ms à 1080p |
+| Contexte audio de l'écran de fin, ouvert à chaque fin de partie (jamais refermé) | 2-80 ms | |
+
+Puis l'image suivante : **9 programmes GPU compilés** au premier rendu de l'intro (166 ms de JS au banc ;
+sous D3D11, 10 à 300 ms par programme quand le cache de Chrome est froid), et **2 à 3 autres en pleine
+intro** (les lettres, les anneaux du slam : invisibles au départ). Et à chaque image de l'écran de fin :
+le monde gelé **redessiné en entier** sous l'instantané opaque qui le cache (73 draws au banc, 7-10 ms de
+GPU sur le portable) et composé, et deux quads plein écran de l'intro (le fond une fois le titre en
+place, les lignes de vitesse hors du slam) dessinés à opacité 0, avec MSAA. Au rejouer, tout
+recommençait : nouveau contexte WebGL, 12 compilations, nouveau contexte audio.
+
+**Ce qui a été fait** — même image (preuves plus bas), un interrupteur `?diag=` par changement (production
+comprise), `?diag=oldendscreen` = l'ancienne fin de partie entière (`match/EndScreenPerf.ts`) :
+
+| Changement | Pour l'enlever |
+|---|---|
+| **Préchauffage.** Feuille de style, polices, contexte audio (dès que la page a eu un geste, au plus tard au clic sur JOUER), contexte WebGL de l'intro et ses programmes (envoyés au processus GPU par `renderer.compile`, liés en parallèle, puis **dessinés une fois avec tous leurs objets visibles**, victoire puis défaite, sur un tampon de 16 × 9), titre extrudé des deux issues : dans les temps morts du menu (`EndScreen.prewarm`), terminé au plus tard au clic sur JOUER et avant une détection automatique (`flushPrewarm`). L'écran de fin prend cette instance (`takeIntro3D` → `adopt` : l'état exact d'une instance neuve, tirages `Math.random()` compris, dans le même ordre) et la rend au suivant (`releaseIntro3D`) : rejouer ne recrée rien. Programmes épinglés, un matériau de chaque sorte gardé (sans lui, three.js renumérote les shaders de la vitre et recompile 3 programmes à chaque écran de fin — règle 43), géométrie des lettres partagée. | `noendwarm` |
+| **Monde couvert.** L'instantané est lu par bandes (~128 k pixels par image, dès la 2ᵉ image de l'intro) ; s'il est opaque partout (three.js crée tous ses contextes avec un canal alpha : le jeu ne peut pas le promettre), le monde gelé n'est plus dessiné (`Game.setWorldCovered` ; le canvas garde sa dernière image) ; découvert avant le fondu de sortie. Les mises à jour du décor continuent. | `noendcover` |
+| **Draws vides.** L'intro ne dessine plus ce qui ne peut changer aucun pixel (`Intro3D._render`) : fond à opacité 0 (tout l'écran de fin une fois le titre en place), lignes de vitesse à 0 (sauf ~0,5 s autour du slam), flash d'impact éteint, pools de particules sans point visible, confettis sans pièce vivante, ombre du titre avant son arrivée, fissures pas encore poussées ou fondues — chacun mélange un alpha 0, ajoute 0 ou fait `discard`, aucun n'écrit la profondeur. | `noendskip` |
+| **Instantané.** Les 64 pixels testés sont lus un par un au lieu de toute l'image ; vitre et fissures construites directement dans des tableaux typés, arêtes repérées par des clés numériques (`buildGlassFast`, `buildCracksFast`) : la même géométrie au bit près (`scripts/test-endscreen-glass.mts`), 3× moins de CPU. | `noendsnap` |
+| **Mise en page.** L'unité des résultats (`--u`) et leur mode de mise en page posés avant d'insérer le contenu (`UI.build`) : un seul style + une seule mise en page du DOM des résultats (règle 42). | `noendlayout` |
+
+**Banc, avant → après** (SwiftShader, Yard LOW victoire, 8 joueurs, 640 × 360 ; la capture de l'image —
+une lecture GPU → CPU de 1,7 à 2,8 s sous SwiftShader, quelques ms sur une vraie carte — est hors
+comparaison) :
+
+| Mesure | Avant | Après | `?diag=oldendscreen` (même build) |
+|---|---|---|---|
+| JS de l'image de fin, hors capture | ≈ 280 ms | **≈ 105 ms** (≈ 195 ms si le contexte audio n'a pas pu être préparé : page sans geste) | ≈ 310 ms |
+| Contextes WebGL / audio créés à la fin du match | 1 / 1 | **0 / 0** | 1 / 1 |
+| Programmes compilés : 1ʳᵉ fin de match / pendant l'intro / 2ᵉ fin (rejouer) | 9 / 2-3 / 12 | **0 / 0 / 0** | 9 / 2-3 / 11 |
+| Image suivante (1ᵉʳ rendu de l'intro), JS | 166 ms | 17-40 ms | 105 ms |
+| Écran de fin : draws du monde par image | 73 | **0** | 73 |
+| Écran de fin : draws de l'intro par image | 47 | 43 (42 une fois le titre en place) | 47 |
+| Écran de fin : JS des rAF par image | 12,2 ms | 3,8-4,2 ms | 7,1 ms |
+| Givre LOW défaite : draws du monde par image / contextes et programmes à la fin | — | 0 / 0 et 0 | 34 / 1 et 12 |
+| Intro seule, rendu synchronisé (480 × 270, après le dock) | 56 / 47 ms (victoire / défaite) | 52 / 36 ms | — |
+| Rejouer : `restartSoloMatch` / plus longue tâche à la fermeture de l'écran de fin | 12 ms / 165 ms (dont `onfinish` 118 ms : intro et contextes détruits) | 13-21 ms / aucune de plus de 50 ms | 20 ms / — |
+
+**Preuves (même image)** — pixel pour pixel, RGBA, seuil 0 :
+- intro 3D, ancien code (fe377c8) contre nouveau, horloge fixe, mêmes tirages, à 22 instants de 0 à 7 s,
+  victoire et défaite, mouvement normal et réduit : chemins froid, instance préchauffée, draws vides
+  sautés, et les deux ensemble — **0 pixel différent partout** (les tirages `Math.random()` des UUID de
+  three.js sont séparés de ceux de l'intro : un objet réutilisé au lieu d'être recréé ne doit pas décaler
+  la vitre) ; 0 programme compilé pendant l'intro avec l'instance préchauffée ;
+- instantané : ancien contre nouveau, 5 rapports de taille jeu / écran (copie 1:1 et redimensionnée) :
+  0 pixel différent, et le même rendu de l'intro avec chacun en texture ; la lecture par bandes donne
+  le même verdict que le compte complet ;
+- page composée (écran de fin + jeu derrière), ancien build contre nouveau, 8 états (départ, fissures,
+  éclatement, titre, dock, résultats, votes, fin du vote) : Yard LOW victoire et Givre LOW défaite
+  **identiques** ; Givre HIGH victoire : identique aux 4 premiers états, et aux résultats / votes / fin
+  du vote dans une série (1 pixel d'1 niveau sur 255). Dans d'autres séries, une ligne du classement et
+  la pastille du score sortent décalées d'1 px — **y compris avec le monde redessiné comme avant**
+  (`?diag=noendcover`) : effet de la composition du banc (cette ligne vient d'être animée), pas d'un
+  changement ; et après le redémarrage du banc, la vue du dock saisit le compteur du score à un autre
+  instant (194 au lieu de 288) avec ou sans le changement (horloge réelle des animations WAAPI contre
+  l'horloge fixe du banc).
+
+**Ce qui reste, et les compromis possibles** (non faits) :
+- **La capture elle-même** : `Game.captureFrame` redessine le monde gelé puis le copie ; l'écran de fin
+  le recopie dans un canvas 2D lu par le CPU : le thread principal attend que le GPU ait fini cette
+  image, plus le transfert (≈ 8 Mo, plafonné à 2048 px de large). Une copie restée sur le GPU (canvas 2D
+  accéléré) supprimerait l'attente, mais son rééchantillonnage (rendu à moins de 100 %) n'est pas celui
+  du CPU : pas prouvable identique ici (pas de GPU) — à essayer sur le portable.
+- **Le DOM des résultats** reste construit, stylé et mis en page dans l'image de fin (une fois au lieu
+  de deux) : 20-50 ms au banc. Il n'apparaît qu'à 2,05 s (victoire) / 3,25 s (défaite) ; le construire
+  plus tard le déplacerait en pleine cinématique.
+- **Le flou de la vignette** (`backdrop-filter: blur(3px)` plein écran quand les résultats sont là),
+  recalculé à chaque image où l'intro bouge au-dessus : l'enlever change l'image.
+- **L'intro 3D à la densité de l'écran avec MSAA** (×1,25 sur le portable : 2400 × 1160, 4 échantillons)
+  pendant tout l'écran de fin (le titre ondule, les confettis tombent) : densité 1 ou sans MSAA =
+  −36 % / −75 % de fragments, mais des bords différents.
+
+**À mesurer sur le portable** (production, un déploiement, A/B par `?diag=`) : l'image où le chrono
+tombe à 0:00 (`[hitch]` en console, ou les intervalles entre rAF) — avant 133-166 ms ; les FPS des 10 s
+d'écran de fin — avant 52-54 ; puis `?diag=oldendscreen` (l'ancien chemin) et chaque interrupteur seul ;
+rejouer sur la même carte (aucune compilation, aucun contexte créé ; la relance doit arriver ≈ 2,65 s après
+la fin du vote, comme avant — au banc, SwiftShader prend du retard sur les images de l'intro seule et la
+relance arrive à 5,5 s au lieu de 3,0 s) ; un clic sur JOUER dans la première seconde du menu (le reste
+du préchauffage passe au clic, comme les BVH de tir).
+
 ## Vérifier sur une machine
 
 HUD de debug (déjà présent) : lignes `World: N draws` et `CPU`. La page **SETTINGS** a sa propre carte de
@@ -426,6 +533,15 @@ c'est le GPU (ou le processus GPU du navigateur).
   inchangés = CPU et GPU travaillent en parallèle) ; `nopost` = Givre dessiné directement dans
   le canvas, sans cible HDR ni passe de sortie ; `empty` = plus aucun rendu 3D (ce qui reste =
   le coût propre de la page). Jamais pour jouer.
+  **Fin de partie** (voir « La fin de partie ») : `oldendscreen` = l'ancienne fin de partie
+  entière ; un seul changement à la fois : `noendwarm` (écran de fin construit à la fin du
+  match : contexte WebGL, programmes, titre, polices, feuille de style, contexte audio), `noendcover` (le monde
+  gelé redessiné derrière l'instantané opaque), `noendskip` (l'intro 3D dessine aussi ses quads
+  à opacité 0), `noendsnap` (instantané copié en entier pour tester 64 pixels), `noendlayout`
+  (les résultats stylés et mis en page deux fois, à l'unité par défaut puis à la vraie). À mesurer : la
+  frame où le chrono tombe à 0:00 (console `[hitch]`, ou les intervalles entre rAF) et les FPS
+  de l'écran de fin (le panneau de debug y est masqué : intervalles entre rAF, requêtes de
+  chronométrage GPU — le jeu n'y dessine plus rien tant que l'écran de fin le recouvre).
 - `Device:` : le GPU réellement utilisé par le navigateur. « SwiftShader »,
   « Basic Render Driver » ou « llvmpipe » = rendu logiciel (accélération matérielle
   désactivée) : aucune optimisation du jeu n'y changera rien.
