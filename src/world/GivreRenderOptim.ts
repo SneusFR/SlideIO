@@ -679,6 +679,26 @@ export function buildLimitedMipmaps(image: unknown, levels: number): unknown[] |
 }
 
 /**
+ * RGBA bytes of an image (ImageBitmap, canvas, image element) as drawn into a
+ * 2D canvas — what WebGL uploads from it when it is opaque (no premultiplied
+ * alpha to undo). Null without a DOM or a size.
+ */
+export function readImageRgba(image: unknown): Uint8ClampedArray | null {
+  if (typeof document === "undefined") return null;
+  const src = image as { width?: number; height?: number } | null;
+  const w = src?.width ?? 0;
+  const h = src?.height ?? 0;
+  if (w < 1 || h < 1) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(image as CanvasImageSource, 0, 0);
+  return ctx.getImageData(0, 0, w, h).data;
+}
+
+/**
  * Opaque sort for Givre: renderOrder first (stencil / outline contracts are
  * kept), then strictly FRONT-TO-BACK (early-Z rejects the rooms hidden
  * behind the walls), material only as a tie-break.

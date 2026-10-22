@@ -63,6 +63,7 @@ opérations de skinning par rayon).
 | Image du kill (17ᵉ passe) | **Le premier dessin d'un cadavre ne fait plus, dans l'image du kill, le travail de « première fois » de three.js** (mesures plus bas). Ce dessin créait les textures d'os des squelettes du cadavre (2 à 4 : tableau, DataTexture, `createTexture` + `texStorage2D` + envoi) et initialisait chaque nouveau clone de fondu (premier cadavre de chaque bot, et chaque cadavre d'un bot peint : les clones de la peinture partent avec leur cadavre) : `material.clone()`, uniforms clonés, programme cherché, lumières branchées. C'est fait maintenant sur une image ordinaire de la vie du bot, un bot par image, à la fin de la frame juste après le rendu (jamais dans l'image qui le demande, un tir de peinture par exemple) : le clone de cadavre préparé reçoit ses textures d'os, et CorpseManager garde un clone de fondu initialisé (`renderer.compile` sur les mailles mêmes du clone préparé, la cible de la passe monde liée, les deux looks : fondu puis vie opaque) pour chaque matériau visible dont la réserve est vide. Au kill, ce clone est remis à l'état de la source par `copy()` + les mêmes réglages : exactement ce que `source.clone()` donnerait à cet instant (test propriété par propriété), et three redérive son programme au premier dessin comme pour un clone neuf. Même image (vérifiée au banc au kill et pendant le fondu). Reste dans l'image du kill : la vérification du programme de ces clones, le VAO d'une géométrie jamais dessinée avec le programme de fondu (pas de dessin d'avance : aucun draw de plus en jeu), les envois d'os de toute image. `?diag=nokillprep` remet l'ancien chemin. **Expérience, désactivée par défaut** : `?diag=programsort` trie les opaques par programme puis matériau (proche → lointain dans un matériau) au lieu du tri avant → arrière, pour la pré-passe de profondeur de la carte (`?diag=prepass`, branche gpu-overdraw) : un tiers de `useProgram` en moins, mais à profondeur exactement égale quelques pixels peuvent changer (1 à 9 pixels dans 6 des 68 vues comparées au banc). | `effects/KillPrep.ts`, `ragdoll/CorpseManager.ts`, `ragdoll/CorpseCloneSpare.ts`, `bots/BotModel.ts`, `bots/Bot.ts`, `world/GivreRenderOptim.ts`, `ui/perfDiag.ts`, `game/Game.ts` |
 | Fin de partie (18ᵉ passe : écran de fin) | **Plus rien de neuf dans l'image où le chrono tombe à 0:00, plus de monde dessiné sous l'écran de fin.** Mesuré sur le portable : une image de 133-166 ms à la fin du match, puis 52-54 FPS sur l'écran de fin. L'écran de fin créait son contexte WebGL, compilait ses programmes (9 au premier rendu de l'intro, 2-3 en pleine intro), extrudait son titre, injectait sa feuille de style, chargeait ses polices, copiait toute l'image (8 Mo) pour en tester 64 pixels et stylait / mettait en page ses résultats deux fois — tout dans cette image ; puis le jeu redessinait le monde gelé sous l'instantané qui le cache, et l'intro dessinait deux quads plein écran à opacité 0, à chaque image. Maintenant : le premier usage est fait dans les temps morts du menu et gardé d'un écran de fin au suivant (contexte, programmes et numéros de shaders, géométrie des lettres), le monde n'est plus dessiné dès que l'instantané est prouvé opaque, les draws sans contribution sont sautés, 64 pixels lus au lieu de toute l'image, la vitre construite en tableaux typés (au bit près), l'unité des résultats posée avant leur contenu. Même image (0 pixel de différence : intro 3D à 22 instants, instantané, écran composé à 8 instants). Détails, chiffres et interrupteurs (`?diag=oldendscreen`…) dans « La fin de partie » plus bas. | `endscreen/Intro3D.js`, `endscreen/EndScreen.js`, `endscreen/UI.js`, `match/MatchEndController.ts`, `match/EndScreenPerf.ts`, `game/Game.ts`, `main.ts`, `ui/perfDiag.ts` |
 | Qualité HIGH | Filtrage anisotrope ×8 sur les lightmaps (sols et murs nets en incidence rasante). | `game/GraphicsQuality.ts`, `world/GivreMap.ts` |
+| GPU (19ᵉ passe : shader de la carte de Givre) | **Le shader de la carte ne calcule plus que ce que Givre utilise, même image au bit près.** La carte est dessinée par le `MeshStandardMaterial` de three (matériaux « uber », lampes, montagnes) : le modèle PBR général, qui évalue pour chaque pixel des termes nuls sur cette carte. `GivreMapMaterial` les retire au chargement, matériau par matériau, seulement si les données réelles le permettent (`mapShaderEligibility` : sinon l'option tombe pour ce matériau, jamais une image fausse) : (1) la lumière d'environnement (IBL : deux lectures de la table DFG, deux `computeMultiscattering`, ~60 instructions) — Givre n'a pas d'env map, ce terme était multiplié par 0 ; (2) le métal, 0 sur tous les sommets (plus d'attribut ni de varying `aMetalness`, les mélanges deviennent des constantes) ; (3) une seule coordonnée pour les deux lightmaps (même `uv`, même transformation) ; (4) le soleil seulement là où il éclaire : une face tournée à l'opposé du soleil (N·L ≤ 0) ne lit plus l'ombre (5 lectures PCF, 5 cos + 5 sin) ni le BRDF ; un pixel entièrement à l'ombre du soleil (facteur exactement 0 : intérieurs, dessous des toits) ne calcule plus le BRDF — le shader d'origine y ajoutait exactement 0. Banc (13 poses : spawn, les 9 points de vue de la carte, face au soleil bas, plongée sur la cour, verglas ; 960 × 540) : **0 pixel de différence** (RGBA) en LOW (FXAA) comme en HIGH (MSAA 4×). Le soleil n'est plus calculé sur 76 à 98 % de l'écran dans les salles et sous les toits (spawn 98 %, chaufferie 76 %, liaison sud 88 %), 2 à 47 % dehors. Au banc (passe monde seule, SwiftShader : temps CPU du processus GPU, médiane de 5 rendus) : **−15 %** au spawn en LOW, −11 % à la chaufferie, −10 % au couloir ouest, −3 % dans la cour centrale (presque tout l'écran au soleil) ; en HIGH −9 % au spawn, −5 % dans la cour. Un GPU logiciel paie chaque instruction : sur la vraie carte le gain sera plus petit (l'ombre du soleil entière coûtait 0,24 ms par image à l'Iris Xe, 11ᵉ passe) — à lire sur la ligne `GPU` (`monde`) avec et sans `?diag=nomapshader` (le shader d'origine) ; une ligne `[CARTE]` dans la console dit lequel tourne. Partie quasi exacte en option, **à décider** (`?diag=mapshaderfast`) : sans la compensation de diffusion multiple du soleil (au plus 6,6·10⁻⁵ en linéaire : moins d'un quart de niveau, même près du noir) et la rotation du disque PCF avec un seul cos / sin au lieu de cinq. Mesuré : au plus **1 niveau sur 255** sur 0,10 % des pixels avant l'anticrénelage (LOW et HIGH) ; en LOW, le FXAA élargit une petite partie de ces écarts (0,12 % des pixels, dont 98 % d'un niveau, mais jusqu'à 46 niveaux sur ~80 pixels de bords sur 6,7 millions). Au banc, elle gagne 1 à 10 points de plus que le défaut (chaufferie −21 % au lieu de −11 %). Entre les deux, `?diag=mapshaderao` (exact au banc, **à mesurer** avant d'en faire le défaut) : l'AO rangée dans l'alpha de la lightmap émissive, empaquetée au chargement — une lecture de texture de moins par pixel, 0 pixel de différence (13 poses, LOW et HIGH), 3 à 9 % de plus au banc ; `mapshaderfast` la comprend. Détail et risques : « Le shader de la carte, terme par terme » plus bas. | `world/GivreMapMaterial.ts`, `world/GivreMap.ts`, `ui/perfDiag.ts`, `tools/perf/map-shader-check.mjs` |
 
 ### Bugs corrigés au passage
 
@@ -130,6 +131,7 @@ opérations de skinning par rayon).
 54. **Instantané d'un canvas WebGL** (copie dans un canvas 2D) : lire toute l'image (`getImageData`) pour tester quelques pixels coûte une copie et une conversion de 8 Mo à 1080p, au pire moment — lire les pixels testés seulement. Ce qui demande de tout lire (est-elle opaque partout ?) se lit par bandes, une par image, après l'image critique (règle 51).
 55. **Un écran construit d'un bloc** (les résultats de l'écran de fin) : poser ce qui fixe ses tailles (`--u`, le mode de mise en page) **avant** d'insérer son contenu, et ne lire aucune géométrie entre deux écritures (`focus()` force le style, `getBoundingClientRect` la mise en page) — sinon tout le contenu est stylé et mis en page une fois à la mauvaise taille, puis encore une fois (`UI.build`).
 56. **`ShaderMaterial` recréé à chaque usage** (vitre, fissures de l'écran de fin) : three.js numérote le code de chaque shader tant qu'un matériau l'utilise ; dès que le dernier est libéré (`dispose`), le suivant reçoit un nouveau numéro, donc une nouvelle clé de programme, et son programme est **recompilé** — même épinglé (`ProgramPin` ne garde que l'ancien, plus jamais choisi). Garder un matériau de chaque sorte en vie (`Intro3D._retire`), ou réutiliser le matériau. (Les matériaux intégrés — `MeshStandardMaterial`… — ne sont pas concernés : leur clé ne dépend pas de ces numéros.)
+57. **Shader de la carte Givre** (`world/GivreMapMaterial.ts`) : il suppose ce que `mapShaderEligibility` vérifie sur les vraies données au chargement — métal 0 sur chaque sommet, pas d'env map, emissive + AO sur le même `uv` et la même transformation, pas de normal map / clearcoat / sheen / transmission. Une condition qui tombe (un matériau métallique, une env map, une texture décalée) retire l'option pour CE matériau : jamais une image fausse, mais le gain disparaît sans bruit — vérifier `givreMapShader.list()` (DEV) après un changement de la carte. Un chunk de three réécrit (mise à jour de three) : `scripts/test-givre-render-optim.mts` échoue sur l'ancre manquante, et en jeu le shader d'origine est gardé (avertissement console). Un matériau de carte modifié en jeu par un effet (l'émissif de GIV_Feu) n'est jamais cloné : l'ajouter à `DECOR_KEEP_MATERIALS`. Toute nouvelle simplification : `tools/perf/map-shader-check.mjs` doit rester à 0 pixel de différence (LOW et HIGH), sinon elle va dans `mapshaderfast` (compromis à décider).
 
 ## Mesures (banc headless, avant → après)
 
@@ -961,6 +963,79 @@ peints diffèrent de plus de 32 niveaux, aux bords et aux reflets), `?diag=paint
 de tirages en tirant, un mouvement moins fluide). Plus aucune allocation par tirage
 (`PaintGL.draw`).
 
+## Le shader de la carte, terme par terme (19ᵉ passe)
+
+Ce que three r185 calcule pour chaque pixel de la carte (programme « uber » texturé, lu dans
+`renderer.info.programs`) : couleur de sommet, rugosité / métal / émissif par sommet, deux
+lightmaps 2048² (émissive sRGB + AO, mêmes `uv`), soleil (GGX + compensation de diffusion
+multiple : 2 lectures de la table DFG) avec son ombre PCF (**5 prises** matérielles 2 × 2 sur un
+disque de Vogel tourné par pixel : 5 cos + 5 sin), lumière hémisphérique, et la lumière
+d'environnement (IBL : 2 `computeMultiscattering`, chacun une lecture DFG aux mêmes coordonnées)
+— sans env map sur Givre.
+Données réelles : métal **0** partout, rugosité 0,06 (verglas) à 0,92 (neige), pas de couleur de
+sommet dans le glb (couleur constante par objet), aucune AmbientLight, aucune lumière ponctuelle.
+
+| Terme | Verdict | Mesure (banc, 13 poses, LOW + HIGH, 960 × 540) |
+|---|---|---|
+| IBL (lumière d'environnement) | retiré — exact | ajoutait exactement 0 (rayonnement nul sans env map) : 0 pixel |
+| Métal (mélanges, attribut, varying) | replié — exact | 0 sur chaque sommet : 0 pixel |
+| Deux coordonnées de lightmap | une seule — exact | même `uv`, même transformation : 0 pixel |
+| Soleil où N·L ≤ 0 ou ombre = 0 | sauté — exact | le shader d'origine y ajoutait 0 : 0 pixel ; sauté sur 2 à 98 % de l'écran selon la vue |
+| Diffusion multiple du soleil | `mapshaderfast` — quasi exact | ≤ 6,6·10⁻⁵ en linéaire ; 1 niveau sur 0,10 % des pixels (avant FXAA) |
+| Rotation du disque PCF | `mapshaderfast` — quasi exact | mêmes prises à ~10⁻⁶ texel près ; 1 niveau sur 0,003 % des pixels |
+| Spéculaire du soleil | **gardé** | pas négligeable : sans lui 30 % des pixels changent (jusqu'à 145 niveaux), même sur les seuls matériaux rugueux (≥ 0,75 : 29 %, jusqu'à 106) — soleil rasant, Fresnel fort sur la neige |
+| PCF 1 prise au lieu de 5 | **compromis, non fait** | ombres plus dures : 3,3 % des pixels en LOW (jusqu'à 83 niveaux), 0,66 % en HIGH |
+| Lumière hémisphérique | gardée | ~10 instructions ; par sommet, l'image changerait (normale renormalisée par pixel) |
+| AO + émissive dans une texture | `mapshaderao` — exact au banc, **à mesurer** | l'AO dans l'alpha de la lightmap émissive (empaquetée au chargement, chaque niveau de mip, octet pour octet) : une lecture au lieu de deux par pixel (jusqu'à une texture 2048² de moins en mémoire vidéo) ; 0 pixel de différence (13 poses, LOW et HIGH, anisotrope 8× compris) ; au banc 3 à 9 % de plus que le défaut en LOW, ~20 % en HIGH (la lecture anisotrope 8× de l'AO est chère en logiciel). Pas par défaut : l'empaquetage relit les deux images par un canvas 2D au chargement (temps sur la ligne `[CARTE]` : 0,2 s au banc ; +21 Mo de mémoire JS), et cette relecture est brouillée exprès par les protections anti-empreinte (Brave par défaut, Safari en navigation privée, Firefox `resistFingerprinting`) : l'image n'y serait plus exacte ; et sur un vrai GPU rien ne garantit que l'alpha d'une texture sRGB est filtré avec le même arrondi que le rouge d'une texture linéaire (tous deux 8 bits linéaires). Les deux lectures ensemble étaient dans le bruit sur l'Iris Xe en LOW (19ᵉ passe, filtrage 1×) : le gain réel est à mesurer, surtout en HIGH. Pour en faire le défaut : une lightmap RGBA empaquetée **hors ligne**, livrée avec la carte (plus de relecture) |
+| AO / émissive dans les sommets | non fait | les lightmaps varient dans les triangles : exact seulement où l'empreinte filtrée (3 niveaux de mip, anisotrope) est constante — invérifiable sûrement |
+| Varyings `flat` (constantes par objet) | non fait | sous Windows, ANGLE / D3D11 doit émuler le sommet provoquant d'OpenGL pour un varying flat (c'est la raison d'être de l'extension `WEBGL_provoking_vertex`) : risque d'être plus cher sur la machine visée, pour 7 interpolations de moins |
+
+**Mesures.** Pixels : `tools/perf/map-shader-check.mjs` (sortie du canvas en RGBA, 960 × 540,
+13 poses : spawn, les 9 points de vue, soleil bas de face, plongée sur la cour, verglas). Temps :
+la passe monde seule, une pose figée, sur SwiftShader (un GPU logiciel : le temps CPU de son
+processus = le travail du GPU, au centième de seconde), médiane de 5 rendus alternés entre
+variantes. C'est un ordre de grandeur des instructions et des lectures économisées, pas une
+prévision : une vraie carte cache les textures, recouvre une partie des calculs par les lectures,
+et paie les branches par paquets de pixels (le saut du soleil gagne surtout sur les grandes zones
+d'un seul tenant : salles, dessous des toits, faces à contre-jour).
+
+Piège du banc : une session ouverte avec `?diag=mapshaderao` ne dessine les matériaux d'origine
+qu'à la première comparaison, et leurs lightmaps partent alors tard au GPU ; or, au banc, un envoi
+**tardif** des niveaux de mip des lightmaps (des canvas 2D, `buildLimitedMipmaps`) ne donne pas ce
+que contiennent ces canvas (niveaux 1 et 2 faux, jusqu'à 255 niveaux — lu sur le GPU), ce qui
+faussait la référence (7 % des pixels « différents »). `map-shader-check` avec `DIAG=` envoie ces
+niveaux depuis leurs pixels : 0 pixel de différence, lightmap empaquetée au chargement comprise. Le
+jeu, lui, envoie ses lightmaps au chargement (vérifié). À garder en tête : une restauration du
+contexte WebGL les renverrait tard — à vérifier sur un vrai GPU ; garder ces niveaux en `ImageData`
+plutôt qu'en canvas réglerait la question.
+
+| Givre, 960 × 540 (série 1) | soleil sauté (LOW) | origine | défaut (exact) | quasi exact, sans AO empaquetée |
+|---|---|---|---|---|
+| LOW spawn (salle) | 98 % de l'écran | 720 ms | 610 (−15 %) | 590 (−18 %) |
+| LOW cour centrale | 4 % | 380 | 370 (−3 %) | 350 (−8 %) |
+| LOW chaufferie | 76 % | 630 | 560 (−11 %) | 500 (−21 %) |
+| LOW couloir ouest | 80 % | 480 | 430 (−10 %) | 400 (−17 %) |
+| HIGH spawn | — | 1 690 | 1 540 (−9 %) | 1 520 (−10 %) |
+| HIGH cour centrale | — | 970 | 920 (−5 %) | 870 (−10 %) |
+
+Série 2, avec l'AO empaquetée (le banc redémarré sur 2 cœurs : temps ~2 × plus longs et plus
+bruités — à lire entre colonnes d'une même ligne) :
+
+| Givre, 960 × 540 (série 2) | origine | défaut | `mapshaderao` | quasi exact sans AO | `mapshaderfast` |
+|---|---|---|---|---|---|
+| LOW spawn | 1 390 ms | −19 % | −21 % | −20 % | −26 % |
+| LOW cour centrale | 740 | −7 % | −11 % | −8 % | −18 % |
+| LOW chaufferie | 1 130 | −11 % | −19 % | −16 % | −22 % |
+| HIGH spawn | 3 320 | −4 % | −23 % | −13 % | −23 % |
+
+Terme par terme (série 1, LOW spawn, 720 ms à l'origine) : soleil sauté seul −10 % ; IBL retirée
+seule 0 % (le compilateur de SwiftShader éliminait déjà ce terme nul ; celui d'un pilote le fait
+sans doute aussi — le retrait reste une simplification sûre) ; compensation de diffusion multiple
+seule −12 % (deux lectures de la table DFG par pixel, partout dans le shader d'origine ; le défaut
+n'en garde que sur les pixels au soleil) ; rotation PCF seule −4 %. Sur le défaut : la lecture de
+l'AO coûte 8 % (13 % en HIGH, filtrage anisotrope 8×), le PCF à 1 prise au lieu de 5 en ferait
+gagner 11 % (compromis visuel, non retenu).
+
 ## Réglages graphiques et détection automatique (page SETTINGS)
 
 La page **SETTINGS** (menu principal et menu pause, `menu/SettingsPage.ts`) remplace le petit menu
@@ -1291,6 +1366,17 @@ c'est le GPU (ou le processus GPU du navigateur).
   frame où le chrono tombe à 0:00 (console `[hitch]`, ou les intervalles entre rAF) et les FPS
   de l'écran de fin (le panneau de debug y est masqué : intervalles entre rAF, requêtes de
   chronométrage GPU — le jeu n'y dessine plus rien tant que l'écran de fin le recouvre).
+- **Shader de la carte** (19ᵉ passe) : `nomapshader` = la carte Givre dessinée avec le shader
+  d'origine de three au lieu du shader spécialisé (`world/GivreMapMaterial.ts`, même image) :
+  la différence de la ligne `GPU` (`monde`) = ce que la spécialisation fait gagner sur cette
+  machine ; `mapshaderao` = le shader spécialisé avec l'AO rangée dans l'alpha de la lightmap
+  émissive (une lecture de texture de moins par pixel, même image au banc ; empaquetée au
+  chargement, la ligne `[CARTE]` de la console en donne le temps) : à comparer au défaut avant
+  d'en faire le défaut ; `mapshaderfast` = `mapshaderao` **plus** la partie quasi exacte (au plus
+  1 niveau sur 255, sur quelques pixels : un compromis visuel à décider, coupé par défaut).
+  Protocole : même pose, une fois dans une salle (le spawn) et une fois dehors (la cour
+  centrale), ligne `GPU` `monde` avec le défaut, `nomapshader`, `mapshaderao` et
+  `mapshaderfast`. Jamais pour jouer.
 - `Device:` : le GPU réellement utilisé par le navigateur. « SwiftShader »,
   « Basic Render Driver » ou « llvmpipe » = rendu logiciel (accélération matérielle
   désactivée) : aucune optimisation du jeu n'y changera rien.

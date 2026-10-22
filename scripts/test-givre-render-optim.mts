@@ -14,7 +14,12 @@
 //   6. SkyCoveredRenderPass: one depth / stencil clear while the sky covers
 //      every pixel (GivreSky.coversEveryPixel), one full clear otherwise
 //      (never two); the renderer's autoClear flags are restored;
-//   7. the FX light pool adds no (dead) light to the world scene.
+//   7. the FX light pool adds no (dead) light to the world scene;
+//   8. specialised map shader (GivreMapMaterial): `?diag=` options, what the
+//      real map data allows (metalness ≡ 0, one lightmap uv…), the GLSL
+//      rewrite against three's own chunks (every anchor found, the removed
+//      terms really gone, the PCF taps rotated exactly), the specialised
+//      clones (same values, own cache key, stock patch kept) and the swap.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import * as THREE from "three";
@@ -37,6 +42,22 @@ import {
 import { SkyCoveredRenderPass } from "../src/effects/SkyCoveredRenderPass.ts";
 import { GivreSky } from "../src/world/GivreSky.ts";
 import { fxLights } from "../src/effects/FXLightPool.ts";
+import { applyUberMaterial } from "../src/world/MapBatching.ts";
+import {
+  MAP_SHADER_AO,
+  MAP_SHADER_EXACT,
+  MAP_SHADER_FAST,
+  applyMapShader,
+  buildPackedLightmap,
+  collectMapShaderTargets,
+  createMapShaderMaterial,
+  mapShaderEligibility,
+  mapShaderOptionsFor,
+  packLightmapLevel,
+  specialiseMapShader,
+  vogelTaps,
+  type MapShaderOptions,
+} from "../src/world/GivreMapMaterial.ts";
 
 let passed = 0;
 const ok = (label: string) => {
@@ -390,6 +411,273 @@ console.log(`INFO buildStaticBatches load-time cost: ${(performance.now() - t0).
   fxLights.request(0xffffff, 5, 4, 2, new THREE.Vector3()); // still a valid call
   fxLights.commit();
   ok("FX light pool: no light added to the scene (nothing requests one)");
+}
+
+// ---------------------------------------------------------------- 8. map shader
+{
+  // ?diag= options.
+  assert.equal(mapShaderOptionsFor(new Set()), MAP_SHADER_EXACT, "default: the exact set");
+  assert.equal(mapShaderOptionsFor(new Set(["nomapshader"])), null);
+  assert.equal(mapShaderOptionsFor(new Set(["mapshaderfast"])), MAP_SHADER_FAST);
+  assert.equal(mapShaderOptionsFor(new Set(["mapshaderfast", "nomapshader"])), null, "off wins");
+  assert.equal(mapShaderOptionsFor(new Set(["mapshaderao"])), MAP_SHADER_AO);
+  assert.ok(MAP_SHADER_AO.packedAo && MAP_SHADER_AO.sunSkip && !MAP_SHADER_AO.noDirectMs, "ao = exact + packed AO");
+  assert.ok(!MAP_SHADER_EXACT.packedAo && MAP_SHADER_FAST.packedAo, "packed AO opt-in, in the fast set");
+  assert.ok(MAP_SHADER_EXACT.noIbl && MAP_SHADER_EXACT.dielectric && MAP_SHADER_EXACT.sharedUv && MAP_SHADER_EXACT.sunSkip);
+  assert.ok(!MAP_SHADER_EXACT.noDirectMs && !MAP_SHADER_EXACT.pcfRotate, "near-exact parts off by default");
+  assert.ok(MAP_SHADER_FAST.noDirectMs && MAP_SHADER_FAST.pcfRotate);
+
+  // The real map as GivreMap builds it: Standard materials, then the uber merge.
+  const converted = new Map<THREE.Material, THREE.Material>();
+  const mapEntries: StaticEntry[] = entries.map((e) => {
+    let m = converted.get(e.material);
+    if (!m) {
+      m = toStandardMaterial(e.material);
+      converted.set(e.material, m);
+    }
+    return { geometry: e.geometry.clone(), material: m };
+  });
+  const ubers = applyUberMaterial(mapEntries, new Set(["GIV_Feu", "GIV_Lampe"]));
+  const geometriesOf = (m: THREE.Material) => mapEntries.filter((e) => e.material === m).map((e) => e.geometry);
+  let vertices = 0;
+  for (const uber of ubers) {
+    const geometries = geometriesOf(uber);
+    for (const g of geometries) {
+      const a = g.getAttribute("aMetalness");
+      for (let i = 0; i < a.count; i++) assert.equal(a.getX(i), 0, `${uber.name}: metalness 0 on every vertex`);
+      vertices += a.count;
+    }
+    const textured = !!(uber as THREE.MeshStandardMaterial).emissiveMap;
+    assert.deepEqual(
+      mapShaderEligibility(uber, geometries),
+      { noIbl: true, dielectric: true, sharedUv: textured, sunSkip: true, noDirectMs: true, pcfRotate: true },
+      `${uber.name}: every option applies`,
+    );
+  }
+  const texturedUber = ubers.find((u) => (u as THREE.MeshStandardMaterial).emissiveMap)!;
+  assert.ok(texturedUber && ubers.length >= 2, "textured + untextured uber groups");
+  // The conditions are really checked.
+  {
+    const geometries = geometriesOf(texturedUber).map((g) => g.clone());
+    (geometries[0].getAttribute("aMetalness") as THREE.BufferAttribute).setX(0, 0.5);
+    const can = mapShaderEligibility(texturedUber, geometries);
+    assert.equal(can.dielectric, false, "one metallic vertex → not dielectric");
+    assert.equal(can.noDirectMs, false, "the multiscatter bound needs F0 = 0.04");
+    const moved = texturedUber.clone() as THREE.MeshStandardMaterial;
+    moved.aoMap = moved.aoMap!.clone();
+    moved.aoMap.offset.set(0.5, 0);
+    assert.equal(mapShaderEligibility(moved, geometriesOf(texturedUber)).sharedUv, false, "different AO transform");
+    moved.envMap = new THREE.Texture();
+    assert.equal(mapShaderEligibility(moved, geometriesOf(texturedUber)).noIbl, false, "env map → IBL kept");
+    const coat = new THREE.MeshPhysicalMaterial({ clearcoat: 1 });
+    assert.equal(mapShaderEligibility(coat, geometries).noIbl, false, "clearcoat → stock shader");
+    assert.equal(mapShaderEligibility(new THREE.MeshBasicMaterial(), geometries).pcfRotate, false, "unlit → stock");
+    const backdrop = new THREE.MeshPhysicalMaterial({ roughness: 0.95, specularIntensity: 0.2 });
+    assert.equal(mapShaderEligibility(backdrop, geometries).dielectric, true, "Physical backdrop: dielectric");
+  }
+
+  // GLSL rewrite on three's own sources, after MapUberMaterial's patch.
+  // The same steps as three's WebGLProgram: includes, light counts (Givre: 1
+  // sun with a shadow, 1 hemisphere light), then the unrolled light loops.
+  const includePattern = /^[ \t]*#include +<([\w\d./]+)>/gm;
+  const chunks = THREE.ShaderChunk as unknown as Record<string, string>;
+  const resolve = (src: string): string => src.replace(includePattern, (_m, name: string) => resolve(chunks[name]));
+  const lightNums = (src: string): string =>
+    src
+      .replace(/NUM_DIR_LIGHTS/g, "1")
+      .replace(/NUM_SPOT_LIGHTS/g, "0")
+      .replace(/NUM_SPOT_LIGHT_MAPS/g, "0")
+      .replace(/NUM_SPOT_LIGHT_COORDS/g, "0")
+      .replace(/NUM_RECT_AREA_LIGHTS/g, "0")
+      .replace(/NUM_POINT_LIGHTS/g, "0")
+      .replace(/NUM_HEMI_LIGHTS/g, "1")
+      .replace(/NUM_DIR_LIGHT_SHADOWS/g, "1")
+      .replace(/NUM_SPOT_LIGHT_SHADOWS_WITH_MAPS/g, "0")
+      .replace(/NUM_SPOT_LIGHT_SHADOWS/g, "0")
+      .replace(/NUM_POINT_LIGHT_SHADOWS/g, "0")
+      .replace(/NUM_CLIPPING_PLANES/g, "0") // replaceClippingPlaneNums: no clipping plane
+      .replace(/UNION_CLIPPING_PLANES/g, "0");
+  const unrollPattern = /#pragma unroll_loop_start\s+for\s*\(\s*int\s+i\s*=\s*(\d+)\s*;\s*i\s*<\s*(\d+)\s*;\s*i\s*\+\+\s*\)\s*{([\s\S]+?)}\s+#pragma unroll_loop_end/g;
+  const unroll = (src: string): string =>
+    src.replace(unrollPattern, (_m, start: string, end: string, body: string) => {
+      let out = "";
+      for (let i = Number(start); i < Number(end); i++) out += body.replace(/\[\s*i\s*\]/g, `[ ${i} ]`).replace(/UNROLLED_LOOP_INDEX/g, String(i));
+      return out;
+    });
+  const finish = (src: string): string => unroll(lightNums(resolve(src)));
+  const program = (m: THREE.Material, o: MapShaderOptions | null, uber = true) => {
+    const s = { vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader };
+    m.onBeforeCompile(s as never, null as never);
+    if (o) specialiseMapShader(s, o, uber);
+    return { vs: finish(s.vertexShader), fs: finish(s.fragmentShader) };
+  };
+  const count = (s: string, find: string) => s.split(find).length - 1;
+  const balanced = (s: string) => count(s, "{") === count(s, "}") && count(s, "(") === count(s, ")");
+  const base = program(texturedUber, null);
+  assert.ok(base.fs.includes("vUberMetalness") && base.vs.includes("attribute float aMetalness;"));
+  assert.ok(base.fs.includes("texture2D( aoMap, vAoMapUv )"));
+  assert.ok(base.fs.includes("irradiance * BRDF_GGX_Multiscatter( directLight.direction"));
+  assert.ok(base.fs.includes("#define RE_IndirectSpecular\t\tRE_IndirectSpecular_Physical"));
+  const exact = program(texturedUber, MAP_SHADER_EXACT);
+  assert.ok(
+    !exact.fs.includes("vUberMetalness") && !exact.vs.includes("aMetalness") && !exact.vs.includes("vUberMetalness"),
+    "metalness attribute + varying gone",
+  );
+  assert.ok(exact.fs.includes("const float metalnessFactor = 0.0;"));
+  assert.ok(exact.fs.includes("#ifdef USE_ENVMAP\n#define RE_IndirectSpecular\t\tRE_IndirectSpecular_Physical\n#endif"), "IBL only with an env map");
+  assert.ok(exact.fs.includes("texture2D( aoMap, vEmissiveMapUv )") && !exact.fs.includes("texture2D( aoMap, vAoMapUv )"));
+  assert.ok(exact.vs.includes("#undef USE_AOMAP") && exact.fs.includes("#undef USE_AOMAP"), "no vAoMapUv varying");
+  assert.ok(exact.fs.includes("irradiance * BRDF_GGX_Multiscatter("), "exact set keeps the multiscatter");
+  assert.ok(exact.fs.includes("vogelDiskSample( 0, 5, phi ) * radius"), "exact set keeps three's PCF taps");
+  assert.ok(exact.fs.includes("totalEmissiveRadiance *= vUberEmissive;") && exact.fs.includes("roughness * vUberRoughness"), "uber patch kept");
+  // sunSkip: the sun's block in its branch, unrolled like three does it, LOD 0 lookups inside.
+  assert.equal(count(base.fs, "#pragma unroll_loop_start"), 0, "the emulation unrolls three's own loops");
+  assert.equal(count(exact.fs, "#pragma unroll_loop_start"), 0, "every light loop still unrolls");
+  assert.equal(count(exact.fs, "if ( dot( geometryNormal, directLight.direction ) > 0.0 ) {"), 1);
+  assert.equal(count(exact.fs, "if ( directLight.color != vec3( 0.0 ) ) RE_Direct( directLight,"), 1);
+  {
+    const at = exact.fs.indexOf("if ( dot( geometryNormal, directLight.direction ) > 0.0 ) {");
+    const block = exact.fs.slice(at, exact.fs.indexOf("#if defined( RE_IndirectDiffuse )", at));
+    assert.ok(block.includes("getShadow( directionalShadowMap[ 0 ]") && block.includes("RE_Direct("), "shadow + BRDF inside the branch");
+    assert.ok(balanced(block), "the branch closes before the ambient light");
+  }
+  assert.equal(count(exact.fs, "textureLod( shadowMap, vec3( shadowCoord.xy + "), 5, "PCF taps at LOD 0");
+  assert.equal(count(exact.fs, "texture( shadowMap, vec3( shadowCoord.xy + "), 0);
+  assert.ok(exact.fs.includes("vec2 dfgV = textureLod( dfgLUT, vec2( material.roughness, dotNV ), 0.0 ).rg;"));
+  // (three's comments are not checked for balance: compare the imbalance with the stock text.)
+  const imbalance = (s: string) => `${count(s, "{") - count(s, "}")}/${count(s, "(") - count(s, ")")}`;
+  assert.equal(imbalance(exact.fs), imbalance(base.fs), "the rewrite adds balanced code (fs)");
+  assert.equal(imbalance(exact.vs), imbalance(base.vs), "the rewrite adds balanced code (vs)");
+  const fast = program(texturedUber, MAP_SHADER_FAST);
+  assert.equal(imbalance(fast.fs), imbalance(base.fs), "the rewrite adds balanced code (fast fs)");
+  assert.equal(count(fast.fs, "textureLod( shadowMap, vec3( shadowCoord.xy + givreTap"), 5, "rotated taps at LOD 0");
+  assert.ok(!fast.fs.includes("irradiance * BRDF_GGX_Multiscatter(") && fast.fs.includes("irradiance * BRDF_GGX( directLight.direction"));
+  assert.ok(fast.fs.includes("vec2 givreRot = vec2( cos( phi ), sin( phi ) );"));
+  assert.ok(!fast.fs.includes("vogelDiskSample( 0, 5, phi ) * radius"), "2D PCF taps rotated");
+  assert.ok(fast.fs.includes("vec2 sample0 = vogelDiskSample( 0, 5, phi );"), "point-light PCF untouched");
+  // The emitted taps ARE three's Vogel disk, rotated: cos(iθ + φ) expanded.
+  const taps = vogelTaps(5);
+  for (const [i, [x, y]] of taps.entries()) {
+    const r = Math.sqrt((i + 0.5) / 5);
+    const theta = i * 2.399963229728653;
+    for (const phi of [0, 0.7, 2.5, 4.4, 6.2]) {
+      const rx = x * Math.cos(phi) - y * Math.sin(phi);
+      const ry = x * Math.sin(phi) + y * Math.cos(phi);
+      assert.ok(Math.abs(rx - Math.cos(theta + phi) * r) < 1e-12 && Math.abs(ry - Math.sin(theta + phi) * r) < 1e-12, `tap ${i} at φ ${phi}`);
+    }
+    const decl = new RegExp(`vec2 givreTap${i} = vec2\\( (\\S+) \\* givreRot\\.x - (\\S+) \\* givreRot\\.y, \\1 \\* givreRot\\.y \\+ \\2 \\* givreRot\\.x \\);`).exec(fast.fs);
+    assert.ok(decl, `tap ${i} declared`);
+    assert.equal(Math.fround(Number(decl[1])), Math.fround(x), `tap ${i} x literal`);
+    assert.equal(Math.fround(Number(decl[2])), Math.fround(y), `tap ${i} y literal`);
+  }
+  // A plain map material (the lamp panels): its own metalness chunk.
+  const lamp = [...converted.values()].find((m) => m.name === "GIV_Lampe")!;
+  const plain = program(lamp, { ...MAP_SHADER_EXACT, sharedUv: false }, false);
+  assert.ok(plain.fs.includes("const float metalnessFactor = 0.0;") && !plain.fs.includes("float metalnessFactor = metalness;"));
+  assert.throws(() => specialiseMapShader({ vertexShader: "", fragmentShader: "" }, MAP_SHADER_EXACT, true), /anchor not found/);
+
+  // Specialised clones: same values, own cache key, the stock patch kept.
+  const special = createMapShaderMaterial(texturedUber, geometriesOf(texturedUber), MAP_SHADER_EXACT)! as THREE.MeshStandardMaterial;
+  const src = texturedUber as THREE.MeshStandardMaterial;
+  assert.notEqual(special, src);
+  assert.equal(special.name, src.name);
+  assert.equal(special.side, src.side);
+  assert.equal(special.emissiveMap, src.emissiveMap);
+  assert.equal(special.aoMap, src.aoMap);
+  assert.equal(special.vertexColors, true);
+  assert.equal(special.customProgramCacheKey(), "map-uber-v1|givre-map-shader-v1:ibl0,die,uv1,sun0");
+  assert.equal(src.customProgramCacheKey(), "map-uber-v1", "stock material untouched");
+  assert.deepEqual(program(special, null), exact, "clone = stock patch + rewrite");
+  assert.ok(program(src, null).fs.includes("vUberMetalness"), "stock shader unchanged");
+
+  // Swap: drawn meshes only, GIV_Feu kept, clones reused, stock restored.
+  const group = new THREE.Group();
+  const geometry = geometriesOf(texturedUber)[0];
+  const a = new THREE.Mesh(geometry, texturedUber);
+  const b = new THREE.Mesh(geometry, texturedUber);
+  const hidden = new THREE.Mesh(geometry, texturedUber);
+  hidden.visible = false;
+  // (GIV_Feu sits on an animated node: not among the static entries.)
+  const feu = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ name: "GIV_Feu" }));
+  group.add(a, b, hidden, feu);
+  const targets = collectMapShaderTargets([group], new Set(["GIV_Feu"]));
+  assert.deepEqual(targets.map((t) => t.mesh), [a, b], "drawn, non-excluded meshes");
+  const cache = new Map<string, THREE.Material | null>();
+  assert.equal(applyMapShader(targets, MAP_SHADER_EXACT, cache), 2);
+  assert.ok(a.material !== texturedUber && a.material === b.material, "one clone per stock material");
+  const first = a.material;
+  applyMapShader(targets, null, cache);
+  assert.ok(a.material === texturedUber && b.material === texturedUber && (feu.material as THREE.Material).name === "GIV_Feu");
+  applyMapShader(targets, MAP_SHADER_EXACT, cache);
+  assert.equal(a.material, first, "clone reused (no new program)");
+
+  // Packed lightmap: AO bytes in the alpha of the emissive ones, same sampling, one fetch.
+  {
+    const e = [10, 20, 30, 255, 40, 50, 60, 255];
+    const o = [200, 200, 200, 255, 7, 7, 7, 255];
+    assert.deepEqual([...packLightmapLevel(e, o)!], [10, 20, 30, 200, 40, 50, 60, 7], "RGB = emissive, A = AO red");
+    assert.equal(packLightmapLevel([1, 2, 3, 128], [9, 9, 9, 255]), null, "translucent emissive refused");
+    assert.equal(packLightmapLevel([1, 2, 3, 255], [9, 9, 9, 128]), null, "translucent AO refused (premultiplied readback)");
+    assert.equal(packLightmapLevel(e, o.slice(4)), null, "size mismatch refused");
+    const img = (w: number, h: number, fill: number[]) => ({ width: w, height: h, fill });
+    const tex = (name: string, fill: number[]) => {
+      const t = new THREE.Texture(img(4, 4, fill) as never);
+      t.name = name;
+      t.mipmaps = [img(4, 4, fill), img(2, 2, fill), img(1, 1, fill)] as never;
+      t.minFilter = THREE.LinearMipmapLinearFilter;
+      t.colorSpace = name === "lum" ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      t.anisotropy = 4;
+      return t;
+    };
+    const lum = tex("lum", [1, 2, 3, 255]);
+    const aoTex = tex("ao", [77, 77, 77, 255]);
+    const read = (i: unknown) => {
+      const { width, height, fill } = i as { width: number; height: number; fill: number[] };
+      return Array.from({ length: width * height }, () => fill).flat();
+    };
+    const packed = buildPackedLightmap(lum, aoTex, read)!;
+    assert.ok(packed && packed.texture.isDataTexture);
+    assert.equal(packed.texture.colorSpace, THREE.SRGBColorSpace, "sRGB like the emissive (alpha stays linear)");
+    assert.equal(packed.texture.mipmaps.length, 3);
+    assert.deepEqual([...(packed.texture.mipmaps[2] as unknown as { data: Uint8Array }).data], [1, 2, 3, 77]);
+    assert.equal(packed.texture.minFilter, THREE.LinearMipmapLinearFilter);
+    assert.equal(packed.texture.anisotropy, 4);
+    assert.equal(packed.texture.generateMipmaps, false);
+    const other = tex("ao", [77, 77, 77, 255]);
+    other.anisotropy = 1;
+    assert.equal(buildPackedLightmap(lum, other, read), null, "different sampling refused");
+    // GLSL: the AO lookup becomes the alpha of the emissive texel.
+    const s = { vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader };
+    texturedUber.onBeforeCompile(s as never, null as never);
+    specialiseMapShader(s, { ...MAP_SHADER_EXACT, packedAo: true }, true);
+    const fsPacked = finish(s.fragmentShader);
+    assert.ok(fsPacked.includes("float ambientOcclusion = ( emissiveColor.a - 1.0 ) * aoMapIntensity + 1.0;"));
+    assert.ok(!fsPacked.includes("texture2D( aoMap"), "no AO fetch left");
+    // The specialised clone swaps its emissive map for the packed one — only for ITS two maps.
+    const src = texturedUber as THREE.MeshStandardMaterial;
+    const realPacked = { emissive: src.emissiveMap!, ao: src.aoMap!, texture: packed.texture };
+    const pt = packed.texture;
+    const em = src.emissiveMap!;
+    Object.assign(pt, { minFilter: em.minFilter, magFilter: em.magFilter, wrapS: em.wrapS, wrapT: em.wrapT, flipY: em.flipY, anisotropy: em.anisotropy, channel: em.channel, rotation: em.rotation });
+    pt.offset.copy(em.offset);
+    pt.repeat.copy(em.repeat);
+    pt.center.copy(em.center);
+    const withAo = createMapShaderMaterial(texturedUber, geometriesOf(texturedUber), { ...MAP_SHADER_EXACT, packedAo: true }, undefined, realPacked) as THREE.MeshStandardMaterial;
+    assert.equal(withAo.emissiveMap, packed.texture, "emissive map = packed lightmap");
+    assert.equal(withAo.aoMap, src.aoMap, "AO map kept (aoMapIntensity), never sampled");
+    assert.ok(withAo.customProgramCacheKey().endsWith(":ibl0,die,uv1,sun0,aoA"));
+    pt.offset.x += 0.5; // a packed lightmap sampled elsewhere than this material's maps: not used
+    const shifted = createMapShaderMaterial(texturedUber, geometriesOf(texturedUber), { ...MAP_SHADER_EXACT, packedAo: true }, undefined, realPacked) as THREE.MeshStandardMaterial;
+    assert.equal(shifted.emissiveMap, src.emissiveMap, "packed lightmap with another uv transform: not used");
+    pt.offset.copy(em.offset);
+    const foreign = createMapShaderMaterial(texturedUber, geometriesOf(texturedUber), { ...MAP_SHADER_EXACT, packedAo: true }, undefined, { emissive: lum, ao: aoTex, texture: packed.texture }) as THREE.MeshStandardMaterial;
+    assert.equal(foreign.emissiveMap, src.emissiveMap, "packed lightmap of other images: not used");
+    assert.ok(foreign.customProgramCacheKey().endsWith(":ibl0,die,uv1,sun0"));
+  }
+  ok(
+    `map shader: ${ubers.length} uber materials (${vertices} vertices, metalness 0 everywhere) eligible; ` +
+      "GLSL rewrite applied on three's chunks (IBL / metalness / AO varying gone, PCF taps rotated exactly); clones + swap",
+  );
 }
 
 console.log(`\nAll ${passed} GIVRE render-optim checks passed.`);

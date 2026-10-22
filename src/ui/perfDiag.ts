@@ -144,6 +144,19 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *                 whole end screen in the frame where the match ends)
  *   oldendscreen  all of them: the old end of match, to compare
  *
+ *   nomapshader    Givre: the map drawn with three's stock MeshStandardMaterial
+ *            shader instead of the specialised one (world/GivreMapMaterial:
+ *            no image-based light, metalness folded to 0, one lightmap uv —
+ *            the same pixels, fewer instructions per map pixel): to compare
+ *   mapshaderao    Givre: the specialised map shader + the packed lightmap
+ *            (AO in the alpha of the emissive lightmap: one fetch instead of
+ *            two — same pixels on the bench; packed at load, +21 MB of JS
+ *            memory): to measure on a real GPU before it becomes the default
+ *   mapshaderfast  Givre: the specialised map shader + the packed lightmap +
+ *            the NEAR-EXACT part (no multiple-scattering compensation on the
+ *            sun, PCF rotation with one cos / sin pair): ≤ 1 level of
+ *            difference on a few pixels — a visual trade-off, off by default
+ *
  * Several at once: `?diag=noflush,scale50`. Never for normal play.
  */
 export function perfExperiments(search: string = typeof location === "undefined" ? "" : location.search): ReadonlySet<string> {
