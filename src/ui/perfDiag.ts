@@ -69,6 +69,25 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *            connected component of a mesh, not only per whole mesh
  *            (GivreRenderOptim.closedOutwardThinTriangles) — NOT the same
  *            image to the bit (a few pixels per view): an experiment
+ *   nohudidle  the HUD document's old permanent frame loop: a main frame at
+ *            every refresh even at rest (src/hud/runtime/frameClock.ts) —
+ *            the debug line "HUD: … images/s" back at the display rate
+ *   hudanim  the HUD's previous animation CSS + Bean Buddy markup: the idle
+ *            motions that repainted / re-rasterized at every frame (SVG-child
+ *            animations, clip-path / mask on animated elements, the FAMAS
+ *            wave's background-position, the K.O. banner's translateX(-50%)
+ *            keyframes…) and the medal ribbon tails' filtered shadow (the
+ *            ribbon repainted at every frame of a medal's pop) — hud.css
+ *            « PERF — animations »
+ *   paintssNN  the weapon plate's 3D paint rendered at NN % of the screen's
+ *            pixel density per axis instead of 200 % (src/ui/paint/PaintLayer.ts):
+ *            its GPU cost on a real GPU (paintss100 ≈ 3× fewer pixels at 1080p)
+ *            — NOT the same pixels (less supersampling), an experiment only
+ *   paintfpsNN  that paint drawn at most NN times per second while it moves
+ *            (default: at every display frame) — a jerkier jelly, an experiment
+ *
+ * The HUD's own switches reach its document (the HUD iframe has its own
+ * address: src/hud/host/HudHost.ts hudDocumentUrl passes `?diag=` on).
  *
  * Givre post chain — memory traffic of the fullscreen steps on an iGPU
  * (effects/GivrePostChain; each one measured in PERFORMANCE.md « La chaîne
@@ -150,6 +169,14 @@ export function optSwitch(name: string): { on: boolean } {
   }
   return s;
 }
+
+/**
+ * `?diag=hudanim`: the class HudRuntime puts on the HUD document's <html>
+ * (the iframe's, or the game page's in the inline fallback). The HUD
+ * stylesheets' compositor-only overrides key on its ABSENCE, and CombatHUD
+ * then builds the one-SVG Bean Buddy instead of its layers.
+ */
+export const HUD_ANIM_LEGACY_CLASS = "diag-hudanim";
 
 /** The number of a numbered experiment (`scale50` → 50), or null when absent / invalid. */
 export function experimentValue(experiments: ReadonlySet<string>, prefix: string): number | null {

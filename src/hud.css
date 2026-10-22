@@ -1988,3 +1988,161 @@
   }
 }
 
+
+/* ==========================================================================
+   PERF — animations: the HUD's idle motions on the compositor ONLY.
+   The HUD document draws over the game; whatever it repaints it also
+   rasterizes, and its raster runs in the browser's GPU process — the one the
+   game's own frames need. A motion stays off the main thread and off the
+   rasterizer only when it is a transform / opacity animation of an element
+   with a CSS box, which nothing inside repaints. Patterns that broke that
+   at EVERY frame:
+     - CSS animations of SVG CHILDREN (Bean Buddy's leaves, eyes, sweat drop)
+       and of the portrait's <svg> root (its breathing): Chrome leaves them
+       on the main thread (TransformCannotBeAcceleratedOnTarget) — a main
+       frame at every refresh, the SVG's style and layout re-run, the
+       portrait's layer rasterized again (bench: ~6 tiles per frame at rest);
+     - clip-path / mask ON the animated element (dash chevrons, heal
+       sparkles, the reload ring): the compositor needs a mask layer and an
+       offscreen pass per element at every frame — on a static child, the
+       clip is painted once into the moving layer instead;
+     - background-position keyframes (the FAMAS wave): a repaint by design;
+     - a percentage in transform keyframes (the K.O. banner's
+       translateX(-50%)): it depends on the box size, main thread again;
+     - a pixel-moving filter (drop-shadow) inside a layer whose ancestors
+       animate (the medal ribbon's tails): the whole ribbon repainted at
+       every frame of a medal's pop.
+   And the portrait's idle scale on its own layer (real Iris Xe, production
+   HUD iframe, 1080p: 45-46 FPS → 60.1, 0 late frame, with only
+   `will-change: transform` on .buddy-art).
+   `?diag=hudanim` (src/ui/perfDiag.ts) puts .diag-hudanim on <html> (the HUD
+   iframe's, or the game page's with ?hud=inline): every override below keys
+   on its ABSENCE and CombatHUD builds the one-SVG portrait — the previous
+   CSS and markup, to A/B on a real GPU. Same pictures but for edge
+   anti-aliasing: a layer kept at a fixed raster scale, or turned / slid by
+   the compositor, is resampled where the old code re-rasterized the shape
+   (Bean Buddy's outline, the FAMAS wave's rounded end, the medal ribbon).
+   ========================================================================== */
+
+/* Bean Buddy portrait as stacked SVG layers (hudIcons BEAN_BUDDY_LAYERS,
+   never built under ?diag=hudanim): each moving part is drawn by an <svg> of
+   its own, in a <div> that the animation moves — the 84 px box of the
+   portrait, viewBox 80 (1.05 px per unit) for every layer.
+   Pivots = the SVG children's own (transform-box: fill-box) in that box's
+   px: left leaf (40.5, 13.18034) × 1.05 (its fill box's bottom right), right
+   leaf (43, 10.12789) × 1.05 (bottom left), eyes (40, 31 + 6) × 1.05 (their
+   centre in the face's translate(0 6)); the drop falls 2 → 8 units × 1.05. */
+#buddy-portrait .bb-layers { position: relative; }
+#buddy-portrait .bb-layer,
+#buddy-portrait .bb-layer > svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+#buddy-portrait .bb-leaf-layer { animation: leaf-sway 2.6s ease-in-out infinite; }
+#buddy-portrait .bb-leaf-layer-l { transform-origin: 42.525px 13.83936px; animation-direction: reverse; }
+#buddy-portrait .bb-leaf-layer-r { transform-origin: 45.15px 10.63429px; }
+#buddy-portrait .bb-eyes-layer { transform-origin: 42px 38.85px; animation: buddy-blink 4.6s infinite; }
+#buddy-portrait .bb-sweat-layer { animation: bb-sweat-layer 1s ease-in infinite; }
+/* Each moving layer is composited from its first frame and keeps its raster
+   scale whatever its parent does (the dead pose's still tilt + uneven squash
+   re-rasterized the swaying leaves at every frame). The eyes and the drop
+   stay laid out, their animation running on the compositor like the SVG
+   children's did: their face's group shows or hides what they draw. */
+#buddy-portrait .bb-leaf-layer,
+#buddy-portrait .bb-eyes-layer,
+#buddy-portrait .bb-sweat-layer { will-change: transform; }
+@keyframes bb-sweat-layer {
+  0% { transform: translateY(-2.1px); opacity: 0; }
+  30% { opacity: 1; }
+  100% { transform: translateY(8.4px); opacity: 0; }
+}
+
+/* The art keeps ONE layer at a stable raster scale through its idle squash,
+   the panic tremble and the hit squash. Dead: a still, tilted pose — no hint,
+   the compositor rasterizes it again at its own scale once the tilt has played. */
+html:not(.diag-hudanim) #buddy-portrait .buddy-art { will-change: transform; }
+html:not(.diag-hudanim) #bean-buddy.mood-dead #buddy-portrait .buddy-art { will-change: auto; }
+
+/* Heal sparkles: the star clip on a still child of the flying element. */
+html:not(.diag-hudanim) .buddy-sparkles i {
+  background: none;
+  clip-path: none;
+}
+html:not(.diag-hudanim) .buddy-sparkles i::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--bb-lime);
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+}
+
+/* Dash chevrons (running while the dash is READY): the chevron clip on a
+   still child of the running element (beats #dash-hud:not(.ready) … i). */
+html:not(.diag-hudanim) #dash-hud .dash-chevrons i {
+  position: relative;
+  background: none;
+  clip-path: none;
+}
+html:not(.diag-hudanim) #dash-hud .dash-chevrons i::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--bb-ink);
+  clip-path: polygon(0 0, 48% 0, 100% 50%, 48% 100%, 0 100%, 52% 50%);
+}
+html:not(.diag-hudanim) #dash-hud:not(.ready) .dash-chevrons i::before { background: var(--bb-text); }
+
+/* Knock-down banner (GET UP! bobbing while it lasts): centred by the
+   `translate` property instead of a translateX(-50%) inside the animated
+   transform — a percentage of the element's own width in the keyframes kept
+   the bob on the main thread (a main frame at every refresh). Same matrices:
+   `translate` applies first, the keyframes are the old ones minus their
+   constant leading translateX(-50%). */
+html:not(.diag-hudanim) #knockdown-hint {
+  translate: -50% 0;
+  transform: rotate(-1.5deg);
+  animation-name: banner-slam-c;
+}
+html:not(.diag-hudanim) #knockdown-hint.can-get-up {
+  animation: banner-slam-c 0.4s var(--pop), banner-bob-c 0.8s ease-in-out 0.4s infinite;
+}
+@keyframes banner-slam-c {
+  0% { transform: translateY(30px) scale(0.6); opacity: 0; }
+  60% { transform: translateY(-4px) scale(1.06) rotate(1deg); opacity: 1; }
+  100% { transform: rotate(-1.5deg); }
+}
+@keyframes banner-bob-c {
+  0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+  50% { transform: translateY(-4px) rotate(1.5deg); }
+}
+
+/* Medal ribbon tails: their hard shadow is a copy of the tail
+   (hudIcons.ribbonTailSvg), filled with the shadow's colour and 3 px lower,
+   instead of `filter: drop-shadow(0 3px 0 rgba(40, 27, 12, 0.85))` on the
+   tail. Under the pop's animated transforms, that filter had the whole
+   ribbon (stroked label included) repainted and re-rasterized at every
+   frame of a medal's entrance. The shadow itself is the same: the tail's
+   coverage, offset by 3 px, in that colour at 85 % (group opacity of the
+   opaque copy). The ribbon, now rasterized once per pop (at the pop's
+   largest scale, its `will-change: transform`), is resampled by the
+   compositor where it used to be re-rasterized at every frame: its edges
+   and label differ by anti-aliasing while a medal shows (bench: ≤ 1.4 %
+   of the screen, max 82 / 255). */
+.md-tail-shadow {
+  position: absolute;
+  top: 12px; /* .md-tail's 9 px + the shadow's 3 px */
+  width: 24px;
+  height: calc(100% - 6px);
+  z-index: 0;
+  overflow: visible;
+  opacity: 0.85;
+}
+.md-tail-shadow path { fill: rgb(40, 27, 12); stroke: rgb(40, 27, 12); }
+.md-tail-shadow-l { left: -16px; }
+.md-tail-shadow-r { right: -16px; }
+html:not(.diag-hudanim) .md-tail { filter: none; }
+html.diag-hudanim .md-tail-shadow { display: none; }

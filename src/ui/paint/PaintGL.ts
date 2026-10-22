@@ -119,19 +119,27 @@ export class PaintGL {
     const col = u.uColor.value as Float32Array;
     const mat = u.uMat.value as Float32Array;
     cl.fill(0);
+    // No allocation per draw (up to every frame while the paint moves).
     for (let c = 0; c < sim.clusterCount; c++) {
-      const [s, e] = sim.range(c);
+      const s = sim.rangeStart(c);
+      const e = sim.rangeEnd(c);
       for (let i = s; i < e; i++) cl[i] = c;
       const spec = p.clusters[c];
       col.set(spec.color, c * 3);
-      mat.set([spec.material.gloss, spec.material.spec, spec.material.sss, spec.material.opacity], c * 4);
+      const m = spec.material;
+      mat[c * 4] = m.gloss;
+      mat[c * 4 + 1] = m.spec;
+      mat[c * 4 + 2] = m.sss;
+      mat[c * 4 + 3] = m.opacity;
     }
     u.uCount.value = sim.nodeCount;
     u.uNC.value = sim.clusterCount;
     u.uSize.value.set(p.canvas.w, p.canvas.h);
     u.uOrigin.value.set(p.canvas.x, p.canvas.y);
-    u.uRect0.value.set(...p.frame.rects[0]);
-    u.uRect1.value.set(...p.frame.rects[1]);
+    const r0 = p.frame.rects[0];
+    const r1 = p.frame.rects[1];
+    u.uRect0.value.set(r0[0], r0[1], r0[2], r0[3]);
+    u.uRect1.value.set(r1[0], r1[1], r1[2], r1[3]);
     u.uRad.value.set(p.frame.radii[0], p.frame.radii[1]);
     this.timer?.beginFrame("peinture");
     this.renderer.render(this.scene, this.camera);

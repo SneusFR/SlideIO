@@ -21,6 +21,8 @@
 //     --settle N         real frames drawn per virtual frame (default 4)
 //     --until <name>     stop the scenario at that checkpoint · --chrome-args "<flags>"
 //     --fast             no lockstep drawing · --dump animation states · --no-checks
+//     --rest             + each checkpoint AT REST: endless animations at their start
+//     --diag <list>      the HUD's `?diag=` (e.g. hudanim: its previous animation CSS)
 //     --out <dir>        report.json, screenshots, diff images (default: tmp)
 // Chromium is started with --site-per-process (site isolation, as desktop
 // Chrome). Needs Playwright (env HARNESS_PLAYWRIGHT: its index.mjs, default
@@ -46,6 +48,8 @@ const flag = (name) => argv.includes(`--${name}`);
 const [W, H] = opt("size", "1280x720").split("x").map(Number);
 const DPR = Number(opt("dpr", "1"));
 const OLD = opt("old", null);
+/** `--diag <list>`: the `?diag=` of the HUD (its document in frame mode, the page in inline mode). */
+const DIAG = opt("diag", "");
 const MODES = opt("modes", OLD ? "frame,inline,old" : "frame,inline").split(",");
 /** Draw every virtual frame (both modes then rasterize the same sequence of states); `--fast` skips it. */
 const LOCKSTEP = !flag("fast");
@@ -242,7 +246,7 @@ async function newPage() {
 async function runMode(mode, tag = mode) {
   const { context, page, logs } = await newPage();
   const t0 = Date.now();
-  await page.goto(`${base}/?mode=${mode}&settle=${SETTLE}`);
+  await page.goto(`${base}/?mode=${mode}&settle=${SETTLE}${DIAG ? `&diag=${encodeURIComponent(DIAG)}` : ""}`);
   await page.waitForFunction(() => window.hh);
   await page.evaluate(() => window.hh.loaded());
   const ok = await page.evaluate((init) => window.hh.boot(init), scenario.init);
@@ -281,6 +285,27 @@ async function runMode(mode, tag = mode) {
       await page.evaluate(() => window.hh.sync());
       shots[name] = await page.screenshot();
       fs.writeFileSync(path.join(out, `${tag}-${name}.png`), shots[name]);
+      if (flag("rest")) {
+        // The same state AT REST: every endless (idle) animation at its start
+        // (leaves, blink, chevrons, rays, waves… at 0 %), the one-shot ones where
+        // they are; then each back where it was (the next frames unchanged).
+        await hudDoc().evaluate(() => {
+          window.__restSaved = [];
+          for (const a of document.getAnimations()) {
+            if (a.effect?.getComputedTiming().endTime !== Infinity) continue;
+            window.__restSaved.push([a, a.currentTime]);
+            a.currentTime = 0;
+          }
+        });
+        await page.evaluate(() => window.hh.sync());
+        shots[`${name}-rest`] = await page.screenshot();
+        fs.writeFileSync(path.join(out, `${tag}-${name}-rest.png`), shots[`${name}-rest`]);
+        await hudDoc().evaluate(() => {
+          for (const [a, t] of window.__restSaved) a.currentTime = t;
+          window.__restSaved = null;
+        });
+        await page.evaluate(() => window.hh.sync());
+      }
       if (flag("dump")) {
         // The HUD document's animations (name, target, time, state): what a
         // pixel difference between two modes comes from, timing or drawing.
