@@ -39,6 +39,9 @@ export function perfDiag(search: string = typeof location === "undefined" ? "" :
  *            by as much = they wait for each other (something serializes)
  *   noflush  no gl.flush() at the pass boundaries (Game.flushGpu): the old
  *            submission, to compare
+ *   programsort  Givre: opaques sorted by program, then material, near → far
+ *            inside (EXPERIMENT, see world/GivreRenderOptim.ts
+ *            programFirstOpaqueSort — meant with the depth prepass)
  *
  * Several at once: `?diag=noflush,scale50`. Never for normal play.
  */

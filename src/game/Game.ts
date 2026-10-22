@@ -15,7 +15,7 @@ import { GivreMap } from "../world/GivreMap";
 import { GIVRE_SKY_RENDER_ORDER, GivreSky } from "../world/GivreSky";
 import { GivreConfig as givreCfg } from "../world/GivreConfig";
 import { GivreEffects } from "../world/GivreEffects";
-import { frontToBackOpaqueSort } from "../world/GivreRenderOptim";
+import { frontToBackOpaqueSort, programFirstOpaqueSort } from "../world/GivreRenderOptim";
 import type { GivreSnowLevel } from "../world/GivreSnow";
 import { loadMapSelection } from "../world/MapSelection";
 import { MapId, MAP_REGISTRY, type MapEnvelope } from "../../shared/map/MapRegistry";
@@ -1584,7 +1584,10 @@ export class Game {
     // split in spatial chunks, so early-Z can reject the rooms hidden behind
     // the walls instead of shading them. Depth-tested opaque output does not
     // depend on draw order — only the overdraw does.
-    this.renderer.setOpaqueSort(frontToBackOpaqueSort);
+    // (`?diag=programsort`: the program-first experiment, see programFirstOpaqueSort.)
+    this.renderer.setOpaqueSort(
+      this.experiments.has("programsort") ? programFirstOpaqueSort(this.renderer, this.scene) : frontToBackOpaqueSort,
+    );
 
     // DEV builds only (`npm run dev`): live tuning / verification handle —
     //   givreDebug.world.normalThreshold = 0.3   (any GivreOutlinePass knob)
@@ -1753,7 +1756,11 @@ export class Game {
         }
         return `MSAA depth/stencil resolve ${on ? "ON (old, slow)" : "OFF"} (samples ${samples})`;
       },
-      sort: (frontToBack: boolean) => {
+      sort: (frontToBack: boolean | "program") => {
+        if (frontToBack === "program") {
+          this.renderer.setOpaqueSort(programFirstOpaqueSort(this.renderer, this.scene));
+          return "program first (experiment)";
+        }
         this.renderer.setOpaqueSort(frontToBack ? frontToBackOpaqueSort : null);
         return frontToBack ? "front-to-back" : "three default (material first)";
       },

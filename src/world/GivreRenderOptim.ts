@@ -486,3 +486,60 @@ export function frontToBackOpaqueSort(a: THREE.RenderItem, b: THREE.RenderItem):
   return a.id - b.id;
 }
 
+/** A render item with its program rank cached for one sort (programFirstOpaqueSort). */
+type RankedItem = THREE.RenderItem & { __programSort?: number; __programRank?: number };
+
+/**
+ * EXPERIMENT (`?diag=programsort`, off by default) — opaque sort for FEWER
+ * STATE CHANGES: groupOrder and renderOrder first (the depth prepass's
+ * proxies, stencil / outline contracts), then the PROGRAM three last drew
+ * the material with, then the material, near → far inside a material,
+ * object id last. Each program change re-sends the camera and light
+ * uniforms, each material change the material's: grouped, they happen once
+ * per program / material instead of at every alternation of the
+ * front-to-back order.
+ *
+ * Meant for the map's depth prepass (GivreDepthPrepass, `?diag=prepass`):
+ * once the map's depth is laid first, early-Z no longer needs the main pass
+ * in front-to-back order. Without the prepass it trades GPU overdraw for CPU.
+ *
+ * Same image? Only where no two opaque fragments have EXACTLY the same
+ * depth: with three's LEQUAL test the last one drawn wins a tie, and the
+ * order changes (with or without the prepass, which keeps that rule) —
+ * measured on the bench, never assumed (PERFORMANCE.md).
+ *
+ * The rank is read once per render item and per render() (three's frame
+ * counter advances between the sort and the draws of each call): a
+ * material not drawn yet (no program) goes after its group's programs.
+ * A pass of `world` with an override material (the outline's normal
+ * pre-pass: one material for all) keeps the front-to-back order.
+ */
+export function programFirstOpaqueSort(
+  renderer: THREE.WebGLRenderer,
+  world: THREE.Scene | null = null,
+): (a: THREE.RenderItem, b: THREE.RenderItem) => number {
+  const properties = renderer.properties;
+  const render = renderer.info.render;
+  const rank = (item: RankedItem): number => {
+    const sort = render.frame;
+    if (item.__programSort === sort) return item.__programRank!;
+    const program = (properties.get(item.material) as { currentProgram?: { id: number } }).currentProgram;
+    const r = program ? program.id : Number.MAX_SAFE_INTEGER;
+    item.__programSort = sort;
+    item.__programRank = r;
+    return r;
+  };
+  return (a, b) => {
+    if (world !== null && world.overrideMaterial !== null) return frontToBackOpaqueSort(a, b);
+    if (a.groupOrder !== b.groupOrder) return a.groupOrder - b.groupOrder;
+    if (a.renderOrder !== b.renderOrder) return a.renderOrder - b.renderOrder;
+    const pa = rank(a), pb = rank(b);
+    if (pa !== pb) return pa < pb ? -1 : 1;
+    const ma = (a.material as THREE.Material & { id: number }).id;
+    const mb = (b.material as THREE.Material & { id: number }).id;
+    if (ma !== mb) return ma - mb;
+    if (a.z !== b.z) return a.z - b.z;
+    return a.id - b.id;
+  };
+}
+
