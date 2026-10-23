@@ -36,7 +36,9 @@ import type {
   HudUpMessage,
 } from "../protocol";
 import { HUD_CONNECT, HUD_HELLO } from "../protocol";
+import { optSwitch } from "../../ui/perfDiag";
 import { createHudProxies } from "./HudProxies";
+import { KillCascade } from "./killCascade";
 
 /** No hello from the iframe within this: HUD in the page. */
 export const HELLO_TIMEOUT_MS = 8000;
@@ -413,10 +415,17 @@ export class HudHost {
   private stats: HudStats | null = null;
   private paintGpuMs: number | null = null;
 
-  constructor() {
+  /**
+   * Frame mode: a kill's HUD effects start over a few frames instead of one
+   * (killCascade.ts; the page's host turns it on, `?diag=nokillcascade` off).
+   */
+  private readonly cascade: KillCascade | null;
+
+  constructor(options: { killCascade?: boolean } = {}) {
     this.api = createHudProxies((cmd) => this.emit(cmd), {
       mirrorMenuActive: (on) => this.setRootClass("hud-menu-active", on),
     });
+    this.cascade = options.killCascade ? new KillCascade(() => (this.env ? this.env.now() : 0)) : null;
   }
 
   /** The mode once final (null while deciding / without HUD). */
@@ -520,6 +529,8 @@ export class HudHost {
       this.watch();
       if (this.phase !== "frame") return; // fell back: this frame's commands went to the page's HUD
     }
+    // The kill effects due in this frame join its batch (killCascade.ts).
+    this.cascade?.release((cmd) => this.emitNow(cmd));
     if (this.batch.length === 0) return;
     const cmds = this.batch;
     this.batch = [];
@@ -569,6 +580,12 @@ export class HudHost {
   // ------------------------------------------------------------------
 
   private emit(cmd: HudCommand): void {
+    // Frame mode: a kill's effects after the kill's own feedback, a few frames later.
+    if (this.phase === "frame" && this.cascade?.hold(cmd)) return;
+    this.emitNow(cmd);
+  }
+
+  private emitNow(cmd: HudCommand): void {
     if (this.phase === "inline") {
       // Synchronous, at the call: exactly the old direct widget call.
       this.runtime!.run(cmd);
@@ -857,6 +874,8 @@ export class HudHost {
     const waiter = this.pongWaiter;
     this.pongWaiter = null;
     waiter?.(null);
+    // The kill effects still held go with this frame's batch (killCascade.ts).
+    if (lateFallback) this.cascade?.drain((cmd) => this.emitNow(cmd));
     // Already posted (late fallback), then not posted yet, in order.
     if (lateFallback) this.buffer = [...(this.journal ?? this.state.values()), ...this.batch, ...this.buffer];
     this.batch = [];
@@ -991,4 +1010,4 @@ export class HudHost {
 }
 
 /** The game page's HUD host (one per page). */
-export const hudHost = new HudHost();
+export const hudHost = new HudHost({ killCascade: optSwitch("killcascade").on });

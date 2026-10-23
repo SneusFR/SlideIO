@@ -192,6 +192,10 @@ export function diagSwitch(experiments: ReadonlySet<string>, name: string, defau
  *                   the frame's pass over the dead bots (effects/matrixFresh.ts)
  *   nokillprep      a corpse's bone textures and fade clones are created in the kill frame
  *                   again, at its first draw (effects/KillPrep.ts)
+ *   nokillcascade   a kill's HUD effects (medal, BEANED!, combo, killstreak, leaderboard) all
+ *                   start in the kill's frame again, instead of 1-8 frames later, a few ms apart
+ *                   (hud/host/killCascade.ts — the only switch here that moves something on
+ *                   screen: by a few milliseconds, the same effects in the same order)
  *
  * DEV builds expose the live switches as `window.__cpuOpt` (`__cpuOpt.hudskip.on = false`): a
  * headless check compares both paths in the SAME session, on the same frame.
