@@ -63,6 +63,7 @@ opérations de skinning par rayon).
 | Image du kill (17ᵉ passe) | **Le premier dessin d'un cadavre ne fait plus, dans l'image du kill, le travail de « première fois » de three.js** (mesures plus bas). Ce dessin créait les textures d'os des squelettes du cadavre (2 à 4 : tableau, DataTexture, `createTexture` + `texStorage2D` + envoi) et initialisait chaque nouveau clone de fondu (premier cadavre de chaque bot, et chaque cadavre d'un bot peint : les clones de la peinture partent avec leur cadavre) : `material.clone()`, uniforms clonés, programme cherché, lumières branchées. C'est fait maintenant sur une image ordinaire de la vie du bot, un bot par image, à la fin de la frame juste après le rendu (jamais dans l'image qui le demande, un tir de peinture par exemple) : le clone de cadavre préparé reçoit ses textures d'os, et CorpseManager garde un clone de fondu initialisé (`renderer.compile` sur les mailles mêmes du clone préparé, la cible de la passe monde liée, les deux looks : fondu puis vie opaque) pour chaque matériau visible dont la réserve est vide. Au kill, ce clone est remis à l'état de la source par `copy()` + les mêmes réglages : exactement ce que `source.clone()` donnerait à cet instant (test propriété par propriété), et three redérive son programme au premier dessin comme pour un clone neuf. Même image (vérifiée au banc au kill et pendant le fondu). Reste dans l'image du kill : la vérification du programme de ces clones, le VAO d'une géométrie jamais dessinée avec le programme de fondu (pas de dessin d'avance : aucun draw de plus en jeu), les envois d'os de toute image. `?diag=nokillprep` remet l'ancien chemin. **Expérience, désactivée par défaut** : `?diag=programsort` trie les opaques par programme puis matériau (proche → lointain dans un matériau) au lieu du tri avant → arrière, pour la pré-passe de profondeur de la carte (`?diag=prepass`, branche gpu-overdraw) : un tiers de `useProgram` en moins, mais à profondeur exactement égale quelques pixels peuvent changer (1 à 9 pixels dans 6 des 68 vues comparées au banc). | `effects/KillPrep.ts`, `ragdoll/CorpseManager.ts`, `ragdoll/CorpseCloneSpare.ts`, `bots/BotModel.ts`, `bots/Bot.ts`, `world/GivreRenderOptim.ts`, `ui/perfDiag.ts`, `game/Game.ts` |
 | Fin de partie (18ᵉ passe : écran de fin) | **Plus rien de neuf dans l'image où le chrono tombe à 0:00, plus de monde dessiné sous l'écran de fin.** Mesuré sur le portable : une image de 133-166 ms à la fin du match, puis 52-54 FPS sur l'écran de fin. L'écran de fin créait son contexte WebGL, compilait ses programmes (9 au premier rendu de l'intro, 2-3 en pleine intro), extrudait son titre, injectait sa feuille de style, chargeait ses polices, copiait toute l'image (8 Mo) pour en tester 64 pixels et stylait / mettait en page ses résultats deux fois — tout dans cette image ; puis le jeu redessinait le monde gelé sous l'instantané qui le cache, et l'intro dessinait deux quads plein écran à opacité 0, à chaque image. Maintenant : le premier usage est fait dans les temps morts du menu et gardé d'un écran de fin au suivant (contexte, programmes et numéros de shaders, géométrie des lettres), le monde n'est plus dessiné dès que l'instantané est prouvé opaque, les draws sans contribution sont sautés, 64 pixels lus au lieu de toute l'image, la vitre construite en tableaux typés (au bit près), l'unité des résultats posée avant leur contenu. Même image (0 pixel de différence : intro 3D à 22 instants, instantané, écran composé à 8 instants). Détails, chiffres et interrupteurs (`?diag=oldendscreen`…) dans « La fin de partie » plus bas. | `endscreen/Intro3D.js`, `endscreen/EndScreen.js`, `endscreen/UI.js`, `match/MatchEndController.ts`, `match/EndScreenPerf.ts`, `game/Game.ts`, `main.ts`, `ui/perfDiag.ts` |
 | Kill (20ᵉ passe : PC gamer, « attente GPU 14 ms ») | **Mesuré sur le PC gamer lui-même** (panneau navigateur de l'application Claude, build de production, Ultra, Givre, 8 bots, joueur scripté au paintball ; détail dans « Les chutes au kill, mesurées sur le PC gamer » plus bas). Deux phénomènes distincts. (1) **L'attente GPU de ~14 ms au kill est une première fois du processus GPU de Chrome** : le premier badge de médaille d'un aspect que le préchauffage n'avait jamais dessiné — la première HEADSHOT, injectée seule dans le vrai HUD, sans kill : 16,7 ms = jeu 3,4 + navigateur 0,6 + attente GPU ~12, GPU du jeu 1,5-2,4 ms ; la deuxième : rien. Le badge se construit autrement selon son nombre d'étoiles (aucune pour HEADSHOT / SMASHED / HOME RUN / MOLED / IMPALED, deux pour DOUBLE KILL) ; le préchauffage n'en dessinait que deux (KILL, TRIPLE). Il dessine maintenant chaque nombre d'étoiles que le jeu montre (`WARM_MEDAL_LOOKS`, deux situations réelles de plus). **À vérifier sur le PC gamer après déploiement, cache GPU froid** (une première fois ne se voit qu'une fois par processus GPU). (2) **Les chutes qui reviennent à chaque kill** (tout préparé : 0 à 7 images manquées, 3-4 en moyenne) viennent de **la somme** du pic de CPU de l'image du kill (4,4-6,2 ms, médiane 3,1, budget 4,17 ; 2-3 images à 4-5 ms ensuite) et du travail du HUD dans le processus GPU au même moment (attentes de 4 à 8 ms) : HUD masqué, les mêmes kills n'en coûtent que 0 à 2 (0,4 en moyenne) pour le même CPU ; les effets du HUD injectés seuls, sans tir ni kill, rien. Part de chacun **à mesurer** (A/B HUD affiché / masqué dans une même partie) — le chantier « pics au kill ». | `medals/medalLooks.ts`, `ui/MedalHUD.ts`, `ui/HudWarmup.ts`, `scripts/test-hud-warmup-medals.mts`, `tools/perf/pane/*` |
+| Kill (21ᵉ passe : PC gamer, les chutes à chaque kill) | **Les effets de kill du HUD démarrent en cascade au lieu de tous dans la même image** (mesuré sur le PC gamer, 23/10, des kills à la demande dans de vraies parties ; détail dans « Les chutes au kill : l'empilement des effets du HUD » plus bas). Les chutes répétées au kill étaient des **attentes GPU de 4 à 9 ms, 4 à 8 images après le kill** : la médaille, BEANED!, le combo, le killstreak et le classement partaient dans le même lot et leur travail arrivait ensemble dans le processus GPU de Chrome. HUD normal : 5 kills sur 17 touchés ; chaque effet seul : 0 sur 22 ; aucun effet de kill : 0 sur 23 ; **en cascade (8 à 33 ms d'écart à 240 Hz) : 0 sur 11, et 0 image manquée**. La peinture 3D de la plaque n'y est pour rien (plaque figée : mêmes chutes). Le hitmarker et le chiffre du kill restent dans l'image du kill ; mêmes animations, même ordre par widget. **À vérifier sur le PC gamer après déploiement** (A/B `?diag=nokillcascade`). Mesuré aussi le CPU en combat : base de 3,0 ms par image (budget 4,17), des événements de 0,3 à 1,7 ms (jet de FAMAS d'un bot, tir au paintball, kill, tir au Popcorn d'un bot) qui suffisent à dépasser — prochain chantier. | `hud/host/killCascade.ts`, `hud/host/HudHost.ts`, `scripts/test-hud-kill-cascade.mts`, `tools/perf/pane/killab.js`, `lightprof.js`, `cpuprof.js` |
 | Qualité HIGH | Filtrage anisotrope ×8 sur les lightmaps (sols et murs nets en incidence rasante). | `game/GraphicsQuality.ts`, `world/GivreMap.ts` |
 | GPU (19ᵉ passe : shader de la carte de Givre) | **Le shader de la carte ne calcule plus que ce que Givre utilise, même image au bit près.** La carte est dessinée par le `MeshStandardMaterial` de three (matériaux « uber », lampes, montagnes) : le modèle PBR général, qui évalue pour chaque pixel des termes nuls sur cette carte. `GivreMapMaterial` les retire au chargement, matériau par matériau, seulement si les données réelles le permettent (`mapShaderEligibility` : sinon l'option tombe pour ce matériau, jamais une image fausse) : (1) la lumière d'environnement (IBL : deux lectures de la table DFG, deux `computeMultiscattering`, ~60 instructions) — Givre n'a pas d'env map, ce terme était multiplié par 0 ; (2) le métal, 0 sur tous les sommets (plus d'attribut ni de varying `aMetalness`, les mélanges deviennent des constantes) ; (3) une seule coordonnée pour les deux lightmaps (même `uv`, même transformation) ; (4) le soleil seulement là où il éclaire : une face tournée à l'opposé du soleil (N·L ≤ 0) ne lit plus l'ombre (5 lectures PCF, 5 cos + 5 sin) ni le BRDF ; un pixel entièrement à l'ombre du soleil (facteur exactement 0 : intérieurs, dessous des toits) ne calcule plus le BRDF — le shader d'origine y ajoutait exactement 0. Banc (13 poses : spawn, les 9 points de vue de la carte, face au soleil bas, plongée sur la cour, verglas ; 960 × 540) : **0 pixel de différence** (RGBA) en LOW (FXAA) comme en HIGH (MSAA 4×). Le soleil n'est plus calculé sur 76 à 98 % de l'écran dans les salles et sous les toits (spawn 98 %, chaufferie 76 %, liaison sud 88 %), 2 à 47 % dehors. Au banc (passe monde seule, SwiftShader : temps CPU du processus GPU, médiane de 5 rendus) : **−15 %** au spawn en LOW, −11 % à la chaufferie, −10 % au couloir ouest, −3 % dans la cour centrale (presque tout l'écran au soleil) ; en HIGH −9 % au spawn, −5 % dans la cour. Un GPU logiciel paie chaque instruction : sur la vraie carte le gain sera plus petit (l'ombre du soleil entière coûtait 0,24 ms par image à l'Iris Xe, 11ᵉ passe) — à lire sur la ligne `GPU` (`monde`) avec et sans `?diag=nomapshader` (le shader d'origine) ; une ligne `[CARTE]` dans la console dit lequel tourne. Partie quasi exacte en option, **à décider** (`?diag=mapshaderfast`) : sans la compensation de diffusion multiple du soleil (au plus 6,6·10⁻⁵ en linéaire : moins d'un quart de niveau, même près du noir) et la rotation du disque PCF avec un seul cos / sin au lieu de cinq. Mesuré : au plus **1 niveau sur 255** sur 0,10 % des pixels avant l'anticrénelage (LOW et HIGH) ; en LOW, le FXAA élargit une petite partie de ces écarts (0,12 % des pixels, dont 98 % d'un niveau, mais jusqu'à 46 niveaux sur ~80 pixels de bords sur 6,7 millions). Au banc, elle gagne 1 à 10 points de plus que le défaut (chaufferie −21 % au lieu de −11 %). Entre les deux, `?diag=mapshaderao` (exact au banc, **à mesurer** avant d'en faire le défaut) : l'AO rangée dans l'alpha de la lightmap émissive, empaquetée au chargement — une lecture de texture de moins par pixel, 0 pixel de différence (13 poses, LOW et HIGH), 3 à 9 % de plus au banc ; `mapshaderfast` la comprend. Détail et risques : « Le shader de la carte, terme par terme » plus bas. | `world/GivreMapMaterial.ts`, `world/GivreMap.ts`, `ui/perfDiag.ts`, `tools/perf/map-shader-check.mjs` |
 
@@ -135,6 +136,7 @@ opérations de skinning par rayon).
 57. **Shader de la carte Givre** (`world/GivreMapMaterial.ts`) : il suppose ce que `mapShaderEligibility` vérifie sur les vraies données au chargement — métal 0 sur chaque sommet, pas d'env map, emissive + AO sur le même `uv` et la même transformation, pas de normal map / clearcoat / sheen / transmission. Une condition qui tombe (un matériau métallique, une env map, une texture décalée) retire l'option pour CE matériau : jamais une image fausse, mais le gain disparaît sans bruit — vérifier `givreMapShader.list()` (DEV) après un changement de la carte. Un chunk de three réécrit (mise à jour de three) : `scripts/test-givre-render-optim.mts` échoue sur l'ancre manquante, et en jeu le shader d'origine est gardé (avertissement console). Un matériau de carte modifié en jeu par un effet (l'émissif de GIV_Feu) n'est jamais cloné : l'ajouter à `DECOR_KEEP_MATERIALS`. Toute nouvelle simplification : `tools/perf/map-shader-check.mjs` doit rester à 0 pixel de différence (LOW et HIGH), sinon elle va dans `mapshaderfast` (compromis à décider).
 58. **Premier passage d'un chemin JS lourd en partie** (boucle sur tous les sommets ou triangles d'un perso : raycast visuel du corps skinné, barycentre, étalement de la peinture / de l'eau) : à froid — jamais exécuté, ou resté inutilisé assez longtemps (un long passage au menu) pour que le moteur JS jette son code compilé — la première fois s'exécute interprétée dans l'image du tir (≈ 27 ms au banc pour le premier impact de paintball, ≈ 1,5 ms ensuite). Trois règles : (1) la boucle chaude dans une fonction qui ne reçoit que des tableaux typés et des nombres (`skinVertices`, `nearestFace` dans `effects/SkinnedRaycast.ts`) — son code compilé vaut alors pour tous les persos, quelle que soit la forme de leurs objets ; (2) la faire tourner au chargement sur un clone de warm-up (`PaintballFX.warmHitPath`, `WaterFamasFX.warmHitPath`) ; (3) la refaire tourner quand le jeu commence (`Game.warmHitLoops`, au clic JOUER / reprise, au plus toutes les 20 s). Nouvelle arme qui marque les persos : les mêmes trois. Le résultat ne doit pas bouger d'un bit (`scripts/test-skinned-raycast.mts`).
 59. **Chaque aspect que peut prendre un élément du HUD est dessiné par le préchauffage** — pas seulement chaque élément : le badge de médaille n'est pas construit pareil avec 0, 1, 2 ou 3 étoiles, et le premier badge d'un aspect jamais dessiné a coûté ~12-14 ms d'attente GPU sur le PC gamer (première HEADSHOT : aucune étoile ; 20ᵉ passe). L'aspect du badge vient d'une seule règle (`medals/medalLooks.ts`, lue par `MedalHUD.show` et par le préchauffage) ; un nouveau nombre d'étoiles ou une nouvelle médaille qui change la forme du badge va dans `WARM_MEDAL_LOOKS`, dessiné dans la situation où il apparaît (règle 18) — `scripts/test-hud-warmup-medals.mts` joue toutes les chaînes du vrai `MedalManager` et échoue sinon. Même chose pour tout autre élément à variantes (paliers, plaques d'arme, capsules…). **Mesurer une première fois** : elle ne se paie qu'une fois par processus GPU du navigateur (et peut-être une fois pour toutes si Chrome la garde dans son cache disque) — sur une machine qui a déjà joué, injecter dans le vrai HUD un aspect jamais montré (`tools/perf/pane/hudinject.js`) ou repartir d'un cache GPU froid ; une requête de temps GPU du jeu peut compter le travail des autres clients du processus GPU (`tools/perf/pane/README.md`).
+60. **Un événement ne démarre pas tous les effets du HUD dans la même image.** Au kill, la médaille, BEANED! et la petite joie du Bean Buddy, l'étiquette du combo, les cases de killstreak et le classement partaient dans le lot du kill : leurs premières images (rastérisation du nouveau contenu, passes d'opacité de groupe des pops) arrivaient ensemble dans le processus GPU de Chrome, et 4 à 8 images plus tard l'image du jeu l'attendait (4-9 ms sur le PC gamer à 240 Hz, 5 kills sur 17). Chacun seul : rien (0 sur 22). Ils démarrent maintenant en cascade (`hud/host/killCascade.ts`, dans `HudHost` en mode iframe) : le hitmarker et le chiffre du kill dans l'image du kill (ils répondent au tir), puis chaque groupe dans sa propre image, quelques millisecondes plus tard (8 à 33 ms à 240 Hz, au plus 67 ms à 60 Hz), dans le même ordre pour chaque widget. Un nouvel effet de kill (ou d'un autre événement qui en déclenche plusieurs) prend sa place dans `cascadeOf` / `CASCADE`, et dans la liste du test (qui vérifie, commande par commande du protocole, que seules celles-là sont retenues). `?diag=nokillcascade` pour comparer ; `scripts/test-hud-kill-cascade.mts`, `scripts/test-hud-host-cascade.mts`.
 
 ## Mesures (banc headless, avant → après)
 
@@ -1217,7 +1219,8 @@ propriétaire), Givre, 8 bots, joueur scripté au paintball (`tools/perf/pane/`)
   du jeu dans les images voisines, 41,7 ms (dont 38,5 d'attente) à une mort (la 2ᵉ de la partie)
   — absentes des parties suivantes (une mort : 0-1 image manquée, une fois 12,4 ms), pas encore
   identifiées une à une (il faudrait un cache GPU froid). Que Chrome garde ou non ce travail
-  dans son cache disque d'une session du navigateur à l'autre n'est pas encore mesuré.
+  dans son cache disque d'une session du navigateur à l'autre n'est pas encore mesuré (mesuré le
+  23/10 : il le garde — 21ᵉ passe).
 - Correctif (**à vérifier sur le PC gamer après déploiement, cache GPU froid**) : le
   préchauffage dessine chaque nombre d'étoiles que le jeu montre (`WARM_MEDAL_LOOKS` :
   KILL #0, DOUBLE KILL #1, HEADSHOT #1, TRIPLE #2), dans deux situations réelles de plus — le
@@ -1240,7 +1243,8 @@ chaque image tant que le joueur tire). **HUD masqué, les mêmes kills coûtent 
 immobile qui ne tire pas, **rien** (0-1). C'est la somme qui déborde. Le compteur FPS
 (fenêtres de 0,5 s) affiche alors 226-234. Part de chacun à mesurer : A/B HUD affiché / masqué
 en alternance dans une même partie déjà « chaude », chaque image manquée classée CPU ou attente,
-puis la peinture de plaque allégée (`?diag=paintfps30`, `paintss100`).
+puis la peinture de plaque allégée (`?diag=paintfps30`, `paintss100`). (Mesurée le 23/10 : c'est
+l'empilement des effets de kill du HUD, pas la plaque — 21ᵉ passe.)
 
 **3. La pause « navigateur 50 ms » au tir : pas reproduite.** 4 min à 240 FPS (57 000 images,
 9 kills, 4 morts) : aucune image ≥ 50 ms. Le ramasse-miettes passe environ une fois par seconde
@@ -1252,6 +1256,107 @@ plancher du tas après collection monte d'environ 3 Mo/min. Si la pause revient 
 **Régime d'un combat, tout préparé** : 239,4 à 239,8 FPS de moyenne, 0,25 à 0,55 image
 manquée par seconde, presque toutes par le processeur (images du jeu à 4,5-7 ms ; p99 4,4-4,7
 ms). Pièges de mesure de ce soir : `tools/perf/pane/README.md`.
+
+## Les chutes au kill : l'empilement des effets du HUD (21ᵉ passe)
+
+Mesuré le 23/10 au matin sur le PC gamer (même installation que la 20ᵉ passe ; PC redémarré la
+nuit ; panneau de 2130 × 1275, DPR 1 ; build de production `ddfd791`, Ultra, Givre, 8 bots ;
+personne sur le PC pendant les mesures).
+
+**0. Le pic de 14 ms de la première médaille, après le redémarrage : plus rien** (première
+HEADSHOT de la journée : 4,3 ms). Chrome garde ce travail dans son cache disque : il ne se paie
+qu'une fois pour toutes, puis de nouveau après une mise à jour de Chrome ou du pilote, ou quand
+le HUD change. Ce n'était donc pas la cause des chutes répétées (le correctif du préchauffage
+de la 20ᵉ passe reste utile pour ces cas-là ; à vérifier avec un cache froid).
+
+**1. La méthode : des kills à la demande, dans une vraie partie** (`tools/perf/pane/killab.js`).
+Le joueur scripté vise le bot vivant le plus en face et tire au paintball ; sur une image où il
+est sur la cible et tire, ce bot passe à 1 PV et le chemin de touche du fusil s'exécute sur lui
+(`applyLocalDamage` : impulsion du ragdoll, dégâts, retour de touche — puis tout le chemin de mort
+du jeu). Les kills et les morts sont lus dans les rappels `Health` du jeu, pas dans le HUD. Le
+joueur encaisse les tirs des bots mais ne meurt pas (un coup mortel remet ses PV d'abord). Les
+lots de commandes du HUD peuvent être filtrés : A/B dans la même partie, en blocs alternés de
+25-28 s. Une image manquée est classée « CPU » quand l'avance + le jeu + le navigateur de l'image
+précédente remplissent l'intervalle, « attente GPU » sinon. « Kill touché » : au moins une
+attente GPU dans les 0,5 s qui suivent.
+
+**2. Résultats.**
+
+| Test (23/10) | Situation | Kills | Kills touchés (attente GPU) |
+|---|---|---|---|
+| 9 (kills naturels) | HUD affiché / masqué | 7 / 5 | 5 (1 à 3 images, attentes de 4 à 9 ms, 6-8 images après le kill) / **0** |
+| 10 (effets de kill injectés, sans kill) | joueur qui tire (interrompu une partie du test), plaque animée | 7 | 1 (la toute première injection) |
+| 11 (kills accélérés) | HUD normal · sans effets de kill · plaque figée | 5 · 5 · 4 | 3 · **0** · 2 |
+| 12 (un kill toutes les 5,2 s) | HUD normal · aucun effet de kill · **un seul groupe d'effets** (médaille, combo, killstreak + classement, hitmarker + chiffre ; BEANED! seul : 2 kills avant la mise en veille du PC, 0) | 6 · 7 · 22 | 2 · 0 · **0** |
+| 13 (simples, doubles, têtes ; dégâts reçus) | HUD normal · aucun effet de kill · **en cascade** | 11 · 16 · 11 | 3 · 0 · **0 (et 0 image manquée)** |
+
+Ce n'est aucun effet en particulier : c'est **leur empilement dans la même image**. Au kill, un
+seul lot lançait la médaille, BEANED! et la petite joie du Bean Buddy, l'étiquette du combo, les
+cases de killstreak, les lignes du classement, le hitmarker et le chiffre du kill ; le document
+du HUD les applique à l'image suivante, leurs premières images (rastérisation du nouveau contenu,
+passes d'opacité de groupe des pops) arrivent ensemble dans le processus GPU de Chrome, et l'image
+du jeu qui suit attend derrière (4 à 8 images après le kill). La peinture 3D de la plaque n'y est
+pour rien : plaque figée, mêmes chutes ; 30 s de tir continu sans kill, 1 image manquée.
+
+**3. Le correctif : les effets du kill en cascade** (`hud/host/killCascade.ts`, appliqué par
+`HudHost` en mode iframe). Le hitmarker et le chiffre du kill restent dans l'image du kill (ils
+répondent au tir) ; ensuite chaque groupe démarre dans sa propre image, au moins `rank` images et
+environ `ms` après le kill :
+
+| | Médaille | BEANED! + Bean Buddy, combo | Killstreak | Classement |
+|---|---|---|---|---|
+| 240 Hz | +2 images (8 ms) | +4 (17 ms) | +6 (25 ms) | +8 (33 ms) |
+| 144 Hz | +1 (7 ms) | +2 (14 ms) | +4 (28 ms) | +5 (35 ms) |
+| 60 Hz | +1 (17 ms) | +2 (33 ms) | +3 (50 ms) | +4 (67 ms) |
+
+Les mêmes animations, les mêmes états, dans le même ordre pour chaque widget (les mises à jour
+du combo et la sortie de la médaille attendent derrière leur déclencheur) — seulement quelques
+millisecondes plus tard. Le rythme d'affichage est mesuré sur les images (`flush`) ; hors d'une
+boucle d'images (menus, chargement), rien n'est retenu. Retombée sur le HUD dans la page : ce qui
+attend part avec le lot de l'image. Le mode « dans la page » (fallback, `npm run dev`) n'est pas
+touché (commandes appliquées à l'appel, comme avant). `?diag=nokillcascade` : tout dans l'image
+du kill, comme avant. `scripts/test-hud-kill-cascade.mts` : le calendrier à 60-360 Hz (les
+images exactes du prototype mesuré à 240 Hz), l'ordre par widget, seules les commandes d'effet
+de kill retenues (toutes celles du protocole passées en revue), le passage direct hors boucle,
+le câblage dans `HudHost` ; `scripts/test-hud-host-cascade.mts` : le vrai `HudHost` et ses
+façades, navigateur simulé — les lots image par image (0 · 2 · 4 · 6 · 8 à 240 Hz), l'hôte sans
+l'option et le mode dans la page inchangés, ce qui attend rejoué à une retombée. Les tests de
+`HudHost` (`test-hud-host.mts`) ne changent pas : la cascade n'existe que dans l'hôte de la page
+(`new HudHost()` sans option : désactivée).
+**À vérifier sur le PC gamer après déploiement**, kill par kill, en regardant les pires images
+(et en A/B `?diag=nokillcascade`).
+
+**4. Le CPU du jeu en combat** (tests 14-15, `tools/perf/pane/lightprof.js` : une cinquantaine de
+méthodes nommées, surcoût négligeable ; `cpuprof.js`, qui enveloppe ~1 500 méthodes de ~100
+classes, coûte lui-même 2-3 ms par image — ses chiffres absolus sont 2 à 4 fois trop hauts, il
+sert à trouver où regarder). Base : **3,0 ms de jeu par image** (médiane ; budget 4,17 ms) ; en
+160 s, 681 images du jeu au-dessus du budget (1,8 %), 91 rafraîchissements manqués dont 76 côté
+CPU. Les événements, au pire / p99 d'un seul appel :
+
+| Événement | Pire | p99 | Médiane |
+|---|---|---|---|
+| Jet de FAMAS d'un bot (`fireFamasJet`) | 1,7 ms | 1,5 | 0,2 |
+| Tir du joueur au paintball (`fire`) | 1,6 | 0,6 | 0,3 |
+| Kill par le joueur (`applyLocalDamage`) | 1,4 | 0,9 | — |
+| dont la mort du bot (`Bot.onDeath`) / son cadavre (`CorpseManager.spawn`) | 0,8 / 0,5 | 0,8 / 0,4 | 0,6 / 0,3 |
+| Bot qui touche et tue (`applyHit`) | 1,1 | 1,0 | — |
+| Tir au Popcorn d'un bot (`updatePopcorn`, dont `popcornShot` 0,3-0,5) | 1,3 | — | — |
+| Peinture d'une touche sur un perso (`characterHit`) | 0,5 | 0,5 | 0,3 |
+| Pas de physique (`physics.step`) | 0,7 | 0,4 | 0,2 |
+
+La plupart des images en retard n'ont aucun gros événement : leurs parties nommées font
+~1,2 ms (bots `postStep` 0,3-0,5, mixers d'animation, physique 0,2-0,5) et le reste (~3 ms) est
+le rendu et la boucle d'image. À 240 Hz, la marge n'est que de ~1 ms : tout événement de 0,5 à
+1,5 ms la dépasse. Le kill lui-même : +1,2 ms sur son image (cadavre 0,3-0,5, le reste du chemin
+de mort), puis +0,12 ms par image tant que le ragdoll simule. Prochain chantier CPU : la base de
+l'image (envoi du rendu, animation des bots) et l'étalement des gros événements.
+
+**5. Pièges de ce matin** (`tools/perf/pane/README.md`) : la mise en veille du PC pendant un
+test (9 h 54 : deux blocages de 200 ms, puis un jeu plus lent jusqu'à la fin — régler la veille et
+l'extinction de l'écran sur « Jamais » le temps des tests) ; la fenêtre Claude réduite ou
+recouverte (`visibilityState` « hidden » : plus aucune image) ; le joueur scripté qui visait une
+créature animée du décor (un mixer de la carte) au lieu d'un bot — il ne vise plus que des bots
+vivants.
 
 ## La fin de partie (écran de fin) (18ᵉ passe)
 

@@ -121,3 +121,32 @@ au kill, mesurées sur le PC gamer (20ᵉ passe) » ; outils : `tools/perf/pane/
 - Le profil du panneau (localStorage du site) a été rendu **vide**, comme au départ.
 - perf-16 (autre conversation) pas encore reçu : le vérifier au PC gamer, kill par kill, avant toute
   livraison ; rebaser `pc/medal-warmup` dessus s'il ne couvre pas déjà les badges.
+
+## 23/10 au matin — la cause des chutes répétées au kill, et le correctif
+
+Même installation (PC redémarré la nuit ; panneau 2130 × 1275). Détail : PERFORMANCE.md, « Les chutes
+au kill : l'empilement des effets du HUD (21ᵉ passe) » ; outils : `tools/perf/pane/killab.js` (kills à
+la demande dans une vraie partie, filtre des lots du HUD), `lightprof.js`, `cpuprof.js`.
+
+- **Première médaille après le redémarrage : plus de pic** (HEADSHOT à 4,3 ms) : Chrome garde ce travail
+  sur disque. Le correctif du préchauffage (277e751) reste à vérifier avec un cache froid, sans urgence.
+- **Les chutes répétées au kill = l'empilement des effets de kill du HUD dans la même image** : HUD
+  normal, 5 kills sur 17 suivis d'une attente GPU de 4 à 9 ms (4-8 images après le kill) ; chaque effet
+  seul, 0 sur 22 ; aucun effet de kill, 0 sur 23 ; la plaque figée n'y change rien. **Prototype « en
+  cascade » (dans la page, test 13) : 0 sur 11, 0 image manquée.**
+- **Correctif écrit** (branche `pc/medal-warmup`) : `hud/host/killCascade.ts` + `HudHost` (mode iframe)
+  — hitmarker et chiffre du kill dans l'image du kill, puis médaille +2 images, BEANED! / combo +4,
+  killstreak +6, classement +8 à 240 Hz (8-33 ms ; au plus 67 ms à 60 Hz) ; `?diag=nokillcascade` pour
+  comparer ; `scripts/test-hud-kill-cascade.mts`, `scripts/test-hud-host-cascade.mts` (le vrai `HudHost`,
+  navigateur simulé). **Pas encore déployé ni vérifié sur le PC gamer** :
+  après déploiement, refaire le test 13 (`killab.js` : HUD normal contre `?diag=nokillcascade`, ~20 kills
+  chacun, pires images).
+- `test-hud-host.mts` (Vite + three) n'a pas pu tourner ici (pas d'accès au registre npm) : il construit
+  `new HudHost()` sans option, cascade désactivée — inchangé ; à relancer chez le propriétaire.
+- **CPU en combat** (`lightprof.js`) : 3,0 ms de jeu par image (budget 4,17) ; événements de 0,3 à 1,7 ms
+  (jet de FAMAS d'un bot 1,7, tir au paintball 1,6 au pire, kill 1,4, tir au Popcorn d'un bot 1,3,
+  touche peinte 0,5) ; la plupart des images en retard n'ont pas de gros événement (base qui flirte avec
+  le budget). Prochain chantier : la base (envoi du rendu, animation des bots) et l'étalement des gros
+  événements. Le pic CPU du kill lui-même (+1,2 ms, cadavre 0,3-0,5) est modeste.
+- Piège : la mise en veille du PC pendant un test (faire régler veille / écran sur « Jamais »).
+- Le profil du panneau a été rendu **vide**, comme au départ.
