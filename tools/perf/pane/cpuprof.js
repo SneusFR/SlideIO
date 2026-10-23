@@ -13,7 +13,9 @@
 // game's Health callbacks) or realplay.js (window.__rp with a picked scene and its HUD tap).
 //   __cp.start() / __cp.stop()
 //   __cp.report() → { frames, perFrameAvg: top methods (ms / frame, calls / frame), events:
-//        [{ label, frame, frames: [{ k, cpu, top: "name ms×calls, …" }] }] }
+//        [{ label, frame, frames: [{ k, cpu, other, top: "name ms×calls, …" }] }] }
+//        (cpu = the game's callback; other = the page's other rAF callbacks since the previous
+//        game frame, e.g. a scripted player's aim loop — their methods are in `top` too)
 (() => {
   if (window.__cp) return "cp already";
   const g = window.__g, rp = window.__rp, obs = window.__obs;
@@ -107,7 +109,7 @@
   }
   // ---- per frame: ring of the last RING frames, snapshots around events
   const RING = 720;
-  const ring = new Float32Array(RING * MAX), ringN = new Uint16Array(RING * MAX), ringCpu = new Float32Array(RING);
+  const ring = new Float32Array(RING * MAX), ringN = new Uint16Array(RING * MAX), ringCpu = new Float32Array(RING), ringOther = new Float32Array(RING);
   let head = 0, frameNo = 0;
   const totals = new Float64Array(MAX), totalN = new Float64Array(MAX);
   const events = [];
@@ -115,21 +117,24 @@
   const state = () => (window.__K ? { kill: window.__K.kills, deaths: window.__K.deaths, alive: window.__hud ? window.__hud.alive : true } : rp.hud);
   let last = state();
   const bz = window.__bz;
+  // Other rAF callbacks of the page (a scripted player's aim loop, which may make a kill) count in
+  // the NEXT game frame: their methods in its top list, their time in `other`. (probe-lite resets
+  // bz.cbDraws at the start of every callback: a callback with draws is the game's.)
+  let otherCpu = 0;
   const prevRaf = window.requestAnimationFrame;
   window.requestAnimationFrame = function (cb) {
     return prevRaf.call(window, function (t) {
       if (!CP.on) return cb(t);
-      acc.fill(0); cnt.fill(0);
-      const draws0 = bz ? bz.cbDraws : 0;
       const t0 = performance.now();
       try { cb(t); } finally {
         const cpu = performance.now() - t0;
-        if (!bz || bz.cbDraws > draws0) {
+        if (!bz || bz.cbDraws > 0) {
           const h = head % RING;
           ring.set(acc.subarray(0, MAX), h * MAX);
           for (let k = 0; k < names.length; k++) ringN[h * MAX + k] = Math.min(65535, cnt[k]);
-          ringCpu[h] = cpu;
+          ringCpu[h] = cpu; ringOther[h] = otherCpu;
           for (let k = 0; k < names.length; k++) { totals[k] += acc[k]; totalN[k] += cnt[k]; }
+          acc.fill(0); cnt.fill(0); otherCpu = 0;
           const s = state();
           const ev = [];
           if (s.kill > last.kill) ev.push("KILL");
@@ -148,17 +153,17 @@
               const top = [];
               for (let m = 0; m < names.length; m++) { const v = ring[hh * MAX + m]; if (v >= 0.1) top.push([names[m], v, ringN[hh * MAX + m]]); }
               top.sort((a, b) => b[1] - a[1]);
-              fr.push({ k: k - p.at, cpu: +ringCpu[hh].toFixed(2), top: top.slice(0, 14).map(([n, v, c]) => `${n} ${v.toFixed(2)}×${c}`).join(", ") });
+              fr.push({ k: k - p.at, cpu: +ringCpu[hh].toFixed(2), other: +ringOther[hh].toFixed(2), top: top.slice(0, 14).map(([n, v, c]) => `${n} ${v.toFixed(2)}×${c}`).join(", ") });
             }
             events.push({ label: p.label, frame: p.at, frames: fr });
           }
           head++;
           frameNo++;
-        }
+        } else otherCpu += cpu;
       }
     });
   };
-  CP.start = () => { totals.fill(0); totalN.fill(0); events.length = 0; pendingSnap.length = 0; head = 0; frameNo = 0; last = state(); CP.on = true; return `cp on: ${names.length} methods`; };
+  CP.start = () => { totals.fill(0); totalN.fill(0); acc.fill(0); cnt.fill(0); otherCpu = 0; events.length = 0; pendingSnap.length = 0; head = 0; frameNo = 0; last = state(); CP.on = true; return `cp on: ${names.length} methods`; };
   CP.stop = () => { CP.on = false; return `cp off: ${frameNo} frames, ${events.length} events`; };
   CP.report = (minMs = 0.02) => {
     const avg = [];

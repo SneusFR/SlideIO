@@ -18,6 +18,8 @@ AVANT le code du jeu, ce qui donne la scène, la caméra et les personnages au j
 | `firsts.js` | `window.__fd` : premières fois (programme, formats d'attributs du VAO, framebuffer) PAR DESSIN — ce qu'ANGLE / D3D11 compile paresseusement dans le processus GPU au premier dessin. À évaluer AVANT `boot.js` (dans la même fenêtre) pour voir aussi le préchauffage ; `__fd.start()` ne garde ensuite que les nouvelles. 22/10 : 0 en partie (le préchauffage 3D est complet). |
 | `hudinject.js` | `window.__hi` : garde le port du HUD, capture les vraies commandes (avec leurs arguments) et en reposte une seule, sans kill (`__hi.send([["medal.show", "HEADSHOT", 1]])`), pour isoler le coût d'un effet du HUD dans le vrai HUD (iframe). `__hi.effect()` : pire image et images manquées après chaque injection. C'est ce qui a trouvé l'attente GPU de 14 ms au kill (première médaille sans étoile). |
 | `analyze.js` | Rapport d'un passage `killwatch.js` joint à `segprobe.js` et `firsts.js`. |
+| `killab.js` | Des **kills à la demande dans une vraie partie** et la part du HUD dans leur coût (PC gamer, 23/10, tests 11-15). Joueur scripté `__rp` (vise le bot vivant le plus en face, tire au paintball, recharge en lisant les munitions dans l'arme elle-même), kills réels déterministes `__kl` (sur une image où il est sur la cible et tire, le bot passe à 1 PV et le chemin de touche du fusil s'exécute : tout le chemin de mort du jeu ; `__kl.seq` = simples, doubles, têtes), kills / morts lus dans les rappels `Health` (`__K`), joueur qui encaisse mais ne meurt pas (`__pg.on`), filtre des lots du HUD (`__filt.mode` : `all`, `nokill`, `noplate`, `groups` + `__filt.drop`, `stagger` = le prototype de `hud/host/killCascade.ts`), une ligne par image (`__kw.frames`). |
+| `lightprof.js` | `window.__lp` : le CPU d'une cinquantaine de méthodes **nommées** (armes des bots et leur monde partagé, fusil du joueur et ses effets, cadavres, physique, mixers, raycaster) — surcoût négligeable, donc des temps proches des vrais (pire / p99 / médiane de chaque appel, images au-dessus du budget avec leurs méthodes). À préférer à `cpuprof.js` pour chiffrer ; `cpuprof.js` pour trouver où regarder. Après `killab.js` (`__g.bind()`). |
 | `cpuprof.js` | `window.__cp` : où va le CPU du jeu, PAR IMAGE et autour de chaque kill / mort / réapparition, sans carte des sources. Les noms de MÉTHODES survivent à la minification : depuis le bot (`userData.combatant` de son nœud), le monde des armes (`deps` : les armes du JOUEUR, leurs effets, l'audio), le joueur et son fusil, les objets atteignables à 3 propriétés près sont explorés et chaque méthode de leurs classes est enveloppée (temps inclusif × appels), plus `render`, `mixer.update`, `skeleton.update`, le raycaster, `scene.updateMatrixWorld` et l'envoi des lots au HUD. Les classes de three.js et du navigateur ne sont pas enveloppées (trop d'appels). `__cp.start()`, `__cp.report()` → moyenne par image + images −2…+14 autour de chaque évènement. |
 
 ## Déroulé (panneau navigateur de Claude, outils `Claude_Browser__*`)
@@ -34,6 +36,17 @@ Pièges : le panneau doit être **affiché et au premier plan** (sinon le naviga
 `requestAnimationFrame` à ~1/s) ; `javascript_exec` abandonne après 45 s → lancer en asynchrone puis
 interroger ; l'émulation de taille (`resize_window`) réduit l'image à l'écran du panneau, donc sous-estime
 le coût du compositeur ; ne jamais mesurer pendant que le propriétaire joue sur la même machine.
+
+Pièges vus sur le PC gamer (23/10) :
+- **La mise en veille du PC** pendant un test (personne ne touche à la souris) : deux blocages de 200 ms puis un jeu plus
+  lent jusqu'à la fin. Faire régler la veille et l'extinction de l'écran sur « Jamais » le temps des tests.
+- **La fenêtre Claude réduite ou recouverte** : `document.visibilityState` passe à « hidden », plus aucune image (le panneau
+  se dit pourtant « displayed »). Vérifier la visibilité avant et pendant chaque mesure.
+- Le joueur scripté doit viser des **bots vivants** : les créatures animées de la carte ont aussi des mixers (il tirait dessus).
+- `cpuprof.js` enveloppe ~1 500 méthodes (dont `Layers.test`, ~1 500 appels par image) : +2-3 ms par image, chiffres absolus
+  2 à 4 fois trop hauts. Chiffrer avec `lightprof.js`.
+- `__bz.cbDraws` est remis à 0 au début de CHAQUE callback rAF : une image du jeu = un callback avec `cbDraws > 0` (pas
+  « plus qu'avant »).
 
 Pièges vus sur le PC gamer (22/10) :
 - **Une partie solo dure 5 min** : à la fin, l'écran de fin fait voter les bots et peut **changer de carte**
